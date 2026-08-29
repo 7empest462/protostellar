@@ -88,21 +88,28 @@ fn fragment(
     
     var color = base;
     
-    // Gas Giant (Banded)
+    // Gas Giant (Banded, zonal flow, swirling storm spots)
     if (planet.planet_type == 1u) {
-        let band_coord = pos.y * 5.0 + fbm(pos * 2.0 + vec3<f32>(n_time, 0.0, n_time)) * 2.0;
-        let band = sin(band_coord) * 0.5 + 0.5;
-        let swirl = fbm(pos * 4.0 - vec3<f32>(n_time));
-        color = mix(base * 0.5, base * 1.5, band * swirl);
+        let lat = pos.y * 7.0;
+        let flow_dir = sign(sin(lat * 2.0));
+        let storm_coord = pos * 3.5 + vec3<f32>(n_time * flow_dir * 0.8, 0.0, n_time * flow_dir * 0.8);
+        let band = sin(lat + fbm(storm_coord) * 1.8) * 0.5 + 0.5;
+        let eddies = fbm(pos * 5.0 - vec3<f32>(n_time * 0.5));
+        
+        let dark_band = mix(base * 0.45, vec3<f32>(0.75, 0.4, 0.2), 0.5);
+        let bright_band = mix(base * 1.35, vec3<f32>(0.95, 0.85, 0.7), 0.5);
+        color = mix(dark_band, bright_band, band) * (0.8 + eddies * 0.4);
     } 
-    // Ice Giant (Pale, subtle bands)
+    // Ice Giant (Pale azure / cyan, soft atmospheric striations, methane haze)
     else if (planet.planet_type == 2u) {
-        let band_coord = pos.y * 3.0;
-        let band = sin(band_coord) * 0.5 + 0.5;
-        let swirl = fbm(pos * 2.0);
-        color = mix(base * 0.8, base * 1.2, band * swirl);
+        let lat = pos.y * 4.5;
+        let haze = fbm(pos * 2.5 + vec3<f32>(n_time * 0.3, 0.0, n_time * 0.3));
+        let band = sin(lat + haze * 0.8) * 0.5 + 0.5;
+        let deep_ice = mix(base * 0.65, vec3<f32>(0.15, 0.45, 0.85), 0.6);
+        let pale_ice = mix(base * 1.25, vec3<f32>(0.65, 0.90, 0.98), 0.7);
+        color = mix(deep_ice, pale_ice, band * 0.6 + haze * 0.4);
     } 
-    // Terrestrial (Continents, oceans, icecaps)
+    // Terrestrial (Continents, oceans, icecaps, thermal adaptation)
     else if (planet.planet_type == 3u) {
         let elev = fbm(pos * 5.0);
         let ice_cap = abs(in.world_normal.y);
@@ -110,38 +117,47 @@ fn fragment(
         // Very hot planets (Venus/Lava)
         if (planet.temperature > 400.0) {
             if (elev > 0.6) {
-                color = vec3<f32>(0.2, 0.1, 0.0); // rock
+                color = vec3<f32>(0.25, 0.12, 0.05); // rock
             } else {
-                color = mix(base, vec3<f32>(0.8, 0.2, 0.0), elev); // lava / dense clouds
+                color = mix(base, vec3<f32>(0.85, 0.25, 0.05), elev); // lava / dense clouds
                 if (elev < 0.4) {
-                    pbr_input.material.emissive = vec4<f32>(1.0, 0.3, 0.0, 1.0) * (0.4 - elev) * 5.0;
+                    pbr_input.material.emissive = vec4<f32>(1.0, 0.35, 0.05, 1.0) * (0.4 - elev) * 6.0;
                 }
             }
         } 
         // Earth-like / Habitable
-        else if (planet.temperature > 250.0 && planet.temperature < 320.0) {
-            if (ice_cap > 0.85 - (273.0 / planet.temperature) * 0.1) {
-                color = vec3<f32>(0.9, 0.9, 0.95); // ice
-            } else if (elev > 0.5) {
-                color = vec3<f32>(0.1, 0.6, 0.2); // land / vegetation
-                if (elev > 0.7) { color = vec3<f32>(0.4, 0.3, 0.1); } // mountains
+        else if (planet.temperature > 250.0 && planet.temperature <= 400.0) {
+            if (ice_cap > 0.82 - (273.0 / planet.temperature) * 0.08) {
+                color = vec3<f32>(0.92, 0.95, 0.98); // polar ice caps
+            } else if (elev > 0.52) {
+                color = vec3<f32>(0.15, 0.55, 0.22); // lush land / vegetation
+                if (elev > 0.70) { color = vec3<f32>(0.45, 0.35, 0.20); } // mountain ranges
             } else {
-                color = vec3<f32>(0.0, 0.2, 0.8); // ocean
+                color = vec3<f32>(0.02, 0.22, 0.75); // ocean
             }
         }
-        // Mars-like / Barren Red
-        else {
-            if (ice_cap > 0.9) {
-                color = vec3<f32>(0.8, 0.8, 0.8); // dry ice caps
+        // Mars-like / Barren Red / Desert (Cool 190K - 250K)
+        else if (planet.temperature > 190.0) {
+            if (ice_cap > 0.88) {
+                color = vec3<f32>(0.88, 0.88, 0.92); // dry ice caps
             } else {
-                color = mix(vec3<f32>(0.6, 0.2, 0.1), vec3<f32>(0.3, 0.1, 0.0), elev); // rusty
+                color = mix(vec3<f32>(0.68, 0.26, 0.12), vec3<f32>(0.35, 0.15, 0.05), elev); // oxidized rust
+            }
+        }
+        // Frozen Ice World / Cryo-world (< 190K, Outer system)
+        else {
+            let frost = fbm(pos * 8.0);
+            if (ice_cap > 0.65 || frost > 0.45) {
+                color = mix(vec3<f32>(0.85, 0.92, 0.98), vec3<f32>(0.55, 0.75, 0.92), elev); // glacial nitrogen / methane ice
+            } else {
+                color = mix(vec3<f32>(0.35, 0.30, 0.38), vec3<f32>(0.65, 0.70, 0.80), elev); // dark silicate / cryo-crust
             }
         }
     }
     // Moon / Asteroid
     else if (planet.planet_type == 4u) {
         let crater = fbm(pos * 8.0);
-        color = mix(base * 0.5, base, crater);
+        color = mix(base * 0.5, base * 1.1, crater);
     }
     
     // Only apply the color change if planet type is recognized (so we don't mess up stars, which are 0u)

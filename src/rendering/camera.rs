@@ -77,6 +77,7 @@ pub fn update_pan_orbit_camera(
     windows: Query<&Window>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    config: Res<SimulationConfig>,
     mut mouse_motion_events: MessageReader<MouseMotion>,
     mut mouse_wheel_events: MessageReader<MouseWheel>,
     mut player_state: ResMut<PlayerInteractionState>,
@@ -99,6 +100,23 @@ pub fn update_pan_orbit_camera(
     let Ok(window) = windows.single() else {
         return;
     };
+
+    // Update dynamic minimum zoom radius when locked on a body
+    if let Some(target_ent) = camera.target_entity {
+        if let Ok((_, pos, _, body, mass)) = targets_query.get(target_ent) {
+            let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            camera.target_focus = target_vec;
+
+            // Stop right outside the planet's visual surface
+            let visual_radius = SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale;
+            camera.min_radius = (visual_radius * 1.5).max(0.012);
+        } else {
+            camera.target_entity = None;
+            camera.min_radius = 0.05;
+        }
+    } else {
+        camera.min_radius = 0.05;
+    }
 
     // 1. Pixel-Accurate Screen-Space & 3D Ray Selection of Celestial Bodies (Star & Planets)
     if mouse_buttons.just_pressed(MouseButton::Left) {
@@ -224,18 +242,16 @@ pub fn update_pan_orbit_camera(
         camera.target_focus += right * move_speed;
         camera.target_entity = None;
     }
-    if keyboard_input.pressed(KeyCode::KeyE) {
-        let up = transform.rotation * Vec3::Y;
-        camera.target_focus += up * move_speed;
+    if keyboard_input.pressed(KeyCode::KeyQ) {
+        camera.target_focus.y -= move_speed;
         camera.target_entity = None;
     }
-    if keyboard_input.pressed(KeyCode::KeyQ) {
-        let up = transform.rotation * -Vec3::Y;
-        camera.target_focus += up * move_speed;
+    if keyboard_input.pressed(KeyCode::KeyE) {
+        camera.target_focus.y += move_speed;
         camera.target_entity = None;
     }
 
-    // Mouse 360-degree orbit & pan controls: Right-drag for 360 orbit, Middle / Shift+Right for pan
+    // Mouse Controls: Orbit / Pan
     if mouse_buttons.pressed(MouseButton::Right) && !keyboard_input.pressed(KeyCode::ShiftLeft) {
         for ev in mouse_motion_events.read() {
             delta_yaw -= ev.delta.x * camera.orbit_sensitivity;
@@ -270,15 +286,8 @@ pub fn update_pan_orbit_camera(
     camera.target_yaw += delta_yaw;
     camera.target_pitch = (camera.target_pitch + delta_pitch).clamp(-1.54, 1.54);
 
-    // Update tracked target focus position
-    if let Some(target_ent) = camera.target_entity {
-        if let Ok((_, pos, _, _, _)) = targets_query.get(target_ent) {
-            let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-            camera.target_focus = target_vec;
-        } else {
-            camera.target_entity = None;
-        }
-    } else if delta_pan != Vec2::ZERO {
+    // Free panning
+    if camera.target_entity.is_none() && delta_pan != Vec2::ZERO {
         let right = transform.rotation * Vec3::X;
         let up = transform.rotation * Vec3::Y;
         camera.target_focus += right * delta_pan.x + up * delta_pan.y;
@@ -287,8 +296,14 @@ pub fn update_pan_orbit_camera(
     // Smooth cinematic exponential damping interpolation
     camera.yaw += (camera.target_yaw - camera.yaw) * 0.22;
     camera.pitch += (camera.target_pitch - camera.pitch) * 0.22;
-    camera.radius += (camera.target_radius - camera.radius) * 0.18;
-    camera.focus = camera.focus.lerp(camera.target_focus, 0.14);
+    camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.18).clamp(camera.min_radius, camera.max_radius);
+
+    // When focus-locked on a moving celestial body, lock immediately without lag so it stays dead center
+    if camera.target_entity.is_some() {
+        camera.focus = camera.target_focus;
+    } else {
+        camera.focus = camera.focus.lerp(camera.target_focus, 0.14);
+    }
 
     // Recompute camera transform
     let rot =

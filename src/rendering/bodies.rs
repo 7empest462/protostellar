@@ -172,7 +172,15 @@ pub fn spawn_missing_visuals(
                         planet_type: match body.body_type {
                             BodyType::GasGiant => 1,
                             BodyType::IceGiant => 2,
-                            BodyType::TerrestrialPlanet | BodyType::Protoplanet => 3,
+                            BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
+                                if comp.gas_frac > 0.30 {
+                                    1 // Gas Giant banded
+                                } else if comp.ice_frac > 0.40 {
+                                    2 // Ice Giant / Icy world
+                                } else {
+                                    3 // Terrestrial
+                                }
+                            }
                             _ => 4, // Moon / Asteroid
                         },
                         temperature: temp.0 as f32,
@@ -269,7 +277,15 @@ pub fn sync_celestial_transforms(
                 BodyType::Protostar | BodyType::MainSequenceStar => 0,
                 BodyType::GasGiant => 1,
                 BodyType::IceGiant => 2,
-                BodyType::TerrestrialPlanet | BodyType::Protoplanet => 3,
+                BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
+                    if comp.gas_frac > 0.30 {
+                        1 // Gas Giant banded
+                    } else if comp.ice_frac > 0.40 {
+                        2 // Ice Giant / Icy world
+                    } else {
+                        3 // Terrestrial
+                    }
+                }
                 _ => 4, // Moon / Asteroid
             };
 

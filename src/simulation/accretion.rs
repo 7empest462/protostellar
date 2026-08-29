@@ -346,9 +346,13 @@ pub fn process_accretion_and_collisions(
                         t.0 = (t.0 + 600.0).min(5000.0); // Impact heating
                         *comp = primary_comp;
 
-                        // Upgrade body type if crossed mass threshold
-                        if total_primary_mass >= JUPITER_MASS_SOLAR * 0.05 {
-                            body.body_type = if primary_comp.gas_frac > 0.4 {
+                        // Upgrade body type if crossed mass threshold or composition archetype
+                        if primary_comp.gas_frac > 0.35 && total_primary_mass >= EARTH_MASS_SOLAR * 0.5 {
+                            body.body_type = BodyType::GasGiant;
+                        } else if primary_comp.ice_frac > 0.40 && total_primary_mass >= EARTH_MASS_SOLAR * 0.5 {
+                            body.body_type = BodyType::IceGiant;
+                        } else if total_primary_mass >= JUPITER_MASS_SOLAR * 0.03 {
+                            body.body_type = if primary_comp.gas_frac > 0.3 {
                                 BodyType::GasGiant
                             } else {
                                 BodyType::IceGiant
@@ -492,8 +496,12 @@ pub fn process_accretion_and_collisions(
                     let updated_type =
                         if matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar) {
                             p_type
-                        } else if total_mass >= JUPITER_MASS_SOLAR * 0.05 {
-                            if merged_comp.gas_frac > 0.4 {
+                        } else if merged_comp.gas_frac > 0.35 && total_mass >= EARTH_MASS_SOLAR * 0.5 {
+                            BodyType::GasGiant
+                        } else if merged_comp.ice_frac > 0.40 && total_mass >= EARTH_MASS_SOLAR * 0.5 {
+                            BodyType::IceGiant
+                        } else if total_mass >= JUPITER_MASS_SOLAR * 0.03 {
+                            if merged_comp.gas_frac > 0.3 {
                                 BodyType::GasGiant
                             } else {
                                 BodyType::IceGiant

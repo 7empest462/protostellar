@@ -1,1 +1,10 @@
 /target
+flamegraph.svg
+*.svg
+test.rs
+test_*.rs
+test*.rs
+patch_gpu.py
+run_log.txt
+*.log
+.DS_Store
