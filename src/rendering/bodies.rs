@@ -133,8 +133,8 @@ pub fn spawn_missing_visuals(
                     parent.spawn((
                         PointLight {
                             color: base_color,
-                            intensity: 12_000_000.0,
-                            range: 250.0,
+                            intensity: 60_000_000.0,
+                            range: 500.0,
                             shadow_maps_enabled: false,
                             ..default()
                         },

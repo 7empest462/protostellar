@@ -65,6 +65,11 @@ pub fn setup_camera(mut commands: Commands) {
     // Single camera: 3D scene + UI overlay (canonical Bevy pattern)
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            near: 0.005,
+            far: 1500.0,
+            ..default()
+        }),
         Transform::from_translation(translation).looking_at(pan_orbit.focus, Vec3::Y),
         pan_orbit,
         IsDefaultUiCamera,
@@ -107,15 +112,15 @@ pub fn update_pan_orbit_camera(
             let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             camera.target_focus = target_vec;
 
-            // Stop right outside the planet's visual surface
+            // Frame the planet in full view right in front of the camera without clipping
             let visual_radius = SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale;
-            camera.min_radius = (visual_radius * 1.5).max(0.012);
+            camera.min_radius = (visual_radius * 3.6).max(0.08);
         } else {
             camera.target_entity = None;
-            camera.min_radius = 0.05;
+            camera.min_radius = 0.08;
         }
     } else {
-        camera.min_radius = 0.05;
+        camera.min_radius = 0.08;
     }
 
     // 1. Pixel-Accurate Screen-Space & 3D Ray Selection of Celestial Bodies (Star & Planets)
