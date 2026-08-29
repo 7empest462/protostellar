@@ -720,7 +720,10 @@ pub fn direct_nebular_gas_accretion(
     for (_entity, mut mass, pos, mut rad, mut comp, mut body, opt_diff, opt_spin) in
         bodies_query.iter_mut()
     {
-        let r_au = pos.0.length().clamp(disk_params.inner_radius_au, disk_params.outer_radius_au);
+        let r_au = pos
+            .0
+            .length()
+            .clamp(disk_params.inner_radius_au, disk_params.outer_radius_au);
         let m = mass.0;
 
         // Gas accretion occurs when core mass exceeds critical threshold (~0.02 Earth masses)
@@ -740,8 +743,7 @@ pub fn direct_nebular_gas_accretion(
 
         // Hydrodynamic gas envelope inflow rate: dM/dt = C_gas * R_H^2 * rho_gas * Omega_K
         let c_gas = 160.0 * (config.accretion_rate_multiplier as f64 / 120.0);
-        let d_mass_gas = (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr)
-            .min(m * 0.04); // Cap to 4% growth per step for numerical stability
+        let d_mass_gas = (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr).min(m * 0.04); // Cap to 4% growth per step for numerical stability
 
         if d_mass_gas > 1e-16 {
             let old_mass = m;
@@ -754,7 +756,9 @@ pub fn direct_nebular_gas_accretion(
             // Recalculate physical radius with the new gaseous envelope
             let density = comp.average_density();
             let volume = new_mass / density;
-            let new_radius = ((3.0 * volume) / (4.0 * PI)).cbrt().max(EARTH_RADIUS_AU * 0.2);
+            let new_radius = ((3.0 * volume) / (4.0 * PI))
+                .cbrt()
+                .max(EARTH_RADIUS_AU * 0.2);
             rad.0 = new_radius;
 
             // Dynamically upgrade body type based on gas & ice fraction
