@@ -47,7 +47,23 @@ pub fn spawn_protoplanetary_disk(
     // 2. Spawn Initial Protoplanetary Seeds across the active disk zones
     let seeds = [
         (
-            1.5,
+            0.50,
+            0.08 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.45,
+            "Proto-Mercury",
+            Composition::metal_rich(),
+            BodyType::Protoplanet,
+        ),
+        (
+            0.85,
+            0.28 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.65,
+            "Proto-Venus",
+            Composition::rocky(),
+            BodyType::Protoplanet,
+        ),
+        (
+            1.30,
             0.35 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.70,
             "Proto-Earth",
@@ -55,15 +71,39 @@ pub fn spawn_protoplanetary_disk(
             BodyType::Protoplanet,
         ),
         (
-            4.5,
-            0.18 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.55,
-            "Ceres Embryo",
+            1.65,
+            0.15 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.52,
+            "Theia Embryo",
             Composition::rocky(),
-            BodyType::Planetesimal,
+            BodyType::Protoplanet,
         ),
         (
-            10.0,
+            2.30,
+            0.12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.48,
+            "Proto-Mars",
+            Composition::rocky(),
+            BodyType::Protoplanet,
+        ),
+        (
+            3.50,
+            0.05 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.38,
+            "Ceres Embryo",
+            Composition::carbonaceous(),
+            BodyType::Protoplanet,
+        ),
+        (
+            4.60,
+            0.04 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.35,
+            "Vesta Embryo",
+            Composition::rocky(),
+            BodyType::Protoplanet,
+        ),
+        (
+            9.00,
             2.50 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.35,
             "Proto-Jupiter",
@@ -71,15 +111,31 @@ pub fn spawn_protoplanetary_disk(
             BodyType::GasGiant,
         ),
         (
-            20.0,
-            1.50 * EARTH_MASS_SOLAR,
+            13.5,
+            0.08 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.45,
+            "Callisto Embryo",
+            Composition::icy(),
+            BodyType::Protoplanet,
+        ),
+        (
+            19.0,
+            1.80 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.15,
             "Proto-Saturn",
             Composition::solar_gas(),
             BodyType::GasGiant,
         ),
         (
-            40.0,
+            27.0,
+            0.09 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.48,
+            "Titan Embryo",
+            Composition::icy(),
+            BodyType::Protoplanet,
+        ),
+        (
+            38.0,
             0.90 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.95,
             "Proto-Uranus",
@@ -87,12 +143,28 @@ pub fn spawn_protoplanetary_disk(
             BodyType::IceGiant,
         ),
         (
-            60.0,
-            0.45 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.75,
-            "Kuiper Planetesimal",
+            55.0,
+            0.85 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.90,
+            "Proto-Neptune",
             Composition::icy(),
-            BodyType::Planetesimal,
+            BodyType::IceGiant,
+        ),
+        (
+            75.0,
+            0.06 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.40,
+            "Triton Embryo",
+            Composition::icy(),
+            BodyType::Protoplanet,
+        ),
+        (
+            95.0,
+            0.05 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.38,
+            "Pluto Embryo",
+            Composition::icy(),
+            BodyType::Protoplanet,
         ),
     ];
 
@@ -262,7 +334,7 @@ pub fn auto_spawn_planetesimals(
     //   t = 700k yr:  one every ~5,400 yr
     //   t = 1.4M yr:  one every ~14,800 yr
     //   t = 2.8M yr:  one every ~109,000 yr  (disk nearly exhausted)
-    let base_interval_yr = 2_000.0;
+    let base_interval_yr = 600.0;
     let tau_depletion = disk_params.gas_disk_lifetime_yr / 5.0;
     let spawn_interval = base_interval_yr * (t / tau_depletion).exp();
 
@@ -271,7 +343,7 @@ pub fn auto_spawn_planetesimals(
         return;
     }
 
-    // --- Spawn a new planetesimal ---
+    // --- Spawn a new planetesimal or protoplanet embryo ---
     let mut rng = rand::rng();
     use rand::prelude::*;
     use std::f64::consts::PI;
@@ -294,10 +366,13 @@ pub fn auto_spawn_planetesimals(
     let v_mag = v_k * ecc_kick;
     let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
 
-    // Mass: asteroid-scale, drawn from a realistic power-law size distribution.
-    // Real planetesimals formed by streaming instability have a characteristic mass
-    // of ~10^-8 to 10^-5 Earth masses (Ceres is ~1.6e-4 Earth masses).
-    let log_mass_earth: f64 = rng.random_range(-7.0..-4.5);
+    // Bimodal mass distribution: 45% substantive Protoplanets, 55% Planetesimals
+    let is_protoplanet: bool = rng.random_bool(0.45);
+    let log_mass_earth: f64 = if is_protoplanet {
+        rng.random_range(-2.0..-0.8) // 0.01 to 0.16 Earth masses
+    } else {
+        rng.random_range(-3.5..-2.1) // 0.0003 to 0.008 Earth masses
+    };
     let mass = EARTH_MASS_SOLAR * 10.0_f64.powf(log_mass_earth);
 
     // Physical radius from mass and composition density
@@ -326,7 +401,8 @@ pub fn auto_spawn_planetesimals(
     } else {
         "KBO"
     };
-    let name = format!("{} Planetesimal #{}", zone_name, spawner.name_counter);
+    let type_label = if body_type == BodyType::Protoplanet { "Embryo" } else { "Planetesimal" };
+    let name = format!("{} {} #{}", zone_name, type_label, spawner.name_counter);
 
     // Internal differentiation and spin
     let mut diff = InternalDifferentiation::default();

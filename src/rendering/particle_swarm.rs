@@ -13,7 +13,6 @@ use rayon::prelude::*;
 
 use std::f64::consts::PI;
 
-use crate::rendering::bodies::{VisualAssets, VisualBody};
 use crate::simulation::components::*;
 use crate::simulation::disk::sample_disk_radius;
 use crate::simulation::resources::*;
@@ -239,8 +238,6 @@ pub fn update_particle_swarm(
     camera_query: Query<&Transform, With<Camera>>,
     swarm: Option<ResMut<ParticleSwarmData>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    _visual_assets: Option<Res<VisualAssets>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
         return;
@@ -608,19 +605,9 @@ pub fn update_particle_swarm(
         }
     }
 
-    // 4. Spawn ECS entities for promoted embryos
+    // 4. Spawn ECS entities for promoted embryos (visuals and PlanetMaterial automatically handled by bodies.rs)
     for (pos, vel, mass, radius, comp) in promotions {
         let name = format!("Embryo-{}", (pos.length() * 10.0) as u32);
-        let mesh_h = meshes.add(Sphere::new(1.0).mesh().ico(4).unwrap());
-        let (cr, cg, cb) = comp.visual_color_tint();
-        let material = materials.add(StandardMaterial {
-            base_color: Color::srgb(cr, cg, cb),
-            metallic: if comp.metal_frac > 0.4 { 0.8 } else { 0.2 },
-            perceptual_roughness: 0.6,
-            ..default()
-        });
-
-        let trans = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let temp = (disk_params.reference_temp_1au) * (pos.length() / 1.0).powf(-0.5);
 
         let mut diff = InternalDifferentiation::default();
@@ -631,32 +618,22 @@ pub fn update_particle_swarm(
             (mass * radius * radius * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
         spin.update_from_spin(initial_spin, mass, radius);
 
-        let visual_scale = SimulationConfig::calc_render_radius(mass, BodyType::Protoplanet);
-
         commands.spawn((
-            (
-                CelestialBody {
-                    name,
-                    body_type: BodyType::Protoplanet,
-                },
-                Mass(mass),
-                SimPosition(pos),
-                SimVelocity(vel),
-                SimAcceleration::default(),
-                Radius(radius),
-                Temperature(temp),
-                Luminosity(0.0),
-                AngularMomentum(pos.cross(vel) * mass),
-                comp,
-                diff,
-                spin,
-            ),
-            (
-                VisualBody,
-                Mesh3d(mesh_h),
-                MeshMaterial3d(material),
-                Transform::from_translation(trans).with_scale(Vec3::splat(visual_scale)),
-            ),
+            CelestialBody {
+                name,
+                body_type: BodyType::Protoplanet,
+            },
+            Mass(mass),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration::default(),
+            Radius(radius),
+            Temperature(temp),
+            Luminosity(0.0),
+            AngularMomentum(pos.cross(vel) * mass),
+            comp,
+            diff,
+            spin,
         ));
     }
 
