@@ -1,4 +1,5 @@
 #import bevy_pbr::{
+    mesh_view_bindings::view,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
 }
@@ -183,9 +184,7 @@ fn fragment(
     } else {
         let lit = apply_pbr_lighting(pbr_input);
         // Ambient starlight illumination floor + soft fresnel atmospheric rim so outer planets are always beautifully visible!
-        let view_dir = normalize(view.world_position.xyz - in.world_position.xyz);
-        let N = normalize(in.world_normal);
-        let fresnel = pow(1.0 - max(dot(N, view_dir), 0.0), 3.0);
+        let fresnel = pow(1.0 - max(pbr_input.NdotV, 0.0), 3.0);
         let ambient_boost = pbr_input.material.base_color.rgb * 0.40;
         let rim_boost = pbr_input.material.base_color.rgb * fresnel * 0.45;
         out.color = vec4<f32>(lit.rgb + ambient_boost + rim_boost, 1.0);
