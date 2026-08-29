@@ -37,6 +37,7 @@ impl Plugin for SimulationPlugin {
                 (
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),
+                    direct_nebular_gas_accretion.after(step_physics_simulation),
                     update_thermodynamics.after(step_physics_simulation),
                     auto_spawn_planetesimals.after(step_physics_simulation),
                     dissipate_gas_disk.after(step_physics_simulation),

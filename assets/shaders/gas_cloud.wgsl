@@ -55,50 +55,68 @@ fn fragment(
     let gas_density_scale = gas_time.w;
     let time = gas_time.x;
 
-    // 1. Boundary & Shockwave Clearance
-    if (r_cyl < inner_r || r_cyl > outer_r) {
+    // 1. Smooth Boundary & Shockwave Clearance
+    let inner_fade = smoothstep(inner_r, inner_r * 2.2, r_cyl);
+    let outer_fade = smoothstep(outer_r, outer_r * 0.70, r_cyl);
+    let radial_mask = inner_fade * outer_fade;
+
+    if (radial_mask < 0.001) {
         discard;
     }
 
     let shockwave_r = star_params.w;
-    if (shockwave_r > 0.0 && r_cyl < shockwave_r) {
-        discard; // Blown away by stellar ignition wind
+    var shock_mask: f32 = 1.0;
+    if (shockwave_r > 0.0) {
+        shock_mask = smoothstep(shockwave_r * 0.85, shockwave_r * 1.35, r_cyl);
     }
 
-    // 2. Multi-Octave Keplerian Swirling Noise
+    // 2. Differential Keplerian Swirling Flow with Domain Warping
     let angle = atan2(pos_world.z, pos_world.x);
-    let v_k_rot = 1.2 * time * pow(r_cyl / 1.0, -0.75);
+    let v_k_rot = 0.5 * time * pow(max(r_cyl, 0.4), -0.75);
     let rot_angle = angle + v_k_rot;
 
-    let sample_pos = vec2<f32>(
-        r_cyl * cos(rot_angle) * 0.8,
-        r_cyl * sin(rot_angle) * 0.8
+    let spiral_uv = vec2<f32>(
+        r_cyl * cos(rot_angle) * 0.15,
+        r_cyl * sin(rot_angle) * 0.15
     );
 
-    let turb = fbm(sample_pos + vec2<f32>(time * 0.1, time * 0.05));
+    // Multi-octave domain warping for wispy translucent filaments
+    let q = vec2<f32>(
+        fbm(spiral_uv + vec2<f32>(time * 0.015, time * 0.008)),
+        fbm(spiral_uv + vec2<f32>(4.3, 1.7) + vec2<f32>(-time * 0.01, time * 0.018))
+    );
+    let r_warp = vec2<f32>(
+        fbm(spiral_uv + 3.0 * q + vec2<f32>(1.5, 8.2)),
+        fbm(spiral_uv + 3.0 * q + vec2<f32>(7.8, 2.3))
+    );
+    let wisps = fbm(spiral_uv + 2.5 * r_warp);
 
-    // 3. Vertical Scale Height Falloff H(r) = 0.035 * r^1.25
-    let h_scale = 0.035 * pow(r_cyl, 1.25);
-    let vert_falloff = exp(-pow(pos_world.y / max(h_scale, 0.05), 2.0));
+    // 3. Vertical Gaussian Thickness Scale Height
+    let h_scale = 0.045 * pow(max(r_cyl, 0.5), 1.25);
+    let vert_falloff = exp(-pow(pos_world.y / max(h_scale, 0.06), 2.0));
 
-    // 4. Temperature-Based Color Gradient
-    let temp = 280.0 * pow(r_cyl, -0.5);
-    var color = vec3<f32>(0.2, 0.4, 0.8); // Cold outer blue
+    // 4. Ethereal, Translucent Spectral Color Palette
+    let temp = 280.0 * pow(max(r_cyl, 0.2), -0.5);
+    var color = vec3<f32>(0.18, 0.42, 0.88); // Deep celestial blue
 
-    if (temp > 800.0) {
-        color = vec3<f32>(1.0, 0.5, 0.15); // Hot glowing inner orange
-    } else if (temp > 300.0) {
-        color = vec3<f32>(0.9, 0.7, 0.3); // Warm amber
-    } else if (temp > 150.0) {
-        color = vec3<f32>(0.4, 0.7, 0.9); // Cyan ice line
+    if (temp > 700.0) {
+        color = vec3<f32>(1.0, 0.62, 0.25); // Warm sunlit peach/amber
+    } else if (temp > 280.0) {
+        color = vec3<f32>(0.92, 0.78, 0.42); // Warm golden mist
+    } else if (temp > 140.0) {
+        color = vec3<f32>(0.28, 0.82, 0.85); // Ethereal turquoise / ice line
+    } else if (r_cyl > 45.0) {
+        color = vec3<f32>(0.32, 0.22, 0.68); // Outer deep violet / lavender
     }
 
-    let density = turb * vert_falloff * gas_density_scale;
-    let alpha = clamp(density * 0.45, 0.0, 0.75);
+    // 5. Very Wispy, Lite, See-Through Alpha Transparency
+    let density = (wisps * 0.40 + 0.10) * vert_falloff * radial_mask * shock_mask * gas_density_scale;
+    let alpha = clamp(density * 0.30, 0.0, 0.24); // Gentle see-through mist!
 
-    if (alpha < 0.01) {
+    if (alpha < 0.004) {
         discard;
     }
 
-    return vec4<f32>(color * (1.0 + turb * 0.5), alpha);
+    // Soft luminous glow without obstructing particles
+    return vec4<f32>(color * (0.9 + wisps * 0.4), alpha);
 }

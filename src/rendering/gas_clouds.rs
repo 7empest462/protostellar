@@ -43,7 +43,7 @@ impl Material for GasCloudMaterial {
 #[derive(Component)]
 pub struct GasCloudDisk;
 
-/// Spawns the volumetric gas disk geometry.
+/// Spawns the volumetric gas disk geometry with multi-layered ethereal depth.
 pub fn setup_gas_cloud_disk(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -63,14 +63,17 @@ pub fn setup_gas_cloud_disk(
         star_params: Vec4::new(0.013, 3600.0, 1.8, 0.0),
     });
 
-    commands.spawn((
-        Mesh3d(plane_mesh),
-        MeshMaterial3d(gas_material),
-        Transform::from_translation(Vec3::ZERO),
-        NotShadowCaster,
-        NotShadowReceiver,
-        GasCloudDisk,
-    ));
+    // 3 layered translucent planes for ethereal vertical volume
+    for y_offset in [0.0f32, 0.12f32, -0.12f32] {
+        commands.spawn((
+            Mesh3d(plane_mesh.clone()),
+            MeshMaterial3d(gas_material.clone()),
+            Transform::from_translation(Vec3::new(0.0, y_offset, 0.0)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            GasCloudDisk,
+        ));
+    }
 }
 
 /// Updates gas cloud animation time, density clearance, and star ignition shockwave.

@@ -113,7 +113,8 @@ pub fn update_pan_orbit_camera(
             camera.target_focus = target_vec;
 
             // Frame the planet in full view right in front of the camera without clipping
-            let visual_radius = SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale;
+            let visual_radius = SimulationConfig::calc_render_radius(mass.0, body.body_type)
+                * config.body_render_scale;
             camera.min_radius = (visual_radius * 3.6).max(0.08);
         } else {
             camera.target_entity = None;
@@ -204,12 +205,13 @@ pub fn update_pan_orbit_camera(
             .iter()
             .map(|(e, _, _, _, mass)| (e, mass.0))
             .collect();
-            
+
         // Sort descending by mass to always cycle from Star -> Biggest Planet -> Smallest Moon
-        targets_with_mass.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+        targets_with_mass
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
         let targets: Vec<Entity> = targets_with_mass.into_iter().map(|(e, _)| e).collect();
-        
+
         if !targets.is_empty() {
             let next_target = if let Some(cur) = player_state.selected_entity {
                 if let Some(idx) = targets.iter().position(|&e| e == cur) {
@@ -301,7 +303,8 @@ pub fn update_pan_orbit_camera(
     // Smooth cinematic exponential damping interpolation
     camera.yaw += (camera.target_yaw - camera.yaw) * 0.22;
     camera.pitch += (camera.target_pitch - camera.pitch) * 0.22;
-    camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.18).clamp(camera.min_radius, camera.max_radius);
+    camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.18)
+        .clamp(camera.min_radius, camera.max_radius);
 
     // When focus-locked on a moving celestial body, lock immediately without lag so it stays dead center
     if camera.target_entity.is_some() {

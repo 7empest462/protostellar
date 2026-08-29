@@ -347,9 +347,13 @@ pub fn process_accretion_and_collisions(
                         *comp = primary_comp;
 
                         // Upgrade body type if crossed mass threshold or composition archetype
-                        if primary_comp.gas_frac > 0.35 && total_primary_mass >= EARTH_MASS_SOLAR * 0.5 {
+                        if primary_comp.gas_frac > 0.35
+                            && total_primary_mass >= EARTH_MASS_SOLAR * 0.5
+                        {
                             body.body_type = BodyType::GasGiant;
-                        } else if primary_comp.ice_frac > 0.40 && total_primary_mass >= EARTH_MASS_SOLAR * 0.5 {
+                        } else if primary_comp.ice_frac > 0.40
+                            && total_primary_mass >= EARTH_MASS_SOLAR * 0.5
+                        {
                             body.body_type = BodyType::IceGiant;
                         } else if total_primary_mass >= JUPITER_MASS_SOLAR * 0.03 {
                             body.body_type = if primary_comp.gas_frac > 0.3 {
@@ -496,9 +500,13 @@ pub fn process_accretion_and_collisions(
                     let updated_type =
                         if matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar) {
                             p_type
-                        } else if merged_comp.gas_frac > 0.35 && total_mass >= EARTH_MASS_SOLAR * 0.5 {
+                        } else if merged_comp.gas_frac > 0.35
+                            && total_mass >= EARTH_MASS_SOLAR * 0.5
+                        {
                             BodyType::GasGiant
-                        } else if merged_comp.ice_frac > 0.40 && total_mass >= EARTH_MASS_SOLAR * 0.5 {
+                        } else if merged_comp.ice_frac > 0.40
+                            && total_mass >= EARTH_MASS_SOLAR * 0.5
+                        {
                             BodyType::IceGiant
                         } else if total_mass >= JUPITER_MASS_SOLAR * 0.03 {
                             if merged_comp.gas_frac > 0.3 {
@@ -671,6 +679,100 @@ pub fn process_accretion_and_collisions(
     for entity in pending_despawns {
         if let Ok(mut e_cmd) = commands.get_entity(entity) {
             e_cmd.despawn();
+        }
+    }
+}
+
+/// Directly accretes primordial Hydrogen/Helium gas from the surrounding protoplanetary
+/// nebula via hydrodynamic Bondi-Hoyle and Hill sphere gas capture into growing planetary envelopes.
+pub fn direct_nebular_gas_accretion(
+    sim_time: Res<SimTime>,
+    time_warp: Res<TimeWarp>,
+    config: Res<SimulationConfig>,
+    disk_params: Res<DiskParameters>,
+    mut bodies_query: Query<
+        (
+            Entity,
+            &mut Mass,
+            &SimPosition,
+            &mut Radius,
+            &mut Composition,
+            &mut CelestialBody,
+            Option<&mut InternalDifferentiation>,
+            Option<&mut SpinState>,
+        ),
+        Without<CentralStar>,
+    >,
+) {
+    if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
+        return;
+    }
+
+    let gas_scale = config.gas_density_scale as f64;
+    if gas_scale <= 0.001 || sim_time.elapsed_years > disk_params.gas_disk_lifetime_yr {
+        return;
+    }
+
+    // Effective timestep scaled by warp
+    let dt_yr = config.base_dt_yr * (time_warp.multiplier / 1.0).clamp(1.0, 50.0);
+    let star_mass = disk_params.central_star_mass;
+
+    for (_entity, mut mass, pos, mut rad, mut comp, mut body, opt_diff, opt_spin) in
+        bodies_query.iter_mut()
+    {
+        let r_au = pos.0.length().clamp(disk_params.inner_radius_au, disk_params.outer_radius_au);
+        let m = mass.0;
+
+        // Gas accretion occurs when core mass exceeds critical threshold (~0.02 Earth masses)
+        if m < EARTH_MASS_SOLAR * 0.02 {
+            continue;
+        }
+
+        // Ambient gas disk density at orbital distance r (M_sun / AU^3)
+        // Midplane gas density rho_gas ~ rho_0 * (r / 1 AU)^-2.25 * gas_scale
+        let rho_gas = 1.2e-4 * (r_au / 1.0).powf(-2.25) * gas_scale;
+
+        // Hill radius R_H = r * (M / 3 M_star)^(1/3)
+        let r_hill = r_au * (m / (3.0 * star_mass)).cbrt();
+
+        // Local Keplerian angular velocity Omega_K = sqrt(G M_star / r^3)
+        let omega_k = (G_ASTRO * star_mass / (r_au * r_au * r_au)).sqrt();
+
+        // Hydrodynamic gas envelope inflow rate: dM/dt = C_gas * R_H^2 * rho_gas * Omega_K
+        let c_gas = 160.0 * (config.accretion_rate_multiplier as f64 / 120.0);
+        let d_mass_gas = (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr)
+            .min(m * 0.04); // Cap to 4% growth per step for numerical stability
+
+        if d_mass_gas > 1e-16 {
+            let old_mass = m;
+            let new_mass = old_mass + d_mass_gas;
+            mass.0 = new_mass;
+
+            // Merge pure primordial solar gas into the planet's bulk composition
+            *comp = comp.mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas);
+
+            // Recalculate physical radius with the new gaseous envelope
+            let density = comp.average_density();
+            let volume = new_mass / density;
+            let new_radius = ((3.0 * volume) / (4.0 * PI)).cbrt().max(EARTH_RADIUS_AU * 0.2);
+            rad.0 = new_radius;
+
+            // Dynamically upgrade body type based on gas & ice fraction
+            if comp.gas_frac > 0.35 && new_mass >= EARTH_MASS_SOLAR * 0.5 {
+                body.body_type = BodyType::GasGiant;
+            } else if (comp.ice_frac > 0.30 && comp.gas_frac > 0.10)
+                || (comp.ice_frac > 0.40 && new_mass >= EARTH_MASS_SOLAR * 0.4)
+            {
+                body.body_type = BodyType::IceGiant;
+            }
+
+            if let Some(mut diff) = opt_diff {
+                diff.recalculate(new_mass, new_radius, &comp);
+            }
+            if let Some(mut spin) = opt_spin {
+                let spin_vec = spin.spin_vector;
+                spin.update_from_spin(spin_vec, new_mass, new_radius);
+            }
         }
     }
 }

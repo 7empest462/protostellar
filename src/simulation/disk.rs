@@ -401,7 +401,11 @@ pub fn auto_spawn_planetesimals(
     } else {
         "KBO"
     };
-    let type_label = if body_type == BodyType::Protoplanet { "Embryo" } else { "Planetesimal" };
+    let type_label = if body_type == BodyType::Protoplanet {
+        "Embryo"
+    } else {
+        "Planetesimal"
+    };
     let name = format!("{} {} #{}", zone_name, type_label, spawner.name_counter);
 
     // Internal differentiation and spin
