@@ -319,7 +319,7 @@ pub fn step_physics_simulation(
 
                 // Solar System Boundary Clamping: Keep all active bodies within the physical domain (r <= 75 AU)
                 let r_mag = body.2.length();
-                if r_mag > 75.0 && r_mag > 1e-6 {
+                if r_mag > 75.0 {
                     body.2 *= 75.0 / r_mag;
                 }
             } else {

@@ -252,11 +252,10 @@ fn fragment(
         let ambient_boost = pbr_input.material.base_color.rgb * 0.40;
         
         // Rayleigh atmospheric rim glow only if planet actually has an atmosphere (gas >= 0.01)
-        let rim_color = if (gas >= 0.01) {
-            vec3<f32>(0.35, 0.75, 1.0) * fresnel * 0.55
-        } else {
-            pbr_input.material.base_color.rgb * fresnel * 0.18
-        };
+        var rim_color = pbr_input.material.base_color.rgb * fresnel * 0.18;
+        if (gas >= 0.01) {
+            rim_color = vec3<f32>(0.35, 0.75, 1.0) * fresnel * 0.55;
+        }
         
         out.color = vec4<f32>(lit.rgb + ambient_boost + rim_color, 1.0);
     }
