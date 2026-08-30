@@ -734,8 +734,8 @@ pub fn direct_nebular_gas_accretion(
         }
 
         // Ambient gas disk density at orbital distance r (M_sun / AU^3)
-        // Midplane gas density rho_gas ~ rho_0 * (r / 1 AU)^-2.25 * gas_scale
-        let rho_gas = 1.2e-4 * (r_au / 1.0).powf(-2.25) * gas_scale;
+        // Midplane gas density rho_gas ~ rho_0 * (r / 1 AU)^-1.5 * gas_scale
+        let rho_gas = 1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale;
 
         // Hill radius R_H = r * (M / 3 M_star)^(1/3)
         let r_hill = r_au * (m / (3.0 * star_mass)).cbrt();
@@ -743,13 +743,24 @@ pub fn direct_nebular_gas_accretion(
         // Local Keplerian angular velocity Omega_K = sqrt(G M_star / r^3)
         let omega_k = (G_ASTRO * star_mass / (r_au * r_au * r_au)).sqrt();
 
-        // Hydrodynamic gas envelope inflow rate: dM/dt = C_gas * R_H^2 * rho_gas * Omega_K
+        // Astrophysical Thermal Inflow Factor:
+        // Inside the snowline (r < 2.7 AU), intense stellar radiation and photo-evaporative heating
+        // blow away light H/He envelopes, preventing terrestrial planets from runaway gas accretion.
+        // Outside the snowline (r >= 2.7 AU), ice-rich giant cores capture massive nebular gas.
+        let thermal_factor = if r_au < disk_params.snow_line_au {
+            (r_au / disk_params.snow_line_au).powi(4) * 0.005
+        } else {
+            1.0 + (r_au / 5.0).min(3.0)
+        };
+
+        // Hydrodynamic gas envelope inflow rate: dM/dt = C_gas * R_H^2 * rho_gas * Omega_K * thermal_factor
         // Gap factor slows accretion as planet carves an annular gap in the disk
         let gap_factor = (1.0 - (m / max_planet_gas_mass)).clamp(0.05, 1.0);
-        let c_gas = 80.0 * (config.accretion_rate_multiplier as f64 / 120.0);
-        let d_mass_gas = (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr * gap_factor)
-            .min(m * 0.005) // 0.5% max growth per step for physical stability
-            .min(max_planet_gas_mass - m);
+        let c_gas = 120.0 * (config.accretion_rate_multiplier as f64 / 120.0);
+        let d_mass_gas =
+            (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr * gap_factor * thermal_factor)
+                .min(m * 0.005) // 0.5% max growth per step for physical stability
+                .min(max_planet_gas_mass - m);
 
         if d_mass_gas > 1e-16 {
             let old_mass = m;

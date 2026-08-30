@@ -165,6 +165,20 @@ pub fn draw_orbital_effects_and_gizmos(
         );
     }
 
+    // 2B. Draw Subtle Astronomical Unit (AU) Spatial Guide Rings around the Sun
+    let au_rings = [
+        (1.0f32, Color::srgba(0.3, 0.7, 1.0, 0.15)), // 1 AU (Earth Orbit)
+        (5.2f32, Color::srgba(1.0, 0.7, 0.3, 0.12)), // 5.2 AU (Jupiter Orbit)
+        (9.58f32, Color::srgba(0.9, 0.8, 0.4, 0.10)), // 9.58 AU (Saturn Orbit)
+        (19.2f32, Color::srgba(0.4, 0.8, 0.9, 0.08)), // 19.2 AU (Uranus Orbit)
+        (30.0f32, Color::srgba(0.3, 0.5, 0.9, 0.06)), // 30.0 AU (Neptune Orbit)
+        (39.5f32, Color::srgba(0.5, 0.4, 0.8, 0.05)), // 39.5 AU (Kuiper Belt)
+    ];
+    let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    for (r_au, col) in au_rings {
+        gizmos.circle(Isometry3d::new(star_vec, ring_rot), r_au, col);
+    }
+
     // 3. Draw Orbit Trails & Diagnostic Overlays for Bodies
     for (entity, pos, vel, mass, comp, body) in bodies_query.iter() {
         let is_selected = player_state.selected_entity == Some(entity);

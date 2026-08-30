@@ -289,6 +289,26 @@ impl Composition {
         }
     }
 
+    /// Normalizes fractions so that their exact sum equals 1.000000.
+    pub fn normalized(&self) -> Self {
+        let sum = self.metal_frac
+            + self.silicate_frac
+            + self.ice_frac
+            + self.organics_frac
+            + self.gas_frac;
+        if sum > 1e-12 {
+            Self {
+                metal_frac: self.metal_frac / sum,
+                silicate_frac: self.silicate_frac / sum,
+                ice_frac: self.ice_frac / sum,
+                organics_frac: self.organics_frac / sum,
+                gas_frac: self.gas_frac / sum,
+            }
+        } else {
+            Self::rocky()
+        }
+    }
+
     /// Strict mass-weighted deterministic merger (conserves total mass of all 5 components).
     pub fn mass_weighted_merge(
         &self,
@@ -297,7 +317,7 @@ impl Composition {
         m_other: f64,
     ) -> Composition {
         let total_mass = (m_self + m_other).max(1e-12);
-        Composition {
+        let raw = Composition {
             metal_frac: (self.metal_frac * m_self + other.metal_frac * m_other) / total_mass,
             silicate_frac: (self.silicate_frac * m_self + other.silicate_frac * m_other)
                 / total_mass,
@@ -305,7 +325,8 @@ impl Composition {
             organics_frac: (self.organics_frac * m_self + other.organics_frac * m_other)
                 / total_mass,
             gas_frac: (self.gas_frac * m_self + other.gas_frac * m_other) / total_mass,
-        }
+        };
+        raw.normalized()
     }
 
     /// Exact harmonic bulk density mixing in $M_\odot / \text{AU}^3$.

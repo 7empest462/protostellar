@@ -16,7 +16,7 @@ pub fn handle_player_tools(
     keyboard: Res<ButtonInput<KeyCode>>,
     disk_params: Res<DiskParameters>,
     mut player_state: ResMut<PlayerInteractionState>,
-    camera_query: Query<(&Transform, &PanOrbitCamera)>,
+    mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut selected_query: Query<
         (
             Entity,
@@ -37,19 +37,60 @@ pub fn handle_player_tools(
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
 
-    // 0. Tab Key: Cycle Selection Through All Celestial Bodies & The Star
+    // 0. Tab Key: Deterministic Numerical Cycling Through All Celestial Bodies & The Star
+    // Sorted strictly from the Central Star (0) outward by orbital distance (1..N)
     if keyboard.just_pressed(KeyCode::Tab) {
-        let all_entities: Vec<Entity> = selected_query.iter().map(|(e, ..)| e).collect();
+        let mut star_entity: Option<Entity> = None;
+        let mut planets: Vec<(Entity, f64)> = Vec::new();
+
+        for (e, _, _, _, pos, _, _, body, ..) in selected_query.iter() {
+            if matches!(
+                body.body_type,
+                BodyType::Protostar | BodyType::MainSequenceStar
+            ) {
+                star_entity = Some(e);
+            } else {
+                planets.push((e, pos.0.length()));
+            }
+        }
+
+        // Sort planets from innermost to outermost
+        planets.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut all_entities: Vec<Entity> = Vec::new();
+        if let Some(star) = star_entity {
+            all_entities.push(star);
+        }
+        for (p_ent, _) in planets {
+            all_entities.push(p_ent);
+        }
+
         if !all_entities.is_empty() {
-            if let Some(curr) = player_state.selected_entity {
-                if let Some(idx) = all_entities.iter().position(|&e| e == curr) {
-                    let next_idx = (idx + 1) % all_entities.len();
-                    player_state.selected_entity = Some(all_entities[next_idx]);
+            let shift =
+                keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+            let len = all_entities.len();
+            let next_idx = if let Some(curr) = player_state.selected_entity {
+                if let Some(curr_idx) = all_entities.iter().position(|&e| e == curr) {
+                    if shift {
+                        (curr_idx + len - 1) % len
+                    } else {
+                        (curr_idx + 1) % len
+                    }
                 } else {
-                    player_state.selected_entity = Some(all_entities[0]);
+                    0
                 }
             } else {
-                player_state.selected_entity = Some(all_entities[0]);
+                if shift {
+                    len - 1
+                } else {
+                    0
+                }
+            };
+
+            let target = all_entities[next_idx];
+            player_state.selected_entity = Some(target);
+            if let Ok((_, mut cam)) = camera_query.single_mut() {
+                cam.target_entity = Some(target);
             }
         }
     }

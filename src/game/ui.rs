@@ -646,25 +646,81 @@ pub fn handle_ui_button_interactions(
                         }
                     }
                     UiButtonAction::CycleTarget => {
-                        let all: Vec<Entity> = selected_query.iter().map(|(e, ..)| e).collect();
-                        if !all.is_empty() {
-                            let next = if let Some(curr) = player_state.selected_entity {
-                                if let Some(idx) = all.iter().position(|&e| e == curr) {
-                                    all[(idx + 1) % all.len()]
+                        let mut star_entity: Option<Entity> = None;
+                        let mut planets: Vec<(Entity, f64, String, f64)> = Vec::new();
+
+                        for (e, m, _, pos, _, _, body, ..) in selected_query.iter() {
+                            if matches!(
+                                body.body_type,
+                                BodyType::Protostar | BodyType::MainSequenceStar
+                            ) {
+                                star_entity = Some(e);
+                            } else {
+                                planets.push((e, pos.0.length(), body.name.clone(), m.0));
+                            }
+                        }
+
+                        // Sort planets strictly from innermost to outermost
+                        planets.sort_by(|a, b| {
+                            a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+
+                        let mut all_entities: Vec<Entity> = Vec::new();
+                        if let Some(star) = star_entity {
+                            all_entities.push(star);
+                        }
+                        for (p_ent, ..) in &planets {
+                            all_entities.push(*p_ent);
+                        }
+
+                        if !all_entities.is_empty() {
+                            let len = all_entities.len();
+                            let next_idx = if let Some(curr) = player_state.selected_entity {
+                                if let Some(curr_idx) = all_entities.iter().position(|&e| e == curr)
+                                {
+                                    (curr_idx + 1) % len
                                 } else {
-                                    all[0]
+                                    0
                                 }
                             } else {
-                                all[0]
+                                0
                             };
+
+                            let next = all_entities[next_idx];
                             player_state.selected_entity = Some(next);
                             if let Ok(mut cam) = camera_query.single_mut() {
                                 cam.target_entity = Some(next);
                             }
-                            if let Ok((.., body, _)) = selected_query.get(next) {
-                                toast.message = format!("🔄 Switched Target: {}", body.name);
-                                toast.timer = 4.0;
+
+                            if next_idx == 0 && star_entity.is_some() {
+                                toast.message = format!(
+                                    ">> TARGET [0/{}]: THE SUN (Central Star) | 0.00 AU",
+                                    len - 1
+                                );
+                            } else {
+                                let p_idx = if star_entity.is_some() {
+                                    next_idx - 1
+                                } else {
+                                    next_idx
+                                };
+                                if p_idx < planets.len() {
+                                    let (_, dist, ref name, mass) = planets[p_idx];
+                                    let m_str = if mass >= 0.01 {
+                                        format!("{:.2} M_sun", mass)
+                                    } else {
+                                        format!("{:.2} M_earth", mass / EARTH_MASS_SOLAR)
+                                    };
+                                    toast.message = format!(
+                                        ">> TARGET [{}/{}]: {} ({:.2} AU) | Mass: {}",
+                                        next_idx,
+                                        len - 1,
+                                        name,
+                                        dist,
+                                        m_str
+                                    );
+                                }
                             }
+                            toast.timer = 4.0;
                         }
                     }
 
@@ -1081,7 +1137,11 @@ pub fn update_hud(
                     BodyType::Moon => "NATURAL MOON / SATELLITE",
                 };
                 let mass_str = if mass.0 >= 0.01 {
-                    format!("{:.2} M_sun ({:.1} M_J)", mass.0, mass.0 / JUPITER_MASS_SOLAR)
+                    format!(
+                        "{:.2} M_sun ({:.1} M_J)",
+                        mass.0,
+                        mass.0 / JUPITER_MASS_SOLAR
+                    )
                 } else {
                     format!("{:.2} M_earth", mass.0 / EARTH_MASS_SOLAR)
                 };
@@ -1220,9 +1280,17 @@ pub fn update_hud(
                 let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
                 let mass_str = if mass.0 >= 0.01 {
-                    format!("{:.3} M_sun ({:.1} M_J)", mass.0, mass.0 / JUPITER_MASS_SOLAR)
+                    format!(
+                        "{:.3} M_sun ({:.1} M_J)",
+                        mass.0,
+                        mass.0 / JUPITER_MASS_SOLAR
+                    )
                 } else {
-                    format!("{:.2} M_earth ({:.4} M_sun)", mass.0 / EARTH_MASS_SOLAR, mass.0)
+                    format!(
+                        "{:.2} M_earth ({:.4} M_sun)",
+                        mass.0 / EARTH_MASS_SOLAR,
+                        mass.0
+                    )
                 };
 
                 let radius_km = rad.0 * AU_TO_KM;
@@ -1302,8 +1370,14 @@ pub fn update_hud(
                     BodyType::Moon => "Natural Moon / Satellite",
                 };
 
+                let norm = comp.normalized();
+                let rock_pct = ((norm.silicate_frac + norm.organics_frac) * 100.0).round();
+                let ice_pct = (norm.ice_frac * 100.0).round();
+                let metal_pct = (norm.metal_frac * 100.0).round();
+                let gas_pct = (100.0 - rock_pct - ice_pct - metal_pct).max(0.0);
+
                 text.0 = format!(
-                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s{}\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}",
+                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,
@@ -1315,11 +1389,10 @@ pub fn update_hud(
                     period_str,
                     dist_au,
                     speed_km_s,
-                    period_str,
-                    comp.silicate_frac * 100.0,
-                    comp.ice_frac * 100.0,
-                    comp.metal_frac * 100.0,
-                    comp.gas_frac * 100.0,
+                    rock_pct,
+                    ice_pct,
+                    metal_pct,
+                    gas_pct,
                     diff_str,
                     star_extra_str,
                 );

@@ -234,7 +234,7 @@ fn test_mass_dependent_render_radius_scaling() {
     assert!(r_jupiter > r_earth);
     assert!(r_earth > r_embryo);
     assert!(r_embryo > r_planetesimal);
-    assert!(r_planetesimal >= 0.008);
+    assert!(r_planetesimal >= 0.005);
 }
 
 #[test]
@@ -251,39 +251,39 @@ fn test_sample_disk_radius_distribution() {
 
     for _ in 0..n_samples {
         let (r, comp) = sample_disk_radius(&mut rng, &disk_params);
-        assert!((0.80..=35.0).contains(&r));
+        assert!((0.35..=45.0).contains(&r));
 
         if r <= 2.50 {
             count_inner += 1;
             assert!(comp.silicate_frac > 0.4 || comp.metal_frac > 0.4);
-        } else if (3.80..=18.0).contains(&r) {
+        } else if (4.50..=25.0).contains(&r) {
             count_giant_zone += 1;
             assert!(comp.ice_frac > 0.4);
-        } else if r > 18.0 {
+        } else if r > 25.0 {
             count_outer += 1;
         }
     }
 
-    // Inner zone should be ~12% (+/- 4%)
+    // Inner zone should be ~25% (+/- 4%)
     let frac_inner = count_inner as f64 / n_samples as f64;
     assert!(
-        (frac_inner - 0.12).abs() < 0.04,
+        (frac_inner - 0.25).abs() < 0.04,
         "Inner fraction: {}",
         frac_inner
     );
 
-    // Giant zone should be ~65% (+/- 5%)
+    // Giant zone should be ~45% (+/- 5%)
     let frac_giant = count_giant_zone as f64 / n_samples as f64;
     assert!(
-        (frac_giant - 0.65).abs() < 0.05,
+        (frac_giant - 0.45).abs() < 0.05,
         "Giant fraction: {}",
         frac_giant
     );
 
-    // Outer zone should be ~13% (+/- 4%)
+    // Outer zone should be ~15% (+/- 4%)
     let frac_outer = count_outer as f64 / n_samples as f64;
     assert!(
-        (frac_outer - 0.13).abs() < 0.04,
+        (frac_outer - 0.15).abs() < 0.04,
         "Outer fraction: {}",
         frac_outer
     );

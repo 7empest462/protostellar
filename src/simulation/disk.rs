@@ -45,142 +45,147 @@ pub fn spawn_protoplanetary_disk(
         .id();
 
     // 2. Spawn Initial Protoplanetary Seeds across the active disk zones
+    // Generously spaced out across the disk for distinct, clear visual orbits
     let seeds = [
         (
             0.50,
-            0.08 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.45,
+            0.06 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.40,
             "Proto-Mercury",
             Composition::metal_rich(),
             BodyType::Protoplanet,
         ),
         (
-            0.85,
-            0.28 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.65,
+            0.95,
+            0.55 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.85,
             "Proto-Venus",
             Composition::rocky(),
             BodyType::Protoplanet,
         ),
         (
-            1.30,
-            0.35 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.70,
+            1.50,
+            0.65 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.90,
             "Proto-Earth",
             Composition::rocky(),
             BodyType::Protoplanet,
         ),
         (
-            1.65,
-            0.15 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.52,
+            1.90,
+            0.12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.50,
             "Theia Embryo",
             Composition::rocky(),
             BodyType::Protoplanet,
         ),
         (
-            2.30,
-            0.12 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.48,
+            2.60,
+            0.11 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.53,
             "Proto-Mars",
             Composition::rocky(),
             BodyType::Protoplanet,
         ),
         (
-            3.50,
-            0.05 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.38,
+            4.20,
+            0.02 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.28,
             "Ceres Embryo",
             Composition::carbonaceous(),
             BodyType::Protoplanet,
         ),
         (
-            4.60,
-            0.04 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.35,
+            5.20,
+            0.015 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.25,
             "Vesta Embryo",
             Composition::rocky(),
             BodyType::Protoplanet,
         ),
         (
-            9.00,
-            2.50 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 1.35,
+            8.50,
+            3.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.50,
             "Proto-Jupiter",
             Composition::solar_gas(),
             BodyType::GasGiant,
         ),
         (
-            13.5,
-            0.08 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.45,
+            11.50,
+            0.05 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.38,
             "Callisto Embryo",
             Composition::icy(),
             BodyType::Protoplanet,
         ),
         (
-            19.0,
-            1.80 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 1.15,
+            15.50,
+            2.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.25,
             "Proto-Saturn",
             Composition::solar_gas(),
             BodyType::GasGiant,
         ),
         (
-            27.0,
-            0.09 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.48,
+            20.50,
+            0.05 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.38,
             "Titan Embryo",
             Composition::icy(),
             BodyType::Protoplanet,
         ),
         (
-            38.0,
-            0.90 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.95,
+            28.00,
+            1.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.05,
             "Proto-Uranus",
             Composition::icy(),
             BodyType::IceGiant,
         ),
         (
-            55.0,
-            0.85 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.90,
+            40.00,
+            1.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.05,
             "Proto-Neptune",
             Composition::icy(),
             BodyType::IceGiant,
         ),
         (
-            75.0,
-            0.06 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.40,
-            "Triton Embryo",
-            Composition::icy(),
-            BodyType::Protoplanet,
-        ),
-        (
-            95.0,
-            0.05 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.38,
+            54.00,
+            0.02 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.28,
             "Pluto Embryo",
             Composition::icy(),
             BodyType::Protoplanet,
         ),
     ];
 
-    for (r, mass, rad, name, comp, body_type) in seeds {
+    let mut rng = rand::rng();
+    use rand::prelude::*;
+    use std::f64::consts::PI;
+
+    for &(r, mass, radius, name, comp, body_type) in &seeds {
+        let phi: f64 = rng.random_range(0.0..2.0 * PI);
+        let pos = DVec3::new(r * phi.cos(), 0.0, r * phi.sin());
+
         let v_k = (G_ASTRO * protostar_mass / r).sqrt();
-        let pos = DVec3::new(r, 0.0, 0.0);
-        let vel = DVec3::new(0.0, 0.0, v_k);
+        let vel = DVec3::new(-v_k * phi.sin(), 0.0, v_k * phi.cos());
+
         let temp = disk_params.reference_temp_1au * (r / 1.0).powf(-0.5);
 
         let mut diff = InternalDifferentiation::default();
-        diff.recalculate(mass, rad, &comp);
+        diff.recalculate(mass, radius, &comp);
 
         let mut spin = SpinState::default();
-        let initial_spin = (mass * rad * rad * 0.33)
-            * DVec3::new(0.0, 2.0 * std::f64::consts::PI / (24.0 / 8766.0), 0.0);
-        spin.update_from_spin(initial_spin, mass, rad);
+        let spin_period_hrs: f64 = match body_type {
+            BodyType::GasGiant => rng.random_range(9.0..11.0),
+            BodyType::IceGiant => rng.random_range(14.0..18.0),
+            _ => rng.random_range(20.0..36.0),
+        };
+        let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
+        let initial_spin = 0.33 * mass * radius * radius * DVec3::new(0.0, omega, 0.0);
+        spin.update_from_spin(initial_spin, mass, radius);
 
         commands.spawn((
             CelestialBody {
@@ -191,7 +196,7 @@ pub fn spawn_protoplanetary_disk(
             SimPosition(pos),
             SimVelocity(vel),
             SimAcceleration::default(),
-            Radius(rad),
+            Radius(radius),
             Temperature(temp),
             Luminosity(0.0),
             AngularMomentum(pos.cross(vel) * mass),
@@ -204,52 +209,51 @@ pub fn spawn_protoplanetary_disk(
     star_ent
 }
 
-/// Samples a particle's radial position and primordial composition according to the
-/// astrophysical protoplanetary mass distribution:
-/// 1. Inner Clear Cavity (r < 0.80 AU): Cleared by protostellar radiation & sublimation
-/// 2. Terrestrial Rocky Zone (0.80 - 4.50 AU): ~12% of particles (silicate/metal rich)
-/// 3. Snow Line & Asteroid Belt (4.50 - 8.0 AU): ~10% of particles (carbonaceous & transition ices)
-/// 4. Giant Planet Accretion Reservoir (8.0 - 40.0 AU): ~65% of particles (dense icy/gas-rich cores)
-/// 5. Outer Kuiper Belt (40.0 - 75.0 AU): ~13% of particles (primordial volatile ices)
+/// Helper function to sample initial radial position according to standard MMSN power-law.
+/// Divided into 4 astrophysical zones:
+/// 1. Terrestrial Rocky Zone (0.35 - 2.50 AU): ~25% of particles (silicate/metal rich)
+/// 2. Snow Line & Asteroid Belt (2.50 - 4.50 AU): ~15% of particles (carbonaceous & transition ices)
+/// 3. Giant Planet Accretion Reservoir (4.50 - 25.0 AU): ~45% of particles (dense icy/gas-rich cores)
+/// 4. Outer Kuiper Belt (25.0 - 45.0 AU): ~15% of particles (primordial volatile ices)
 pub fn sample_disk_radius<R: rand::Rng + ?Sized>(
     rng: &mut R,
     _disk_params: &DiskParameters,
 ) -> (f64, Composition) {
     let roll: f64 = rng.random_range(0.0..1.0);
 
-    if roll < 0.12 {
-        // Zone 1: Terrestrial Rocky Zone (0.80 - 4.50 AU) - 12% of particles
-        let u = roll / 0.12;
-        let r_in_sq = 0.80 * 0.80;
-        let r_out_sq = 4.50 * 4.50;
+    if roll < 0.25 {
+        // Zone 1: Terrestrial Rocky Zone (0.35 - 2.50 AU) - 25% of particles
+        let u = roll / 0.25;
+        let r_in_sq = 0.35 * 0.35;
+        let r_out_sq = 2.50 * 2.50;
         let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
-        let comp = if r < 1.50 {
+        let comp = if r < 0.60 {
             Composition::metal_rich()
         } else {
             Composition::rocky()
         };
         (r, comp)
-    } else if roll < 0.22 {
-        // Zone 2: Snowline Transition & Asteroid Belt (4.50 - 8.0 AU) - 10% of particles
-        let u = (roll - 0.12) / 0.10;
-        let r_in_sq = 4.50 * 4.50;
-        let r_out_sq = 8.0 * 8.0;
+    } else if roll < 0.40 {
+        // Zone 2: Snowline Transition & Asteroid Belt (2.50 - 4.50 AU) - 15% of particles
+        let u = (roll - 0.25) / 0.15;
+        let r_in_sq = 2.50 * 2.50;
+        let r_out_sq = 4.50 * 4.50;
         let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
         (r, Composition::carbonaceous())
-    } else if roll < 0.87 {
-        // Zone 3: Giant Planet Accretion Reservoir (8.0 - 40.0 AU) - 65% of all disk mass!
-        let u = (roll - 0.22) / 0.65;
-        let r_in_sq = 8.0 * 8.0;
-        let r_out_sq = 40.0 * 40.0;
+    } else if roll < 0.85 {
+        // Zone 3: Giant Planet Accretion Reservoir (4.50 - 25.0 AU) - 45% of all disk mass!
+        let u = (roll - 0.40) / 0.45;
+        let r_in_sq = 4.50 * 4.50;
+        let r_out_sq = 25.0 * 25.0;
         let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
         (r, Composition::icy())
     } else {
-        // Zone 4: Outer Kuiper Belt (40.0 - 75.0 AU) - 13% of particles
-        let u = (roll - 0.87) / 0.13;
-        let r_in_sq = 40.0 * 40.0;
-        let r_out_sq = 75.0 * 75.0;
+        // Zone 4: Outer Kuiper Belt (25.0 - 45.0 AU) - 15% of particles
+        let u = (roll - 0.85) / 0.15;
+        let r_in_sq = 25.0 * 25.0;
+        let r_out_sq = 45.0 * 45.0;
         let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
-        (r, Composition::carbonaceous())
+        (r, Composition::icy())
     }
 }
 
@@ -278,7 +282,7 @@ impl Default for PlanetesimalSpawner {
         Self {
             last_spawn_yr: 0.0,
             total_spawned: 0,
-            max_ecs_bodies: 80, // Cap at 80 ECS-tracked bodies to keep N-body fast
+            max_ecs_bodies: 24, // Cap at 24 major bodies so every planet is distinct and easy to cycle
             name_counter: 0,
         }
     }

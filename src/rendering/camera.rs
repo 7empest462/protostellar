@@ -38,8 +38,8 @@ impl Default for PanOrbitCamera {
         Self {
             focus: Vec3::ZERO,
             target_focus: Vec3::ZERO,
-            radius: 40.0, // 40 AU cinematic framing of protoplanetary disk
-            target_radius: 40.0,
+            radius: 16.0, // 16 AU framing of inner and giant solar system
+            target_radius: 16.0,
             yaw: 0.785, // 45 degrees
             target_yaw: 0.785,
             pitch: 0.62, // ~36 degrees inclination

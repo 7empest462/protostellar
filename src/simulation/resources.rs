@@ -66,30 +66,30 @@ impl SimulationConfig {
         use crate::utils::constants::*;
 
         match body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar => 0.22,
+            BodyType::Protostar | BodyType::MainSequenceStar => 0.08,
             BodyType::GasGiant => {
                 let m_ratio = (mass_solar / JUPITER_MASS_SOLAR).cbrt() as f32;
-                (0.10 * m_ratio).clamp(0.060, 0.160)
+                (0.045 * m_ratio).clamp(0.030, 0.065)
             }
             BodyType::IceGiant => {
                 let m_ratio = (mass_solar / (15.0 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.065 * m_ratio).clamp(0.040, 0.100)
+                (0.032 * m_ratio).clamp(0.022, 0.045)
             }
             BodyType::TerrestrialPlanet => {
                 let m_ratio = (mass_solar / EARTH_MASS_SOLAR).cbrt() as f32;
-                (0.042 * m_ratio).clamp(0.025, 0.065)
+                (0.020 * m_ratio).clamp(0.014, 0.030)
             }
             BodyType::Protoplanet => {
                 let m_ratio = (mass_solar / (0.05 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.026 * m_ratio).clamp(0.015, 0.042)
+                (0.014 * m_ratio).clamp(0.010, 0.020)
             }
             BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet => {
                 let m_ratio = (mass_solar / (0.001 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.012 * m_ratio).clamp(0.006, 0.018)
+                (0.008 * m_ratio).clamp(0.005, 0.012)
             }
             BodyType::Moon => {
                 let m_ratio = (mass_solar / (0.012 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.010 * m_ratio).clamp(0.005, 0.016)
+                (0.006 * m_ratio).clamp(0.004, 0.010)
             }
             _ => 0.005,
         }
@@ -220,12 +220,12 @@ impl Default for DiskParameters {
     fn default() -> Self {
         Self {
             central_star_mass: 1.0,
-            disk_mass: 0.0006,      // ~200 Earth masses of solid dust/planetesimals
-            inner_radius_au: 0.65,  // Ignited Sun clears innermost cavity (< 0.65 AU)
-            outer_radius_au: 200.0, // Expanded solar system
+            disk_mass: 0.0006,     // ~200 Earth masses of solid dust/planetesimals
+            inner_radius_au: 0.35, // Sublimation zone (inside Mercury's perihelion)
+            outer_radius_au: 45.0, // Authentic Kuiper Belt boundary (~40-45 AU)
             density_power_law: 1.5,
             reference_temp_1au: 280.0,
-            snow_line_au: 3.2,           // Pushed out for wider system
+            snow_line_au: 2.70, // Authentic Ice/Snow Line (Asteroid Belt transition)
             gas_disk_lifetime_yr: 3.5e6, // 3.5 Million years
         }
     }
