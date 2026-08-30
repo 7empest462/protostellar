@@ -10,6 +10,8 @@ pub struct PlanetUniforms {
     pub planet_type: u32,
     pub temperature: f32,
     pub time: f32,
+    /// x: rock (silicate + organics), y: ice (volatiles/water), z: metal, w: gas (atmosphere)
+    pub composition: Vec4,
     pub color_seed: Vec4,
 }
 

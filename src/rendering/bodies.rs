@@ -89,6 +89,7 @@ pub fn spawn_missing_visuals(
                         planet_type: 0,
                         temperature: temp.0 as f32,
                         time: 0.0,
+                        composition: Vec4::new(0.0, 0.0, 0.0, 1.0),
                         color_seed: LinearRgba::from(base_color).to_vec4(),
                     },
                 },
@@ -107,6 +108,7 @@ pub fn spawn_missing_visuals(
                         planet_type: 0,
                         temperature: temp.0 as f32,
                         time: 0.0,
+                        composition: Vec4::new(0.0, 0.0, 0.0, 1.0),
                         color_seed: LinearRgba::from(base_color).to_vec4(),
                     },
                 },
@@ -143,11 +145,12 @@ pub fn spawn_missing_visuals(
                 });
         } else {
             // Planets / Protoplanets / Planetesimals: Composition-tailored PBR materials
-            let (metallic, roughness) = if comp.metal_frac > 0.4 {
+            let norm_comp = comp.normalized();
+            let (metallic, roughness) = if norm_comp.metal_frac > 0.4 {
                 (0.85, 0.25)
-            } else if comp.ice_frac > 0.4 {
+            } else if norm_comp.ice_frac > 0.4 {
                 (0.05, 0.18)
-            } else if comp.gas_frac > 0.5 {
+            } else if norm_comp.gas_frac > 0.5 {
                 (0.0, 0.85)
             } else {
                 (0.15, 0.75)
@@ -173,9 +176,9 @@ pub fn spawn_missing_visuals(
                             BodyType::GasGiant => 1,
                             BodyType::IceGiant => 2,
                             BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
-                                if comp.gas_frac > 0.30 {
+                                if norm_comp.gas_frac > 0.30 {
                                     1 // Gas Giant banded
-                                } else if comp.ice_frac > 0.40 {
+                                } else if norm_comp.ice_frac > 0.40 {
                                     2 // Ice Giant / Icy world
                                 } else {
                                     3 // Terrestrial
@@ -185,6 +188,12 @@ pub fn spawn_missing_visuals(
                         },
                         temperature: temp.0 as f32,
                         time: 0.0,
+                        composition: Vec4::new(
+                            norm_comp.silicate_frac as f32 + norm_comp.organics_frac as f32,
+                            norm_comp.ice_frac as f32,
+                            norm_comp.metal_frac as f32,
+                            norm_comp.gas_frac as f32,
+                        ),
                         color_seed: LinearRgba::from(base_color).to_vec4(),
                     },
                 },
@@ -269,18 +278,25 @@ pub fn sync_celestial_transforms(
                     (bb * 0.25 + cb * 0.75).clamp(0.1, 1.0),
                 )
             };
+            let norm_comp = comp.normalized();
             mat.base.base_color = color;
             mat.extension.uniforms.color_seed = LinearRgba::from(color).to_vec4();
             mat.extension.uniforms.temperature = temp.0 as f32;
             mat.extension.uniforms.time = time.elapsed_secs();
+            mat.extension.uniforms.composition = Vec4::new(
+                norm_comp.silicate_frac as f32 + norm_comp.organics_frac as f32,
+                norm_comp.ice_frac as f32,
+                norm_comp.metal_frac as f32,
+                norm_comp.gas_frac as f32,
+            );
             mat.extension.uniforms.planet_type = match body.body_type {
                 BodyType::Protostar | BodyType::MainSequenceStar => 0,
                 BodyType::GasGiant => 1,
                 BodyType::IceGiant => 2,
                 BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
-                    if comp.gas_frac > 0.30 {
+                    if norm_comp.gas_frac > 0.30 {
                         1 // Gas Giant banded
-                    } else if comp.ice_frac > 0.40 {
+                    } else if norm_comp.ice_frac > 0.40 {
                         2 // Ice Giant / Icy world
                     } else {
                         3 // Terrestrial
