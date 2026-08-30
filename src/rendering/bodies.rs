@@ -394,10 +394,10 @@ pub fn sync_planetary_rings(
                     transform.rotation = ring_rotation;
 
                     if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
-                        mat.extension.uniforms.inner_radius = ring_sys.inner_radius_au;
-                        mat.extension.uniforms.outer_radius = ring_sys.outer_radius_au;
-                        mat.extension.uniforms.optical_depth = ring_sys.optical_depth;
-                        mat.extension.uniforms.ice_fraction = ring_sys.ice_fraction;
+                        mat.uniforms.inner_radius = ring_sys.inner_radius_au;
+                        mat.uniforms.outer_radius = ring_sys.outer_radius_au;
+                        mat.uniforms.optical_depth = ring_sys.optical_depth;
+                        mat.uniforms.ice_fraction = ring_sys.ice_fraction;
                     }
                 }
             }
@@ -405,21 +405,12 @@ pub fn sync_planetary_rings(
 
         if !found_child {
             let material = ring_materials.add(RingMaterial {
-                base: StandardMaterial {
-                    base_color: Color::WHITE,
-                    alpha_mode: AlphaMode::Blend,
-                    cull_mode: None, // Double-sided
-                    unlit: true,
-                    ..default()
-                },
-                extension: RingMaterialExtension {
-                    uniforms: RingUniforms {
-                        inner_radius: ring_sys.inner_radius_au,
-                        outer_radius: ring_sys.outer_radius_au,
-                        optical_depth: ring_sys.optical_depth,
-                        ice_fraction: ring_sys.ice_fraction,
-                        ring_color: Vec4::ONE,
-                    },
+                uniforms: RingUniforms {
+                    inner_radius: ring_sys.inner_radius_au,
+                    outer_radius: ring_sys.outer_radius_au,
+                    optical_depth: ring_sys.optical_depth,
+                    ice_fraction: ring_sys.ice_fraction,
+                    ring_color: Vec4::ONE,
                 },
             });
 

@@ -1,8 +1,4 @@
-#import bevy_pbr::pbr_types
-#import bevy_pbr::pbr_functions
-#import bevy_pbr::pbr_bindings
 #import bevy_pbr::forward_io::VertexOutput
-#import bevy_pbr::pbr_fragment::pbr_input_from_vertex_output
 
 struct RingUniforms {
     inner_radius: f32,
@@ -12,7 +8,7 @@ struct RingUniforms {
     ring_color: vec4<f32>,
 };
 
-@group(2) @binding(101)
+@group(#{MATERIAL_BIND_GROUP}) @binding(0)
 var<uniform> ring: RingUniforms;
 
 fn hash11(p: f32) -> f32 {
@@ -43,7 +39,6 @@ fn fbm_ring(r: f32) -> f32 {
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Local planar model coordinates
-    let pos_2d = in.world_position.xz - in.world_normal.xz * 0.0; // ring planar radius
     let local_uv = in.uv * 2.0 - 1.0;
     let dist = length(local_uv);
 

@@ -37,15 +37,41 @@ pub struct RingUniforms {
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
-pub struct RingMaterialExtension {
-    #[uniform(101)]
+pub struct RingMaterial {
+    #[uniform(0)]
     pub uniforms: RingUniforms,
 }
 
-impl MaterialExtension for RingMaterialExtension {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/planetary_rings.wgsl".into()
+impl Default for RingMaterial {
+    fn default() -> Self {
+        Self {
+            uniforms: RingUniforms {
+                inner_radius: 0.0008,
+                outer_radius: 0.0028,
+                optical_depth: 0.85,
+                ice_fraction: 0.95,
+                ring_color: Vec4::ONE,
+            },
+        }
     }
 }
 
-pub type RingMaterial = ExtendedMaterial<StandardMaterial, RingMaterialExtension>;
+impl Material for RingMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/planetary_rings.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None; // Double-sided rendering
+        Ok(())
+    }
+}
