@@ -72,8 +72,15 @@ pub fn spawn_missing_visuals(
             continue;
         };
 
-        let visual_radius =
-            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale;
+        let visual_radius = if is_star.is_some()
+            || matches!(
+                body.body_type,
+                BodyType::Protostar | BodyType::MainSequenceStar
+            ) {
+            SimulationConfig::calc_render_radius(mass.0, body.body_type)
+        } else {
+            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale
+        };
 
         if is_star.is_some() {
             // Central Star: High emissive glow + outer solar corona shell + point light
@@ -245,12 +252,19 @@ pub fn sync_celestial_transforms(
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
 
         // Dynamically scale body mesh using mass cube-root hierarchy
-        let visual_radius =
-            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale;
+        let visual_radius = if matches!(
+            body.body_type,
+            BodyType::Protostar | BodyType::MainSequenceStar
+        ) {
+            SimulationConfig::calc_render_radius(mass.0, body.body_type)
+        } else {
+            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale
+        };
         transform.scale = Vec3::splat(visual_radius);
 
         // Sync Mesh Level of Detail (LOD) based on Body Type
         let target_mesh = match body.body_type {
+            BodyType::Protostar | BodyType::MainSequenceStar => visual_assets.star_mesh.clone(),
             BodyType::GasGiant
             | BodyType::IceGiant
             | BodyType::TerrestrialPlanet

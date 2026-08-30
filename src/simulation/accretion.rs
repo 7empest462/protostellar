@@ -472,9 +472,18 @@ pub fn process_accretion_and_collisions(
                     // ==========================================
                     let total_mass = p_m + s_m;
 
-                    // Exact Conservation of Linear Momentum
-                    let merged_vel = (p_vel * p_m + s_vel * s_m) / total_mass;
-                    let merged_pos = (p_pos * p_m + s_pos * s_m) / total_mass;
+                    // Exact Conservation of Linear Momentum (Central Star remains stationary at origin)
+                    let is_star = matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar);
+                    let merged_vel = if is_star {
+                        DVec3::ZERO
+                    } else {
+                        (p_vel * p_m + s_vel * s_m) / total_mass
+                    };
+                    let merged_pos = if is_star {
+                        DVec3::ZERO
+                    } else {
+                        (p_pos * p_m + s_pos * s_m) / total_mass
+                    };
 
                     // Deterministic Mass-Weighted Composition Merging
                     let merged_comp = p_comp.mass_weighted_merge(p_m, &s_comp, s_m);
