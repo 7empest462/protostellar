@@ -18,6 +18,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<SystemPhase>()
             .init_resource::<PhaseManager>()
+            .init_resource::<LateHeavyBombardmentState>()
             .add_systems(Startup, setup_hud)
             .add_systems(
                 Update,

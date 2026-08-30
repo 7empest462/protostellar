@@ -502,3 +502,35 @@ impl Default for IgnitionState {
         }
     }
 }
+
+/// Tracks delivered volatiles (water, nitrogen, organics) delivered via cometary impacts.
+#[derive(Component, Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct VolatileInventory {
+    /// Total water ice mass delivered in Earth masses (M_earth)
+    pub delivered_water_m_earth: f64,
+    /// Current ocean coverage fraction (0.0 to 1.0)
+    pub ocean_coverage_frac: f32,
+    /// Atmospheric surface pressure in bars
+    pub atmospheric_pressure_bar: f32,
+    /// Number of major cometary impacts absorbed
+    pub cometary_impact_count: u32,
+}
+
+/// A dynamic impact basin formed by a major cometary / asteroidal impact.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ImpactBasin {
+    /// Normal vector on the unit sphere
+    pub surface_normal: Vec3,
+    /// Basin angular radius in radians
+    pub angular_radius: f32,
+    /// Timestamp when impact occurred (sim_yr)
+    pub formation_time_yr: f64,
+    /// Current cooling state: 1.0 = glowing magma melt pool, 0.0 = solidified dark basalt mare
+    pub melt_glow_fraction: f32,
+}
+
+/// Tracks recent impact basins on a planetary surface.
+#[derive(Component, Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlanetaryBasins {
+    pub basins: Vec<ImpactBasin>,
+}

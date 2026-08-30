@@ -16,6 +16,7 @@ pub fn step_physics_simulation(
     mut sim_time: ResMut<SimTime>,
     mut energy_monitor: ResMut<EnergyMonitor>,
     player_state: Res<PlayerInteractionState>,
+    mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut bodies_query: Query<(
         Entity,
         &mut Mass,
@@ -288,6 +289,80 @@ pub fn step_physics_simulation(
                 body.4 = new_accelerations[i];
             } else {
                 body.4 = DVec3::ZERO;
+            }
+        }
+
+        // --- 3.5 Nice Model Planetary Migration & Resonance Crossing (Late Heavy Bombardment) ---
+        if lhb_state.is_active {
+            lhb_state.time_active_years += sub_dt;
+            let progress = (lhb_state.time_active_years / 2500.0).clamp(0.0, 1.0);
+            lhb_state.migration_progress = progress;
+
+            // Find Jupiter and Saturn indices
+            let mut jupiter_idx = None;
+            let mut saturn_idx = None;
+
+            for (i, (_, m, pos, _, _, _, b_type, _)) in body_data.iter().enumerate() {
+                let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
+                if matches!(b_type, BodyType::GasGiant) || *m >= JUPITER_MASS_SOLAR * 0.15 {
+                    if r < 10.0 && jupiter_idx.is_none() {
+                        jupiter_idx = Some((i, r));
+                    } else if (8.0..20.0).contains(&r) {
+                        saturn_idx = Some((i, r));
+                    }
+                }
+            }
+
+            if let (Some((j_i, r_j)), Some((s_i, r_s))) = (jupiter_idx, saturn_idx) {
+                let p_ratio = (r_s / r_j.max(0.1)).powf(1.5);
+                lhb_state.resonance_ratio = p_ratio;
+
+                // Check resonance crossing at 2:1
+                if p_ratio >= 2.0 && !lhb_state.resonance_crossed {
+                    lhb_state.resonance_crossed = true;
+                    // Resonant eccentricity kick
+                    let v_j = body_data[j_i].3;
+                    let v_s = body_data[s_i].3;
+                    body_data[j_i].3 +=
+                        v_j.cross(DVec3::Y).normalize_or_zero() * (0.02 * v_j.length());
+                    body_data[s_i].3 -=
+                        v_s.cross(DVec3::Y).normalize_or_zero() * (0.03 * v_s.length());
+                }
+
+                // Inward migration for Jupiter (towards 5.2 AU)
+                if r_j > 5.2 && progress < 0.95 {
+                    let v_dir = body_data[j_i].3.normalize_or_zero();
+                    body_data[j_i].4 -= v_dir * 0.0004;
+                }
+                // Outward migration for Saturn (towards 9.58 AU)
+                if r_s < 9.58 && progress < 0.95 {
+                    let v_dir = body_data[s_i].3.normalize_or_zero();
+                    body_data[s_i].4 += v_dir * 0.0006;
+                }
+            }
+
+            // Outward migration for Ice Giants and comet scattering
+            for (i, (_, _m, pos, vel, acc, _, b_type, _)) in body_data.iter_mut().enumerate() {
+                let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
+                let v_dir = vel.normalize_or_zero();
+
+                if matches!(b_type, BodyType::IceGiant) {
+                    if r < 30.0 && progress < 0.95 {
+                        *acc += v_dir * 0.0012; // Outward migration through icy disk
+                    }
+                } else if matches!(
+                    b_type,
+                    BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet
+                ) && r >= 15.0
+                {
+                    // Gravitational scattering: Comets get perturbed into high-eccentricity inner crossing orbits
+                    if lhb_state.resonance_crossed && progress < 0.90 {
+                        let kick_dir = -pos.normalize_or_zero()
+                            + DVec3::new(0.0, (i % 5) as f64 * 0.05 - 0.1, 0.0);
+                        *acc += kick_dir.normalize_or_zero() * 0.0045;
+                        lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
+                    }
+                }
             }
         }
 

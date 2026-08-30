@@ -16,6 +16,7 @@ pub fn handle_player_tools(
     keyboard: Res<ButtonInput<KeyCode>>,
     disk_params: Res<DiskParameters>,
     mut player_state: ResMut<PlayerInteractionState>,
+    mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut selected_query: Query<
         (
@@ -329,5 +330,11 @@ pub fn handle_player_tools(
             AngularMomentum(pos.cross(vel) * mass),
             comp,
         ));
+    }
+
+    // 4. Trigger Late Heavy Bombardment & Giant Planet Migration (Key G)
+    if keyboard.just_pressed(KeyCode::KeyG) {
+        lhb_state.is_active = true;
+        lhb_state.manual_trigger_requested = true;
     }
 }

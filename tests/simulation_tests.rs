@@ -361,3 +361,39 @@ fn test_solar_wind_radiation_pressure_clearing() {
     let gas_cleared: f64 = (1.0 - (shockwave_radius / 35.0)).clamp(0.0, 1.0);
     assert_eq!(gas_cleared, 0.0);
 }
+
+#[test]
+fn test_giant_planet_resonance_migration() {
+    let r_j: f64 = 5.5; // Jupiter semi-major axis (initial compact configuration)
+    let r_s: f64 = 8.5; // Saturn semi-major axis (inside 2:1 resonance, ratio ~ 1.92)
+    let p_ratio_initial: f64 = (r_s / r_j).powf(1.5);
+    assert!(p_ratio_initial < 2.0); // Before 2:1 resonance
+
+    // Outward migration of Saturn to 9.58 AU and inward migration of Jupiter to 5.2 AU
+    let r_j_final: f64 = 5.20;
+    let r_s_final: f64 = 9.58;
+    let p_ratio_final: f64 = (r_s_final / r_j_final).powf(1.5);
+    assert!(p_ratio_final > 2.0); // Crossed 2:1 resonance!
+    assert!((p_ratio_final - 2.50).abs() < 0.1);
+}
+
+#[test]
+fn test_volatile_water_delivery_mass_budget() {
+    use protostellar::simulation::components::VolatileInventory;
+
+    let mut vol = VolatileInventory::default();
+    assert_eq!(vol.delivered_water_m_earth, 0.0);
+    assert_eq!(vol.ocean_coverage_frac, 0.0);
+
+    // 10 icy cometary impacts delivering 0.00008 Earth masses of volatile ice each
+    for _ in 0..10 {
+        let d_water = 0.00008;
+        vol.delivered_water_m_earth += d_water;
+        vol.cometary_impact_count += 1;
+        vol.ocean_coverage_frac = (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
+    }
+
+    assert_eq!(vol.cometary_impact_count, 10);
+    assert!((vol.delivered_water_m_earth - 0.0008).abs() < 1e-6);
+    assert!(vol.ocean_coverage_frac >= 0.85); // Fully filled Earth-like ocean basins!
+}

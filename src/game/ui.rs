@@ -86,6 +86,7 @@ pub enum UiButtonAction {
     DeselectBody,
     FixOrbit,
     IgniteStar,
+    TriggerLhb,
 }
 
 impl UiButtonAction {
@@ -118,6 +119,7 @@ impl UiButtonAction {
             UiButtonAction::DeselectBody => "[Esc]: Deselect current body and return to free orbital camera.",
             UiButtonAction::FixOrbit => "[Z]: Circularizes and stabilizes orbit into a clean Keplerian circle (e = 0.0).",
             UiButtonAction::IgniteStar => "[I]: Ignites Hydrogen Core Fusion (or triggers Coronal Solar Blast if already ignited).",
+            UiButtonAction::TriggerLhb => "[G]: Triggers Late Heavy Bombardment & Giant Planet 2:1 Resonance Migration.",
         }
     }
 }
@@ -378,6 +380,7 @@ pub fn setup_hud(mut commands: Commands) {
                                     .with_children(|row3| {
                                         create_button(row3, UiButtonAction::CycleComposition, "Change Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
                                         create_button(row3, UiButtonAction::InjectEmbryo, "Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
+                                        create_button(row3, UiButtonAction::TriggerLhb, "Trigger LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
                                         create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
                                         create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
                                     });
@@ -498,6 +501,7 @@ pub fn handle_ui_button_interactions(
     >,
     mut camera_query: Query<&mut PanOrbitCamera>,
     mut star_ignition_query: Query<&mut IgnitionState, With<CentralStar>>,
+    mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut commands: Commands,
 ) {
     let mut rng = rand::rng();
@@ -1080,6 +1084,14 @@ pub fn handle_ui_button_interactions(
                             toast.timer = 5.0;
                         }
                     }
+                    UiButtonAction::TriggerLhb => {
+                        lhb_state.is_active = true;
+                        lhb_state.manual_trigger_requested = true;
+                        toast.message =
+                            "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // 2:1 Giant resonance active!"
+                                .to_string();
+                        toast.timer = 8.0;
+                    }
                 }
             }
         }
@@ -1094,6 +1106,7 @@ pub fn update_hud(
     config: Res<SimulationConfig>,
     energy_monitor: Res<EnergyMonitor>,
     phase_mgr: Res<PhaseManager>,
+    lhb_state: Res<crate::game::phases::LateHeavyBombardmentState>,
     player_state: Res<PlayerInteractionState>,
     mut toast: ResMut<NotificationToast>,
     bodies_query: Query<(
@@ -1107,6 +1120,7 @@ pub fn update_hud(
         Option<&InternalDifferentiation>,
         Option<&SpinState>,
         Option<&IgnitionState>,
+        Option<&VolatileInventory>,
     )>,
     mut header_query: Query<
         &mut Text,
@@ -1246,6 +1260,9 @@ pub fn update_hud(
             crate::game::phases::SystemPhase::PlanetaryAccretion => {
                 "PLANETARY ACCRETION & EMBRYO GROWTH"
             }
+            crate::game::phases::SystemPhase::LateHeavyBombardment => {
+                "LATE HEAVY BOMBARDMENT (2:1 RESONANCE & MIGRATION)"
+            }
             crate::game::phases::SystemPhase::MatureSolarSystem => "MATURE SOLAR SYSTEM",
         };
 
@@ -1262,8 +1279,19 @@ pub fn update_hud(
             .map(|m| format!("{}: {}", m.title, m.prompt))
             .unwrap_or_else(|| "All Formation Milestones Completed!".to_string());
 
+        let lhb_info = if lhb_state.is_active {
+            format!(
+                "\nLHB Migration: {:.0}% (2:1 Resonance: {:.2}:1 | Comets Perturbed: {})",
+                lhb_state.migration_progress * 100.0,
+                lhb_state.resonance_ratio,
+                lhb_state.comets_scattered
+            )
+        } else {
+            "".to_string()
+        };
+
         text.0 = format!(
-            "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / 50,000 active particles | Gas: {}\nPlanets: {} | Protoplanets: {}\nGoal: {}",
+            "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / 50,000 active particles | Gas: {}\nPlanets: {} | Protoplanets: {}{}\nGoal: {}",
             phase_str,
             time_formatted,
             phase_mgr.star_mass,
@@ -1271,6 +1299,7 @@ pub fn update_hud(
             gas_status,
             phase_mgr.planet_count,
             phase_mgr.protoplanet_count,
+            lhb_info,
             active_goal,
         );
     }
@@ -1340,8 +1369,19 @@ pub fn update_hud(
     // 4. Telemetry Inspector Text
     if let Ok(mut text) = inspector_query.single_mut() {
         if let Some(selected_entity) = player_state.selected_entity {
-            if let Ok((pos, vel, mass, rad, temp, comp, body, opt_diff, opt_spin, opt_ignition)) =
-                bodies_query.get(selected_entity)
+            if let Ok((
+                pos,
+                vel,
+                mass,
+                rad,
+                temp,
+                comp,
+                body,
+                opt_diff,
+                opt_spin,
+                opt_ignition,
+                opt_vol,
+            )) = bodies_query.get(selected_entity)
             {
                 let dist_au = if pos.0.is_finite() {
                     pos.0.length()
@@ -1415,6 +1455,18 @@ pub fn update_hud(
                     "".to_string()
                 };
 
+                let vol_str = if let Some(vol) = opt_vol {
+                    format!(
+                        "\nVolatiles: {:.4} M_earth Water Delivered | Ocean Coverage: {:.0}%\nAtmospheric Pressure: {:.2} bar | Icy Bombardment Impacts: {}",
+                        vol.delivered_water_m_earth,
+                        vol.ocean_coverage_frac * 100.0,
+                        vol.atmospheric_pressure_bar,
+                        vol.cometary_impact_count
+                    )
+                } else {
+                    "".to_string()
+                };
+
                 let star_extra_str = if let Some(ignition) = opt_ignition {
                     let core_temp_mk = ignition.core_temperature / 1.0e6;
                     let fusion_pct = ignition.fusion_fraction * 100.0;
@@ -1450,10 +1502,10 @@ pub fn update_hud(
                 let rock_pct = ((norm.silicate_frac + norm.organics_frac) * 100.0).round();
                 let ice_pct = (norm.ice_frac * 100.0).round();
                 let metal_pct = (norm.metal_frac * 100.0).round();
-                let gas_pct = (100.0 - rock_pct - ice_pct - metal_pct).max(0.0);
+                let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
 
                 text.0 = format!(
-                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}",
+                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,
@@ -1470,6 +1522,7 @@ pub fn update_hud(
                     metal_pct,
                     gas_pct,
                     diff_str,
+                    vol_str,
                     star_extra_str,
                 );
             } else {

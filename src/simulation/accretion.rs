@@ -56,6 +56,7 @@ pub fn process_accretion_and_collisions(
     mut commands: Commands,
     config: Res<SimulationConfig>,
     time_warp: Res<TimeWarp>,
+    sim_time: Res<SimTime>,
     mut player_state: ResMut<PlayerInteractionState>,
     disk_params: Res<DiskParameters>,
     mut merge_events: MessageWriter<AccretionMergeEvent>,
@@ -473,7 +474,8 @@ pub fn process_accretion_and_collisions(
                     let total_mass = p_m + s_m;
 
                     // Exact Conservation of Linear Momentum (Central Star remains stationary at origin)
-                    let is_star = matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar);
+                    let is_star =
+                        matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar);
                     let merged_vel = if is_star {
                         DVec3::ZERO
                     } else {
@@ -582,6 +584,53 @@ pub fn process_accretion_and_collisions(
                         if let Some(mut spin) = opt_spin_mut {
                             spin.update_from_spin(merged_spin, total_mass, new_radius);
                         }
+                    }
+
+                    // Deliver volatile water & atmosphere inventory from icy comets / planetesimals
+                    let d_water_earth = (s_m * s_comp.ice_frac) / EARTH_MASS_SOLAR;
+                    let d_gas_earth = (s_m * s_comp.gas_frac) / EARTH_MASS_SOLAR;
+
+                    if let Ok(mut p_cmd) = commands.get_entity(primary_entity) {
+                        p_cmd
+                            .entry::<VolatileInventory>()
+                            .and_modify(move |mut vol| {
+                                vol.delivered_water_m_earth += d_water_earth;
+                                vol.cometary_impact_count += 1;
+                                vol.ocean_coverage_frac =
+                                    (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
+                                vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
+                                    + (d_gas_earth * 120.0) as f32)
+                                    .clamp(0.01, 90.0);
+                            })
+                            .or_insert(VolatileInventory {
+                                delivered_water_m_earth: d_water_earth,
+                                ocean_coverage_frac: (d_water_earth / 0.0006).clamp(0.0, 0.85)
+                                    as f32,
+                                atmospheric_pressure_bar: (d_gas_earth * 120.0).clamp(0.01, 90.0)
+                                    as f32,
+                                cometary_impact_count: 1,
+                            });
+
+                        // Major impact crater melt basin formation
+                        let norm = (s_pos - p_pos).normalize_or_zero();
+                        let basin = ImpactBasin {
+                            surface_normal: Vec3::new(norm.x as f32, norm.y as f32, norm.z as f32),
+                            angular_radius: ((s_m / p_m).cbrt() as f32).clamp(0.12, 0.55),
+                            formation_time_yr: sim_time.elapsed_years,
+                            melt_glow_fraction: 1.0,
+                        };
+
+                        p_cmd
+                            .entry::<PlanetaryBasins>()
+                            .and_modify(move |mut pb| {
+                                if pb.basins.len() >= 8 {
+                                    pb.basins.remove(0);
+                                }
+                                pb.basins.push(basin);
+                            })
+                            .or_insert(PlanetaryBasins {
+                                basins: vec![basin],
+                            });
                     }
 
                     // Seamlessly transfer player selection if secondary entity was merged

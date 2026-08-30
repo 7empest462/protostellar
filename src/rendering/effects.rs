@@ -193,6 +193,28 @@ pub fn draw_orbital_effects_and_gizmos(
         let body_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let r_orbit = pos.0.length() as f32;
 
+        // Cometary Ion and Dust Tails (streaming away from the star for volatile icy bodies)
+        if comp.ice_frac > 0.35 && r_orbit < 6.0 && r_orbit > 0.15 {
+            let tail_dir = (body_vec - star_vec).normalize_or_zero();
+            let tail_len = ((6.0 - r_orbit) * 0.65).clamp(0.2, 3.5);
+            let vel_vec = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
+            let vel_dir = -vel_vec.normalize_or_zero();
+
+            // Ion Gas Tail (Straight radial line away from the star)
+            gizmos.line(
+                body_vec,
+                body_vec + tail_dir * tail_len,
+                Color::srgba(0.35, 0.85, 1.0, 0.85),
+            );
+            // Dust Tail (Curved along orbital velocity)
+            gizmos.line(
+                body_vec,
+                body_vec
+                    + (tail_dir * 0.75 + vel_dir * 0.25).normalize_or_zero() * (tail_len * 0.8),
+                Color::srgba(1.0, 0.92, 0.70, 0.50),
+            );
+        }
+
         // A. Orbit Trails
         if is_selected || is_planet {
             let rel_pos = pos.0 - star_pos.0;
