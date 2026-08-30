@@ -128,12 +128,22 @@ pub fn setup_particle_swarm(
 
         let (br, bg, bb) = blackbody_to_srgb(temp as f64);
         let (cr, cg, cb) = comp.visual_color_tint();
-        let final_color = [
-            (br * 0.45 + cr * 0.85).clamp(0.4, 1.4),
-            (bg * 0.45 + cg * 0.85).clamp(0.35, 1.4),
-            (bb * 0.45 + cb * 0.85).clamp(0.3, 1.4),
-            1.0f32,
-        ];
+        let final_color = if comp.gas_frac > 0.35 {
+            // Primordial gaseous envelope: ethereal cyan-blue glow
+            [
+                (br * 0.20 + 0.35).clamp(0.2, 1.2),
+                (bg * 0.20 + 0.75).clamp(0.4, 1.4),
+                (bb * 0.20 + 1.10).clamp(0.6, 1.5),
+                1.0f32,
+            ]
+        } else {
+            [
+                (br * 0.45 + cr * 0.85).clamp(0.4, 1.4),
+                (bg * 0.45 + cg * 0.85).clamp(0.35, 1.4),
+                (bb * 0.45 + cb * 0.85).clamp(0.3, 1.4),
+                1.0f32,
+            ]
+        };
 
         positions.push(pos);
         velocities.push(vel);
