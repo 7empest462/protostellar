@@ -397,3 +397,36 @@ fn test_volatile_water_delivery_mass_budget() {
     assert!((vol.delivered_water_m_earth - 0.0008).abs() < 1e-6);
     assert!(vol.ocean_coverage_frac >= 0.85); // Fully filled Earth-like ocean basins!
 }
+
+#[test]
+fn test_fluid_roche_limit_disruption_radius() {
+    // Saturn: density ~ 0.687 g/cm3, radius ~ 58,232 km (0.000389 AU)
+    let rho_primary: f64 = 0.687;
+    let r_primary_km: f64 = 58232.0;
+
+    // Pure Water Ice moon: density ~ 1.0 g/cm3
+    let rho_moon: f64 = 1.0;
+
+    let d_roche_km: f64 = 2.44 * r_primary_km * (rho_primary / rho_moon).cbrt();
+
+    // d_roche should be ~ 125,380 km (~ 2.15 Saturn radii), exactly inside Saturn's ring system!
+    assert!(d_roche_km > 120000.0 && d_roche_km < 130000.0);
+    assert!((d_roche_km / r_primary_km - 2.15).abs() < 0.1);
+}
+
+#[test]
+fn test_planetary_ring_mass_and_optical_depth() {
+    use protostellar::simulation::components::PlanetaryRingSystem;
+
+    let mut ring = PlanetaryRingSystem::default();
+    assert_eq!(ring.optical_depth, 0.85);
+    assert_eq!(ring.ice_fraction, 0.95);
+
+    // Accrete additional fragmented moon mass
+    let additional_moon_earth_mass = 0.0002;
+    ring.ring_mass_earth += additional_moon_earth_mass;
+    ring.optical_depth = (ring.optical_depth + 0.10).min(1.0);
+
+    assert!((ring.optical_depth - 0.95).abs() < 1e-5);
+    assert!(ring.ring_mass_earth > 0.00025);
+}

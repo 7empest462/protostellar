@@ -62,6 +62,7 @@ pub fn process_accretion_and_collisions(
     mut merge_events: MessageWriter<AccretionMergeEvent>,
     mut moon_events: MessageWriter<MoonFormationEvent>,
     mut bounce_events: MessageWriter<CollisionBounceEvent>,
+    mut roche_events: MessageWriter<RocheDisruptionEvent>,
     mut bodies_query: Query<(
         Entity,
         &mut Mass,
@@ -249,6 +250,77 @@ pub fn process_accretion_and_collisions(
                         name1.clone(),
                     )
                 };
+
+                // Calculate fluid Roche limit
+                let p_density = p_comp.average_density();
+                let s_density = s_comp.average_density();
+                let p_rad_au = ((3.0 * p_m / p_density) / (4.0 * PI))
+                    .cbrt()
+                    .max(EARTH_RADIUS_AU * 0.3);
+                let d_roche = 2.44 * p_rad_au * (p_density / s_density.max(1e-4)).cbrt();
+
+                // Check for TIDAL ROCHE DISRUPTION (Planetary Ring Formation):
+                // 1. Primary is a massive planet / gas giant (>= 0.05 Earth mass)
+                // 2. Secondary is a small impactor / moon (<= 0.20 Primary mass)
+                // 3. Encounter distance is within Roche limit (min_dist <= d_roche)
+                // 4. Periapsis / grazing encounter (b >= 0.20)
+                // 5. Neither is a central star
+                let is_roche_disruption = min_dist <= d_roche
+                    && b >= 0.20
+                    && p_m >= EARTH_MASS_SOLAR * 0.05
+                    && s_m <= p_m * 0.20
+                    && !matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar)
+                    && !matches!(type2, BodyType::Protostar | BodyType::MainSequenceStar);
+
+                if is_roche_disruption {
+                    // ==========================================
+                    // REGIME 0: TIDAL ROCHE DISRUPTION & RING FORMATION
+                    // ==========================================
+                    let ring_mass_earth = s_m / EARTH_MASS_SOLAR;
+                    let inner_r = (p_rad_au * 1.25) as f32;
+                    let outer_r = (d_roche.min(p_rad_au * 3.2)) as f32;
+
+                    if let Ok(mut p_cmd) = commands.get_entity(primary_entity) {
+                        p_cmd
+                            .entry::<PlanetaryRingSystem>()
+                            .and_modify(move |mut ring| {
+                                ring.ring_mass_earth += ring_mass_earth;
+                                ring.outer_radius_au = ring.outer_radius_au.max(outer_r);
+                                ring.optical_depth = (ring.optical_depth + 0.35).min(1.0);
+                                ring.ice_fraction = (ring.ice_fraction * 0.5
+                                    + s_comp.ice_frac as f32 * 0.5)
+                                    .clamp(0.0, 1.0);
+                                ring.silicate_fraction = (1.0 - ring.ice_fraction).max(0.0);
+                            })
+                            .or_insert(PlanetaryRingSystem {
+                                inner_radius_au: inner_r,
+                                outer_radius_au: outer_r,
+                                ring_mass_earth,
+                                optical_depth: ((ring_mass_earth / 0.0001).clamp(0.40, 0.95))
+                                    as f32,
+                                ice_fraction: s_comp.ice_frac as f32,
+                                silicate_fraction: (s_comp.silicate_frac + s_comp.metal_frac)
+                                    as f32,
+                            });
+                    }
+
+                    roche_events.write(RocheDisruptionEvent {
+                        disrupted_entity: secondary_entity,
+                        primary_entity,
+                        disruption_radius: min_dist,
+                    });
+
+                    // Seamlessly transfer player selection if secondary entity was merged
+                    if player_state.selected_entity == Some(secondary_entity) {
+                        player_state.selected_entity = Some(primary_entity);
+                    }
+
+                    merged_away.insert(secondary_entity);
+                    if !pending_despawns.contains(&secondary_entity) {
+                        pending_despawns.push(secondary_entity);
+                    }
+                    continue;
+                }
 
                 // Check for GIANT IMPACT MOON FORMATION:
                 // Conditions:

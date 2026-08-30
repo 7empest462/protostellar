@@ -87,6 +87,7 @@ pub enum UiButtonAction {
     FixOrbit,
     IgniteStar,
     TriggerLhb,
+    ShatterIntoRings,
 }
 
 impl UiButtonAction {
@@ -120,6 +121,7 @@ impl UiButtonAction {
             UiButtonAction::FixOrbit => "[Z]: Circularizes and stabilizes orbit into a clean Keplerian circle (e = 0.0).",
             UiButtonAction::IgniteStar => "[I]: Ignites Hydrogen Core Fusion (or triggers Coronal Solar Blast if already ignited).",
             UiButtonAction::TriggerLhb => "[G]: Triggers Late Heavy Bombardment & Giant Planet 2:1 Resonance Migration.",
+            UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupts icy material into a luminous planetary ring system.",
         }
     }
 }
@@ -381,6 +383,7 @@ pub fn setup_hud(mut commands: Commands) {
                                         create_button(row3, UiButtonAction::CycleComposition, "Change Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
                                         create_button(row3, UiButtonAction::InjectEmbryo, "Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                         create_button(row3, UiButtonAction::TriggerLhb, "Trigger LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
+                                        create_button(row3, UiButtonAction::ShatterIntoRings, "Rings [X]", Color::srgba(0.18, 0.14, 0.06, 0.9), Color::srgb(1.0, 0.85, 0.35));
                                         create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
                                         create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
                                     });
@@ -1092,6 +1095,32 @@ pub fn handle_ui_button_interactions(
                                 .to_string();
                         toast.timer = 8.0;
                     }
+                    UiButtonAction::ShatterIntoRings => {
+                        if let Some(ent) = player_state.selected_entity {
+                            if let Ok((.., body, is_star)) = selected_query.get(ent) {
+                                if is_star.is_some() {
+                                    toast.message =
+                                        "⚠️ Cannot form planetary rings around the central star!"
+                                            .to_string();
+                                    toast.timer = 3.5;
+                                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                                    p_cmd.insert(PlanetaryRingSystem {
+                                        inner_radius_au: 0.0008,
+                                        outer_radius_au: 0.0028,
+                                        ring_mass_earth: 0.0002,
+                                        optical_depth: 0.88,
+                                        ice_fraction: 0.95,
+                                        silicate_fraction: 0.05,
+                                    });
+                                    toast.message = format!(
+                                        "🪐 Formed Luminous Ring System around {}!",
+                                        body.name
+                                    );
+                                    toast.timer = 5.0;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1121,6 +1150,7 @@ pub fn update_hud(
         Option<&SpinState>,
         Option<&IgnitionState>,
         Option<&VolatileInventory>,
+        Option<&PlanetaryRingSystem>,
     )>,
     mut header_query: Query<
         &mut Text,
@@ -1381,6 +1411,7 @@ pub fn update_hud(
                 opt_spin,
                 opt_ignition,
                 opt_vol,
+                opt_rings,
             )) = bodies_query.get(selected_entity)
             {
                 let dist_au = if pos.0.is_finite() {
@@ -1467,6 +1498,20 @@ pub fn update_hud(
                     "".to_string()
                 };
 
+                let rings_str = if let Some(ring) = opt_rings {
+                    let inner_km = ring.inner_radius_au as f64 * AU_TO_KM;
+                    let outer_km = ring.outer_radius_au as f64 * AU_TO_KM;
+                    format!(
+                        "\nRing System: Active (Span: {:.0} - {:.0} km | Opacity: {:.0}% | {:.0}% Ice)",
+                        inner_km,
+                        outer_km,
+                        ring.optical_depth * 100.0,
+                        ring.ice_fraction * 100.0
+                    )
+                } else {
+                    "".to_string()
+                };
+
                 let star_extra_str = if let Some(ignition) = opt_ignition {
                     let core_temp_mk = ignition.core_temperature / 1.0e6;
                     let fusion_pct = ignition.fusion_fraction * 100.0;
@@ -1505,7 +1550,7 @@ pub fn update_hud(
                 let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
 
                 text.0 = format!(
-                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}",
+                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,
@@ -1523,6 +1568,7 @@ pub fn update_hud(
                     gas_pct,
                     diff_str,
                     vol_str,
+                    rings_str,
                     star_extra_str,
                 );
             } else {

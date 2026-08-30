@@ -35,6 +35,7 @@ pub enum MilestoneId {
     GiantPlanetResonance,
     LateHeavyBombardment,
     VolatileOceanDelivery,
+    PlanetaryRingGenesis,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +167,13 @@ impl Default for PhaseManager {
                     achieved: false,
                     achieve_timestamp: None,
                 },
+                ScientificMilestone {
+                    id: MilestoneId::PlanetaryRingGenesis,
+                    title: "🪐 10. Planetary Ring Genesis",
+                    prompt: "Tidally disrupt an icy moon or captured planetesimal inside a planet's fluid Roche limit to form ring systems.",
+                    achieved: false,
+                    achieve_timestamp: None,
+                },
             ],
             latest_unlocked_milestone: None,
             milestone_toast_timer: 0.0,
@@ -188,6 +196,7 @@ pub fn monitor_phase_transitions(
             &CelestialBody,
             Option<&InternalDifferentiation>,
             Option<&VolatileInventory>,
+            Option<&PlanetaryRingSystem>,
         ),
         Without<CentralStar>,
     >,
@@ -202,10 +211,11 @@ pub fn monitor_phase_transitions(
     let mut protoplanets = 0;
     let mut planetesimals = 0;
     let mut has_differentiated = false;
+    let mut has_rings = false;
     let mut total_delivered_water = 0.0;
     let mut remaining_disk_mass = 0.0;
 
-    for (mass, body, opt_diff, opt_vol) in bodies_query.iter() {
+    for (mass, body, opt_diff, opt_vol, opt_rings) in bodies_query.iter() {
         match body.body_type {
             BodyType::TerrestrialPlanet | BodyType::GasGiant | BodyType::IceGiant => planets += 1,
             BodyType::Protoplanet => protoplanets += 1,
@@ -219,6 +229,9 @@ pub fn monitor_phase_transitions(
         }
         if let Some(vol) = opt_vol {
             total_delivered_water += vol.delivered_water_m_earth;
+        }
+        if opt_rings.is_some() {
+            has_rings = true;
         }
         remaining_disk_mass += mass.0;
     }
@@ -253,6 +266,7 @@ pub fn monitor_phase_transitions(
             MilestoneId::GiantPlanetResonance => lhb_state.resonance_crossed,
             MilestoneId::LateHeavyBombardment => lhb_state.is_active,
             MilestoneId::VolatileOceanDelivery => total_delivered_water >= 0.0005,
+            MilestoneId::PlanetaryRingGenesis => has_rings,
         };
 
         if passed {

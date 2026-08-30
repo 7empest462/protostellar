@@ -296,6 +296,25 @@ pub fn handle_player_tools(
                 }
                 player_state.selected_entity = None;
             }
+
+            // J. Shatter / Form Planetary Rings (Key X)
+            if keyboard.just_pressed(KeyCode::KeyX)
+                && !matches!(
+                    body.body_type,
+                    BodyType::Protostar | BodyType::MainSequenceStar
+                )
+            {
+                if let Ok(mut cmd) = commands.get_entity(entity) {
+                    cmd.insert(PlanetaryRingSystem {
+                        inner_radius_au: 0.0008,
+                        outer_radius_au: 0.0028,
+                        ring_mass_earth: 0.0002,
+                        optical_depth: 0.88,
+                        ice_fraction: 0.95,
+                        silicate_fraction: 0.05,
+                    });
+                }
+            }
         }
     }
 

@@ -18,17 +18,20 @@ pub struct VisualAssets {
     pub star_mesh: Handle<Mesh>,
     pub planet_mesh: Handle<Mesh>,
     pub particle_mesh: Handle<Mesh>,
+    pub ring_mesh: Handle<Mesh>,
 }
 
 pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     let star_mesh = meshes.add(Sphere::new(1.0).mesh().ico(5).unwrap());
     let planet_mesh = meshes.add(Sphere::new(1.0).mesh().ico(4).unwrap());
     let particle_mesh = meshes.add(Sphere::new(1.0).mesh().ico(3).unwrap());
+    let ring_mesh = meshes.add(Plane3d::default().mesh().size(2.0, 2.0).build());
 
     commands.insert_resource(VisualAssets {
         star_mesh,
         planet_mesh,
         particle_mesh,
+        ring_mesh,
     });
 }
 
@@ -342,6 +345,95 @@ pub fn sync_celestial_transforms(
                     LinearRgba::from(color) * ((temp.0 as f32 - 600.0) / 600.0).clamp(0.0, 5.0);
             } else {
                 mat.base.emissive = LinearRgba::BLACK;
+            }
+        }
+    }
+}
+
+/// Marker component for an instantiated visual planetary ring entity.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct VisualRingChild;
+
+/// Synchronizes 3D planetary ring system meshes, materials, and axial tilt transforms.
+pub fn sync_planetary_rings(
+    mut commands: Commands,
+    config: Res<SimulationConfig>,
+    visual_assets: Res<VisualAssets>,
+    mut ring_materials: ResMut<Assets<RingMaterial>>,
+    planets_with_rings_query: Query<(
+        Entity,
+        &PlanetaryRingSystem,
+        &Mass,
+        &CelestialBody,
+        Option<&SpinState>,
+        Option<&Children>,
+    )>,
+    mut ring_children_query: Query<
+        (&mut Transform, &MeshMaterial3d<RingMaterial>),
+        With<VisualRingChild>,
+    >,
+) {
+    for (planet_entity, ring_sys, mass, body, opt_spin, opt_children) in
+        planets_with_rings_query.iter()
+    {
+        let planet_render_rad =
+            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale;
+        let ring_outer_scale = (planet_render_rad * 2.85).max(0.015);
+
+        let tilt_degrees = opt_spin
+            .map(|s| s.axial_tilt_degrees as f32)
+            .unwrap_or(26.7);
+        let ring_rotation = Quat::from_rotation_z(tilt_degrees.to_radians());
+
+        let mut found_child = false;
+        if let Some(children) = opt_children {
+            for child in children.iter() {
+                if let Ok((mut transform, mat_handle)) = ring_children_query.get_mut(child) {
+                    found_child = true;
+                    transform.scale = Vec3::splat(ring_outer_scale);
+                    transform.rotation = ring_rotation;
+
+                    if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
+                        mat.extension.uniforms.inner_radius = ring_sys.inner_radius_au;
+                        mat.extension.uniforms.outer_radius = ring_sys.outer_radius_au;
+                        mat.extension.uniforms.optical_depth = ring_sys.optical_depth;
+                        mat.extension.uniforms.ice_fraction = ring_sys.ice_fraction;
+                    }
+                }
+            }
+        }
+
+        if !found_child {
+            let material = ring_materials.add(RingMaterial {
+                base: StandardMaterial {
+                    base_color: Color::WHITE,
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None, // Double-sided
+                    unlit: true,
+                    ..default()
+                },
+                extension: RingMaterialExtension {
+                    uniforms: RingUniforms {
+                        inner_radius: ring_sys.inner_radius_au,
+                        outer_radius: ring_sys.outer_radius_au,
+                        optical_depth: ring_sys.optical_depth,
+                        ice_fraction: ring_sys.ice_fraction,
+                        ring_color: Vec4::ONE,
+                    },
+                },
+            });
+
+            if let Ok(mut p_cmd) = commands.get_entity(planet_entity) {
+                p_cmd.with_children(|parent| {
+                    parent.spawn((
+                        VisualRingChild,
+                        Mesh3d(visual_assets.ring_mesh.clone()),
+                        MeshMaterial3d(material),
+                        Transform::from_scale(Vec3::splat(ring_outer_scale))
+                            .with_rotation(ring_rotation),
+                        NotShadowCaster,
+                    ));
+                });
             }
         }
     }

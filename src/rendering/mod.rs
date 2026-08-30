@@ -28,6 +28,7 @@ impl Plugin for RenderingPlugin {
                 GasCloudPlugin,
                 ParticleSwarmPlugin,
                 MaterialPlugin::<PlanetMaterial>::default(),
+                MaterialPlugin::<RingMaterial>::default(),
             ))
             .add_systems(
                 Startup,
@@ -39,6 +40,7 @@ impl Plugin for RenderingPlugin {
                     update_pan_orbit_camera,
                     spawn_missing_visuals,
                     sync_celestial_transforms,
+                    sync_planetary_rings,
                     update_impact_shockwaves,
                     draw_orbital_effects_and_gizmos,
                 ),

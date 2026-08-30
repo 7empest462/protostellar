@@ -534,3 +534,27 @@ pub struct ImpactBasin {
 pub struct PlanetaryBasins {
     pub basins: Vec<ImpactBasin>,
 }
+
+/// Circumplanetary planetary ring system formed by tidal Roche disruption.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlanetaryRingSystem {
+    pub inner_radius_au: f32,
+    pub outer_radius_au: f32,
+    pub ring_mass_earth: f64,
+    pub optical_depth: f32,
+    pub ice_fraction: f32,
+    pub silicate_fraction: f32,
+}
+
+impl Default for PlanetaryRingSystem {
+    fn default() -> Self {
+        Self {
+            inner_radius_au: 0.0008,
+            outer_radius_au: 0.0022,
+            ring_mass_earth: 0.0001,
+            optical_depth: 0.85,
+            ice_fraction: 0.95,
+            silicate_fraction: 0.05,
+        }
+    }
+}
