@@ -51,7 +51,8 @@ pub fn setup_gas_cloud_disk(
     disk_params: Res<DiskParameters>,
 ) {
     let plane_size = (disk_params.outer_radius_au * 2.2) as f32;
-    let plane_mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(plane_size)));
+    let plane_mesh_up = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(plane_size)));
+    let plane_mesh_down = meshes.add(Plane3d::new(-Vec3::Y, Vec2::splat(plane_size)));
 
     let gas_material = materials.add(GasCloudMaterial {
         time_data: Vec4::new(
@@ -63,10 +64,18 @@ pub fn setup_gas_cloud_disk(
         star_params: Vec4::new(0.013, 3600.0, 1.8, 0.0),
     });
 
-    // 3 layered translucent planes for ethereal vertical volume
-    for y_offset in [0.0f32, 0.12f32, -0.12f32] {
+    // Layered translucent planes visible from all camera angles (both top & bottom)
+    for y_offset in [0.0f32, 0.15f32, -0.15f32] {
         commands.spawn((
-            Mesh3d(plane_mesh.clone()),
+            Mesh3d(plane_mesh_up.clone()),
+            MeshMaterial3d(gas_material.clone()),
+            Transform::from_translation(Vec3::new(0.0, y_offset, 0.0)),
+            NotShadowCaster,
+            NotShadowReceiver,
+            GasCloudDisk,
+        ));
+        commands.spawn((
+            Mesh3d(plane_mesh_down.clone()),
             MeshMaterial3d(gas_material.clone()),
             Transform::from_translation(Vec3::new(0.0, y_offset, 0.0)),
             NotShadowCaster,

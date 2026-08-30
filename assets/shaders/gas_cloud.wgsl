@@ -55,9 +55,9 @@ fn fragment(
     let gas_density_scale = gas_time.w;
     let time = gas_time.x;
 
-    // 1. Smooth Boundary & Shockwave Clearance
-    let inner_fade = smoothstep(inner_r, inner_r * 2.2, r_cyl);
-    let outer_fade = smoothstep(outer_r, outer_r * 0.70, r_cyl);
+    // 1. Smooth Radial Boundaries (low < high for WGSL smoothstep specification)
+    let inner_fade = smoothstep(inner_r * 0.6, inner_r * 2.0, r_cyl);
+    let outer_fade = 1.0 - smoothstep(outer_r * 0.70, outer_r, r_cyl);
     let radial_mask = inner_fade * outer_fade;
 
     if (radial_mask < 0.001) {
@@ -72,12 +72,12 @@ fn fragment(
 
     // 2. Differential Keplerian Swirling Flow with Domain Warping
     let angle = atan2(pos_world.z, pos_world.x);
-    let v_k_rot = 0.5 * time * pow(max(r_cyl, 0.4), -0.75);
+    let v_k_rot = 0.4 * time * pow(max(r_cyl, 0.5), -0.75);
     let rot_angle = angle + v_k_rot;
 
     let spiral_uv = vec2<f32>(
-        r_cyl * cos(rot_angle) * 0.15,
-        r_cyl * sin(rot_angle) * 0.15
+        r_cyl * cos(rot_angle) * 0.12,
+        r_cyl * sin(rot_angle) * 0.12
     );
 
     // Multi-octave domain warping for wispy translucent filaments
@@ -97,26 +97,26 @@ fn fragment(
 
     // 4. Ethereal, Translucent Spectral Color Palette
     let temp = 280.0 * pow(max(r_cyl, 0.2), -0.5);
-    var color = vec3<f32>(0.18, 0.42, 0.88); // Deep celestial blue
+    var color = vec3<f32>(0.20, 0.45, 0.92); // Deep celestial blue
 
     if (temp > 700.0) {
-        color = vec3<f32>(1.0, 0.62, 0.25); // Warm sunlit peach/amber
+        color = vec3<f32>(1.0, 0.65, 0.28); // Warm sunlit peach/amber
     } else if (temp > 280.0) {
-        color = vec3<f32>(0.92, 0.78, 0.42); // Warm golden mist
+        color = vec3<f32>(0.95, 0.80, 0.45); // Warm golden mist
     } else if (temp > 140.0) {
-        color = vec3<f32>(0.28, 0.82, 0.85); // Ethereal turquoise / ice line
+        color = vec3<f32>(0.30, 0.85, 0.88); // Ethereal turquoise / ice line
     } else if (r_cyl > 45.0) {
-        color = vec3<f32>(0.32, 0.22, 0.68); // Outer deep violet / lavender
+        color = vec3<f32>(0.38, 0.26, 0.75); // Outer deep violet / lavender
     }
 
     // 5. Very Wispy, Lite, See-Through Alpha Transparency
-    let density = (wisps * 0.40 + 0.10) * vert_falloff * radial_mask * shock_mask * gas_density_scale;
-    let alpha = clamp(density * 0.30, 0.0, 0.24); // Gentle see-through mist!
+    let density = (wisps * 0.50 + 0.20) * vert_falloff * radial_mask * shock_mask * gas_density_scale;
+    let alpha = clamp(density * 0.45, 0.0, 0.35); // Delicate see-through nebular mist
 
-    if (alpha < 0.004) {
+    if (alpha < 0.005) {
         discard;
     }
 
-    // Soft luminous glow without obstructing particles
-    return vec4<f32>(color * (0.9 + wisps * 0.4), alpha);
+    // Luminous celestial glow that softly illuminates without blocking dust particles
+    return vec4<f32>(color * (1.15 + wisps * 0.5), alpha);
 }
