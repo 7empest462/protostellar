@@ -307,7 +307,9 @@ pub fn step_physics_simulation(
 
                 // Velocity Capping: Prevent close-encounter numerical singularities from launching
                 // planets into unphysical hyperbolic escape trajectories (e.g. 210,000 km/s)
-                let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z).sqrt().clamp(0.1, 75.0);
+                let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z)
+                    .sqrt()
+                    .clamp(0.1, 75.0);
                 let v_esc = (2.0 * G_ASTRO * star_mass / r_cyl).sqrt();
                 let max_v = 1.6 * v_esc; // Up to 1.6x escape velocity for eccentric comets
                 let speed = body.3.length();
