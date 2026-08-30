@@ -82,26 +82,29 @@ fn fragment(
         discard;
     }
 
-    // 2. Differential Keplerian Logarithmic Swirling Flow
-    let angle = atan2(pos_world.z, pos_world.x);
+    // 2. Seamless Continuous Cartesian Keplerian Swirling Flow (100% Smooth, Zero Seams)
     let v_k_rot = 0.28 * time * pow(max(r_cyl, 0.4), -0.75);
-    let rot_angle = angle + v_k_rot;
+    let cos_a = cos(v_k_rot);
+    let sin_a = sin(v_k_rot);
 
-    let spiral_coord = vec2<f32>(
-        log(max(r_cyl, 0.15)) * 2.5 - rot_angle * 1.6,
-        rot_angle * 2.0 + log(max(r_cyl, 0.15)) * 0.9
+    // Continuous 2D rotational mapping in Cartesian space (completely eliminates branch cut seams)
+    let p_rot = vec2<f32>(
+        pos_world.x * cos_a - pos_world.z * sin_a,
+        pos_world.x * sin_a + pos_world.z * cos_a
     );
 
-    // Multi-octave domain warping for wispy translucent filaments
+    let uv1 = p_rot * 0.12;
+
+    // Multi-octave domain warping for organic wispy translucent nebular filaments
     let q = vec2<f32>(
-        fbm2(spiral_coord + vec2<f32>(time * 0.015, time * 0.008)),
-        fbm2(spiral_coord + vec2<f32>(4.3, 1.7) + vec2<f32>(-time * 0.01, time * 0.02))
+        fbm2(uv1 + vec2<f32>(time * 0.015, time * 0.008)),
+        fbm2(uv1 + vec2<f32>(4.3, 1.7) + vec2<f32>(-time * 0.01, time * 0.018))
     );
     let r_warp = vec2<f32>(
-        fbm2(spiral_coord + 2.2 * q + vec2<f32>(1.5, 8.2)),
-        fbm2(spiral_coord + 2.2 * q + vec2<f32>(7.8, 2.3))
+        fbm2(uv1 + 2.2 * q + vec2<f32>(1.5, 8.2)),
+        fbm2(uv1 + 2.2 * q + vec2<f32>(7.8, 2.3))
     );
-    let wisps = fbm2(spiral_coord + 1.8 * r_warp);
+    let wisps = fbm2(uv1 + 1.9 * r_warp);
 
     // 3. Dynamic Annular Planetary Gap Clearing
     // Giant planets carve dark orbital lanes through the gas disk
