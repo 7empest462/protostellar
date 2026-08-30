@@ -66,7 +66,7 @@ impl SimulationConfig {
         use crate::utils::constants::*;
 
         match body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar => 0.18,
+            BodyType::Protostar | BodyType::MainSequenceStar => 0.055,
             BodyType::GasGiant => {
                 let m_ratio = (mass_solar / JUPITER_MASS_SOLAR).cbrt() as f32;
                 (0.045 * m_ratio).clamp(0.030, 0.065)
