@@ -91,33 +91,33 @@ pub enum UiButtonAction {
 impl UiButtonAction {
     pub fn tooltip_description(&self) -> &'static str {
         match self {
-            UiButtonAction::TimePause => "⏸ [Space]: Pause or resume continuous orbital physics flow.",
-            UiButtonAction::TimeSpeed1 => "▶ [1]: 1.0x Real-time orbital flow speed.",
-            UiButtonAction::TimeSpeed100 => "⏩ [2]: 100x Accelerated time progression.",
-            UiButtonAction::TimeSpeed10k => "⚡ [3]: 10,000x High-speed planetary accretion flow (~10 kyr/sec).",
-            UiButtonAction::TimeSpeed1M => "🚀 [4]: 1,000,000x Geological timescale flow (~1 Myr/sec).",
-            UiButtonAction::SelectStar => "☀️ Select the central star to inspect solar mass, temperature, and corona.",
-            UiButtonAction::SelectMercury => "🪨 Select the innermost rocky terrestrial planet.",
-            UiButtonAction::SelectEarth => "🌍 Select the habitable-zone terrestrial planet.",
-            UiButtonAction::SelectJupiter => "🪐 Select the dominant outer gas giant planet.",
-            UiButtonAction::SelectKuiper => "☄️ Select the outermost icy Kuiper belt planetesimal.",
-            UiButtonAction::CycleTarget => "🔄 [Tab]: Cycle camera selection through all celestial bodies and embryos.",
-            UiButtonAction::CycleOverlayMode => "📊 [V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
-            UiButtonAction::ToggleTractor => "🧲 [T]: Toggle mouse gravitational tractor beam to pull or redirect orbiting bodies.",
-            UiButtonAction::IncreaseMass => "➕ [U / =]: Injects +25% mass into this body, expanding its physical size and Hill sphere.",
-            UiButtonAction::DecreaseMass => "➖ [J / -]: Strips -20% mass from this body through thermal ablation or particle ejection.",
-            UiButtonAction::ExpandOrbit => "🚀 [O]: Expands circular orbital radius by +10% around the central star.",
-            UiButtonAction::ContractOrbit => "🧲 [L]: Contracts orbital radius by -10%, drawing the body closer into the star's gravity well.",
-            UiButtonAction::CycleComposition => "🎨 [C]: Cycles internal chemistry: Silicate Rock -> Water Ice -> Gas Envelope -> Iron Metal Core.",
-            UiButtonAction::BoostDeltaV => "⚡ [B]: Applies +15% prograde velocity boost (Δv), stretching orbit into an eccentric ellipse.",
-            UiButtonAction::BrakeDeltaV => "⚡ [K]: Applies -15% retrograde velocity brake (-Δv), lowering perihelion toward the star.",
-            UiButtonAction::InjectEmbryo => "☄️ [M]: Injects a new protoplanetary embryo seed in a stable Keplerian orbit.",
-            UiButtonAction::VaporizeBody => "💥 [Del / Backspace]: Shatters this body into a swarm of 500 orbiting dust particles.",
-            UiButtonAction::FocusLock => "🎯 [F]: Locks the 360° orbital camera to track this celestial body smoothly in orbit.",
-            UiButtonAction::ResetView => "☀️ [R]: Resets camera focus to the central star overview (45 AU radius).",
-            UiButtonAction::DeselectBody => "❌ [Escape / R]: Closes the context inspector card and returns to free-fly camera mode.",
-            UiButtonAction::FixOrbit => "🪐 [Z]: Circularizes and stabilizes orbit into a clean Keplerian circle (e = 0.0).",
-            UiButtonAction::IgniteStar => "⭐ [I]: Ignites Hydrogen Core Fusion (or triggers Coronal Solar Blast if already ignited).",
+            UiButtonAction::TimePause => "[Space]: Pause or resume continuous orbital physics flow.",
+            UiButtonAction::TimeSpeed1 => "[1]: 1.0x Real-time orbital flow speed.",
+            UiButtonAction::TimeSpeed100 => "[2]: 100x Accelerated time progression.",
+            UiButtonAction::TimeSpeed10k => "[3]: 10,000x High-speed planetary accretion flow (~10 kyr/sec).",
+            UiButtonAction::TimeSpeed1M => "[4]: 1,000,000x Deep astronomical time-warp (~1 Myr/sec).",
+            UiButtonAction::SelectStar => "Select the central star to inspect solar mass, temperature, and corona.",
+            UiButtonAction::SelectMercury => "Select the innermost rocky terrestrial planet.",
+            UiButtonAction::SelectEarth => "Select the habitable-zone terrestrial planet.",
+            UiButtonAction::SelectJupiter => "Select the dominant outer gas giant planet.",
+            UiButtonAction::SelectKuiper => "Select the outermost icy Kuiper belt planetesimal.",
+            UiButtonAction::CycleTarget => "[Tab]: Cycle camera focus through all active celestial bodies.",
+            UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
+            UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
+            UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
+            UiButtonAction::DecreaseMass => "[J]: Strip -20% outer envelope mass from selected planet.",
+            UiButtonAction::ExpandOrbit => "[O]: Gently expands semi-major axis (+10% orbital radius).",
+            UiButtonAction::ContractOrbit => "[L]: Gently contracts semi-major axis (-10% orbital radius).",
+            UiButtonAction::CycleComposition => "[C]: Cycles bulk chemical composition (Metal-Rich -> Rocky -> Carbonaceous -> Icy -> Solar Gas).",
+            UiButtonAction::BoostDeltaV => "[B]: Applies +15% prograde velocity boost (+dv), stretching orbit into an ellipse.",
+            UiButtonAction::BrakeDeltaV => "[K]: Applies -15% retrograde velocity brake (-dv), lowering perihelion toward the star.",
+            UiButtonAction::InjectEmbryo => "[M]: Injects a new protoplanetary embryo seed in a stable Keplerian orbit.",
+            UiButtonAction::VaporizeBody => "[Del]: Vaporizes the selected body into microscopic accretion dust particles.",
+            UiButtonAction::FocusLock => "[F]: Focus camera directly on currently selected celestial body.",
+            UiButtonAction::ResetView => "[R]: Resets camera focus to the central star overview (45 AU radius).",
+            UiButtonAction::DeselectBody => "[Esc]: Deselect current body and return to free orbital camera.",
+            UiButtonAction::FixOrbit => "[Z]: Circularizes and stabilizes orbit into a clean Keplerian circle (e = 0.0).",
+            UiButtonAction::IgniteStar => "[I]: Ignites Hydrogen Core Fusion (or triggers Coronal Solar Blast if already ignited).",
         }
     }
 }
@@ -228,12 +228,12 @@ pub fn setup_hud(mut commands: Commands) {
                                 BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
                             ))
                             .with_children(|btn_row| {
-                                create_button(btn_row, UiButtonAction::SelectStar, "☀️ Sun", Color::srgba(0.25, 0.18, 0.04, 0.9), Color::srgb(0.9, 0.7, 0.2));
-                                create_button(btn_row, UiButtonAction::SelectEarth, "🌍 Proto-Earth", Color::srgba(0.05, 0.18, 0.15, 0.85), Color::srgb(0.3, 0.85, 0.6));
-                                create_button(btn_row, UiButtonAction::SelectMercury, "🪨 Ceres", Color::srgba(0.08, 0.12, 0.2, 0.85), Color::srgb(0.4, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::SelectJupiter, "🪐 Proto-Jupiter", Color::srgba(0.18, 0.12, 0.08, 0.85), Color::srgb(0.9, 0.6, 0.3));
-                                create_button(btn_row, UiButtonAction::SelectKuiper, "☄️ Kuiper", Color::srgba(0.08, 0.12, 0.22, 0.85), Color::srgb(0.4, 0.6, 0.95));
-                                create_button(btn_row, UiButtonAction::CycleTarget, "🔄 Cycle [Tab]", Color::srgba(0.12, 0.16, 0.26, 0.85), Color::srgb(0.5, 0.7, 1.0));
+                                create_button(btn_row, UiButtonAction::SelectStar, "Sun", Color::srgba(0.25, 0.18, 0.04, 0.9), Color::srgb(0.9, 0.7, 0.2));
+                                create_button(btn_row, UiButtonAction::SelectEarth, "Proto-Earth", Color::srgba(0.05, 0.18, 0.15, 0.85), Color::srgb(0.3, 0.85, 0.6));
+                                create_button(btn_row, UiButtonAction::SelectMercury, "Ceres", Color::srgba(0.08, 0.12, 0.2, 0.85), Color::srgb(0.4, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::SelectJupiter, "Proto-Jupiter", Color::srgba(0.18, 0.12, 0.08, 0.85), Color::srgb(0.9, 0.6, 0.3));
+                                create_button(btn_row, UiButtonAction::SelectKuiper, "Kuiper", Color::srgba(0.08, 0.12, 0.22, 0.85), Color::srgb(0.4, 0.6, 0.95));
+                                create_button(btn_row, UiButtonAction::CycleTarget, "Cycle [Tab]", Color::srgba(0.12, 0.16, 0.26, 0.85), Color::srgb(0.5, 0.7, 1.0));
                             });
 
                         // Notification Toast Box
@@ -250,7 +250,7 @@ pub fn setup_hud(mut commands: Commands) {
                             ))
                             .with_children(|toast_box| {
                                 toast_box.spawn((
-                                    Text::new("⚡ PROTOSTELLAR LIVE"),
+                                    Text::new(">> PROTOSTELLAR LIVE"),
                                     TextFont { font_size: FontSize::Px(13.5), ..default() },
                                     TextColor(Color::srgb(0.4, 0.9, 1.0)),
                                     HudToastText,
@@ -258,7 +258,7 @@ pub fn setup_hud(mut commands: Commands) {
                             });
                     });
 
-                // Top Right: Interactive Time Controls Panel
+                // Top Right: Diagnostics & Time Scale Indicator
                 top_row
                     .spawn((
                         Node {
@@ -285,11 +285,11 @@ pub fn setup_hud(mut commands: Commands) {
                                 ..default()
                             })
                             .with_children(|btn_row| {
-                                create_button(btn_row, UiButtonAction::TimePause, "⏸ Pause", Color::srgba(0.18, 0.08, 0.08, 0.85), Color::srgb(0.9, 0.4, 0.4));
-                                create_button(btn_row, UiButtonAction::TimeSpeed1, "▶ 1x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed100, "⏩ 100x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed10k, "⚡ 10k/s", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed1M, "🚀 1M/s", Color::srgba(0.12, 0.08, 0.22, 0.85), Color::srgb(0.7, 0.4, 0.95));
+                                create_button(btn_row, UiButtonAction::TimePause, "Pause", Color::srgba(0.18, 0.08, 0.08, 0.85), Color::srgb(0.9, 0.4, 0.4));
+                                create_button(btn_row, UiButtonAction::TimeSpeed1, "1x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::TimeSpeed100, "100x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::TimeSpeed10k, "10k/s", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::TimeSpeed1M, "1M/s", Color::srgba(0.12, 0.08, 0.22, 0.85), Color::srgb(0.7, 0.4, 0.95));
                             });
                     });
             });
@@ -344,11 +344,11 @@ pub fn setup_hud(mut commands: Commands) {
                                         ..default()
                                     })
                                     .with_children(|row1| {
-                                        create_button(row1, UiButtonAction::IgniteStar, "⭐ Ignite Star / Blast [I]", Color::srgba(0.24, 0.16, 0.04, 0.9), Color::srgb(1.0, 0.85, 0.3));
-                                        create_button(row1, UiButtonAction::FocusLock, "🎯 Track Cam [F]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
-                                        create_button(row1, UiButtonAction::IncreaseMass, "➕ Accrete Mass (+25%) [U]", Color::srgba(0.06, 0.18, 0.12, 0.9), Color::srgb(0.3, 0.9, 0.55));
-                                        create_button(row1, UiButtonAction::DecreaseMass, "➖ Strip Mass (-20%) [J]", Color::srgba(0.18, 0.08, 0.08, 0.9), Color::srgb(0.95, 0.4, 0.4));
-                                        create_button(row1, UiButtonAction::DeselectBody, "❌ Deselect [Esc]", Color::srgba(0.15, 0.15, 0.18, 0.9), Color::srgb(0.7, 0.7, 0.8));
+                                        create_button(row1, UiButtonAction::IgniteStar, "Ignite Star / Blast [I]", Color::srgba(0.24, 0.16, 0.04, 0.9), Color::srgb(1.0, 0.85, 0.3));
+                                        create_button(row1, UiButtonAction::FocusLock, "Track Cam [F]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
+                                        create_button(row1, UiButtonAction::IncreaseMass, "Accrete Mass (+25%) [U]", Color::srgba(0.06, 0.18, 0.12, 0.9), Color::srgb(0.3, 0.9, 0.55));
+                                        create_button(row1, UiButtonAction::DecreaseMass, "Strip Mass (-20%) [J]", Color::srgba(0.18, 0.08, 0.08, 0.9), Color::srgb(0.95, 0.4, 0.4));
+                                        create_button(row1, UiButtonAction::DeselectBody, "Deselect [Esc]", Color::srgba(0.15, 0.15, 0.18, 0.9), Color::srgb(0.7, 0.7, 0.8));
                                     });
 
                                 // Row 2: Orbital Maneuvers (Radius & Delta-V)
@@ -360,11 +360,11 @@ pub fn setup_hud(mut commands: Commands) {
                                         ..default()
                                     })
                                     .with_children(|row2| {
-                                        create_button(row2, UiButtonAction::FixOrbit, "🪐 Fix Orbit [Z]", Color::srgba(0.06, 0.22, 0.22, 0.9), Color::srgb(0.3, 0.95, 0.85));
-                                        create_button(row2, UiButtonAction::ExpandOrbit, "🚀 +10% Orbit [O]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
-                                        create_button(row2, UiButtonAction::ContractOrbit, "🧲 -10% Orbit [L]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
-                                        create_button(row2, UiButtonAction::BoostDeltaV, "⚡ Boost Δv [B]", Color::srgba(0.18, 0.15, 0.06, 0.9), Color::srgb(0.95, 0.85, 0.3));
-                                        create_button(row2, UiButtonAction::BrakeDeltaV, "⚡ Brake Δv [K]", Color::srgba(0.18, 0.12, 0.06, 0.9), Color::srgb(0.95, 0.65, 0.25));
+                                        create_button(row2, UiButtonAction::FixOrbit, "Fix Orbit [Z]", Color::srgba(0.06, 0.22, 0.22, 0.9), Color::srgb(0.3, 0.95, 0.85));
+                                        create_button(row2, UiButtonAction::ExpandOrbit, "+10% Orbit [O]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
+                                        create_button(row2, UiButtonAction::ContractOrbit, "-10% Orbit [L]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
+                                        create_button(row2, UiButtonAction::BoostDeltaV, "Boost +dv [B]", Color::srgba(0.18, 0.15, 0.06, 0.9), Color::srgb(0.95, 0.85, 0.3));
+                                        create_button(row2, UiButtonAction::BrakeDeltaV, "Brake -dv [K]", Color::srgba(0.18, 0.12, 0.06, 0.9), Color::srgb(0.95, 0.65, 0.25));
                                     });
 
                                 // Row 3: Material, Protoplanet Spawning, Tractor & Destruction
@@ -376,10 +376,10 @@ pub fn setup_hud(mut commands: Commands) {
                                         ..default()
                                     })
                                     .with_children(|row3| {
-                                        create_button(row3, UiButtonAction::CycleComposition, "🎨 Change Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
-                                        create_button(row3, UiButtonAction::InjectEmbryo, "☄️ Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
-                                        create_button(row3, UiButtonAction::ToggleTractor, "🧲 Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
-                                        create_button(row3, UiButtonAction::VaporizeBody, "💥 Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
+                                        create_button(row3, UiButtonAction::CycleComposition, "Change Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
+                                        create_button(row3, UiButtonAction::InjectEmbryo, "Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
+                                        create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
+                                        create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
                                     });
 
                                 // Dynamic Tooltip & Explanation Bar
@@ -397,7 +397,7 @@ pub fn setup_hud(mut commands: Commands) {
                                     ))
                                     .with_children(|tip_box| {
                                         tip_box.spawn((
-                                            Text::new("💡 Click any planet or button to interact. Hover over buttons for descriptions."),
+                                            Text::new("Click any planet or button to interact. Hover over buttons for descriptions."),
                                             TextFont { font_size: FontSize::Px(10.5), ..default() },
                                             TextColor(Color::srgb(0.75, 0.90, 1.0)),
                                             HudActionTooltipText,
@@ -424,7 +424,7 @@ pub fn setup_hud(mut commands: Commands) {
                     ))
                     .with_children(|timer_panel| {
                         timer_panel.spawn((
-                            Text::new("⏳ SIMULATION ELAPSED TIME: 0.00 yr\n⚡ RATE: 1.0x (Real-time) | ▶ FLOWING"),
+                            Text::new("SIMULATION ELAPSED TIME: 0.00 yr\nRATE: 1.0x (Real-time) | FLOWING"),
                             TextFont { font_size: FontSize::Px(13.5), ..default() },
                             TextColor(Color::srgb(0.4, 0.95, 1.0)),
                             HudBottomTimerText,
@@ -437,11 +437,11 @@ pub fn setup_hud(mut commands: Commands) {
                                 ..default()
                             })
                             .with_children(|btn_row| {
-                                create_button(btn_row, UiButtonAction::TimePause, "⏸ Pause", Color::srgba(0.18, 0.08, 0.08, 0.85), Color::srgb(0.9, 0.4, 0.4));
-                                create_button(btn_row, UiButtonAction::TimeSpeed1, "▶ 1x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed100, "⏩ 100x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed10k, "⚡ 10k/s", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed1M, "🚀 1M/s", Color::srgba(0.12, 0.08, 0.22, 0.85), Color::srgb(0.7, 0.4, 0.95));
+                                create_button(btn_row, UiButtonAction::TimePause, "Pause", Color::srgba(0.18, 0.08, 0.08, 0.85), Color::srgb(0.9, 0.4, 0.4));
+                                create_button(btn_row, UiButtonAction::TimeSpeed1, "1x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::TimeSpeed100, "100x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::TimeSpeed10k, "10k/s", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
+                                create_button(btn_row, UiButtonAction::TimeSpeed1M, "1M/s", Color::srgba(0.12, 0.08, 0.22, 0.85), Color::srgb(0.7, 0.4, 0.95));
                             });
                     });
 
@@ -458,7 +458,7 @@ pub fn setup_hud(mut commands: Commands) {
                     ))
                     .with_children(|panel| {
                         panel.spawn((
-                            Text::new("360° NAVIGATION & CONTROLS:\n[Right-Drag] 360° Orbit View  |  [WASD / QE] Free-Fly Pan  |  [Scroll] Smooth Zoom\n[Left-Click / Tab] Select Celestial Body  |  [F] Focus-Lock  |  [Esc / R] Deselect / Overview\n[Click Any Button Above] Instant Mouse Action  |  [Space] Pause / Resume"),
+                            Text::new("360 NAVIGATION & CONTROLS:\n[Right-Drag] 360 Orbit View  |  [WASD / QE] Free-Fly Pan  |  [Scroll] Smooth Zoom\n[Left-Click / Tab] Select Celestial Body  |  [F] Focus-Lock  |  [Esc / R] Deselect / Overview\n[Click Any Button Above] Instant Mouse Action  |  [Space] Pause / Resume"),
                             TextFont { font_size: FontSize::Px(10.5), ..default() },
                             TextColor(Color::srgb(0.75, 0.82, 0.95)),
                         ));
@@ -1067,30 +1067,30 @@ pub fn update_hud(
                 bodies_query.get(selected_entity)
             {
                 let type_name = match body.body_type {
-                    BodyType::Protostar => "☀️ THE SUN (Protostar)",
-                    BodyType::MainSequenceStar => "⭐ THE SUN (Main Sequence Star)",
-                    BodyType::GasGiant => "🪐 GAS GIANT",
-                    BodyType::IceGiant => "❄️ ICE GIANT",
-                    BodyType::TerrestrialPlanet => "🌍 TERRESTRIAL PLANET",
-                    BodyType::Protoplanet => "🌱 PROTOPLANETARY EMBRYO",
-                    BodyType::Planetesimal => "☄️ PLANETESIMAL",
-                    BodyType::Asteroid => "🪨 ASTEROID",
-                    BodyType::Comet => "❄️ COMET",
-                    BodyType::DustGrain => "✨ DUST GRAIN",
-                    BodyType::DebrisRing => "💫 DEBRIS RING",
-                    BodyType::Moon => "🌙 NATURAL MOON / SATELLITE",
+                    BodyType::Protostar => "THE SUN (Protostar)",
+                    BodyType::MainSequenceStar => "THE SUN (Main Sequence Star)",
+                    BodyType::GasGiant => "GAS GIANT",
+                    BodyType::IceGiant => "ICE GIANT",
+                    BodyType::TerrestrialPlanet => "TERRESTRIAL PLANET",
+                    BodyType::Protoplanet => "PROTOPLANETARY EMBRYO",
+                    BodyType::Planetesimal => "PLANETESIMAL",
+                    BodyType::Asteroid => "ASTEROID",
+                    BodyType::Comet => "COMET",
+                    BodyType::DustGrain => "DUST GRAIN",
+                    BodyType::DebrisRing => "DEBRIS RING",
+                    BodyType::Moon => "NATURAL MOON / SATELLITE",
                 };
                 let mass_str = if mass.0 >= 0.01 {
-                    format!("{:.2} M☉ ({:.1} M_J)", mass.0, mass.0 / JUPITER_MASS_SOLAR)
+                    format!("{:.2} M_sun ({:.1} M_J)", mass.0, mass.0 / JUPITER_MASS_SOLAR)
                 } else {
-                    format!("{:.2} M⊕", mass.0 / EARTH_MASS_SOLAR)
+                    format!("{:.2} M_earth", mass.0 / EARTH_MASS_SOLAR)
                 };
                 let dist_au = pos.0.length();
                 let speed_km_s = vel.0.length() * AU_PER_YR_TO_KM_PER_S;
                 let rad_km = rad.0 * AU_TO_KM;
 
                 toast_text.0 = format!(
-                    "▶ SELECTED: {} [{}]  |  Mass: {}  |  Radius: {:.0} km  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K ◀",
+                    ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {:.0} km  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
                     body.name.to_uppercase(),
                     type_name,
                     mass_str,
@@ -1100,10 +1100,10 @@ pub fn update_hud(
                     temp.0,
                 );
             } else {
-                toast_text.0 = "⚡ PROTOSTELLAR LIVE // Select any planet or the Sun".to_string();
+                toast_text.0 = ">> PROTOSTELLAR LIVE // Select any planet or the Sun".to_string();
             }
         } else {
-            toast_text.0 = "⚡ PROTOSTELLAR LIVE // Click any planet or the Sun".to_string();
+            toast_text.0 = ">> PROTOSTELLAR LIVE // Click any planet or the Sun".to_string();
         }
     }
 
@@ -1120,7 +1120,7 @@ pub fn update_hud(
         let phase_str = match phase_mgr.current_phase {
             crate::game::phases::SystemPhase::MolecularCloudCollapse => "MOLECULAR CLOUD COLLAPSE",
             crate::game::phases::SystemPhase::ProtoplanetaryDisk => "PROTOPLANETARY DISK FORMATION",
-            crate::game::phases::SystemPhase::StarIgnition => "⭐ STAR IGNITION (FUSION ONSET)",
+            crate::game::phases::SystemPhase::StarIgnition => "STAR IGNITION (FUSION ONSET)",
             crate::game::phases::SystemPhase::PlanetaryAccretion => {
                 "PLANETARY ACCRETION & EMBRYO GROWTH"
             }
@@ -1138,10 +1138,10 @@ pub fn update_hud(
             .iter()
             .find(|m| !m.achieved)
             .map(|m| format!("{}: {}", m.title, m.prompt))
-            .unwrap_or_else(|| "🌟 All Formation Milestones Completed!".to_string());
+            .unwrap_or_else(|| "All Formation Milestones Completed!".to_string());
 
         text.0 = format!(
-            "Phase: {}\nTime: T + {} | Star: {:.2} M☉\nSwarm: {} / 50,000 active particles | Gas: {}\nPlanets: {} | Protoplanets: {}\nGoal: {}",
+            "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / 50,000 active particles | Gas: {}\nPlanets: {} | Protoplanets: {}\nGoal: {}",
             phase_str,
             time_formatted,
             phase_mgr.star_mass,
@@ -1196,13 +1196,13 @@ pub fn update_hud(
         };
 
         let status_str = if time_warp.is_paused {
-            "⏸ PAUSED [Space to Resume]"
+            "PAUSED [Space to Resume]"
         } else {
-            "▶ FLOWING"
+            "FLOWING"
         };
 
         text.0 = format!(
-            "⏳ SIMULATION ELAPSED TIME: {}\n⚡ SPEED: {} | STATUS: {}",
+            "SIMULATION ELAPSED TIME: {}\nSPEED: {} | STATUS: {}",
             time_formatted,
             time_warp.human_readable_speed(),
             status_str,
@@ -1220,9 +1220,9 @@ pub fn update_hud(
                 let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
                 let mass_str = if mass.0 >= 0.01 {
-                    format!("{:.3} M☉ ({:.1} M_J)", mass.0, mass.0 / JUPITER_MASS_SOLAR)
+                    format!("{:.3} M_sun ({:.1} M_J)", mass.0, mass.0 / JUPITER_MASS_SOLAR)
                 } else {
-                    format!("{:.2} M⊕ ({:.4} M☉)", mass.0 / EARTH_MASS_SOLAR, mass.0)
+                    format!("{:.2} M_earth ({:.4} M_sun)", mass.0 / EARTH_MASS_SOLAR, mass.0)
                 };
 
                 let radius_km = rad.0 * AU_TO_KM;
@@ -1247,7 +1247,7 @@ pub fn update_hud(
 
                 let spin_str = if let Some(spin) = opt_spin {
                     format!(
-                        " | Day: {:.1}h | Tilt: {:.1}°",
+                        " | Day: {:.1}h | Tilt: {:.1} deg",
                         spin.rotation_period_hours, spin.axial_tilt_degrees
                     )
                 } else {
@@ -1275,9 +1275,9 @@ pub fn update_hud(
                     let core_temp_mk = ignition.core_temperature / 1.0e6;
                     let fusion_pct = ignition.fusion_fraction * 100.0;
                     let status = if ignition.is_ignited {
-                        format!("⭐ ACTIVE HYDROGEN FUSION (Main Sequence)\nSolar Wind Shockwave: {:.2} AU | Gas Dispersal: {:.0}%", ignition.shockwave_radius, (1.0 - config.gas_density_scale) * 100.0)
+                        format!("ACTIVE HYDROGEN FUSION (Main Sequence)\nSolar Wind Shockwave: {:.2} AU | Gas Dispersal: {:.0}%", ignition.shockwave_radius, (1.0 - config.gas_density_scale) * 100.0)
                     } else {
-                        format!("⏳ Kelvin-Helmholtz Core Heating (Progress: {:.1}%)\nIgnition Threshold: 10.0 MK [Press 'I' or Click Button Below to Ignite]", fusion_pct)
+                        format!("Kelvin-Helmholtz Core Heating (Progress: {:.1}%)\nIgnition Threshold: 10.0 MK [Press 'I' or Click Button Below to Ignite]", fusion_pct)
                     };
                     format!(
                         "\nStellar Core Temp: {:.2} MK | Fusion: {:.1}%\nStellar State: {}",
@@ -1287,24 +1287,23 @@ pub fn update_hud(
                     "".to_string()
                 };
 
-                let (icon, type_str) = match body.body_type {
-                    BodyType::Protostar => ("☀️", "Central Star (Protostar)"),
-                    BodyType::MainSequenceStar => ("⭐", "Main Sequence Star"),
-                    BodyType::GasGiant => ("🪐", "Gas Giant Planet"),
-                    BodyType::IceGiant => ("❄️", "Ice Giant Planet"),
-                    BodyType::TerrestrialPlanet => ("🌍", "Terrestrial Planet"),
-                    BodyType::Protoplanet => ("🌱", "Protoplanetary Embryo"),
-                    BodyType::Planetesimal => ("☄️", "Planetesimal"),
-                    BodyType::Asteroid => ("🪨", "Asteroid"),
-                    BodyType::Comet => ("❄️", "Comet"),
-                    BodyType::DustGrain => ("✨", "Dust Grain"),
-                    BodyType::DebrisRing => ("💫", "Debris Ring"),
-                    BodyType::Moon => ("🌙", "Natural Moon / Satellite"),
+                let type_str = match body.body_type {
+                    BodyType::Protostar => "Central Star (Protostar)",
+                    BodyType::MainSequenceStar => "Main Sequence Star",
+                    BodyType::GasGiant => "Gas Giant Planet",
+                    BodyType::IceGiant => "Ice Giant Planet",
+                    BodyType::TerrestrialPlanet => "Terrestrial Planet",
+                    BodyType::Protoplanet => "Protoplanetary Embryo",
+                    BodyType::Planetesimal => "Planetesimal",
+                    BodyType::Asteroid => "Asteroid",
+                    BodyType::Comet => "Comet",
+                    BodyType::DustGrain => "Dust Grain",
+                    BodyType::DebrisRing => "Debris Ring",
+                    BodyType::Moon => "Natural Moon / Satellite",
                 };
 
                 text.0 = format!(
-                    "╔══════════════════════════════════════════════════╗\n║  {} SELECTED: {}  \n║  CLASSIFICATION: {}  \n╚══════════════════════════════════════════════════╝\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm³ | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s{}\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}",
-                    icon,
+                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s{}\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,

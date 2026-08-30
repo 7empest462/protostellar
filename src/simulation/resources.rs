@@ -66,32 +66,32 @@ impl SimulationConfig {
         use crate::utils::constants::*;
 
         match body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar => 0.95,
+            BodyType::Protostar | BodyType::MainSequenceStar => 0.22,
             BodyType::GasGiant => {
                 let m_ratio = (mass_solar / JUPITER_MASS_SOLAR).cbrt() as f32;
-                (0.18 * m_ratio).clamp(0.13, 0.30)
+                (0.10 * m_ratio).clamp(0.060, 0.160)
             }
             BodyType::IceGiant => {
                 let m_ratio = (mass_solar / (15.0 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.11 * m_ratio).clamp(0.08, 0.16)
+                (0.065 * m_ratio).clamp(0.040, 0.100)
             }
             BodyType::TerrestrialPlanet => {
                 let m_ratio = (mass_solar / EARTH_MASS_SOLAR).cbrt() as f32;
-                (0.080 * m_ratio).clamp(0.060, 0.120)
+                (0.042 * m_ratio).clamp(0.025, 0.065)
             }
             BodyType::Protoplanet => {
                 let m_ratio = (mass_solar / (0.05 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.045 * m_ratio).clamp(0.030, 0.070)
+                (0.026 * m_ratio).clamp(0.015, 0.042)
             }
             BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet => {
                 let m_ratio = (mass_solar / (0.001 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.016 * m_ratio).clamp(0.010, 0.025)
+                (0.012 * m_ratio).clamp(0.006, 0.018)
             }
             BodyType::Moon => {
                 let m_ratio = (mass_solar / (0.012 * EARTH_MASS_SOLAR)).cbrt() as f32;
-                (0.018 * m_ratio).clamp(0.010, 0.030)
+                (0.010 * m_ratio).clamp(0.005, 0.016)
             }
-            _ => 0.008,
+            _ => 0.005,
         }
     }
 }

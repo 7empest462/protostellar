@@ -727,7 +727,9 @@ pub fn direct_nebular_gas_accretion(
         let m = mass.0;
 
         // Gas accretion occurs when core mass exceeds critical threshold (~0.02 Earth masses)
-        if m < EARTH_MASS_SOLAR * 0.02 {
+        // Planetary runaway gas accretion limit: Gap opening & disk clearance caps planet to ~3.5 M_Jupiter
+        let max_planet_gas_mass = JUPITER_MASS_SOLAR * 3.5;
+        if m >= max_planet_gas_mass {
             continue;
         }
 
@@ -742,8 +744,12 @@ pub fn direct_nebular_gas_accretion(
         let omega_k = (G_ASTRO * star_mass / (r_au * r_au * r_au)).sqrt();
 
         // Hydrodynamic gas envelope inflow rate: dM/dt = C_gas * R_H^2 * rho_gas * Omega_K
-        let c_gas = 160.0 * (config.accretion_rate_multiplier as f64 / 120.0);
-        let d_mass_gas = (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr).min(m * 0.04); // Cap to 4% growth per step for numerical stability
+        // Gap factor slows accretion as planet carves an annular gap in the disk
+        let gap_factor = (1.0 - (m / max_planet_gas_mass)).clamp(0.05, 1.0);
+        let c_gas = 80.0 * (config.accretion_rate_multiplier as f64 / 120.0);
+        let d_mass_gas = (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr * gap_factor)
+            .min(m * 0.005) // 0.5% max growth per step for physical stability
+            .min(max_planet_gas_mass - m);
 
         if d_mass_gas > 1e-16 {
             let old_mass = m;
