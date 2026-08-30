@@ -578,11 +578,16 @@ pub fn handle_ui_button_interactions(
                             .iter()
                             .filter(|(.., is_star)| is_star.is_none())
                             .collect();
-                        sorted
-                            .sort_by(|a, b| a.3 .0.length().partial_cmp(&b.3 .0.length()).unwrap());
-                        if let Some(first) = sorted.first() {
-                            let ent = first.0;
-                            let body_name = first.6.name.clone();
+                        sorted.sort_by(|a, b| {
+                            a.3.0.length().partial_cmp(&b.3.0.length()).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        // Prefer body named Mercury or closest inner body
+                        let target = sorted.iter().find(|(.., body, _)| body.name.to_lowercase().contains("mercury") || body.name.to_lowercase().contains("ceres"))
+                            .or_else(|| sorted.first());
+
+                        if let Some(item) = target {
+                            let ent = item.0;
+                            let body_name = item.6.name.clone();
                             player_state.selected_entity = Some(ent);
                             if let Ok(mut cam) = camera_query.single_mut() {
                                 cam.target_entity = Some(ent);
@@ -596,11 +601,19 @@ pub fn handle_ui_button_interactions(
                             .iter()
                             .filter(|(.., is_star)| is_star.is_none())
                             .collect();
-                        sorted
-                            .sort_by(|a, b| a.3 .0.length().partial_cmp(&b.3 .0.length()).unwrap());
-                        if sorted.len() > 1 {
-                            let ent = sorted[1].0;
-                            let body_name = sorted[1].6.name.clone();
+                        sorted.sort_by(|a, b| {
+                            a.3.0.length().partial_cmp(&b.3.0.length()).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        // Prefer body named Earth, or closest planet near ~1.0-2.0 AU
+                        let target = sorted.iter().find(|(.., body, _)| body.name.to_lowercase().contains("earth"))
+                            .or_else(|| sorted.iter().min_by(|a, b| {
+                                (a.3.0.length() - 1.5).abs().partial_cmp(&(b.3.0.length() - 1.5).abs()).unwrap_or(std::cmp::Ordering::Equal)
+                            }))
+                            .or_else(|| sorted.first());
+
+                        if let Some(item) = target {
+                            let ent = item.0;
+                            let body_name = item.6.name.clone();
                             player_state.selected_entity = Some(ent);
                             if let Ok(mut cam) = camera_query.single_mut() {
                                 cam.target_entity = Some(ent);
@@ -614,11 +627,19 @@ pub fn handle_ui_button_interactions(
                             .iter()
                             .filter(|(.., is_star)| is_star.is_none())
                             .collect();
-                        sorted
-                            .sort_by(|a, b| a.3 .0.length().partial_cmp(&b.3 .0.length()).unwrap());
-                        if sorted.len() > 2 {
-                            let ent = sorted[2].0;
-                            let body_name = sorted[2].6.name.clone();
+                        sorted.sort_by(|a, b| {
+                            a.3.0.length().partial_cmp(&b.3.0.length()).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        // Prefer body named Jupiter or massive outer planet near ~5.0-10.0 AU
+                        let target = sorted.iter().find(|(.., body, _)| body.name.to_lowercase().contains("jupiter"))
+                            .or_else(|| sorted.iter().min_by(|a, b| {
+                                (a.3.0.length() - 8.5).abs().partial_cmp(&(b.3.0.length() - 8.5).abs()).unwrap_or(std::cmp::Ordering::Equal)
+                            }))
+                            .or_else(|| sorted.first());
+
+                        if let Some(item) = target {
+                            let ent = item.0;
+                            let body_name = item.6.name.clone();
                             player_state.selected_entity = Some(ent);
                             if let Ok(mut cam) = camera_query.single_mut() {
                                 cam.target_entity = Some(ent);
@@ -632,8 +653,10 @@ pub fn handle_ui_button_interactions(
                             .iter()
                             .filter(|(.., is_star)| is_star.is_none())
                             .collect();
-                        sorted
-                            .sort_by(|a, b| a.3 .0.length().partial_cmp(&b.3 .0.length()).unwrap());
+                        sorted.sort_by(|a, b| {
+                            a.3.0.length().partial_cmp(&b.3.0.length()).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        // Outermost planet or Kuiper embryo
                         if let Some(last) = sorted.last() {
                             let ent = last.0;
                             let body_name = last.6.name.clone();
@@ -1145,9 +1168,9 @@ pub fn update_hud(
                 } else {
                     format!("{:.2} M_earth", mass.0 / EARTH_MASS_SOLAR)
                 };
-                let dist_au = pos.0.length();
-                let speed_km_s = vel.0.length() * AU_PER_YR_TO_KM_PER_S;
-                let rad_km = rad.0 * AU_TO_KM;
+                let dist_au = if pos.0.is_finite() { pos.0.length() } else { 0.0 };
+                let speed_km_s = if vel.0.is_finite() { vel.0.length() * AU_PER_YR_TO_KM_PER_S } else { 0.0 };
+                let rad_km = (rad.0 * AU_TO_KM).max(1.0);
 
                 toast_text.0 = format!(
                     ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {:.0} km  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
@@ -1225,13 +1248,19 @@ pub fn update_hud(
             PlayerTool::DensityWave => "DENSITY WAVE",
         };
 
+        let drift_pct = if energy_monitor.relative_energy_drift.is_finite() {
+            (energy_monitor.relative_energy_drift * 100.0).clamp(0.0, 999.0)
+        } else {
+            0.0
+        };
+
         text.0 = format!(
             "SPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
             speed_str,
             tool_str,
             player_state.overlay_mode.display_name(),
             config.accretion_rate_multiplier,
-            energy_monitor.relative_energy_drift * 100.0,
+            drift_pct,
             sim_time.step_count,
         );
     }
@@ -1275,8 +1304,8 @@ pub fn update_hud(
             if let Ok((pos, vel, mass, rad, temp, comp, body, opt_diff, opt_spin, opt_ignition)) =
                 bodies_query.get(selected_entity)
             {
-                let dist_au = pos.0.length();
-                let speed_au_yr = vel.0.length();
+                let dist_au = if pos.0.is_finite() { pos.0.length() } else { 0.0 };
+                let speed_au_yr = if vel.0.is_finite() { vel.0.length() } else { 0.0 };
                 let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
                 let mass_str = if mass.0 >= 0.01 {

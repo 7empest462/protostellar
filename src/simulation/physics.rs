@@ -125,9 +125,6 @@ pub fn step_physics_simulation(
         }
     }
 
-    const C_LIGHT_AU_YR: f64 = 63241.077;
-    const C_LIGHT_SQ: f64 = C_LIGHT_AU_YR * C_LIGHT_AU_YR;
-
     for _ in 0..n_substeps {
         // --- 1. Kick step (v += a * dt/2) ---
         for body in body_data.iter_mut() {
@@ -216,25 +213,11 @@ pub fn step_physics_simulation(
             .collect();
 
         let compute_acc =
-            |i: usize, pos: &DVec3, vel: &DVec3, rad: f64, b_type: BodyType| -> DVec3 {
+            |i: usize, pos: &DVec3, vel: &DVec3, _rad: f64, b_type: BodyType| -> DVec3 {
                 let mut acc = DVec3::ZERO;
 
-                // Non-Keplerian perturbations (1PN GR + Gas Drag + Mutual Gravity)
+                // Non-Keplerian perturbations (Gas Aerodynamic Drag & Eccentricity Damping)
                 if !matches!(b_type, BodyType::Protostar | BodyType::MainSequenceStar) {
-                    let r_vec = *pos - star_pos;
-                    let r_mag = r_vec.length().max(1e-5);
-                    let dist_sq = r_vec.length_squared() + softening_sq;
-                    let dist = dist_sq.sqrt();
-
-                    // 1PN General Relativistic orbital precession correction (preserves long-term inner stability)
-                    let h_vec = r_vec.cross(*vel);
-                    let h_sq = h_vec.length_squared();
-                    if h_sq > 1e-12 {
-                        let a_gr = (3.0 * G_ASTRO * star_mass * h_sq)
-                            / (C_LIGHT_SQ * r_mag.powi(4) * dist);
-                        acc -= (a_gr * (star_mass / 1.0)) * r_vec;
-                    }
-
                     // Gas aerodynamic drag and orbital circularization
                     if config.enable_gas_drag && config.gas_density_scale > 0.001 {
                         let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.1);
@@ -259,14 +242,13 @@ pub fn step_physics_simulation(
                     }
                 }
 
-                // Mutual N-body interactions with Adaptive Close-Encounter Softening
+                // Mutual N-body interactions with Adaptive Softening
                 for &(m_pos, m_mass, m_rad, m_idx) in &massive_data {
                     if m_idx == i {
                         continue;
                     }
                     let r_vec = *pos - m_pos;
-                    let contact_r = rad + m_rad;
-                    let pair_softening_sq = softening_sq.max((contact_r * 0.25).powi(2));
+                    let pair_softening_sq = softening_sq.max((m_rad * 0.5).powi(2)).max(1e-4);
                     let dist_sq = r_vec.length_squared() + pair_softening_sq;
                     let dist = dist_sq.sqrt();
                     acc -= (G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
@@ -280,7 +262,17 @@ pub fn step_physics_simulation(
                     acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
                 }
 
-                acc
+                // Acceleration Limiting: Bound maximum acceleration to prevent high-warp numerical explosions
+                let acc_mag = acc.length();
+                if acc_mag > 80.0 {
+                    acc *= 80.0 / acc_mag;
+                }
+
+                if !acc.is_finite() {
+                    DVec3::ZERO
+                } else {
+                    acc
+                }
             };
 
         // Compute accelerations sequentially (<64 bodies)
@@ -304,9 +296,18 @@ pub fn step_physics_simulation(
             if !matches!(body.6, BodyType::Protostar | BodyType::MainSequenceStar) {
                 body.3 += body.4 * (sub_dt * 0.5);
 
+                // Sanitize non-finite vectors
+                if !body.2.is_finite() || !body.3.is_finite() {
+                    let safe_r = 1.0;
+                    let v_k = (G_ASTRO * star_mass / safe_r).sqrt();
+                    body.2 = DVec3::new(safe_r, 0.0, 0.0);
+                    body.3 = DVec3::new(0.0, 0.0, v_k);
+                    body.4 = DVec3::ZERO;
+                }
+
                 // Velocity Capping: Prevent close-encounter numerical singularities from launching
                 // planets into unphysical hyperbolic escape trajectories (e.g. 210,000 km/s)
-                let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z).sqrt().max(0.1);
+                let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z).sqrt().clamp(0.1, 75.0);
                 let v_esc = (2.0 * G_ASTRO * star_mass / r_cyl).sqrt();
                 let max_v = 1.6 * v_esc; // Up to 1.6x escape velocity for eccentric comets
                 let speed = body.3.length();
@@ -315,9 +316,8 @@ pub fn step_physics_simulation(
                 }
 
                 // Solar System Boundary Clamping: Keep all active bodies within the physical domain (r <= 75 AU)
-                // Prevents bodies from flying to millions of AU where float32 vertex precision loss flattens them into pancakes
                 let r_mag = body.2.length();
-                if r_mag > 75.0 {
+                if r_mag > 75.0 && r_mag > 1e-6 {
                     body.2 *= 75.0 / r_mag;
                 }
             } else {
