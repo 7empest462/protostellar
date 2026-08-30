@@ -226,7 +226,7 @@ impl Default for DiskParameters {
             density_power_law: 1.5,
             reference_temp_1au: 280.0,
             snow_line_au: 2.70, // Authentic Ice/Snow Line (Asteroid Belt transition)
-            gas_disk_lifetime_yr: 3.5e6, // 3.5 Million years
+            gas_disk_lifetime_yr: 15_000.0, // 15,000 years before complete photo-evaporative clearance
         }
     }
 }

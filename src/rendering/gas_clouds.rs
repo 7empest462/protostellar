@@ -68,8 +68,8 @@ pub fn setup_gas_cloud_disk(
         },
     });
 
-    // Multi-layer volumetric height stacking for rich 3D depth from any orbital camera angle
-    for y_offset in [0.0f32, 0.08f32, -0.08f32, 0.20f32, -0.20f32] {
+    // Dual-layer double-sided geometry for translucent depth without over-saturating opacity
+    for y_offset in [0.0f32, 0.04f32] {
         commands.spawn((
             Mesh3d(plane_mesh.clone()),
             MeshMaterial3d(gas_material.clone()),

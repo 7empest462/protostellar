@@ -726,41 +726,75 @@ pub fn direct_nebular_gas_accretion(
             .clamp(disk_params.inner_radius_au, disk_params.outer_radius_au);
         let m = mass.0;
 
-        // Gas accretion occurs when core mass exceeds critical threshold (~0.02 Earth masses)
-        // Planetary runaway gas accretion limit: Gap opening & disk clearance caps planet to ~3.5 M_Jupiter
-        let max_planet_gas_mass = JUPITER_MASS_SOLAR * 3.5;
-        if m >= max_planet_gas_mass {
+        // 1. Zone-specific maximum mass and gas envelope saturation limits:
+        let (max_gas_mass, max_gas_frac, runaway_threshold_m_earth) = if r_au < 2.5 {
+            // Terrestrial Zone (Mercury, Venus, Earth, Mars):
+            // Thin to moderate atmosphere (1-3% gas fraction), capped at ~0.03 M_Earth of gas
+            (0.03 * EARTH_MASS_SOLAR, 0.035, 100.0) // Runaway disabled
+        } else if r_au < 5.0 {
+            // Asteroid Belt Zone (Ceres, Vesta):
+            // Trace volatile envelope (up to 4.5% gas fraction), capped at ~0.05 M_Earth of gas
+            (0.05 * EARTH_MASS_SOLAR, 0.045, 100.0) // Runaway disabled for small asteroid embryos
+        } else if r_au < 12.0 {
+            // Jupiter Zone:
+            // Massive gas giant runaway accretion up to 1.1 M_Jupiter (~350 M_Earth)
+            (JUPITER_MASS_SOLAR * 1.1, 0.92, 0.5) // Runaway enabled once core >= 0.5 M_Earth
+        } else if r_au < 22.0 {
+            // Saturn Zone:
+            // Gas giant runaway accretion up to 0.35 M_Jupiter (~110 M_Earth)
+            (JUPITER_MASS_SOLAR * 0.35, 0.85, 0.4)
+        } else if r_au < 36.0 {
+            // Uranus Zone (Ice Giant):
+            // Capped at ~20 M_Earth (~15-22% gas envelope, dominated by ices/silicates)
+            (20.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
+        } else if r_au < 50.0 {
+            // Neptune Zone (Ice Giant):
+            // Capped at ~22 M_Earth (~15-22% gas envelope)
+            (22.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
+        } else {
+            // Kuiper Belt (Pluto / comets):
+            // Tenuous ice world atmosphere (< 2% gas)
+            (0.02 * EARTH_MASS_SOLAR, 0.02, 100.0)
+        };
+
+        if m >= max_gas_mass || comp.gas_frac >= max_gas_frac {
             continue;
         }
 
-        // Ambient gas disk density at orbital distance r (M_sun / AU^3)
-        // Midplane gas density rho_gas ~ rho_0 * (r / 1 AU)^-1.5 * gas_scale
-        let rho_gas = 1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale;
+        // Local ambient gas disk density at orbital radius r
+        // Inside 3.5 AU (terrestrial zone), stellar wind and solar radiation clear most gas after ignition,
+        // leaving a ~5% residual level for primordial atmospheres.
+        let local_gas_density = if r_au < 3.5 {
+            1.2e-4 * (r_au / 1.0).powf(-1.50) * (gas_scale * 0.15 + 0.005)
+        } else {
+            1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale
+        };
 
         // Hill radius R_H = r * (M / 3 M_star)^(1/3)
         let r_hill = r_au * (m / (3.0 * star_mass)).cbrt();
-
-        // Local Keplerian angular velocity Omega_K = sqrt(G M_star / r^3)
         let omega_k = (G_ASTRO * star_mass / (r_au * r_au * r_au)).sqrt();
 
-        // Astrophysical Thermal Inflow Factor:
-        // Inside the snowline (r < 2.7 AU), intense stellar radiation and photo-evaporative heating
-        // blow away light H/He envelopes, preventing terrestrial planets from runaway gas accretion.
-        // Outside the snowline (r >= 2.7 AU), ice-rich giant cores capture massive nebular gas.
-        let thermal_factor = if r_au < disk_params.snow_line_au {
-            (r_au / disk_params.snow_line_au).powi(4) * 0.005
+        let m_earth = m / EARTH_MASS_SOLAR;
+        let is_runaway = m_earth >= runaway_threshold_m_earth;
+        let runaway_boost = if is_runaway {
+            // Rapid exponential runaway gas capture for massive outer cores
+            (1.0 + (m_earth / 5.0).powf(1.4)).min(40.0)
         } else {
-            1.0 + (r_au / 5.0).min(3.0)
+            0.05
         };
 
-        // Hydrodynamic gas envelope inflow rate: dM/dt = C_gas * R_H^2 * rho_gas * Omega_K * thermal_factor
-        // Gap factor slows accretion as planet carves an annular gap in the disk
-        let gap_factor = (1.0 - (m / max_planet_gas_mass)).clamp(0.05, 1.0);
-        let c_gas = 120.0 * (config.accretion_rate_multiplier as f64 / 120.0);
-        let d_mass_gas =
-            (c_gas * r_hill * r_hill * rho_gas * omega_k * dt_yr * gap_factor * thermal_factor)
-                .min(m * 0.005) // 0.5% max growth per step for physical stability
-                .min(max_planet_gas_mass - m);
+        let gap_factor = (1.0 - (m / max_gas_mass)).clamp(0.02, 1.0);
+        let c_gas = 180.0 * (config.accretion_rate_multiplier as f64 / 120.0);
+        let d_mass_gas = (c_gas
+            * r_hill
+            * r_hill
+            * local_gas_density
+            * omega_k
+            * dt_yr
+            * gap_factor
+            * runaway_boost)
+            .min(m * 0.015) // Max 1.5% mass growth per sub-step for numerical stability
+            .min(max_gas_mass - m);
 
         if d_mass_gas > 1e-16 {
             let old_mass = m;

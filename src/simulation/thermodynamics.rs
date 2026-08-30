@@ -55,7 +55,7 @@ pub fn update_thermodynamics(
     {
         if !ignition.is_ignited {
             // Core temperature heats up via gravitational Kelvin-Helmholtz contraction
-            let heating_rate_per_yr = 3.5e3 * mass.0; // Accelerated for interactive experience
+            let heating_rate_per_yr = 1.0e4 * mass.0; // Naturally ignites around ~1000 years
             ignition.core_temperature += heating_rate_per_yr * dt_yr;
 
             let ignition_threshold = 1.0e7; // 10 Million Kelvin (Hydrogen P-P Fusion)
@@ -93,15 +93,13 @@ pub fn update_thermodynamics(
                 });
             }
         } else {
-            // Star is ignited: expand shockwave / radiation front & photoevaporate gas disk
-            let blast_speed = if ignition.shockwave_radius < 5.0 {
-                35.0 // Fast initial solar blast
-            } else {
-                12.0 // Steady outward stellar wind
-            };
+            // Star is ignited: expand radiation pressure shockwave & photoevaporate gas disk
+            let blast_speed = 3.5; // Smooth outward stellar wind (AU/yr)
             ignition.shockwave_radius += blast_speed * dt_yr;
-            config.gas_density_scale =
-                (1.0 - (ignition.shockwave_radius / 35.0)).clamp(0.0, 1.0) as f32;
+
+            // Progressive photo-evaporative clearance over 15,000 years
+            let time_decay = (1.0 - (sim_time.elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
+            config.gas_density_scale = time_decay;
         }
 
         // 2. Update Disk Body Temperatures & Planetary Thermal Processing
