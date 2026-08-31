@@ -44,9 +44,8 @@ pub fn spawn_protoplanetary_disk(
         ))
         .id();
 
-    // 2. Spawn Initial Protoplanetary Seeds across the active disk zones
-    // Generously spaced out across the disk for distinct, clear visual orbits
-    let seeds = [
+    // 2. Spawn Major Protoplanetary Seeds across the active disk zones
+    let major_seeds = [
         (
             0.50,
             0.06 * EARTH_MASS_SOLAR,
@@ -54,6 +53,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Mercury",
             Composition::metal_rich(),
             BodyType::Protoplanet,
+            0.05,
         ),
         (
             0.95,
@@ -62,6 +62,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Venus",
             Composition::rocky(),
             BodyType::Protoplanet,
+            0.01,
         ),
         (
             1.50,
@@ -70,6 +71,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Earth",
             Composition::rocky(),
             BodyType::Protoplanet,
+            0.02,
         ),
         (
             1.90,
@@ -78,6 +80,7 @@ pub fn spawn_protoplanetary_disk(
             "Theia Embryo",
             Composition::rocky(),
             BodyType::Protoplanet,
+            0.04,
         ),
         (
             2.60,
@@ -86,22 +89,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Mars",
             Composition::rocky(),
             BodyType::Protoplanet,
-        ),
-        (
-            4.20,
-            0.02 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.28,
-            "Ceres Embryo",
-            Composition::carbonaceous(),
-            BodyType::Protoplanet,
-        ),
-        (
-            5.20,
-            0.015 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.25,
-            "Vesta Embryo",
-            Composition::rocky(),
-            BodyType::Protoplanet,
+            0.07,
         ),
         (
             8.50,
@@ -110,6 +98,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Jupiter",
             Composition::solar_gas(),
             BodyType::GasGiant,
+            0.03,
         ),
         (
             11.50,
@@ -118,6 +107,7 @@ pub fn spawn_protoplanetary_disk(
             "Callisto Embryo",
             Composition::icy(),
             BodyType::Protoplanet,
+            0.02,
         ),
         (
             15.50,
@@ -126,6 +116,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Saturn",
             Composition::solar_gas(),
             BodyType::GasGiant,
+            0.04,
         ),
         (
             20.50,
@@ -134,6 +125,7 @@ pub fn spawn_protoplanetary_disk(
             "Titan Embryo",
             Composition::icy(),
             BodyType::Protoplanet,
+            0.03,
         ),
         (
             28.00,
@@ -142,6 +134,7 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Uranus",
             Composition::icy(),
             BodyType::IceGiant,
+            0.05,
         ),
         (
             40.00,
@@ -150,14 +143,240 @@ pub fn spawn_protoplanetary_disk(
             "Proto-Neptune",
             Composition::icy(),
             BodyType::IceGiant,
+            0.02,
+        ),
+    ];
+
+    // 3. Spawn Asteroid Belt Minor Planets (Silicate, Carbonaceous, Metallic)
+    let asteroid_seeds = [
+        (
+            2.77,
+            0.00015 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.18,
+            "Ceres (Dwarf Planet)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.08,
         ),
         (
-            54.00,
-            0.02 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.28,
-            "Pluto Embryo",
+            2.36,
+            0.00008 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.14,
+            "Vesta (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.09,
+        ),
+        (
+            2.77,
+            0.00007 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.14,
+            "Pallas (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.23,
+        ),
+        (
+            3.15,
+            0.00004 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.12,
+            "Hygiea (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.11,
+        ),
+        (
+            2.92,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.10,
+            "Psyche (Metal Asteroid)",
+            Composition::metal_rich(),
+            BodyType::Asteroid,
+            0.13,
+        ),
+        (
+            2.21,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.06,
+            "Gaspra (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.17,
+        ),
+        (
+            2.86,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.07,
+            "Ida (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.04,
+        ),
+        (
+            2.65,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.06,
+            "Mathilde (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.26,
+        ),
+        (
+            1.45,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "Eros (Near-Earth Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.22,
+        ),
+        (
+            1.12,
+            0.000005 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.03,
+            "Bennu (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.20,
+        ),
+        (
+            1.19,
+            0.000005 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.03,
+            "Ryugu (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.19,
+        ),
+        (
+            1.32,
+            0.000005 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.03,
+            "Itokawa (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.28,
+        ),
+    ];
+
+    // 4. Spawn Kuiper Belt & Long-Period Cometary Reservoir (Pristine Volatile Ices)
+    let comet_seeds = [
+        (
+            17.8,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.08,
+            "1P/Halley (Comet)",
             Composition::icy(),
-            BodyType::Protoplanet,
+            BodyType::Comet,
+            0.65,
+        ),
+        (
+            3.30,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "2P/Encke (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.60,
+        ),
+        (
+            45.0,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.10,
+            "C/Hale-Bopp (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.72,
+        ),
+        (
+            26.0,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.08,
+            "109P/Swift-Tuttle (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.68,
+        ),
+        (
+            3.50,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "67P/Churyumov (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.64,
+        ),
+        (
+            52.0,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.09,
+            "C/NEOWISE (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.75,
+        ),
+        (
+            48.0,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.08,
+            "C/Hyakutake (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.74,
+        ),
+        (
+            39.5,
+            0.0022 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.24,
+            "Pluto (Kuiper Dwarf)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.24,
+        ),
+        (
+            67.8,
+            0.0028 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.25,
+            "Eris (Scattered Disk)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.44,
+        ),
+        (
+            45.8,
+            0.0018 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.20,
+            "Makemake (Kuiper Dwarf)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.16,
+        ),
+        (
+            43.3,
+            0.0020 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.21,
+            "Haumea (Kuiper Dwarf)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.19,
+        ),
+        (
+            43.7,
+            0.0012 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.16,
+            "Quaoar (Kuiper Object)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.04,
+        ),
+        (
+            76.0,
+            0.0015 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.18,
+            "Sedna (Oort Cloud)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.60,
         ),
     ];
 
@@ -165,14 +384,28 @@ pub fn spawn_protoplanetary_disk(
     use rand::prelude::*;
     use std::f64::consts::PI;
 
-    for &(r, mass, radius, name, comp, body_type) in &seeds {
+    let all_seeds = major_seeds
+        .into_iter()
+        .chain(asteroid_seeds)
+        .chain(comet_seeds);
+
+    for (a, mass, radius, name, comp, body_type, ecc) in all_seeds {
+        let a_f64: f64 = a;
+        let ecc_f64: f64 = ecc;
         let phi: f64 = rng.random_range(0.0..2.0 * PI);
-        let pos = DVec3::new(r * phi.cos(), 0.0, r * phi.sin());
+        let inc_rad: f64 = rng.random_range(-0.04..0.04);
 
-        let v_k = (G_ASTRO * protostar_mass / r).sqrt();
-        let vel = DVec3::new(-v_k * phi.sin(), 0.0, v_k * phi.cos());
+        // At perihelion r_p = a * (1 - e)
+        let r_p = a_f64 * (1.0f64 - ecc_f64).max(0.1f64);
+        let pos = DVec3::new(r_p * phi.cos(), r_p * inc_rad, r_p * phi.sin());
 
-        let temp = disk_params.reference_temp_1au * (r / 1.0).powf(-0.5);
+        // Vis-viva perihelion orbital velocity: v_p = sqrt(GM/a * (1+e)/(1-e))
+        let v_peri = ((G_ASTRO * protostar_mass / a_f64)
+            * ((1.0f64 + ecc_f64) / (1.0f64 - ecc_f64).max(0.01f64)))
+        .sqrt();
+        let vel = DVec3::new(-v_peri * phi.sin(), 0.0, v_peri * phi.cos());
+
+        let temp = disk_params.reference_temp_1au * (a_f64 / 1.0).powf(-0.5);
 
         let mut diff = InternalDifferentiation::default();
         diff.recalculate(mass, radius, &comp);
@@ -181,7 +414,7 @@ pub fn spawn_protoplanetary_disk(
         let spin_period_hrs: f64 = match body_type {
             BodyType::GasGiant => rng.random_range(9.0..11.0),
             BodyType::IceGiant => rng.random_range(14.0..18.0),
-            _ => rng.random_range(20.0..36.0),
+            _ => rng.random_range(6.0..36.0),
         };
         let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
         let initial_spin = 0.33 * mass * radius * radius * DVec3::new(0.0, omega, 0.0);

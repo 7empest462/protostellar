@@ -628,8 +628,16 @@ pub fn update_particle_swarm(
 
     // 4. Spawn ECS entities for promoted embryos (visuals and PlanetMaterial automatically handled by bodies.rs)
     for (pos, vel, mass, radius, comp) in promotions {
-        let name = format!("Embryo-{}", (pos.length() * 10.0) as u32);
-        let temp = (disk_params.reference_temp_1au) * (pos.length() / 1.0).powf(-0.5);
+        let r_dist = pos.length();
+        let (body_type, name) = if r_dist < 4.5 {
+            (
+                BodyType::Asteroid,
+                format!("Asteroid-{:.0}AU", r_dist * 10.0),
+            )
+        } else {
+            (BodyType::Comet, format!("Comet-{:.0}AU", r_dist * 10.0))
+        };
+        let temp = (disk_params.reference_temp_1au) * (r_dist / 1.0).powf(-0.5);
 
         let mut diff = InternalDifferentiation::default();
         diff.recalculate(mass, radius, &comp);
@@ -640,10 +648,7 @@ pub fn update_particle_swarm(
         spin.update_from_spin(initial_spin, mass, radius);
 
         commands.spawn((
-            CelestialBody {
-                name,
-                body_type: BodyType::Protoplanet,
-            },
+            CelestialBody { body_type, name },
             Mass(mass),
             SimPosition(pos),
             SimVelocity(vel),
@@ -659,8 +664,12 @@ pub fn update_particle_swarm(
     }
 
     // 5. Continuous Smooth Debris Recycling & Swarm Maintenance
-    if active_count < (n as u32) {
-        let missing = (n as u32) - active_count;
+    // ONLY replenish during early nebular phase while gas density is high and star has not ignited!
+    if config.gas_density_scale > 0.15
+        && !ignition.is_ignited
+        && active_count < config.active_particles
+    {
+        let missing = config.active_particles.saturating_sub(active_count);
         let mut replenished = 0u32;
         let mut rng = rand::rng();
         let star_mass_f64 = disk_params.central_star_mass;
