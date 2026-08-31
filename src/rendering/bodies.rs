@@ -86,32 +86,12 @@ pub fn spawn_missing_visuals(
         };
 
         if is_star.is_some() {
-            // Central Star: High emissive glow + outer solar corona shell + point light
+            // Central Star: High emissive unlit glow + omnidirectional point light
             let material = materials.add(PlanetMaterial {
                 base: StandardMaterial {
                     base_color,
                     emissive: LinearRgba::from(base_color) * 22.0,
                     unlit: true,
-                    ..default()
-                },
-                extension: PlanetMaterialExtension {
-                    uniforms: PlanetUniforms {
-                        planet_type: 0,
-                        temperature: temp.0 as f32,
-                        time: 0.0,
-                        composition: Vec4::new(0.0, 0.0, 0.0, 1.0),
-                        color_seed: LinearRgba::from(base_color).to_vec4(),
-                        climate_and_bio: Vec4::ZERO,
-                    },
-                },
-            });
-
-            let corona_material = materials.add(PlanetMaterial {
-                base: StandardMaterial {
-                    base_color: Color::srgba(br, bg, bb, 0.25),
-                    emissive: LinearRgba::from(base_color) * 8.0,
-                    unlit: true,
-                    alpha_mode: AlphaMode::Blend,
                     ..default()
                 },
                 extension: PlanetMaterialExtension {
@@ -135,14 +115,6 @@ pub fn spawn_missing_visuals(
                     Visibility::default(),
                 ))
                 .with_children(|parent| {
-                    // Outer atmospheric corona halo
-                    parent.spawn((
-                        Mesh3d(visual_assets.star_mesh.clone()),
-                        MeshMaterial3d(corona_material),
-                        Transform::from_scale(Vec3::splat(1.35)),
-                        NotShadowCaster,
-                    ));
-
                     // Omnidirectional solar illumination
                     parent.spawn((
                         PointLight {
