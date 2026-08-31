@@ -254,13 +254,12 @@ fn fragment(
     }
 
     pbr_input.material.base_color = vec4<f32>(color, 1.0);
+    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
 #ifdef PREPASS_PIPELINE
-    out.frag_coord = in.position;
-    out.world_normal = norm;
-    out.world_position = in.world_position;
+    let out = deferred_output(in, pbr_input);
 #else
-    alpha_discard(&pbr_input, pbr_input.material.base_color);
+    var out: FragmentOutput;
     
     if (planet.planet_type == 0u) {
         // Bypass lighting entirely for the star, force it to be bright!
