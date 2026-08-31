@@ -36,6 +36,8 @@ pub enum MilestoneId {
     LateHeavyBombardment,
     VolatileOceanDelivery,
     PlanetaryRingGenesis,
+    DynamoMagneticShield,
+    BiosphereGenesis,
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +176,20 @@ impl Default for PhaseManager {
                     achieved: false,
                     achieve_timestamp: None,
                 },
+                ScientificMilestone {
+                    id: MilestoneId::DynamoMagneticShield,
+                    title: "🛡️ 11. Dynamo Magnetic Shield",
+                    prompt: "Generate a convective molten iron core and planetary rotation to establish a protective magnetosphere (>0.15 G).",
+                    achieved: false,
+                    achieve_timestamp: None,
+                },
+                ScientificMilestone {
+                    id: MilestoneId::BiosphereGenesis,
+                    title: "🌱 12. Biosphere Genesis",
+                    prompt: "Evolve photosynthetic microbial life and vegetation on a shielded temperate world with liquid surface oceans.",
+                    achieved: false,
+                    achieve_timestamp: None,
+                },
             ],
             latest_unlocked_milestone: None,
             milestone_toast_timer: 0.0,
@@ -197,6 +213,7 @@ pub fn monitor_phase_transitions(
             Option<&InternalDifferentiation>,
             Option<&VolatileInventory>,
             Option<&PlanetaryRingSystem>,
+            Option<&BiosphereState>,
         ),
         Without<CentralStar>,
     >,
@@ -212,10 +229,12 @@ pub fn monitor_phase_transitions(
     let mut planetesimals = 0;
     let mut has_differentiated = false;
     let mut has_rings = false;
+    let mut has_dynamo = false;
+    let mut has_biosphere = false;
     let mut total_delivered_water = 0.0;
     let mut remaining_disk_mass = 0.0;
 
-    for (mass, body, opt_diff, opt_vol, opt_rings) in bodies_query.iter() {
+    for (mass, body, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
         match body.body_type {
             BodyType::TerrestrialPlanet | BodyType::GasGiant | BodyType::IceGiant => planets += 1,
             BodyType::Protoplanet => protoplanets += 1,
@@ -226,12 +245,20 @@ pub fn monitor_phase_transitions(
             if diff.is_differentiated {
                 has_differentiated = true;
             }
+            if diff.magnetic_field_gauss >= 0.15 {
+                has_dynamo = true;
+            }
         }
         if let Some(vol) = opt_vol {
             total_delivered_water += vol.delivered_water_m_earth;
         }
         if opt_rings.is_some() {
             has_rings = true;
+        }
+        if let Some(bio) = opt_bio {
+            if bio.biomass_coverage_frac >= 0.02 || bio.emergence_year.is_some() {
+                has_biosphere = true;
+            }
         }
         remaining_disk_mass += mass.0;
     }
@@ -267,6 +294,8 @@ pub fn monitor_phase_transitions(
             MilestoneId::LateHeavyBombardment => lhb_state.is_active,
             MilestoneId::VolatileOceanDelivery => total_delivered_water >= 0.0005,
             MilestoneId::PlanetaryRingGenesis => has_rings,
+            MilestoneId::DynamoMagneticShield => has_dynamo,
+            MilestoneId::BiosphereGenesis => has_biosphere,
         };
 
         if passed {

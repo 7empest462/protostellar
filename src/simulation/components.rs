@@ -558,3 +558,76 @@ impl Default for PlanetaryRingSystem {
         }
     }
 }
+
+/// Major thermodynamic climate regimes for terrestrial and giant planets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ClimateRegime {
+    /// Frozen global ice sheets with high albedo (T < 260 K)
+    SnowballIceAge,
+    /// Liquid surface water oceans, moderate greenhouse balance, dynamic clouds (273 - 340 K)
+    #[default]
+    TemperateHabitable,
+    /// Evaporated oceans, dense CO2/steam greenhouse runaway (T > 400 K, P > 20 bar)
+    RunawayVenusian,
+    /// Massive hydrogen/helium envelope (Gas/Ice Giants)
+    GasGiantEnvelope,
+    /// Airless frozen or baked rock (Mercury / Moon)
+    AirlessVacuum,
+}
+
+/// Atmospheric radiative greenhouse climate equilibrium state.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlanetaryClimate {
+    /// Actual surface temperature in Kelvin (T_eq + dT_GH)
+    pub surface_temperature_k: f32,
+    /// Pure radiative equilibrium blackbody temperature from stellar flux (Kelvin)
+    pub equilibrium_temperature_k: f32,
+    /// Radiative atmospheric greenhouse temperature elevation (Kelvin)
+    pub greenhouse_delta_k: f32,
+    /// Bond albedo (0.0 to 1.0, e.g. 0.30 for Earth, 0.65 for Snowball Earth)
+    pub albedo: f32,
+    /// Surface fractional ice coverage (0.0 to 1.0)
+    pub ice_coverage_frac: f32,
+    /// Atmospheric cloud coverage fraction (0.0 to 1.0)
+    pub cloud_coverage_frac: f32,
+    /// Dominant climate regime classification
+    pub climate_regime: ClimateRegime,
+}
+
+impl Default for PlanetaryClimate {
+    fn default() -> Self {
+        Self {
+            surface_temperature_k: 288.0,
+            equilibrium_temperature_k: 255.0,
+            greenhouse_delta_k: 33.0,
+            albedo: 0.30,
+            ice_coverage_frac: 0.10,
+            cloud_coverage_frac: 0.50,
+            climate_regime: ClimateRegime::TemperateHabitable,
+        }
+    }
+}
+
+/// Dynamic habitability and living biosphere on terrestrial worlds.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BiosphereState {
+    /// Habitability score (0.0 = sterile/hostile, 1.0 = ideal Eden)
+    pub habitability_score: f32,
+    /// Fractional surface coverage by photosynthetic vegetation / biomass (0.0 to 1.0)
+    pub biomass_coverage_frac: f32,
+    /// Atmospheric oxygen gas fraction (0.0 to 0.21)
+    pub oxygen_fraction: f32,
+    /// Timestamp when primordial life emerged (sim_yr)
+    pub emergence_year: Option<f64>,
+}
+
+impl Default for BiosphereState {
+    fn default() -> Self {
+        Self {
+            habitability_score: 0.0,
+            biomass_coverage_frac: 0.0,
+            oxygen_fraction: 0.0,
+            emergence_year: None,
+        }
+    }
+}

@@ -101,6 +101,7 @@ pub fn spawn_missing_visuals(
                         time: 0.0,
                         composition: Vec4::new(0.0, 0.0, 0.0, 1.0),
                         color_seed: LinearRgba::from(base_color).to_vec4(),
+                        climate_and_bio: Vec4::ZERO,
                     },
                 },
             });
@@ -120,6 +121,7 @@ pub fn spawn_missing_visuals(
                         time: 0.0,
                         composition: Vec4::new(0.0, 0.0, 0.0, 1.0),
                         color_seed: LinearRgba::from(base_color).to_vec4(),
+                        climate_and_bio: Vec4::ZERO,
                     },
                 },
             });
@@ -205,6 +207,7 @@ pub fn spawn_missing_visuals(
                             norm_comp.gas_frac as f32,
                         ),
                         color_seed: LinearRgba::from(base_color).to_vec4(),
+                        climate_and_bio: Vec4::ZERO,
                     },
                 },
             });
@@ -245,12 +248,27 @@ pub fn sync_celestial_transforms(
             &mut Mesh3d,
             &MeshMaterial3d<PlanetMaterial>,
             &CelestialBody,
+            Option<&PlanetaryClimate>,
+            Option<&BiosphereState>,
+            Option<&VolatileInventory>,
         ),
         With<VisualBody>,
     >,
 ) {
-    for (pos, mass, _radius, temp, comp, mut transform, mut mesh, mat_handle, body) in
-        query.iter_mut()
+    for (
+        pos,
+        mass,
+        _radius,
+        temp,
+        comp,
+        mut transform,
+        mut mesh,
+        mat_handle,
+        body,
+        opt_climate,
+        opt_bio,
+        opt_vol,
+    ) in query.iter_mut()
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
 
@@ -296,6 +314,15 @@ pub fn sync_celestial_transforms(
                 )
             };
             let norm_comp = comp.normalized();
+            let ocean_frac = opt_vol
+                .map(|v| v.ocean_coverage_frac)
+                .unwrap_or(norm_comp.ice_frac as f32);
+            let ice_frac = opt_climate.map(|c| c.ice_coverage_frac).unwrap_or(0.0);
+            let biomass_frac = opt_bio.map(|b| b.biomass_coverage_frac).unwrap_or(0.0);
+            let cloud_density = opt_climate
+                .map(|c| c.cloud_coverage_frac)
+                .unwrap_or(norm_comp.gas_frac as f32);
+
             mat.base.base_color = color;
             mat.extension.uniforms.color_seed = LinearRgba::from(color).to_vec4();
             mat.extension.uniforms.temperature = temp.0 as f32;
@@ -306,6 +333,8 @@ pub fn sync_celestial_transforms(
                 norm_comp.metal_frac as f32,
                 norm_comp.gas_frac as f32,
             );
+            mat.extension.uniforms.climate_and_bio =
+                Vec4::new(ocean_frac, ice_frac, biomass_frac, cloud_density);
             mat.extension.uniforms.planet_type = match body.body_type {
                 BodyType::Protostar | BodyType::MainSequenceStar => 0,
                 BodyType::GasGiant => 1,

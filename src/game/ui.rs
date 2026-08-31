@@ -88,6 +88,7 @@ pub enum UiButtonAction {
     IgniteStar,
     TriggerLhb,
     ShatterIntoRings,
+    SeedLife,
 }
 
 impl UiButtonAction {
@@ -108,20 +109,21 @@ impl UiButtonAction {
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
             UiButtonAction::DecreaseMass => "[J]: Strip -20% outer envelope mass from selected planet.",
-            UiButtonAction::ExpandOrbit => "[O]: Gently expands semi-major axis (+10% orbital radius).",
-            UiButtonAction::ContractOrbit => "[L]: Gently contracts semi-major axis (-10% orbital radius).",
-            UiButtonAction::CycleComposition => "[C]: Cycles bulk chemical composition (Metal-Rich -> Rocky -> Carbonaceous -> Icy -> Solar Gas).",
-            UiButtonAction::BoostDeltaV => "[B]: Applies +15% prograde velocity boost (+dv), stretching orbit into an ellipse.",
-            UiButtonAction::BrakeDeltaV => "[K]: Applies -15% retrograde velocity brake (-dv), lowering perihelion toward the star.",
-            UiButtonAction::InjectEmbryo => "[M]: Injects a new protoplanetary embryo seed in a stable Keplerian orbit.",
-            UiButtonAction::VaporizeBody => "[Del]: Vaporizes the selected body into microscopic accretion dust particles.",
-            UiButtonAction::FocusLock => "[F]: Focus camera directly on currently selected celestial body.",
-            UiButtonAction::ResetView => "[R]: Resets camera focus to the central star overview (45 AU radius).",
-            UiButtonAction::DeselectBody => "[Esc]: Deselect current body and return to free orbital camera.",
-            UiButtonAction::FixOrbit => "[Z]: Circularizes and stabilizes orbit into a clean Keplerian circle (e = 0.0).",
-            UiButtonAction::IgniteStar => "[I]: Ignites Hydrogen Core Fusion (or triggers Coronal Solar Blast if already ignited).",
-            UiButtonAction::TriggerLhb => "[G]: Triggers Late Heavy Bombardment & Giant Planet 2:1 Resonance Migration.",
+            UiButtonAction::ExpandOrbit => "[O]: Boost orbital energy to expand orbital radius +10%.",
+            UiButtonAction::ContractOrbit => "[L]: Brake orbital energy to contract orbital radius -10%.",
+            UiButtonAction::CycleComposition => "[C]: Cycle composition between Rocky, Metallic, Icy, and Volatile.",
+            UiButtonAction::BoostDeltaV => "[=]: Prograde orbital velocity acceleration boost.",
+            UiButtonAction::BrakeDeltaV => "[-]: Retrograde orbital velocity braking deceleration.",
+            UiButtonAction::InjectEmbryo => "[M]: Spawns an oligarchic protoplanetary embryo into the disk.",
+            UiButtonAction::VaporizeBody => "[Del]: Shatters the selected planet into thousands of debris particles.",
+            UiButtonAction::FocusLock => "[F]: Centers and locks the orbital camera onto target body.",
+            UiButtonAction::ResetView => "[R]: Resets camera angle and zooms out to system-wide perspective.",
+            UiButtonAction::DeselectBody => "[Esc]: Closes inspector and clears target selection.",
+            UiButtonAction::FixOrbit => "[K]: Circularizes and stabilizes orbital velocity.",
+            UiButtonAction::IgniteStar => "[I]: Triggers nuclear fusion ignition in the protostellar core.",
+            UiButtonAction::TriggerLhb => "[G]: Triggers Late Heavy Bombardment & Giant Planet 2:1 resonance migration.",
             UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupts icy material into a luminous planetary ring system.",
+            UiButtonAction::SeedLife => "[E]: Seeds primordial photosynthetic life, oceans, and vegetation on selected world.",
         }
     }
 }
@@ -384,6 +386,7 @@ pub fn setup_hud(mut commands: Commands) {
                                         create_button(row3, UiButtonAction::InjectEmbryo, "Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                         create_button(row3, UiButtonAction::TriggerLhb, "Trigger LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
                                         create_button(row3, UiButtonAction::ShatterIntoRings, "Rings [X]", Color::srgba(0.18, 0.14, 0.06, 0.9), Color::srgb(1.0, 0.85, 0.35));
+                                        create_button(row3, UiButtonAction::SeedLife, "Seed Life [E]", Color::srgba(0.04, 0.20, 0.08, 0.9), Color::srgb(0.35, 1.0, 0.45));
                                         create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
                                         create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
                                     });
@@ -505,6 +508,7 @@ pub fn handle_ui_button_interactions(
     mut camera_query: Query<&mut PanOrbitCamera>,
     mut star_ignition_query: Query<&mut IgnitionState, With<CentralStar>>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    sim_time: Res<SimTime>,
     mut commands: Commands,
 ) {
     let mut rng = rand::rng();
@@ -1121,6 +1125,49 @@ pub fn handle_ui_button_interactions(
                             }
                         }
                     }
+                    UiButtonAction::SeedLife => {
+                        if let Some(ent) = player_state.selected_entity {
+                            if let Ok((.., mut comp, body, is_star)) = selected_query.get_mut(ent) {
+                                if is_star.is_some() {
+                                    toast.message =
+                                        "⚠️ Cannot seed life onto a stellar plasma furnace!"
+                                            .to_string();
+                                    toast.timer = 3.5;
+                                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                                    p_cmd.insert((
+                                        VolatileInventory {
+                                            delivered_water_m_earth: 0.002,
+                                            ocean_coverage_frac: 0.70,
+                                            atmospheric_pressure_bar: 1.0,
+                                            cometary_impact_count: 12,
+                                        },
+                                        BiosphereState {
+                                            habitability_score: 0.95,
+                                            biomass_coverage_frac: 0.65,
+                                            oxygen_fraction: 0.21,
+                                            emergence_year: Some(sim_time.elapsed_years),
+                                        },
+                                        PlanetaryClimate {
+                                            surface_temperature_k: 288.0,
+                                            equilibrium_temperature_k: 255.0,
+                                            greenhouse_delta_k: 33.0,
+                                            albedo: 0.30,
+                                            ice_coverage_frac: 0.10,
+                                            cloud_coverage_frac: 0.55,
+                                            climate_regime: ClimateRegime::TemperateHabitable,
+                                        },
+                                    ));
+                                    comp.ice_frac = 0.08;
+                                    comp.gas_frac = 0.02;
+                                    toast.message = format!(
+                                        "🌱 Seeded Photosynthetic Biosphere & Oceans on {}!",
+                                        body.name
+                                    );
+                                    toast.timer = 5.0;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1151,6 +1198,8 @@ pub fn update_hud(
         Option<&IgnitionState>,
         Option<&VolatileInventory>,
         Option<&PlanetaryRingSystem>,
+        Option<&PlanetaryClimate>,
+        Option<&BiosphereState>,
     )>,
     mut header_query: Query<
         &mut Text,
@@ -1412,6 +1461,8 @@ pub fn update_hud(
                 opt_ignition,
                 opt_vol,
                 opt_rings,
+                opt_climate,
+                opt_bio,
             )) = bodies_query.get(selected_entity)
             {
                 let dist_au = if pos.0.is_finite() {
@@ -1512,6 +1563,56 @@ pub fn update_hud(
                     "".to_string()
                 };
 
+                let climate_str = if let Some(climate) = opt_climate {
+                    let regime_name = match climate.climate_regime {
+                        crate::simulation::components::ClimateRegime::SnowballIceAge => {
+                            "Frozen Snowball (Ice Age)"
+                        }
+                        crate::simulation::components::ClimateRegime::TemperateHabitable => {
+                            "Temperate Habitable"
+                        }
+                        crate::simulation::components::ClimateRegime::RunawayVenusian => {
+                            "Runaway Greenhouse (Venusian)"
+                        }
+                        crate::simulation::components::ClimateRegime::GasGiantEnvelope => {
+                            "Gas Giant Envelope"
+                        }
+                        crate::simulation::components::ClimateRegime::AirlessVacuum => {
+                            "Airless Vacuum"
+                        }
+                    };
+                    format!(
+                        "\nClimate: {} (T_surf: {:.0} K | Albedo: {:.2} | Greenhouse: +{:.0} K)",
+                        regime_name,
+                        climate.surface_temperature_k,
+                        climate.albedo,
+                        climate.greenhouse_delta_k
+                    )
+                } else {
+                    "".to_string()
+                };
+
+                let bio_str = if let Some(bio) = opt_bio {
+                    let status = if bio.biomass_coverage_frac >= 0.50 {
+                        "Thriving Eden"
+                    } else if bio.biomass_coverage_frac >= 0.05 {
+                        "Colonizing Biosphere"
+                    } else if bio.habitability_score >= 0.40 {
+                        "Pre-Biotic Prime"
+                    } else {
+                        "Sterile / Hostile"
+                    };
+                    format!(
+                        "\nBiosphere: {} (Biomass: {:.0}% | O2: {:.1}% | Habitability: {:.0}%)",
+                        status,
+                        bio.biomass_coverage_frac * 100.0,
+                        bio.oxygen_fraction * 100.0,
+                        bio.habitability_score * 100.0
+                    )
+                } else {
+                    "".to_string()
+                };
+
                 let star_extra_str = if let Some(ignition) = opt_ignition {
                     let core_temp_mk = ignition.core_temperature / 1.0e6;
                     let fusion_pct = ignition.fusion_fraction * 100.0;
@@ -1550,7 +1651,7 @@ pub fn update_hud(
                 let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
 
                 text.0 = format!(
-                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}",
+                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,
@@ -1569,6 +1670,8 @@ pub fn update_hud(
                     diff_str,
                     vol_str,
                     rings_str,
+                    climate_str,
+                    bio_str,
                     star_extra_str,
                 );
             } else {

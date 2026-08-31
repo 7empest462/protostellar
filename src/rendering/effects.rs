@@ -78,6 +78,8 @@ pub fn draw_orbital_effects_and_gizmos(
         &Mass,
         &Composition,
         &CelestialBody,
+        Option<&InternalDifferentiation>,
+        Option<&SpinState>,
     )>,
 ) {
     let Ok((star_pos, star_mass, ignition)) = star_query.single() else {
@@ -180,7 +182,7 @@ pub fn draw_orbital_effects_and_gizmos(
     }
 
     // 3. Draw Orbit Trails & Diagnostic Overlays for Bodies
-    for (entity, pos, vel, mass, comp, body) in bodies_query.iter() {
+    for (entity, pos, vel, mass, comp, body, opt_diff, opt_spin) in bodies_query.iter() {
         let is_selected = player_state.selected_entity == Some(entity);
         let is_planet = matches!(
             body.body_type,
@@ -196,23 +198,71 @@ pub fn draw_orbital_effects_and_gizmos(
         // Cometary Ion and Dust Tails (streaming away from the star for volatile icy bodies)
         if comp.ice_frac > 0.35 && r_orbit < 6.0 && r_orbit > 0.15 {
             let tail_dir = (body_vec - star_vec).normalize_or_zero();
-            let tail_len = ((6.0 - r_orbit) * 0.65).clamp(0.2, 3.5);
-            let vel_vec = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
-            let vel_dir = -vel_vec.normalize_or_zero();
+            let tail_len = (8.0 / r_orbit.powi(2)).clamp(0.2, 3.5) * (comp.ice_frac as f32);
 
-            // Ion Gas Tail (Straight radial line away from the star)
+            // Brilliant blue ion tail
             gizmos.line(
                 body_vec,
                 body_vec + tail_dir * tail_len,
-                Color::srgba(0.35, 0.85, 1.0, 0.85),
+                Color::srgba(0.3, 0.7, 1.0, 0.65),
             );
-            // Dust Tail (Curved along orbital velocity)
+            // Diffuse curved dust tail
+            let dust_dir =
+                (tail_dir - vel.0.normalize_or_zero().as_vec3() * 0.3).normalize_or_zero();
             gizmos.line(
                 body_vec,
-                body_vec
-                    + (tail_dir * 0.75 + vel_dir * 0.25).normalize_or_zero() * (tail_len * 0.8),
-                Color::srgba(1.0, 0.92, 0.70, 0.50),
+                body_vec + dust_dir * (tail_len * 0.7),
+                Color::srgba(0.9, 0.85, 0.6, 0.45),
             );
+        }
+
+        // 3D Magnetic Dipole Flux Loops & Sunward Bow Shock
+        if let Some(diff) = opt_diff {
+            if diff.magnetic_field_gauss >= 0.15 {
+                let tilt_deg = opt_spin
+                    .map(|s| s.axial_tilt_degrees as f32)
+                    .unwrap_or(23.5);
+                let tilt_rot = Quat::from_rotation_z(tilt_deg.to_radians());
+                let b_strength = (diff.magnetic_field_gauss as f32).min(3.0);
+                let shield_r = 0.35 + b_strength * 0.25;
+
+                // 4 Dipole field lines at 90-degree azimuthal intervals
+                for quad in 0..4 {
+                    let quad_rot = Quat::from_rotation_y(quad as f32 * std::f32::consts::FRAC_PI_2);
+                    let mut prev_pt: Option<Vec3> = None;
+                    let steps = 18;
+                    for step in 0..=steps {
+                        let theta = (step as f32 / steps as f32) * std::f32::consts::PI;
+                        let sin_th = theta.sin();
+                        let r = shield_r * sin_th.powi(2);
+                        let local_x = r * sin_th;
+                        let local_y = r * theta.cos();
+                        let local_pt = quad_rot * Vec3::new(local_x, local_y, 0.0);
+                        let world_pt = body_vec + tilt_rot * local_pt;
+
+                        if let Some(prev) = prev_pt {
+                            gizmos.line(
+                                prev,
+                                world_pt,
+                                Color::srgba(0.25, 0.75, 1.0, 0.35 * (b_strength / 3.0)),
+                            );
+                        }
+                        prev_pt = Some(world_pt);
+                    }
+                }
+
+                // Sunward Deflection Bow Shock Arc
+                let to_sun = (star_vec - body_vec).normalize_or_zero();
+                let perp_tangent = Vec3::new(-to_sun.z, 0.0, to_sun.x).normalize_or_zero();
+                let bow_apex = body_vec + to_sun * (shield_r * 1.25);
+                let bow_left =
+                    body_vec + to_sun * (shield_r * 0.75) + perp_tangent * (shield_r * 1.1);
+                let bow_right =
+                    body_vec + to_sun * (shield_r * 0.75) - perp_tangent * (shield_r * 1.1);
+
+                gizmos.line(bow_left, bow_apex, Color::srgba(1.0, 0.85, 0.3, 0.55));
+                gizmos.line(bow_apex, bow_right, Color::srgba(1.0, 0.85, 0.3, 0.55));
+            }
         }
 
         // A. Orbit Trails

@@ -315,6 +315,42 @@ pub fn handle_player_tools(
                     });
                 }
             }
+
+            // K. Seed Photosynthetic Biosphere & Oceans (Key E)
+            if keyboard.just_pressed(KeyCode::KeyE)
+                && !matches!(
+                    body.body_type,
+                    BodyType::Protostar | BodyType::MainSequenceStar
+                )
+            {
+                if let Ok(mut cmd) = commands.get_entity(entity) {
+                    cmd.insert((
+                        VolatileInventory {
+                            delivered_water_m_earth: 0.002,
+                            ocean_coverage_frac: 0.70,
+                            atmospheric_pressure_bar: 1.0,
+                            cometary_impact_count: 12,
+                        },
+                        BiosphereState {
+                            habitability_score: 0.95,
+                            biomass_coverage_frac: 0.65,
+                            oxygen_fraction: 0.21,
+                            emergence_year: Some(0.0),
+                        },
+                        PlanetaryClimate {
+                            surface_temperature_k: 288.0,
+                            equilibrium_temperature_k: 255.0,
+                            greenhouse_delta_k: 33.0,
+                            albedo: 0.30,
+                            ice_coverage_frac: 0.10,
+                            cloud_coverage_frac: 0.55,
+                            climate_regime: ClimateRegime::TemperateHabitable,
+                        },
+                    ));
+                    comp.ice_frac = 0.08;
+                    comp.gas_frac = 0.02;
+                }
+            }
         }
     }
 

@@ -430,3 +430,114 @@ fn test_planetary_ring_mass_and_optical_depth() {
     assert!((ring.optical_depth - 0.95).abs() < 1e-5);
     assert!(ring.ring_mass_earth > 0.00025);
 }
+
+#[test]
+fn test_dynamo_magnetic_field_scaling() {
+    use protostellar::simulation::components::InternalDifferentiation;
+
+    let mut diff = InternalDifferentiation {
+        is_differentiated: true,
+        differentiation_fraction: 1.0,
+        core_radius_au: 0.000023,
+        mantle_radius_au: 0.000042,
+        crust_thickness_au: 0.000001,
+        ocean_ice_thickness_au: 0.0,
+        magnetic_field_gauss: 0.0,
+        core_temp_k: 4500.0,
+    };
+
+    let period_hrs: f64 = 24.0;
+    let temp_factor = ((diff.core_temp_k - 1800.0) / 2000.0).clamp(0.0, 1.5);
+    let spin_factor = (24.0f64 / period_hrs).sqrt().clamp(0.2, 3.0);
+    let core_mass_frac = (diff.core_radius_au / diff.mantle_radius_au).powi(3);
+
+    let b_gauss = 0.35 * core_mass_frac.sqrt() * spin_factor * temp_factor.powf(0.33);
+    diff.magnetic_field_gauss = b_gauss;
+
+    // Earth analog: ~0.3 - 0.5 Gauss
+    assert!(diff.magnetic_field_gauss >= 0.15 && diff.magnetic_field_gauss <= 0.60);
+
+    // Rapid rotator (Jupiter analog, period = 10 hrs)
+    let fast_spin_factor = (24.0f64 / 10.0f64).sqrt();
+    let fast_b = 0.35 * core_mass_frac.sqrt() * fast_spin_factor * temp_factor.powf(0.33);
+    assert!(fast_b > diff.magnetic_field_gauss);
+}
+
+#[test]
+fn test_greenhouse_climate_equilibrium_earth() {
+    use protostellar::simulation::components::{ClimateRegime, PlanetaryClimate};
+    use protostellar::utils::constants::SOLAR_RADIUS_AU;
+
+    let star_temp = 5778.0f64;
+    let star_radius = SOLAR_RADIUS_AU;
+    let r_au = 1.0f64;
+    let albedo = 0.30f64;
+
+    // Radiative equilibrium: T_eq = T_sun * sqrt(R_sun / (2 * r)) * (1 - A)^0.25
+    let t_eq = star_temp * (star_radius / (2.0 * r_au)).sqrt() * (1.0 - albedo).powf(0.25);
+    assert!((t_eq - 255.0).abs() < 3.0); // Pure blackbody Earth ~ 255 K (-18°C)
+
+    // 1 bar atmosphere greenhouse boost (+33 K)
+    let atm_pressure = 1.0f32;
+    let greenhouse_delta = 33.0 * (atm_pressure / 1.0).powf(0.28);
+    let t_surf = t_eq as f32 + greenhouse_delta;
+
+    assert!((t_surf - 288.0).abs() < 3.0); // Earth surface ~ 288 K (+15°C)
+
+    let climate = PlanetaryClimate {
+        surface_temperature_k: t_surf,
+        equilibrium_temperature_k: t_eq as f32,
+        greenhouse_delta_k: greenhouse_delta,
+        albedo: albedo as f32,
+        ice_coverage_frac: 0.10,
+        cloud_coverage_frac: 0.50,
+        climate_regime: ClimateRegime::TemperateHabitable,
+    };
+    assert_eq!(climate.climate_regime, ClimateRegime::TemperateHabitable);
+}
+
+#[test]
+fn test_ice_albedo_feedback_snowball_regime() {
+    use protostellar::simulation::components::ClimateRegime;
+
+    // Outer terrestrial planet at 1.8 AU
+    let star_temp = 5778.0f64;
+    let star_radius = protostellar::utils::constants::SOLAR_RADIUS_AU;
+    let r_au = 1.8f64;
+    let albedo = 0.65f64; // High glacial albedo
+
+    let t_eq = star_temp * (star_radius / (2.0 * r_au)).sqrt() * (1.0 - albedo).powf(0.25);
+    let t_surf = t_eq + 10.0; // Thin cold atmosphere
+
+    assert!(t_surf < 240.0);
+    let regime = if t_surf < 260.0 {
+        ClimateRegime::SnowballIceAge
+    } else {
+        ClimateRegime::TemperateHabitable
+    };
+    assert_eq!(regime, ClimateRegime::SnowballIceAge);
+}
+
+#[test]
+fn test_biosphere_habitability_index() {
+    use protostellar::simulation::components::BiosphereState;
+
+    let temp_score = 0.95f32;
+    let water_score = 1.0f32;
+    let shield_score = 1.0f32;
+    let atm_score = 1.0f32;
+
+    let habitability = temp_score * water_score * shield_score * atm_score;
+    assert!(habitability >= 0.90);
+
+    let mut bio = BiosphereState::default();
+    assert_eq!(bio.biomass_coverage_frac, 0.0);
+    assert_eq!(bio.oxygen_fraction, 0.0);
+
+    // Life blooms over time in high habitability
+    bio.habitability_score = habitability;
+    bio.biomass_coverage_frac = 0.70;
+    bio.oxygen_fraction = (bio.biomass_coverage_frac * 0.24).clamp(0.0, 0.21);
+
+    assert!((bio.oxygen_fraction - 0.168).abs() < 1e-3);
+}

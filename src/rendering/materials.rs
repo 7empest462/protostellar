@@ -11,6 +11,8 @@ pub struct PlanetUniforms {
     /// x: rock (silicate + organics), y: ice (volatiles/water), z: metal, w: gas (atmosphere)
     pub composition: Vec4,
     pub color_seed: Vec4,
+    /// x: ocean_frac, y: ice_frac, z: biomass_frac, w: cloud_density
+    pub climate_and_bio: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
