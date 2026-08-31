@@ -59,7 +59,7 @@ impl Default for GpuOrbitUniforms {
             star_mass: 1.0,
             dt: 0.0005,
             gas_scale: 1.0,
-            inner_radius: 0.65,
+            inner_radius: 0.06,
             outer_radius: 35.0,
             g_const: 39.478418, // 4 * PI^2
             enable_gas_drag: 1,

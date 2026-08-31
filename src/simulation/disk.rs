@@ -217,14 +217,14 @@ pub fn spawn_protoplanetary_disk(
 /// 4. Outer Kuiper Belt (25.0 - 45.0 AU): ~15% of particles (primordial volatile ices)
 pub fn sample_disk_radius<R: rand::Rng + ?Sized>(
     rng: &mut R,
-    _disk_params: &DiskParameters,
+    disk_params: &DiskParameters,
 ) -> (f64, Composition) {
     let roll: f64 = rng.random_range(0.0..1.0);
 
     if roll < 0.25 {
-        // Zone 1: Terrestrial Rocky Zone (0.35 - 2.50 AU) - 25% of particles
+        // Zone 1: Terrestrial Rocky Zone (0.06 - 2.50 AU) - 25% of particles
         let u = roll / 0.25;
-        let r_in_sq = 0.35 * 0.35;
+        let r_in_sq = disk_params.inner_radius_au * disk_params.inner_radius_au;
         let r_out_sq = 2.50 * 2.50;
         let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
         let comp = if r < 0.60 {

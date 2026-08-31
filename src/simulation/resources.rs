@@ -221,7 +221,7 @@ impl Default for DiskParameters {
         Self {
             central_star_mass: 1.0,
             disk_mass: 0.0006,     // ~200 Earth masses of solid dust/planetesimals
-            inner_radius_au: 0.35, // Sublimation zone (inside Mercury's perihelion)
+            inner_radius_au: 0.06, // Protostellar accretion boundary layer (~0.06 AU)
             outer_radius_au: 45.0, // Authentic Kuiper Belt boundary (~40-45 AU)
             density_power_law: 1.5,
             reference_temp_1au: 280.0,

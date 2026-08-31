@@ -251,7 +251,7 @@ fn test_sample_disk_radius_distribution() {
 
     for _ in 0..n_samples {
         let (r, comp) = sample_disk_radius(&mut rng, &disk_params);
-        assert!((0.35..=45.0).contains(&r));
+        assert!((0.06..=45.0).contains(&r));
 
         if r <= 2.50 {
             count_inner += 1;

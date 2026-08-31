@@ -194,7 +194,7 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) 
         star_mass: 1.0,
         dt: 0.0005,
         gas_scale: 1.0,
-        inner_radius: 0.65,
+        inner_radius: 0.06,
         outer_radius: 35.0,
         g_const: G_ASTRO as f32,
         enable_gas_drag: 1,

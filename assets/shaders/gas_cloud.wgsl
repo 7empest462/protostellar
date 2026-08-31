@@ -74,7 +74,7 @@ fn fragment(
     let time = gas.time_data.x;
 
     // 1. Smooth Radial Boundaries
-    let inner_fade = smoothstep(inner_r * 0.5, inner_r * 2.0, r_cyl);
+    let inner_fade = smoothstep(inner_r * 0.7, inner_r * 1.5, r_cyl);
     let outer_fade = 1.0 - smoothstep(outer_r * 0.80, outer_r * 1.15, r_cyl);
     let radial_mask = inner_fade * outer_fade;
 
