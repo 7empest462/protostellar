@@ -1084,7 +1084,7 @@ pub fn handle_ui_button_interactions(
                                 toast.message =
                                     "⭐ Hydrogen Core Fusion Ignited! Solar Wind Shockwave Sweeping the System!".to_string();
                             } else {
-                                ignition.shockwave_radius = 0.1;
+                                ignition.shockwave_radius = 1.6;
                                 toast.message =
                                     "☀️ Coronal Mass Ejection & Solar Blast Triggered!".to_string();
                             }

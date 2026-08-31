@@ -68,10 +68,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         r = max(r - migration, uniforms.inner_radius * 0.8);
     }
 
-    // Stellar Blast Shockwave Interaction
-    if (uniforms.shockwave_radius > 0.0 && abs(r - uniforms.shockwave_radius) < 1.0) {
-        let shock_boost = (1.0 - abs(r - uniforms.shockwave_radius)) / 1.0;
-        r = r + shock_boost * 1.0 * uniforms.dt;
+    // Stellar Blast Shockwave & Photo-evaporative Dust Clearing
+    if (uniforms.shockwave_radius > 0.0) {
+        if (r < uniforms.shockwave_radius) {
+            if (r < 1.6 || r < uniforms.shockwave_radius * 0.85) {
+                p.mass = 0.0;
+                p.position = vec3<f32>(0.0, -5000.0, 0.0);
+                particles[idx] = p;
+                return;
+            } else {
+                r = min(uniforms.shockwave_radius + 0.15, uniforms.outer_radius);
+            }
+        } else if (abs(r - uniforms.shockwave_radius) < 1.0) {
+            let shock_boost = (1.0 - abs(r - uniforms.shockwave_radius)) / 1.0;
+            r = r + shock_boost * 1.5 * uniforms.dt;
+        }
     }
 
     // Bound particles within the disk

@@ -84,6 +84,7 @@ pub fn update_thermodynamics(
             if ignition.core_temperature >= ignition_threshold {
                 ignition.is_ignited = true;
                 ignition.fusion_fraction = 1.0;
+                ignition.shockwave_radius = 1.6; // Immediately clears out inner dust around the star!
                 body.body_type = BodyType::MainSequenceStar;
                 body.name = "The Star (Main Sequence)".to_string();
 

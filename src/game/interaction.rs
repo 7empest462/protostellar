@@ -230,7 +230,7 @@ pub fn handle_player_tools(
                         if !ignition.is_ignited {
                             ignition.core_temperature = 1.0e7; // Trigger instant fusion!
                         } else {
-                            ignition.shockwave_radius = 0.1; // Trigger new coronal solar blast!
+                            ignition.shockwave_radius = 1.6; // Trigger new coronal solar blast!
                         }
                     }
                 } else {

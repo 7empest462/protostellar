@@ -345,9 +345,20 @@ pub fn update_particle_swarm(
                         let migration = (r * drag_rate * visual_flow_dt).min(r * 0.005);
                         r = (r - migration).max(disk_params.inner_radius_au as f32 * 0.8);
                     }
-                    if shockwave_r > 0.0 && (r - shockwave_r).abs() < 1.0 {
-                        let shock_boost = (1.0 - (r - shockwave_r).abs()) / 1.0;
-                        r += shock_boost * 1.0 * visual_flow_dt;
+                    if shockwave_r > 0.0 {
+                        // Solar radiation pressure sweeps and photo-evaporates dust close to the star
+                        if r < shockwave_r {
+                            if r < 1.6 || r < shockwave_r * 0.85 {
+                                mass_chunk[i] = 0.0;
+                                pos_chunk[i] = [0.0, -5000.0, 0.0];
+                                continue;
+                            } else {
+                                r = (shockwave_r + 0.15).min(disk_params.outer_radius_au as f32);
+                            }
+                        } else if (r - shockwave_r).abs() < 1.0 {
+                            let shock_boost = (1.0 - (r - shockwave_r).abs()) / 1.0;
+                            r += shock_boost * 1.5 * visual_flow_dt;
+                        }
                     }
 
                     let mut accreted = false;
