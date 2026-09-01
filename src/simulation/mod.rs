@@ -5,6 +5,7 @@ pub mod components;
 pub mod disk;
 pub mod physics;
 pub mod resources;
+pub mod scenarios;
 pub mod thermodynamics;
 
 use bevy::prelude::*;
@@ -14,6 +15,7 @@ use crate::simulation::components::*;
 use crate::simulation::disk::*;
 use crate::simulation::physics::*;
 use crate::simulation::resources::*;
+use crate::simulation::scenarios::*;
 use crate::simulation::thermodynamics::*;
 
 pub struct SimulationPlugin;
@@ -27,6 +29,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<DiskParameters>()
             .init_resource::<PlayerInteractionState>()
             .init_resource::<PlanetesimalSpawner>()
+            .init_resource::<ActiveScenarioState>()
             .add_message::<AccretionMergeEvent>()
             .add_message::<MoonFormationEvent>()
             .add_message::<CollisionBounceEvent>()
@@ -34,10 +37,13 @@ impl Plugin for SimulationPlugin {
             .add_message::<StarIgnitionEvent>()
             .add_message::<PlanetaryEngulfmentEvent>()
             .add_message::<SupernovaEvent>()
+            .add_message::<LoadScenarioEvent>()
             .add_systems(Startup, setup_simulation)
             .add_systems(
                 Update,
                 (
+                    handle_load_scenario_events,
+                    update_active_scenarios,
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),
                     direct_nebular_gas_accretion.after(step_physics_simulation),

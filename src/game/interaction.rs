@@ -17,6 +17,7 @@ pub fn handle_player_tools(
     disk_params: Res<DiskParameters>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut selected_query: Query<
         (
@@ -367,5 +368,28 @@ pub fn handle_player_tools(
     if keyboard.just_pressed(KeyCode::KeyG) {
         lhb_state.is_active = true;
         lhb_state.manual_trigger_requested = true;
+    }
+
+    // 5. Exoplanet System Generator Scenario Hotkeys (F1 - F5)
+    if keyboard.just_pressed(KeyCode::F1) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
+        ));
+    } else if keyboard.just_pressed(KeyCode::F2) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::Trappist1System,
+        ));
+    } else if keyboard.just_pressed(KeyCode::F3) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary,
+        ));
+    } else if keyboard.just_pressed(KeyCode::F4) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration,
+        ));
+    } else if keyboard.just_pressed(KeyCode::F5) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby,
+        ));
     }
 }

@@ -90,6 +90,12 @@ pub enum UiButtonAction {
     ShatterIntoRings,
     SeedLife,
     AgeStar,
+    // Sandbox Scenarios & System Presets
+    LoadScenarioSolar,
+    LoadScenarioTrappist,
+    LoadScenarioKepler16,
+    LoadScenarioHotJupiter,
+    LoadScenarioRoguePlanet,
 }
 
 impl UiButtonAction {
@@ -126,6 +132,11 @@ impl UiButtonAction {
             UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupt selected moon/body into glowing planetary rings.",
             UiButtonAction::SeedLife => "[E]: Seed primordial water oceans, atmosphere, and photosynthetic biosphere.",
             UiButtonAction::AgeStar => "[N]: Step central star forward through far-future lifecycle (Red Giant -> Nebula -> White Dwarf).",
+            UiButtonAction::LoadScenarioSolar => "[F1]: Reset to standard 4.5 Gyr Hayashi Solar Nebula MMSN with central protostar and 10 embryos.",
+            UiButtonAction::LoadScenarioTrappist => "[F2]: Load TRAPPIST-1 ultracool red dwarf system with 7 resonant Earths (3 in Habitable Zone).",
+            UiButtonAction::LoadScenarioKepler16 => "[F3]: Load Kepler-16 'Tatooine' circumbinary system with K/M binary star pair and giant planet.",
+            UiButtonAction::LoadScenarioHotJupiter => "[F4]: Load Hot Jupiter inward migration scenario (Type II disk migration from 5.2 AU -> 0.045 AU).",
+            UiButtonAction::LoadScenarioRoguePlanet => "[F5]: Load Rogue Planet Flyby scenario (Hyperbolic 3.5 M_Jup interloper scattering the solar system).",
         }
     }
 }
@@ -242,6 +253,27 @@ pub fn setup_hud(mut commands: Commands) {
                                 create_button(btn_row, UiButtonAction::SelectJupiter, "Proto-Jupiter", Color::srgba(0.18, 0.12, 0.08, 0.85), Color::srgb(0.9, 0.6, 0.3));
                                 create_button(btn_row, UiButtonAction::SelectKuiper, "Kuiper", Color::srgba(0.08, 0.12, 0.22, 0.85), Color::srgb(0.4, 0.6, 0.95));
                                 create_button(btn_row, UiButtonAction::CycleTarget, "Cycle [Tab]", Color::srgba(0.12, 0.16, 0.26, 0.85), Color::srgb(0.5, 0.7, 1.0));
+                            });
+
+                        // Interactive Sandbox Scenario Presets Bar
+                        center_col
+                            .spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    padding: UiRect::all(Val::Px(3.0)),
+                                    align_items: AlignItems::Center,
+                                    margin: UiRect::bottom(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.90)),
+                                BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
+                            ))
+                            .with_children(|scenario_row| {
+                                create_button(scenario_row, UiButtonAction::LoadScenarioSolar, "Solar [F1]", Color::srgba(0.18, 0.14, 0.04, 0.9), Color::srgb(0.9, 0.75, 0.3));
+                                create_button(scenario_row, UiButtonAction::LoadScenarioTrappist, "TRAPPIST-1 [F2]", Color::srgba(0.22, 0.06, 0.08, 0.9), Color::srgb(1.0, 0.45, 0.45));
+                                create_button(scenario_row, UiButtonAction::LoadScenarioKepler16, "Kepler-16 [F3]", Color::srgba(0.20, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.7, 0.3));
+                                create_button(scenario_row, UiButtonAction::LoadScenarioHotJupiter, "Hot Jupiter [F4]", Color::srgba(0.18, 0.08, 0.22, 0.9), Color::srgb(0.85, 0.45, 1.0));
+                                create_button(scenario_row, UiButtonAction::LoadScenarioRoguePlanet, "Rogue Planet [F5]", Color::srgba(0.06, 0.16, 0.22, 0.9), Color::srgb(0.4, 0.85, 1.0));
                             });
 
                         // Notification Toast Box
@@ -514,6 +546,7 @@ pub fn handle_ui_button_interactions(
     >,
     mut camera_query: Query<&mut PanOrbitCamera>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
 ) {
@@ -1494,6 +1527,51 @@ pub fn handle_ui_button_interactions(
                             }
                             toast.timer = 6.0;
                         }
+                    }
+
+                    // Sandbox Scenarios & System Presets
+                    UiButtonAction::LoadScenarioSolar => {
+                        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+                            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
+                        ));
+                        toast.message =
+                            "🪐 Loaded Scenario: Hayashi Solar Nebula (MMSN)".to_string();
+                        toast.timer = 5.0;
+                    }
+                    UiButtonAction::LoadScenarioTrappist => {
+                        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+                            crate::simulation::scenarios::ScenarioPreset::Trappist1System,
+                        ));
+                        toast.message =
+                            "🔴 Loaded Scenario: TRAPPIST-1 (7 Resonant Earths, 3 Habitable)"
+                                .to_string();
+                        toast.timer = 5.0;
+                    }
+                    UiButtonAction::LoadScenarioKepler16 => {
+                        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+                            crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary,
+                        ));
+                        toast.message =
+                            "☀️ Loaded Scenario: Kepler-16 'Tatooine' Circumbinary System"
+                                .to_string();
+                        toast.timer = 5.0;
+                    }
+                    UiButtonAction::LoadScenarioHotJupiter => {
+                        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+                            crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration,
+                        ));
+                        toast.message =
+                            "🌀 Loaded Scenario: Hot Jupiter Type II Inward Migration".to_string();
+                        toast.timer = 5.0;
+                    }
+                    UiButtonAction::LoadScenarioRoguePlanet => {
+                        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+                            crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby,
+                        ));
+                        toast.message =
+                            "☄️ Loaded Scenario: Interstellar Rogue Planet Flyby Perturbation"
+                                .to_string();
+                        toast.timer = 5.0;
                     }
                 }
             }

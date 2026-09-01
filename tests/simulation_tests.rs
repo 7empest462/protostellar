@@ -731,3 +731,75 @@ fn test_massive_star_supernova_evolution_branch() {
     }
     assert_eq!(evo.phase, StellarEvolutionPhase::NeutronStarPulsar);
 }
+
+#[test]
+fn test_trappist1_system_resonance_and_habitable_zone() {
+    let m_star = 0.0898f64; // TRAPPIST-1 mass (Solar)
+    let l_star = 0.000553f64; // TRAPPIST-1 luminosity (Solar)
+
+    // Habitable zone boundaries for TRAPPIST-1: r_hz ~ sqrt(L_star / S_eff)
+    let hz_inner = 0.75 * l_star.sqrt(); // ~0.0176 AU
+    let hz_outer = 1.77 * l_star.sqrt(); // ~0.0416 AU
+
+    let semimajor_axes: [f64; 7] = [
+        0.01154, 0.01580, 0.02227, 0.02925, 0.03849, 0.04688, 0.06193,
+    ];
+
+    // Compute orbital periods using Kepler's 3rd Law: P = sqrt(a^3 / M_star) in years
+    let periods: Vec<f64> = semimajor_axes
+        .iter()
+        .map(|&a| (a.powf(3.0) / m_star).sqrt() * 365.25)
+        .collect();
+
+    // Check TRAPPIST-1e and 1f are inside the habitable zone
+    assert!(semimajor_axes[3] >= hz_inner && semimajor_axes[3] <= hz_outer * 1.2); // TRAPPIST-1e
+    assert!(semimajor_axes[4] >= hz_inner && semimajor_axes[4] <= hz_outer * 1.2); // TRAPPIST-1f
+
+    // Verify resonant period ratios are near integer ratios (e.g. 1c/1b ~ 1.6 ~ 8:5, 1d/1c ~ 1.67 ~ 5:3, 1e/1d ~ 1.5 ~ 3:2)
+    let ratio_c_b = periods[1] / periods[0];
+    let ratio_e_d = periods[3] / periods[2];
+    assert!((ratio_c_b - 1.60).abs() < 0.15);
+    assert!((ratio_e_d - 1.50).abs() < 0.15);
+}
+
+#[test]
+fn test_kepler16_circumbinary_stability_radius() {
+    // Holman & Wiegert (1999) empirical dynamical stability limit for P-type circumbinary planets:
+    // a_crit = a_bin * (1.60 + 5.10*e_bin - 2.22*e_bin^2 + 4.12*mu - 4.27*e_bin*mu - 5.09*mu^2 + 4.61*e_bin^2*mu^2)
+    let m_a = 0.6897f64;
+    let m_b = 0.2025f64;
+    let a_bin = 0.2243f64;
+    let e_bin = 0.159f64;
+    let mu = m_b / (m_a + m_b); // Mass ratio ~ 0.227
+
+    let a_crit = a_bin
+        * (1.60 + 5.10 * e_bin - 2.22 * e_bin.powi(2) + 4.12 * mu
+            - 4.27 * e_bin * mu
+            - 5.09 * mu.powi(2)
+            + 4.61 * e_bin.powi(2) * mu.powi(2));
+
+    // Kepler-16b circumbinary orbit at a = 0.7048 AU
+    let a_kepler16b = 0.7048f64;
+
+    // The planet's orbit must be dynamically stable (outside a_crit ~ 0.65 AU)
+    assert!(a_kepler16b > a_crit);
+    assert!(a_crit > 0.55 && a_crit < 0.70);
+}
+
+#[test]
+fn test_scenario_preset_definitions() {
+    use protostellar::simulation::scenarios::ScenarioPreset;
+
+    let presets = [
+        ScenarioPreset::SolarNebulaMmsn,
+        ScenarioPreset::Trappist1System,
+        ScenarioPreset::Kepler16Circumbinary,
+        ScenarioPreset::HotJupiterMigration,
+        ScenarioPreset::RoguePlanetFlyby,
+    ];
+
+    for preset in presets {
+        assert!(!preset.display_name().is_empty());
+        assert!(!preset.description().is_empty());
+    }
+}
