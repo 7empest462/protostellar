@@ -19,8 +19,8 @@ pub fn handle_time_control_input(
         time_warp.is_paused = !time_warp.is_paused;
     }
 
-    // Step once (when paused)
-    time_warp.step_once = keyboard.just_pressed(KeyCode::KeyN);
+    // Step once (when paused with Period / .)
+    time_warp.step_once = keyboard.just_pressed(KeyCode::Period);
 
     // Continuous Granular Speed Controls ([ / ] or - / +)
     if keyboard.just_pressed(KeyCode::BracketRight) || keyboard.just_pressed(KeyCode::Equal) {

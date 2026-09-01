@@ -269,8 +269,8 @@ pub fn process_accretion_and_collisions(
                     && b >= 0.20
                     && p_m >= EARTH_MASS_SOLAR * 0.05
                     && s_m <= p_m * 0.20
-                    && !matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar)
-                    && !matches!(type2, BodyType::Protostar | BodyType::MainSequenceStar);
+                    && !p_type.is_star_or_remnant()
+                    && !type2.is_star_or_remnant();
 
                 if is_roche_disruption {
                     // ==========================================
@@ -332,8 +332,8 @@ pub fn process_accretion_and_collisions(
                     && p_m >= EARTH_MASS_SOLAR * 0.01
                     && s_m <= p_m * 0.65
                     && s_m >= EARTH_MASS_SOLAR * 0.0001
-                    && !matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar)
-                    && !matches!(type2, BodyType::Protostar | BodyType::MainSequenceStar);
+                    && !p_type.is_star_or_remnant()
+                    && !type2.is_star_or_remnant();
 
                 if is_giant_impact_moon {
                     // ==========================================
@@ -348,55 +348,25 @@ pub fn process_accretion_and_collisions(
                     let primary_vel = (p_vel * p_m + s_vel * accreted_mass) / total_primary_mass;
                     let primary_pos = (p_pos * p_m + s_pos * accreted_mass) / total_primary_mass;
 
-                    // Composition blending for primary
-                    let primary_comp = p_comp.mass_weighted_merge(p_m, &s_comp, accreted_mass);
+                    // Compute stable moon orbit around primary
+                    let d_impact = r_contact.max(1e-5);
+                    let orbit_dist_au = (d_impact * (1.2 + 0.8 * b)).max(EARTH_RADIUS_AU * 1.5);
+                    let p_moon_yr = 2.0
+                        * std::f64::consts::PI
+                        * (orbit_dist_au.powi(3) / (G_ASTRO * total_primary_mass.max(1e-8))).sqrt();
 
-                    // Primary physical radius
-                    let primary_density = primary_comp.average_density();
-                    let primary_volume = total_primary_mass / primary_density;
-                    let primary_radius = ((3.0 * primary_volume) / (4.0 * PI))
+                    let moon_tangent = r_rel.cross(DVec3::Y).normalize_or_zero();
+                    let v_moon_orb =
+                        (G_ASTRO * total_primary_mass / orbit_dist_au.max(1e-5)).sqrt();
+                    let moon_pos = primary_pos + r_rel.normalize_or_zero() * orbit_dist_au;
+                    let moon_vel = primary_vel + moon_tangent * v_moon_orb;
+
+                    // Update primary core entity
+                    let p_density = p_comp.average_density();
+                    let p_new_radius = ((3.0 * total_primary_mass / p_density) / (4.0 * PI))
                         .cbrt()
                         .max(EARTH_RADIUS_AU * 0.3);
 
-                    // Off-center impact angular torque gives the primary an axial tilt and spin
-                    let r_impact = p_pos - s_pos;
-                    let v_impact = p_vel - s_vel;
-                    let impact_orbital_spin =
-                        (p_m * accreted_mass / total_primary_mass) * r_impact.cross(v_impact);
-                    let primary_spin = p_spin + impact_orbital_spin;
-
-                    // Moon physical properties: Mantle-silicate rich debris
-                    let moon_comp = Composition::silicate_rich();
-                    let moon_density = moon_comp.average_density();
-                    let moon_volume = moon_mass / moon_density;
-                    let moon_radius = ((3.0 * moon_volume) / (4.0 * PI))
-                        .cbrt()
-                        .max(EARTH_RADIUS_AU * 0.15);
-
-                    // Circumplanetary orbital distance (safely outside fluid Roche limit)
-                    let orbit_dist_au = primary_radius * (3.5 + 2.5 * b);
-                    let v_orbit_speed = (G_ASTRO * total_primary_mass / orbit_dist_au).sqrt();
-                    let p_moon_yr =
-                        2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * total_primary_mass)).sqrt();
-
-                    // Orbital plane geometry from collision vectors
-                    let r_dir = if r_rel.length() > 1e-8 {
-                        r_rel.normalize()
-                    } else {
-                        DVec3::X
-                    };
-                    let mut ang_dir = r_rel.cross(v_rel_vec);
-                    if ang_dir.length() < 1e-8 {
-                        ang_dir = DVec3::Y;
-                    } else {
-                        ang_dir = ang_dir.normalize();
-                    }
-                    let tang_dir = ang_dir.cross(r_dir).normalize();
-
-                    let moon_pos = primary_pos + r_dir * orbit_dist_au;
-                    let moon_vel = primary_vel + tang_dir * v_orbit_speed;
-
-                    // Update Primary Planet in ECS
                     if let Ok((
                         _,
                         mut m,
@@ -415,29 +385,31 @@ pub fn process_accretion_and_collisions(
                         m.0 = total_primary_mass;
                         pos.0 = primary_pos;
                         vel.0 = primary_vel;
-                        rad.0 = primary_radius;
-                        t.0 = (t.0 + 600.0).min(5000.0); // Impact heating
-                        *comp = primary_comp;
-
-                        // Upgrade body type using centralized hydrostatic and composition classifier
-                        body.body_type = classify_body_by_mass_and_comp(
-                            total_primary_mass,
-                            &primary_comp,
-                            false,
-                        );
+                        rad.0 = p_new_radius;
+                        t.0 = (t.0 + 800.0).min(4000.0); // Heating from collision energy
+                        *comp = p_comp.mass_weighted_merge(p_m, &s_comp, accreted_mass);
+                        body.body_type =
+                            classify_body_by_mass_and_comp(total_primary_mass, &comp, false);
 
                         let r_len = primary_pos.length().max(1e-4);
                         acc.0 = -(G_ASTRO * star_mass / (r_len * r_len * r_len)) * primary_pos;
 
                         if let Some(mut diff) = opt_diff {
-                            diff.recalculate(total_primary_mass, primary_radius, &primary_comp);
+                            diff.recalculate(total_primary_mass, p_new_radius, &comp);
                         }
                         if let Some(mut spin) = opt_spin_mut {
-                            spin.update_from_spin(primary_spin, total_primary_mass, primary_radius);
+                            spin.rotation_period_hours =
+                                (spin.rotation_period_hours * 0.75).clamp(4.0, 72.0);
                         }
                     }
 
-                    // Convert Secondary Body into the newly spawned Moon in ECS
+                    // Convert secondary entity into natural satellite / moon
+                    let moon_comp = s_comp;
+                    let s_density = moon_comp.average_density();
+                    let moon_radius = ((3.0 * moon_mass / s_density) / (4.0 * PI))
+                        .cbrt()
+                        .max(EARTH_RADIUS_AU * 0.05);
+
                     if let Ok((
                         _,
                         mut m,
@@ -470,7 +442,6 @@ pub fn process_accretion_and_collisions(
                         }
                         if let Some(mut spin) = opt_spin_mut {
                             spin.rotation_period_hours = p_moon_yr * YEAR_SECONDS / 3600.0;
-                            // Tidally locked
                         }
                         if let Some(mut sat) = opt_sat_mut {
                             sat.parent = primary_entity;
@@ -507,15 +478,19 @@ pub fn process_accretion_and_collisions(
                             -(1.0 + e_restitution) * v_rel_normal / (1.0 / m1 + 1.0 / m2);
                         let impulse = n_norm * impulse_mag;
 
-                        if let Ok((_, _, _, mut v1, _, _, _, _, _, _, _, _)) =
-                            bodies_query.get_mut(e1)
-                        {
-                            v1.0 += impulse / m1;
+                        if !type1.is_star_or_remnant() {
+                            if let Ok((_, _, _, mut v1, _, _, _, _, _, _, _, _)) =
+                                bodies_query.get_mut(e1)
+                            {
+                                v1.0 += impulse / m1;
+                            }
                         }
-                        if let Ok((_, _, _, mut v2, _, _, _, _, _, _, _, _)) =
-                            bodies_query.get_mut(e2)
-                        {
-                            v2.0 -= impulse / m2;
+                        if !type2.is_star_or_remnant() {
+                            if let Ok((_, _, _, mut v2, _, _, _, _, _, _, _, _)) =
+                                bodies_query.get_mut(e2)
+                            {
+                                v2.0 -= impulse / m2;
+                            }
                         }
 
                         bounce_events.write(CollisionBounceEvent {
@@ -532,8 +507,7 @@ pub fn process_accretion_and_collisions(
                     let total_mass = p_m + s_m;
 
                     // Exact Conservation of Linear Momentum (Central Star remains stationary at origin)
-                    let is_star =
-                        matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar);
+                    let is_star = p_type.is_star_or_remnant();
                     let merged_vel = if is_star {
                         DVec3::ZERO
                     } else {
@@ -722,10 +696,7 @@ pub fn process_accretion_and_collisions(
                     && s_m <= p_m * 0.05
                     && s_m >= EARTH_MASS_SOLAR * 1e-8;
 
-                if is_gas_rich
-                    && valid_mass_ratio
-                    && !matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar)
-                {
+                if is_gas_rich && valid_mass_ratio && !p_type.is_star_or_remnant() {
                     let orbit_radius = p_pos.length().max(1e-4);
                     let hill_radius = orbit_radius * (p_m / (3.0 * star_mass)).cbrt();
 

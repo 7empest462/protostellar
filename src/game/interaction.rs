@@ -45,10 +45,7 @@ pub fn handle_player_tools(
         let mut planets: Vec<(Entity, f64)> = Vec::new();
 
         for (e, _, _, _, pos, _, _, body, ..) in selected_query.iter() {
-            if matches!(
-                body.body_type,
-                BodyType::Protostar | BodyType::MainSequenceStar
-            ) {
+            if body.body_type.is_star_or_remnant() {
                 star_entity = Some(e);
             } else {
                 planets.push((e, pos.0.length()));
@@ -218,10 +215,7 @@ pub fn handle_player_tools(
 
             // F. Stellar Core Ignition (Key I on Star) or Prograde Delta-V Boost (Key I or B on Planets)
             if keyboard.just_pressed(KeyCode::KeyI) {
-                if matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                ) {
+                if body.body_type.is_star_or_remnant() {
                     if let Some(ref mut ignition) = ignition_opt {
                         if !ignition.is_ignited {
                             ignition.core_temperature = 1.0e7; // Trigger instant fusion!
@@ -239,12 +233,7 @@ pub fn handle_player_tools(
             }
 
             // F2. Prograde Delta-V Boost alternative (Key B on Planets)
-            if keyboard.just_pressed(KeyCode::KeyB)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyB) && !body.body_type.is_star_or_remnant() {
                 let speed = vel.0.length();
                 if speed > 0.0 {
                     let dir = vel.0 / speed;
@@ -253,12 +242,7 @@ pub fn handle_player_tools(
             }
 
             // G. Retrograde Delta-V Brake (Key K)
-            if keyboard.just_pressed(KeyCode::KeyK)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyK) && !body.body_type.is_star_or_remnant() {
                 let speed = vel.0.length();
                 if speed > 0.0 {
                     let dir = vel.0 / speed;
@@ -267,12 +251,7 @@ pub fn handle_player_tools(
             }
 
             // H. Circularize / Fix Orbit (Key Z)
-            if keyboard.just_pressed(KeyCode::KeyZ)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyZ) && !body.body_type.is_star_or_remnant() {
                 let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
                 let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
                 let phi = pos.0.z.atan2(pos.0.x);
@@ -282,10 +261,7 @@ pub fn handle_player_tools(
 
             // I. Delete / Vaporize Selected Body (Key Delete or Backspace)
             if (keyboard.just_pressed(KeyCode::Delete) || keyboard.just_pressed(KeyCode::Backspace))
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
+                && !body.body_type.is_star_or_remnant()
             {
                 if let Ok(mut cmd) = commands.get_entity(entity) {
                     cmd.despawn();
@@ -294,12 +270,7 @@ pub fn handle_player_tools(
             }
 
             // J. Shatter / Form Planetary Rings (Key X)
-            if keyboard.just_pressed(KeyCode::KeyX)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyX) && !body.body_type.is_star_or_remnant() {
                 if let Ok(mut cmd) = commands.get_entity(entity) {
                     cmd.insert(PlanetaryRingSystem {
                         inner_radius_au: 0.0008,
@@ -313,12 +284,7 @@ pub fn handle_player_tools(
             }
 
             // K. Seed Photosynthetic Biosphere & Oceans (Key E)
-            if keyboard.just_pressed(KeyCode::KeyE)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyE) && !body.body_type.is_star_or_remnant() {
                 if let Ok(mut cmd) = commands.get_entity(entity) {
                     cmd.insert((
                         VolatileInventory {
@@ -349,12 +315,7 @@ pub fn handle_player_tools(
             }
 
             // L. Stellar Evolution Metamorphosis (Key N on Star)
-            if keyboard.just_pressed(KeyCode::KeyN)
-                && matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
                 if let Some(ref mut ignition) = ignition_opt {
                     if !ignition.is_ignited {
                         ignition.core_temperature = 1.0e7;

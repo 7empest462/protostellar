@@ -721,10 +721,7 @@ pub fn handle_ui_button_interactions(
                         let mut planets: Vec<(Entity, f64, String, f64)> = Vec::new();
 
                         for (e, m, _, pos, _, _, body, ..) in selected_query.iter() {
-                            if matches!(
-                                body.body_type,
-                                BodyType::Protostar | BodyType::MainSequenceStar
-                            ) {
+                            if body.body_type.is_star_or_remnant() {
                                 star_entity = Some(e);
                             } else {
                                 planets.push((e, pos.0.length(), body.name.clone(), m.0));
@@ -1036,10 +1033,7 @@ pub fn handle_ui_button_interactions(
                             if let Ok((_, _, _, mut pos, mut vel, _, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
-                                if !matches!(
-                                    body.body_type,
-                                    BodyType::Protostar | BodyType::MainSequenceStar
-                                ) {
+                                if !body.body_type.is_star_or_remnant() {
                                     let r_cyl =
                                         (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
                                     let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
@@ -1798,11 +1792,7 @@ pub fn update_hud(
                     / (AU_TO_METERS.powi(3) * 1000.0))
                     .clamp(0.01, 20.0);
 
-                let period_str = if dist_au > 0.05
-                    && !matches!(
-                        body.body_type,
-                        BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf
-                    ) {
+                let period_str = if dist_au > 0.05 && !body.body_type.is_star_or_remnant() {
                     let p_yr = dist_au.powf(1.5) / phase_mgr.star_mass.max(0.1).sqrt();
                     if p_yr >= 1.0 {
                         format!(" | Period: {:.2} yr", p_yr)

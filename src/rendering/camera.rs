@@ -134,10 +134,7 @@ pub fn update_pan_orbit_camera(
             if let Ok(ray) = camera_comp.viewport_to_world(global_transform, cursor_pos) {
                 for (entity, pos, _rad, body, _mass) in targets_query.iter() {
                     let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-                    let hit_radius = if matches!(
-                        body.body_type,
-                        BodyType::Protostar | BodyType::MainSequenceStar
-                    ) {
+                    let hit_radius = if body.body_type.is_star_or_remnant() {
                         4.50f32
                     } else if matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant) {
                         2.50f32

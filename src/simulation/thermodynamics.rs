@@ -320,6 +320,15 @@ pub fn update_thermodynamics(
                     evo.nebula_opacity =
                         (1.0 - (evo.nebula_expansion_radius_au / 200.0)).clamp(0.0, 1.0);
 
+                    // Immediate core collapse: the stellar core contracts to degenerate radius while outer shell explodes
+                    let target_core_r = if mass.0 >= 25.0 {
+                        (2.95e-5 * mass.0).max(0.00005)
+                    } else {
+                        0.0001
+                    };
+                    let k_collapse = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
+                    radius.0 += (target_core_r - radius.0) * k_collapse;
+
                     if evo.nebula_expansion_radius_au >= 120.0 || evo.phase_timer_years >= 1500.0 {
                         if mass.0 >= 25.0 {
                             evo.phase = StellarEvolutionPhase::BlackHoleRemnant;

@@ -70,9 +70,9 @@ pub fn step_physics_simulation(
     }
 
     // Find central star index if present
-    let star_index = body_data.iter().position(|(_, _, _, _, _, _, t, _)| {
-        matches!(t, BodyType::Protostar | BodyType::MainSequenceStar)
-    });
+    let star_index = body_data
+        .iter()
+        .position(|(_, _, _, _, _, _, t, _)| t.is_star_or_remnant());
 
     let (star_mass, star_pos) = if let Some(idx) = star_index {
         (body_data[idx].1, body_data[idx].2)
@@ -86,11 +86,10 @@ pub fn step_physics_simulation(
         .enumerate()
         .filter(|(_, (_, m, _, _, _, _, t, _))| {
             *m > EARTH_MASS_SOLAR * 0.1
+                || t.is_star_or_remnant()
                 || matches!(
                     t,
-                    BodyType::Protostar
-                        | BodyType::MainSequenceStar
-                        | BodyType::Protoplanet
+                    BodyType::Protoplanet
                         | BodyType::TerrestrialPlanet
                         | BodyType::GasGiant
                         | BodyType::IceGiant
@@ -120,7 +119,7 @@ pub fn step_physics_simulation(
             let r_vec = body.2 - star_pos;
             let dist_sq = r_vec.length_squared() + softening_sq;
             let dist = dist_sq.sqrt();
-            if !matches!(body.6, BodyType::Protostar | BodyType::MainSequenceStar) {
+            if !body.6.is_star_or_remnant() {
                 body.4 = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
             }
         }
@@ -129,7 +128,7 @@ pub fn step_physics_simulation(
     for _ in 0..n_substeps {
         // --- 1. Kick step (v += a * dt/2) ---
         for body in body_data.iter_mut() {
-            if !matches!(body.6, BodyType::Protostar | BodyType::MainSequenceStar) {
+            if !body.6.is_star_or_remnant() {
                 body.3 += body.4 * (sub_dt * 0.5);
             } else {
                 body.2 = DVec3::ZERO;
@@ -142,7 +141,7 @@ pub fn step_physics_simulation(
         // Pass A: Advance non-satellites (planets, embryos, asteroids) around the central star
         for body in body_data.iter_mut() {
             if body.7.is_none() {
-                if !matches!(body.6, BodyType::Protostar | BodyType::MainSequenceStar) {
+                if !body.6.is_star_or_remnant() {
                     let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z).sqrt().max(0.05);
                     let omega = (G_ASTRO * star_mass / (r_cyl * r_cyl * r_cyl)).sqrt();
                     let delta_phi = omega * sub_dt;
@@ -218,7 +217,7 @@ pub fn step_physics_simulation(
                 let mut acc = DVec3::ZERO;
 
                 // Non-Keplerian perturbations (Gas Aerodynamic Drag & Eccentricity Damping)
-                if !matches!(b_type, BodyType::Protostar | BodyType::MainSequenceStar) {
+                if !b_type.is_star_or_remnant() {
                     // Gas aerodynamic drag and orbital circularization
                     if config.enable_gas_drag && config.gas_density_scale > 0.001 {
                         let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.1);
@@ -285,7 +284,7 @@ pub fn step_physics_simulation(
 
         // Assign newly calculated accelerations
         for (i, body) in body_data.iter_mut().enumerate() {
-            if !matches!(body.6, BodyType::Protostar | BodyType::MainSequenceStar) {
+            if !body.6.is_star_or_remnant() {
                 body.4 = new_accelerations[i];
             } else {
                 body.4 = DVec3::ZERO;
@@ -368,7 +367,7 @@ pub fn step_physics_simulation(
 
         // --- 4. Kick step (v += a * dt/2) & Physical Velocity Limiting ---
         for body in body_data.iter_mut() {
-            if !matches!(body.6, BodyType::Protostar | BodyType::MainSequenceStar) {
+            if !body.6.is_star_or_remnant() {
                 body.3 += body.4 * (sub_dt * 0.5);
 
                 // Sanitize non-finite vectors
@@ -417,10 +416,7 @@ pub fn step_physics_simulation(
 
     // Write back updated positions, velocities, accelerations, and satellite states to ECS
     for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat) in bodies_query.iter_mut() {
-        if matches!(
-            body.body_type,
-            BodyType::Protostar | BodyType::MainSequenceStar
-        ) {
+        if body.body_type.is_star_or_remnant() {
             pos.0 = DVec3::ZERO;
             vel.0 = DVec3::ZERO;
             acc.0 = DVec3::ZERO;

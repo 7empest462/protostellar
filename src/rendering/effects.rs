@@ -563,10 +563,7 @@ pub fn draw_orbital_effects_and_gizmos(
 
         // C. Draw Selection Highlight Reticle & Beacon (Star & Planets)
         if is_selected {
-            let is_star = matches!(
-                body.body_type,
-                BodyType::Protostar | BodyType::MainSequenceStar
-            );
+            let is_star = body.body_type.is_star_or_remnant();
 
             let reticle_r = if is_star {
                 1.6
