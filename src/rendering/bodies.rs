@@ -250,7 +250,10 @@ pub fn sync_celestial_transforms(
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
 
-        // Dynamically scale body mesh using mass cube-root hierarchy and stellar evolution state
+        // Dynamically scale body mesh using mass cube-root hierarchy and stellar evolution state.
+        // Design contract: star visual radius must ALWAYS exceed the largest planet visual radius
+        // so the star remains visually dominant. Planet visual radii use body_render_scale (0.08)
+        // to stay small relative to orbital distances, preventing visual crowding.
         let visual_radius = if body.body_type.is_star_or_remnant() {
             match body.body_type {
                 BodyType::WhiteDwarf
@@ -264,13 +267,15 @@ pub fn sync_celestial_transforms(
                     (radius.0 as f32).clamp(0.045, 10.0)
                 }
                 BodyType::RedDwarf | BodyType::BrownDwarf => {
-                    // Ultracool & red dwarfs (e.g. TRAPPIST-1, Proxima Centauri)
-                    // Scaled so close-in resonant planets at 0.01 - 0.06 AU orbit clearly outside the star
-                    ((radius.0 as f32) * 5.0).clamp(0.0028, 0.015)
+                    // Ultracool & red dwarfs (e.g. TRAPPIST-1 at R=0.00056 AU, Proxima Centauri)
+                    // Must render clearly larger than terrestrial planets (which max out ~0.0024 AU).
+                    // Physical radius × 14 with floor at 0.006 AU.
+                    ((radius.0 as f32) * 14.0).clamp(0.006, 0.018)
                 }
                 _ => {
-                    // Main sequence stars (Sun, K-dwarfs, Blue Giants)
-                    ((radius.0 as f32) * 3.5).clamp(0.012, 0.080)
+                    // Main sequence stars, K-dwarfs, Blue Giants, Wolf-Rayet, Protostars
+                    // Sun (R=0.00465 AU) → 0.00465 * 4.5 = 0.021 AU visual radius
+                    ((radius.0 as f32) * 4.5).clamp(0.015, 0.10)
                 }
             }
         } else {

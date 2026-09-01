@@ -50,7 +50,7 @@ impl Default for SimulationConfig {
             gas_density_scale: 1.0,
             active_particles: 50000,
             particle_render_scale: 0.3,
-            body_render_scale: 0.15, // Scale down planets relative to distances for realism
+            body_render_scale: 0.08, // Compact planets relative to orbital distances and star size
         }
     }
 }
