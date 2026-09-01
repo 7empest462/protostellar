@@ -261,11 +261,17 @@ fn fragment(
     var out: FragmentOutput;
     
     if (planet.planet_type == 0u) {
-        // Bypass lighting entirely for the star, force it to be bright!
-        out.color = vec4<f32>(planet.color_seed.rgb * 5.0, 1.0);
+        // Bypass lighting entirely for the star / stellar remnant, force brilliant Planckian blackbody emission!
+        out.color = vec4<f32>(planet.color_seed.rgb * 6.0, 1.0);
         if (length(out.color.rgb) < 0.1) {
             out.color = vec4<f32>(10.0, 9.0, 8.0, 1.0);
         }
+    } else if (planet.planet_type == 5u) {
+        // Gravitational singularity event horizon: pitch-black core with photon ring lensing rim
+        let NdotV = max(dot(pbr_input.N, pbr_input.V), 0.0);
+        let photon_ring = pow(1.0 - NdotV, 6.0);
+        let ring_color = vec3<f32>(1.0, 0.65, 0.25) * photon_ring * 8.0;
+        out.color = vec4<f32>(ring_color, 1.0);
     } else {
         let lit = apply_pbr_lighting(pbr_input);
         // Ambient starlight illumination floor + soft fresnel atmospheric rim

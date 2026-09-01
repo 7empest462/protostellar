@@ -58,12 +58,38 @@ pub enum BodyType {
     GasGiant,
     /// Water/ammonia/methane mantle world (Uranus, Neptune type)
     IceGiant,
+    /// Sub-stellar brown dwarf (deuterium burning only, M < 0.08 M_sun)
+    BrownDwarf,
+    /// Low-mass, fully convective red dwarf (M < 0.5 M_sun)
+    RedDwarf,
+    /// Sun-like yellow dwarf star (G-type, ~1.0 M_sun)
+    YellowDwarf,
+    /// Hot, massive blue giant star (B-type, 8-15 M_sun)
+    BlueGiant,
+    /// Luminous blue supergiant star (O-type, 15-25 M_sun)
+    BlueSupergiant,
+    /// Expanded hydrogen-shell burning red giant
+    RedGiant,
+    /// Highly evolved massive red supergiant (Betelgeuse type)
+    RedSupergiant,
+    /// Extremely luminous hypergiant star (M > 25 M_sun)
+    Hypergiant,
+    /// Evolved massive star shedding envelope with intense winds
+    WolfRayet,
     /// Pre-main-sequence contracting protostellar core
     Protostar,
     /// Hydrogen-burning ignited star
     MainSequenceStar,
-    /// Degenerate carbon-oxygen Earth-sized stellar remnant
+    /// Degenerate carbon-oxygen Earth-sized stellar remnant (M <= 1.44 M_sun)
     WhiteDwarf,
+    /// Ultra-dense degenerate neutron star core (M <= 2.17 M_sun)
+    NeutronStar,
+    /// Rapidly spinning magnetized neutron star with relativistic beams
+    Pulsar,
+    /// Neutron star with extreme magnetic field (10^14 - 10^15 Gauss)
+    Magnetar,
+    /// Gravitational singularity with event horizon and accretion disk
+    BlackHole,
     /// Minor rocky body
     Asteroid,
     /// Volatile-rich icy body
@@ -72,6 +98,94 @@ pub enum BodyType {
     DebrisRing,
     /// Natural satellite or moon orbiting a parent planet
     Moon,
+}
+
+impl BodyType {
+    /// Returns true if this body is an active star or degenerate stellar remnant.
+    pub fn is_star_or_remnant(&self) -> bool {
+        matches!(
+            self,
+            BodyType::Protostar
+                | BodyType::MainSequenceStar
+                | BodyType::BrownDwarf
+                | BodyType::RedDwarf
+                | BodyType::YellowDwarf
+                | BodyType::BlueGiant
+                | BodyType::BlueSupergiant
+                | BodyType::RedGiant
+                | BodyType::RedSupergiant
+                | BodyType::Hypergiant
+                | BodyType::WolfRayet
+                | BodyType::WhiteDwarf
+                | BodyType::NeutronStar
+                | BodyType::Pulsar
+                | BodyType::Magnetar
+                | BodyType::BlackHole
+        )
+    }
+
+    /// Returns true if this body is a major planet.
+    pub fn is_planet(&self) -> bool {
+        matches!(
+            self,
+            BodyType::TerrestrialPlanet
+                | BodyType::GasGiant
+                | BodyType::IceGiant
+                | BodyType::Protoplanet
+        )
+    }
+}
+
+/// Centralized hydrostatic equilibrium and mass-dependent classification function.
+pub fn classify_body_by_mass_and_comp(
+    mass_solar: f64,
+    comp: &Composition,
+    is_central_star: bool,
+) -> BodyType {
+    let mass_earth = mass_solar / crate::utils::constants::EARTH_MASS_SOLAR;
+    let mass_jupiter = mass_solar / crate::utils::constants::JUPITER_MASS_SOLAR;
+
+    if is_central_star || mass_solar >= 0.08 {
+        if mass_solar < 0.08 {
+            BodyType::BrownDwarf
+        } else if mass_solar < 0.50 {
+            BodyType::RedDwarf
+        } else if mass_solar < 1.4 {
+            BodyType::YellowDwarf
+        } else if mass_solar < 8.0 {
+            BodyType::BlueGiant
+        } else if mass_solar < 25.0 {
+            BodyType::BlueSupergiant
+        } else {
+            BodyType::Hypergiant
+        }
+    } else {
+        // Planetary / Minor body classification
+        if mass_solar >= 0.0125 {
+            // ~13 Jupiter Masses
+            BodyType::BrownDwarf
+        } else if mass_jupiter >= 0.05 || mass_earth >= 15.0 {
+            if comp.gas_frac > 0.30 {
+                BodyType::GasGiant
+            } else {
+                BodyType::IceGiant
+            }
+        } else if mass_earth >= 0.02 {
+            if comp.gas_frac > 0.40 {
+                BodyType::GasGiant
+            } else if comp.ice_frac > 0.40 {
+                BodyType::IceGiant
+            } else {
+                BodyType::TerrestrialPlanet
+            }
+        } else if mass_earth >= 0.002 {
+            BodyType::Protoplanet
+        } else if comp.ice_frac > 0.35 {
+            BodyType::Comet
+        } else {
+            BodyType::Asteroid
+        }
+    }
 }
 
 /// Identifies a natural moon / satellite orbiting a parent celestial body.
@@ -276,6 +390,11 @@ impl Composition {
             organics_frac: 0.000,
             gas_frac: 0.980,
         }
+    }
+
+    /// Solar nebula composition alias
+    pub fn solar_nebula() -> Self {
+        Self::solar_gas()
     }
 
     /// Cycles to next major chemical archetype
@@ -646,10 +765,20 @@ pub enum StellarEvolutionPhase {
     RedGiantBranch,
     /// Advanced shell-burning and helium flash pulsations
     HeliumFlashAgb,
+    /// Massive star expanded into a luminous Red Supergiant (Betelgeuse type)
+    RedSupergiantBranch,
     /// Stellar envelope pulsation and mass shedding into multi-layer ionized planetary nebulae
     PlanetaryNebulaEjection,
+    /// Cataclysmic core-collapse explosion of a massive star (>= 8 M_sun)
+    SupernovaExplosion,
     /// Degenerate carbon-oxygen Earth-sized core remnant (R ~ 0.009 AU, T ~ 30,000 K)
     WhiteDwarf,
+    /// Ultra-dense spinning magnetized neutron star with relativistic beams
+    NeutronStarPulsar,
+    /// Neutron star with ultra-intense magnetic field (10^14 - 10^15 Gauss)
+    MagnetarRemnant,
+    /// Gravitational singularity with event horizon, photon ring, and accretion disk
+    BlackHoleRemnant,
 }
 
 /// Far-future stellar evolution, fuel consumption, and planetary nebula state.
@@ -665,9 +794,9 @@ pub struct StellarEvolutionState {
     pub envelope_mass_loss_rate: f64,
     /// Time spent in the current evolutionary phase in simulation years
     pub phase_timer_years: f64,
-    /// Expanding planetary nebula ionized shell radius in AU
+    /// Expanding planetary nebula / supernova ionized shell radius in AU
     pub nebula_expansion_radius_au: f32,
-    /// Optical opacity of the ejected planetary nebula (0.0 = clear, 1.0 = opaque)
+    /// Optical opacity of the ejected nebula (0.0 = clear, 1.0 = opaque)
     pub nebula_opacity: f32,
 }
 
@@ -685,6 +814,33 @@ impl Default for StellarEvolutionState {
     }
 }
 
+/// Extreme electromagnetic properties for stars and stellar remnants (White Dwarfs, Pulsars, Magnetars, Black Holes).
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ElectromagneticFieldState {
+    /// Magnetic surface dipole field strength in Gauss
+    pub magnetic_field_gauss: f64,
+    /// Rotational period in seconds
+    pub rotation_period_sec: f64,
+    /// Magnetic dipole inclination angle relative to rotational axis (radians)
+    pub magnetic_inclination_rad: f32,
+    /// Relativistic beam jet length in AU
+    pub jet_length_au: f32,
+    /// Synchrotron luminosity / radiance factor
+    pub synchrotron_intensity: f32,
+}
+
+impl Default for ElectromagneticFieldState {
+    fn default() -> Self {
+        Self {
+            magnetic_field_gauss: 1.0,
+            rotation_period_sec: 25.0 * 86400.0,
+            magnetic_inclination_rad: 0.15,
+            jet_length_au: 0.0,
+            synchrotron_intensity: 0.0,
+        }
+    }
+}
+
 /// Event triggered when an inner planet enters the expanding Red Giant envelope and is vaporized.
 #[derive(Message, Debug, Clone)]
 pub struct PlanetaryEngulfmentEvent {
@@ -692,4 +848,15 @@ pub struct PlanetaryEngulfmentEvent {
     pub planet_name: String,
     pub distance_au: f64,
     pub planet_mass_earth: f64,
+}
+
+/// Event triggered when a massive star (>= 8 M_sun) or over-mass White Dwarf (> 1.44 M_sun) explodes.
+#[derive(Message, Debug, Clone)]
+pub struct SupernovaEvent {
+    pub star_entity: Entity,
+    pub star_name: String,
+    pub initial_mass_solar: f64,
+    pub remnant_mass_solar: f64,
+    pub remnant_type: BodyType,
+    pub shockwave_velocity_km_s: f64,
 }

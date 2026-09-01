@@ -84,12 +84,15 @@ pub fn draw_orbital_effects_and_gizmos(
     mut gizmos: Gizmos,
     player_state: Res<PlayerInteractionState>,
     shockwave_pool: Res<ImpactShockwavePool>,
+    time: Res<Time>,
     star_query: Query<
         (
             &SimPosition,
             &Mass,
             &IgnitionState,
+            &CelestialBody,
             Option<&StellarEvolutionState>,
+            Option<&ElectromagneticFieldState>,
         ),
         With<CentralStar>,
     >,
@@ -104,51 +107,198 @@ pub fn draw_orbital_effects_and_gizmos(
         Option<&SpinState>,
     )>,
 ) {
-    let Ok((star_pos, star_mass, ignition, opt_evo)) = star_query.single() else {
+    let Ok((star_pos, star_mass, ignition, star_body, opt_evo, _opt_em)) = star_query.single()
+    else {
         return;
     };
 
     let star_vec = Vec3::new(star_pos.x as f32, star_pos.y as f32, star_pos.z as f32);
+    let elapsed = time.elapsed_secs();
 
-    // 1. Draw Expanding Ionized Planetary Nebula (Emerald [O III] + Crimson H-Alpha)
+    // 1. Draw Expanding Ionized Planetary Nebula / Supernova Blast
     if let Some(evo) = opt_evo {
         if evo.nebula_expansion_radius_au > 0.0 && evo.nebula_opacity > 0.01 {
             let r_neb = evo.nebula_expansion_radius_au;
             let op = evo.nebula_opacity;
 
-            // Outer Ruby H-Alpha Shell (656.3 nm)
-            gizmos.circle(
-                Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                r_neb,
-                Color::srgba(0.95, 0.22, 0.38, 0.65 * op),
-            );
-            gizmos.circle(
-                Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-                r_neb,
-                Color::srgba(0.95, 0.22, 0.38, 0.40 * op),
-            );
-
-            // Inner Emerald [O III] Shell (500.7 nm)
-            if r_neb > 0.5 {
-                gizmos.circle(
-                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                    r_neb * 0.78,
-                    Color::srgba(0.12, 0.95, 0.68, 0.75 * op),
-                );
+            if matches!(evo.phase, StellarEvolutionPhase::SupernovaExplosion) {
+                // Violent Supernova Core-Collapse Blast (Intense White/Cyan & Gold)
                 gizmos.sphere(
                     Isometry3d::from_translation(star_vec),
-                    r_neb * 0.78,
-                    Color::srgba(0.12, 0.95, 0.68, 0.06 * op),
+                    r_neb,
+                    Color::srgba(0.95, 0.95, 1.0, 0.25 * op),
+                );
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    r_neb,
+                    Color::srgba(0.3, 0.8, 1.0, 0.85 * op),
+                );
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                    r_neb * 0.9,
+                    Color::srgba(1.0, 0.6, 0.2, 0.70 * op),
+                );
+            } else {
+                // Outer Ruby H-Alpha Shell (656.3 nm)
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    r_neb,
+                    Color::srgba(0.95, 0.22, 0.38, 0.65 * op),
+                );
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                    r_neb,
+                    Color::srgba(0.95, 0.22, 0.38, 0.40 * op),
+                );
+
+                // Inner Emerald [O III] Shell (500.7 nm)
+                if r_neb > 0.5 {
+                    gizmos.circle(
+                        Isometry3d::new(
+                            star_vec,
+                            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                        ),
+                        r_neb * 0.78,
+                        Color::srgba(0.12, 0.95, 0.68, 0.75 * op),
+                    );
+                    gizmos.sphere(
+                        Isometry3d::from_translation(star_vec),
+                        r_neb * 0.78,
+                        Color::srgba(0.12, 0.95, 0.68, 0.06 * op),
+                    );
+                }
+
+                // Outer Diffuse Gas Shroud
+                gizmos.sphere(
+                    Isometry3d::from_translation(star_vec),
+                    r_neb,
+                    Color::srgba(0.75, 0.20, 0.50, 0.04 * op),
                 );
             }
+        }
+    }
 
-            // Outer Diffuse Gas Shroud
-            gizmos.sphere(
-                Isometry3d::from_translation(star_vec),
-                r_neb,
-                Color::srgba(0.75, 0.20, 0.50, 0.04 * op),
+    // 1B. Draw Extreme Electromagnetism & Relativistic Jets for Stellar Remnants
+    if star_body.body_type == BodyType::WhiteDwarf {
+        // White Dwarf: Magnetic Dipole Field Lines & Diamond Corona
+        let r_mag = 0.25f32;
+        let pulse = (elapsed * 2.0).sin() * 0.05;
+        for i in 0..6 {
+            let angle = (i as f32) * (std::f32::consts::PI / 3.0);
+            let rot = Quat::from_rotation_y(angle);
+            gizmos.circle(
+                Isometry3d::new(star_vec, rot),
+                r_mag + pulse,
+                Color::srgba(0.35, 0.80, 1.0, 0.45),
             );
         }
+        gizmos.sphere(
+            Isometry3d::from_translation(star_vec),
+            0.08,
+            Color::srgba(0.75, 0.90, 1.0, 0.20),
+        );
+    } else if matches!(
+        star_body.body_type,
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+    ) {
+        // Pulsar / Magnetar: Rapidly spinning relativistic synchrotron beam lighthouse jets!
+        let spin_rate = if star_body.body_type == BodyType::Magnetar {
+            1.5
+        } else {
+            12.0
+        };
+        let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.35); // 20-degree magnetic axis tilt
+        let jet_len = if star_body.body_type == BodyType::Magnetar {
+            4.5
+        } else {
+            3.0
+        };
+
+        let north_beam = beam_rot * Vec3::Y;
+        let south_beam = -north_beam;
+
+        let beam_color = if star_body.body_type == BodyType::Magnetar {
+            Color::srgba(1.0, 0.25, 0.55, 0.85) // Vivid magenta for Magnetar
+        } else {
+            Color::srgba(0.20, 0.85, 1.0, 0.85) // Electric cyan for Pulsar
+        };
+
+        // Polar relativistic beams
+        gizmos.line(star_vec, star_vec + north_beam * jet_len, beam_color);
+        gizmos.line(star_vec, star_vec + south_beam * jet_len, beam_color);
+
+        // Synchrotron beam emission cones
+        gizmos.circle(
+            Isometry3d::new(
+                star_vec + north_beam * jet_len,
+                Quat::from_rotation_arc(Vec3::Z, north_beam),
+            ),
+            0.45,
+            beam_color,
+        );
+        gizmos.circle(
+            Isometry3d::new(
+                star_vec + south_beam * jet_len,
+                Quat::from_rotation_arc(Vec3::Z, south_beam),
+            ),
+            0.45,
+            beam_color,
+        );
+
+        // Magnetospheric Dipole Field Loops
+        for i in 0..4 {
+            let angle = (i as f32) * (std::f32::consts::PI / 2.0);
+            let rot = beam_rot * Quat::from_rotation_y(angle);
+            gizmos.circle(
+                Isometry3d::new(star_vec, rot),
+                0.65,
+                Color::srgba(0.5, 0.3, 1.0, 0.40),
+            );
+        }
+    } else if star_body.body_type == BodyType::BlackHole {
+        // Black Hole: Relativistic Accretion Disk & Polar Jets
+        let disk_inner = 0.08f32;
+        let disk_outer = 0.55f32;
+        let disk_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+
+        // Accretion Disk Multi-Rings (Glowing Orange / Gold Doppler boost)
+        gizmos.circle(
+            Isometry3d::new(star_vec, disk_rot),
+            disk_inner,
+            Color::srgba(1.0, 0.9, 0.4, 0.90),
+        );
+        gizmos.circle(
+            Isometry3d::new(star_vec, disk_rot),
+            disk_inner * 2.0,
+            Color::srgba(1.0, 0.55, 0.15, 0.70),
+        );
+        gizmos.circle(
+            Isometry3d::new(star_vec, disk_rot),
+            disk_outer,
+            Color::srgba(0.85, 0.25, 0.05, 0.45),
+        );
+
+        // Collimated Relativistic Polar Jets
+        let jet_len = 5.0f32;
+        let jet_color = Color::srgba(0.4, 0.85, 1.0, 0.75);
+        gizmos.line(star_vec, star_vec + Vec3::Y * jet_len, jet_color);
+        gizmos.line(star_vec, star_vec - Vec3::Y * jet_len, jet_color);
+        gizmos.circle(
+            Isometry3d::new(
+                star_vec + Vec3::Y * jet_len,
+                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            ),
+            0.35,
+            jet_color,
+        );
+        gizmos.circle(
+            Isometry3d::new(
+                star_vec - Vec3::Y * jet_len,
+                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            ),
+            0.35,
+            jet_color,
+        );
     }
 
     // 1B. Draw Ignited Star Shockwave & Solar Wind Wavefront

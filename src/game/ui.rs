@@ -824,18 +824,46 @@ pub fn handle_ui_button_interactions(
                     // Live Editor Actions
                     UiButtonAction::IncreaseMass => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, mut mass, mut radius, _, _, comp, body, ..)) =
-                                selected_query.get_mut(ent)
+                            if let Ok((
+                                _,
+                                mut mass,
+                                mut radius,
+                                _,
+                                _,
+                                comp,
+                                mut body,
+                                is_star,
+                                _,
+                                _,
+                                _,
+                                _,
+                            )) = selected_query.get_mut(ent)
                             {
                                 mass.0 *= 1.25;
                                 let avg_density = comp.average_density();
                                 radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
                                     .cbrt()
                                     .max(EARTH_RADIUS_AU * 0.1);
+
+                                // Dynamically reclassify celestial body and promote comets/asteroids to planets
+                                let old_type = body.body_type;
+                                let new_type = classify_body_by_mass_and_comp(
+                                    mass.0,
+                                    &comp,
+                                    is_star.is_some(),
+                                );
+                                if !is_star.is_some() && new_type != old_type {
+                                    body.body_type = new_type;
+                                    if new_type.is_planet() && !body.name.starts_with("Planet") {
+                                        body.name = format!("Planet ({:?})", new_type);
+                                    }
+                                }
+
                                 toast.message = format!(
-                                    "➕ {} Mass Increased: {:.3} M⊕ (+25%)",
+                                    "➕ {} Mass Increased: {:.3} M⊕ (+25% | {:?})",
                                     body.name,
-                                    mass.0 / EARTH_MASS_SOLAR
+                                    mass.0 / EARTH_MASS_SOLAR,
+                                    body.body_type
                                 );
                                 toast.timer = 4.0;
                             }
@@ -846,18 +874,42 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::DecreaseMass => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, mut mass, mut radius, _, _, comp, body, ..)) =
-                                selected_query.get_mut(ent)
+                            if let Ok((
+                                _,
+                                mut mass,
+                                mut radius,
+                                _,
+                                _,
+                                comp,
+                                mut body,
+                                is_star,
+                                _,
+                                _,
+                                _,
+                                _,
+                            )) = selected_query.get_mut(ent)
                             {
                                 mass.0 *= 0.80;
                                 let avg_density = comp.average_density();
                                 radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
                                     .cbrt()
                                     .max(EARTH_RADIUS_AU * 0.1);
+
+                                let old_type = body.body_type;
+                                let new_type = classify_body_by_mass_and_comp(
+                                    mass.0,
+                                    &comp,
+                                    is_star.is_some(),
+                                );
+                                if !is_star.is_some() && new_type != old_type {
+                                    body.body_type = new_type;
+                                }
+
                                 toast.message = format!(
-                                    "➖ {} Mass Decreased: {:.3} M⊕ (-20%)",
+                                    "➖ {} Mass Decreased: {:.3} M⊕ (-20% | {:?})",
                                     body.name,
-                                    mass.0 / EARTH_MASS_SOLAR
+                                    mass.0 / EARTH_MASS_SOLAR,
+                                    body.body_type
                                 );
                                 toast.timer = 4.0;
                             }
@@ -1225,62 +1277,171 @@ pub fn handle_ui_button_interactions(
                                 ignition.is_ignited = true;
                                 ignition.fusion_fraction = 1.0;
                                 ignition.shockwave_radius = 1.6;
-                                body.body_type = BodyType::MainSequenceStar;
-                                body.name = "The Star (Main Sequence)".to_string();
+                                let (assigned_type, name_str) = if mass.0 < 0.08 {
+                                    (BodyType::BrownDwarf, "The Star (Brown Dwarf)")
+                                } else if mass.0 < 0.50 {
+                                    (BodyType::RedDwarf, "The Star (Red Dwarf - M Type)")
+                                } else if mass.0 < 1.4 {
+                                    (BodyType::YellowDwarf, "The Star (Yellow Dwarf - G2V)")
+                                } else if mass.0 < 8.0 {
+                                    (BodyType::BlueGiant, "The Star (Blue Giant - B Type)")
+                                } else if mass.0 < 25.0 {
+                                    (
+                                        BodyType::BlueSupergiant,
+                                        "The Star (Blue Supergiant - O Type)",
+                                    )
+                                } else {
+                                    (BodyType::Hypergiant, "The Star (Luminous Hypergiant)")
+                                };
+                                body.body_type = assigned_type;
+                                body.name = name_str.to_string();
                                 if let Some(ref mut evo) = opt_evo {
                                     evo.phase = StellarEvolutionPhase::MainSequence;
                                 }
                                 toast.message =
-                                    "⭐ Hydrogen Core Fusion Ignited! (Main Sequence)".to_string();
+                                    format!("⭐ Ignited: {} (Main Sequence)", body.name);
                             } else if let Some(ref mut evo) = opt_evo {
-                                match evo.phase {
-                                    StellarEvolutionPhase::ProtostarContraction
-                                    | StellarEvolutionPhase::MainSequence => {
-                                        evo.phase = StellarEvolutionPhase::RedGiantBranch;
-                                        evo.hydrogen_core_fraction = 0.0;
-                                        body.body_type = BodyType::MainSequenceStar;
-                                        body.name = "The Star (Red Giant Branch)".to_string();
-                                        radius.0 = 1.25;
-                                        temp.0 = 3100.0;
-                                        lum.0 = 2500.0;
-                                        toast.message =
-                                            "🔴 Star Expanded to Red Giant (R ~ 1.25 AU, L ~ 2500 L☉)! Inner planets engulfing!"
-                                                .to_string();
+                                let m = mass.0;
+                                if m >= 25.0 {
+                                    // Hypermassive branch: Hypergiant -> Supernova -> Black Hole
+                                    match evo.phase {
+                                        StellarEvolutionPhase::ProtostarContraction
+                                        | StellarEvolutionPhase::MainSequence => {
+                                            evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
+                                            body.body_type = BodyType::Hypergiant;
+                                            body.name =
+                                                "The Star (Luminous Yellow Hypergiant)".to_string();
+                                            radius.0 = 4.5;
+                                            temp.0 = 4000.0;
+                                            lum.0 = 250_000.0;
+                                            toast.message =
+                                                "💥 Hypergiant Phase: Luminosity surged to 250,000 L☉!"
+                                                    .to_string();
+                                        }
+                                        StellarEvolutionPhase::RedSupergiantBranch => {
+                                            evo.phase = StellarEvolutionPhase::SupernovaExplosion;
+                                            body.name =
+                                                "The Star (Hypernova Detonation)".to_string();
+                                            evo.nebula_expansion_radius_au = 5.0;
+                                            evo.nebula_opacity = 1.0;
+                                            toast.message =
+                                                "💥 HYPERNOVA DETONATION! Core collapsing into a Singularity!"
+                                                    .to_string();
+                                        }
+                                        _ => {
+                                            evo.phase = StellarEvolutionPhase::BlackHoleRemnant;
+                                            body.body_type = BodyType::BlackHole;
+                                            body.name =
+                                                "The Star (Stellar-Mass Black Hole)".to_string();
+                                            mass.0 = (m * 0.25).clamp(3.0, 15.0);
+                                            radius.0 = 2.95e-5 * mass.0;
+                                            temp.0 = 10.0;
+                                            lum.0 = 5000.0;
+                                            toast.message =
+                                                "🕳️ Gravitational Singularity Formed (Event Horizon & Accretion Disk)!"
+                                                    .to_string();
+                                        }
                                     }
-                                    StellarEvolutionPhase::RedGiantBranch => {
-                                        evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
-                                        body.name = "The Star (AGB Supergiant)".to_string();
-                                        radius.0 = 1.50;
-                                        temp.0 = 2900.0;
-                                        lum.0 = 3500.0;
-                                        toast.message =
-                                            "🔥 Helium Flash & Asymptotic Giant Pulses (R ~ 1.50 AU, L ~ 3500 L☉)!"
+                                } else if m >= 8.0 {
+                                    // Massive branch: Blue Giant -> Red Supergiant -> Type II Supernova -> Pulsar / Magnetar
+                                    match evo.phase {
+                                        StellarEvolutionPhase::ProtostarContraction
+                                        | StellarEvolutionPhase::MainSequence => {
+                                            evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
+                                            body.body_type = BodyType::RedSupergiant;
+                                            body.name = "The Star (Red Supergiant)".to_string();
+                                            radius.0 = 3.5;
+                                            temp.0 = 3300.0;
+                                            lum.0 = 80_000.0;
+                                            toast.message =
+                                                "🔴 Red Supergiant Expansion (R ~ 3.5 AU, L ~ 80,000 L☉)!"
+                                                    .to_string();
+                                        }
+                                        StellarEvolutionPhase::RedSupergiantBranch => {
+                                            evo.phase = StellarEvolutionPhase::SupernovaExplosion;
+                                            body.name = "The Star (Type II Supernova Explosion)"
                                                 .to_string();
+                                            evo.nebula_expansion_radius_au = 4.0;
+                                            evo.nebula_opacity = 1.0;
+                                            toast.message =
+                                                "💥 TYPE II CORE-COLLAPSE SUPERNOVA! Blast expanding at 15,000 km/s!"
+                                                    .to_string();
+                                        }
+                                        _ => {
+                                            evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
+                                            body.body_type = BodyType::Pulsar;
+                                            body.name = "The Star (Pulsar Remnant)".to_string();
+                                            mass.0 = 1.44;
+                                            radius.0 = 0.0001;
+                                            temp.0 = 1_000_000.0;
+                                            lum.0 = 100.0;
+                                            toast.message =
+                                                "⚡ Relativistic Pulsar Remnant (B ~ 10^12 G, P ~ 33 ms Synchrotron Jets)!"
+                                                    .to_string();
+                                        }
                                     }
-                                    StellarEvolutionPhase::HeliumFlashAgb => {
-                                        evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
-                                        body.name =
-                                            "The Star (Planetary Nebula Ejection)".to_string();
-                                        evo.nebula_expansion_radius_au = 2.0;
-                                        evo.nebula_opacity = 1.0;
-                                        mass.0 = 0.55;
-                                        toast.message =
-                                            "💨 Planetary Nebula Ejected! Star shed 45% mass, outer orbits expanding!"
-                                                .to_string();
+                                } else if m >= 0.50 {
+                                    // Solar/Intermediate branch: Yellow Dwarf -> Red Giant -> AGB -> Planetary Nebula -> White Dwarf
+                                    match evo.phase {
+                                        StellarEvolutionPhase::ProtostarContraction
+                                        | StellarEvolutionPhase::MainSequence => {
+                                            evo.phase = StellarEvolutionPhase::RedGiantBranch;
+                                            evo.hydrogen_core_fraction = 0.0;
+                                            body.body_type = BodyType::RedGiant;
+                                            body.name = "The Star (Red Giant Branch)".to_string();
+                                            radius.0 = 1.25;
+                                            temp.0 = 3100.0;
+                                            lum.0 = 2500.0;
+                                            toast.message =
+                                                "🔴 Star Expanded to Red Giant (R ~ 1.25 AU, L ~ 2500 L☉)! Inner planets engulfing!"
+                                                    .to_string();
+                                        }
+                                        StellarEvolutionPhase::RedGiantBranch => {
+                                            evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
+                                            body.name = "The Star (AGB Supergiant)".to_string();
+                                            radius.0 = 1.50;
+                                            temp.0 = 2900.0;
+                                            lum.0 = 3500.0;
+                                            toast.message =
+                                                "🔥 Helium Flash & Asymptotic Giant Pulses (R ~ 1.50 AU, L ~ 3500 L☉)!"
+                                                    .to_string();
+                                        }
+                                        StellarEvolutionPhase::HeliumFlashAgb => {
+                                            evo.phase =
+                                                StellarEvolutionPhase::PlanetaryNebulaEjection;
+                                            body.name =
+                                                "The Star (Planetary Nebula Ejection)".to_string();
+                                            evo.nebula_expansion_radius_au = 2.0;
+                                            evo.nebula_opacity = 1.0;
+                                            mass.0 = 0.55;
+                                            toast.message =
+                                                "💨 Planetary Nebula Ejected! Star shed 45% mass, outer orbits expanding!"
+                                                    .to_string();
+                                        }
+                                        _ => {
+                                            evo.phase = StellarEvolutionPhase::WhiteDwarf;
+                                            body.body_type = BodyType::WhiteDwarf;
+                                            body.name =
+                                                "The Star (White Dwarf Remnant)".to_string();
+                                            radius.0 = 0.009;
+                                            temp.0 = 30_000.0;
+                                            lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2)
+                                                * (temp.0 / 5778.0).powi(4);
+                                            toast.message =
+                                                "⚪ Degenerate White Dwarf Remnant (Earth-sized, T ~ 30,000 K, B ~ 10^6 G)!"
+                                                    .to_string();
+                                        }
                                     }
-                                    StellarEvolutionPhase::PlanetaryNebulaEjection
-                                    | StellarEvolutionPhase::WhiteDwarf => {
-                                        evo.phase = StellarEvolutionPhase::WhiteDwarf;
-                                        body.body_type = BodyType::WhiteDwarf;
-                                        body.name = "The Star (White Dwarf Remnant)".to_string();
-                                        radius.0 = 0.009;
-                                        temp.0 = 30_000.0;
-                                        lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2)
-                                            * (temp.0 / 5778.0).powi(4);
-                                        toast.message =
-                                            "⚪ Degenerate White Dwarf Remnant (Earth-sized, T ~ 30,000 K)!"
-                                                .to_string();
-                                    }
+                                } else {
+                                    // Red dwarf branch
+                                    evo.phase = StellarEvolutionPhase::WhiteDwarf;
+                                    body.body_type = BodyType::WhiteDwarf;
+                                    body.name = "The Star (Helium White Dwarf)".to_string();
+                                    radius.0 = 0.009;
+                                    temp.0 = 25_000.0;
+                                    toast.message =
+                                        "⚪ Low-Mass Helium White Dwarf Remnant Formed!"
+                                            .to_string();
                                 }
                             }
                             toast.timer = 6.0;
@@ -1389,9 +1550,22 @@ pub fn update_hud(
                 bodies_query.get(selected_entity)
             {
                 let type_name = match body.body_type {
-                    BodyType::Protostar => "THE SUN (Protostar)",
-                    BodyType::MainSequenceStar => "THE SUN (Main Sequence Star)",
-                    BodyType::WhiteDwarf => "THE SUN (White Dwarf Remnant)",
+                    BodyType::Protostar => "THE STAR (Protostar)",
+                    BodyType::MainSequenceStar => "THE STAR (Main Sequence)",
+                    BodyType::BrownDwarf => "BROWN DWARF (Sub-Stellar)",
+                    BodyType::RedDwarf => "RED DWARF STAR (M-Type)",
+                    BodyType::YellowDwarf => "YELLOW DWARF STAR (G2V)",
+                    BodyType::BlueGiant => "BLUE GIANT STAR (B-Type)",
+                    BodyType::BlueSupergiant => "BLUE SUPERGIANT (O-Type)",
+                    BodyType::RedGiant => "RED GIANT STAR",
+                    BodyType::RedSupergiant => "RED SUPERGIANT STAR",
+                    BodyType::Hypergiant => "LUMINOUS HYPERGIANT",
+                    BodyType::WolfRayet => "WOLF-RAYET STAR",
+                    BodyType::WhiteDwarf => "WHITE DWARF REMNANT",
+                    BodyType::NeutronStar => "NEUTRON STAR REMNANT",
+                    BodyType::Pulsar => "RELATIVISTIC PULSAR",
+                    BodyType::Magnetar => "MAGNETAR REMNANT",
+                    BodyType::BlackHole => "STELLAR-MASS BLACK HOLE",
                     BodyType::GasGiant => "GAS GIANT",
                     BodyType::IceGiant => "ICE GIANT",
                     BodyType::TerrestrialPlanet => "TERRESTRIAL PLANET",
@@ -1761,6 +1935,18 @@ pub fn update_hud(
                                     (rad.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4)
                                 )
                             }
+                            StellarEvolutionPhase::RedSupergiantBranch => {
+                                format!(
+                                    "RED SUPERGIANT BRANCH (R: {:.2} AU | Massive Core Burning)",
+                                    rad.0
+                                )
+                            }
+                            StellarEvolutionPhase::SupernovaExplosion => {
+                                format!(
+                                    "💥 SUPERNOVA CORE-COLLAPSE (Blast: {:.1} AU @ 15,000 km/s)",
+                                    evo.nebula_expansion_radius_au
+                                )
+                            }
                             StellarEvolutionPhase::HeliumFlashAgb => {
                                 format!(
                                     "AGB SUPERGIANT (Core He Fuel: {:.1}% | R: {:.2} AU)",
@@ -1776,9 +1962,18 @@ pub fn update_hud(
                             }
                             StellarEvolutionPhase::WhiteDwarf => {
                                 format!(
-                                    "DEGENERATE WHITE DWARF REMNANT (Earth-Sized Core | T: {:.0} K)",
+                                    "DEGENERATE WHITE DWARF REMNANT (Earth-Sized Core | T: {:.0} K | B: 10^6 G)",
                                     temp.0
                                 )
+                            }
+                            StellarEvolutionPhase::NeutronStarPulsar => {
+                                "⚡ NEUTRON STAR / PULSAR REMNANT (B: 10^12 G | Synchrotron Lighthouse Jets)".to_string()
+                            }
+                            StellarEvolutionPhase::MagnetarRemnant => {
+                                "🧲 MAGNETAR REMNANT (B: 10^15 G | Extreme Magnetic Reconnection Arcs)".to_string()
+                            }
+                            StellarEvolutionPhase::BlackHoleRemnant => {
+                                "🕳️ STELLAR-MASS BLACK HOLE (Event Horizon & Relativistic Accretion Disk)".to_string()
                             }
                         }
                     } else {
@@ -1809,7 +2004,20 @@ pub fn update_hud(
                 let type_str = match body.body_type {
                     BodyType::Protostar => "Central Star (Protostar)",
                     BodyType::MainSequenceStar => "Main Sequence Star",
+                    BodyType::BrownDwarf => "Brown Dwarf (Sub-Stellar)",
+                    BodyType::RedDwarf => "Red Dwarf Star (M-Type)",
+                    BodyType::YellowDwarf => "Yellow Dwarf Star (G2V)",
+                    BodyType::BlueGiant => "Blue Giant Star (B-Type)",
+                    BodyType::BlueSupergiant => "Blue Supergiant Star (O-Type)",
+                    BodyType::RedGiant => "Red Giant Star",
+                    BodyType::RedSupergiant => "Red Supergiant Star",
+                    BodyType::Hypergiant => "Luminous Hypergiant",
+                    BodyType::WolfRayet => "Wolf-Rayet Star",
                     BodyType::WhiteDwarf => "White Dwarf Remnant",
+                    BodyType::NeutronStar => "Neutron Star Remnant",
+                    BodyType::Pulsar => "Relativistic Pulsar Remnant",
+                    BodyType::Magnetar => "Magnetar Remnant",
+                    BodyType::BlackHole => "Stellar-Mass Black Hole",
                     BodyType::GasGiant => "Gas Giant Planet",
                     BodyType::IceGiant => "Ice Giant Planet",
                     BodyType::TerrestrialPlanet => "Terrestrial Planet",

@@ -590,7 +590,7 @@ fn test_red_giant_luminosity_and_habitable_zone() {
     let t_eq = star_temp * (star_radius / (2.0 * r_au)).sqrt() * (1.0 - albedo).powf(0.25);
 
     // Radiative equilibrium insolation at 55 AU reaches temperate liquid water regime (~302 K)!
-    assert!(t_eq >= 260.0 && t_eq <= 335.0);
+    assert!((260.0..=335.0).contains(&t_eq));
 }
 
 #[test]
@@ -622,4 +622,112 @@ fn test_red_giant_inner_planet_engulfment_drag() {
     vel_mag *= 1.0 - (0.05 * dt).min(0.5);
 
     assert!(vel_mag < 5.0);
+}
+
+#[test]
+fn test_comet_hydrostatic_mass_promotion() {
+    let comp_icy = Composition::icy();
+    let comp_rocky = Composition::rocky();
+
+    // Small comet below hydrostatic threshold (~0.0001 Earth masses)
+    let comet_type = classify_body_by_mass_and_comp(0.0001 * EARTH_MASS_SOLAR, &comp_icy, false);
+    assert_eq!(comet_type, BodyType::Comet);
+
+    // 1.0 Earth-Mass icy body must be promoted to Planet / Ice Giant, not remain a comet!
+    let promoted_ice_planet =
+        classify_body_by_mass_and_comp(1.0 * EARTH_MASS_SOLAR, &comp_icy, false);
+    assert!(matches!(
+        promoted_ice_planet,
+        BodyType::IceGiant | BodyType::TerrestrialPlanet
+    ));
+
+    // 1.0 Earth-Mass rocky body must be promoted to Terrestrial Planet
+    let promoted_rocky_planet =
+        classify_body_by_mass_and_comp(1.0 * EARTH_MASS_SOLAR, &comp_rocky, false);
+    assert_eq!(promoted_rocky_planet, BodyType::TerrestrialPlanet);
+
+    // Hydrostatic dwarf planet threshold (> 0.005 Earth masses)
+    let protoplanet = classify_body_by_mass_and_comp(0.02 * EARTH_MASS_SOLAR, &comp_rocky, false);
+    assert!(matches!(
+        protoplanet,
+        BodyType::Protoplanet | BodyType::TerrestrialPlanet
+    ));
+}
+
+#[test]
+fn test_stellar_mass_classification_hierarchy() {
+    let comp = Composition::solar_nebula();
+
+    assert_eq!(
+        classify_body_by_mass_and_comp(0.05, &comp, true),
+        BodyType::BrownDwarf
+    );
+    assert_eq!(
+        classify_body_by_mass_and_comp(0.25, &comp, true),
+        BodyType::RedDwarf
+    );
+    assert_eq!(
+        classify_body_by_mass_and_comp(1.00, &comp, true),
+        BodyType::YellowDwarf
+    );
+    assert_eq!(
+        classify_body_by_mass_and_comp(4.00, &comp, true),
+        BodyType::BlueGiant
+    );
+    assert_eq!(
+        classify_body_by_mass_and_comp(15.00, &comp, true),
+        BodyType::BlueSupergiant
+    );
+    assert_eq!(
+        classify_body_by_mass_and_comp(35.00, &comp, true),
+        BodyType::Hypergiant
+    );
+}
+
+#[test]
+fn test_chandrasekhar_and_tov_collapse_limits() {
+    // Chandrasekhar Limit = 1.44 M_sun
+    assert_eq!(CHANDRASEKHAR_LIMIT_SOLAR, 1.44);
+    // Tolman-Oppenheimer-Volkoff (TOV) Limit = 2.17 M_sun
+    assert_eq!(TOV_LIMIT_SOLAR, 2.17);
+
+    // Over-mass degenerate White Dwarf
+    let wd_mass = 1.55; // > 1.44
+    let collapses_to_pulsar = wd_mass > CHANDRASEKHAR_LIMIT_SOLAR;
+    assert!(collapses_to_pulsar);
+
+    // Over-mass degenerate Neutron Star
+    let ns_mass = 2.50; // > 2.17
+    let collapses_to_black_hole = ns_mass > TOV_LIMIT_SOLAR;
+    assert!(collapses_to_black_hole);
+}
+
+#[test]
+fn test_massive_star_supernova_evolution_branch() {
+    let mut evo = StellarEvolutionState::default();
+    let mass_massive = 12.0f64; // 12 M_sun massive star
+
+    // Main sequence fuel depletion
+    evo.phase = StellarEvolutionPhase::MainSequence;
+    evo.hydrogen_core_fraction = 0.0;
+
+    // Transition to Red Supergiant branch
+    if mass_massive >= 8.0 && evo.hydrogen_core_fraction <= 0.0 {
+        evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
+    }
+    assert_eq!(evo.phase, StellarEvolutionPhase::RedSupergiantBranch);
+
+    // Core collapse triggers Type II Supernova
+    evo.phase = StellarEvolutionPhase::SupernovaExplosion;
+    evo.nebula_expansion_radius_au = 50.0;
+
+    // Supernova remnant leaves behind a Pulsar
+    if evo.nebula_expansion_radius_au >= 40.0 {
+        evo.phase = if mass_massive >= 25.0 {
+            StellarEvolutionPhase::BlackHoleRemnant
+        } else {
+            StellarEvolutionPhase::NeutronStarPulsar
+        };
+    }
+    assert_eq!(evo.phase, StellarEvolutionPhase::NeutronStarPulsar);
 }

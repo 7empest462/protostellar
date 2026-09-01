@@ -75,28 +75,33 @@ pub fn spawn_missing_visuals(
             continue;
         };
 
-        let visual_radius = if is_star.is_some()
-            || matches!(
-                body.body_type,
-                BodyType::Protostar | BodyType::MainSequenceStar
-            ) {
+        let visual_radius = if is_star.is_some() || body.body_type.is_star_or_remnant() {
             SimulationConfig::calc_render_radius(mass.0, body.body_type)
         } else {
             SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale
         };
 
-        if is_star.is_some() {
-            // Central Star: High emissive unlit glow + omnidirectional point light
+        if is_star.is_some() || body.body_type.is_star_or_remnant() {
+            // Central Star & Stellar Remnants: Emissive unlit glow + point light
+            let (p_type, unlit_flag, emissive_val) = match body.body_type {
+                BodyType::BlackHole => (5u32, false, LinearRgba::BLACK),
+                BodyType::WhiteDwarf => (0u32, true, LinearRgba::from(base_color) * 35.0),
+                BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => {
+                    (0u32, true, LinearRgba::from(base_color) * 45.0)
+                }
+                _ => (0u32, true, LinearRgba::from(base_color) * 25.0),
+            };
+
             let material = materials.add(PlanetMaterial {
                 base: StandardMaterial {
                     base_color,
-                    emissive: LinearRgba::from(base_color) * 22.0,
-                    unlit: true,
+                    emissive: emissive_val,
+                    unlit: unlit_flag,
                     ..default()
                 },
                 extension: PlanetMaterialExtension {
                     uniforms: PlanetUniforms {
-                        planet_type: 0,
+                        planet_type: p_type,
                         temperature: temp.0 as f32,
                         time: 0.0,
                         composition: Vec4::new(0.0, 0.0, 0.0, 1.0),
@@ -119,7 +124,11 @@ pub fn spawn_missing_visuals(
                     parent.spawn((
                         PointLight {
                             color: base_color,
-                            intensity: 60_000_000.0,
+                            intensity: if body.body_type == BodyType::BlackHole {
+                                10_000_000.0
+                            } else {
+                                60_000_000.0
+                            },
                             range: 500.0,
                             shadow_maps_enabled: false,
                             ..default()
@@ -209,23 +218,20 @@ pub fn sync_celestial_transforms(
     config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut materials: ResMut<Assets<PlanetMaterial>>,
-    mut query: Query<
-        (
-            &SimPosition,
-            &Mass,
-            &Radius,
-            &Temperature,
-            &Composition,
-            &mut Transform,
-            &mut Mesh3d,
-            &MeshMaterial3d<PlanetMaterial>,
-            &CelestialBody,
-            Option<&PlanetaryClimate>,
-            Option<&BiosphereState>,
-            Option<&VolatileInventory>,
-        ),
-        With<VisualBody>,
-    >,
+    mut query: Query<(
+        &SimPosition,
+        &Mass,
+        &Radius,
+        &Temperature,
+        &Composition,
+        &CelestialBody,
+        &mut Transform,
+        &MeshMaterial3d<PlanetMaterial>,
+        &mut Mesh3d,
+        Option<&PlanetaryClimate>,
+        Option<&BiosphereState>,
+        Option<&VolatileInventory>,
+    )>,
 ) {
     for (
         pos,
@@ -233,10 +239,10 @@ pub fn sync_celestial_transforms(
         radius,
         temp,
         comp,
-        mut transform,
-        mut mesh,
-        mat_handle,
         body,
+        mut transform,
+        mat_handle,
+        mut mesh,
         opt_climate,
         opt_bio,
         opt_vol,
@@ -245,33 +251,28 @@ pub fn sync_celestial_transforms(
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
 
         // Dynamically scale body mesh using mass cube-root hierarchy and stellar evolution state
-        let visual_radius = match body.body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar => {
-                if radius.0 > SOLAR_RADIUS_AU * 1.8 {
-                    // Red Giant / Supergiant envelope expansion
-                    (radius.0 as f32).clamp(0.055, 1.50)
-                } else {
-                    SimulationConfig::calc_render_radius(mass.0, body.body_type)
-                }
-            }
-            BodyType::WhiteDwarf => 0.018f32,
-            _ => {
+        let visual_radius = if body.body_type.is_star_or_remnant() {
+            if radius.0 > SOLAR_RADIUS_AU * 1.8 {
+                (radius.0 as f32).clamp(0.055, 6.0)
+            } else {
                 SimulationConfig::calc_render_radius(mass.0, body.body_type)
-                    * config.body_render_scale
             }
+        } else {
+            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale
         };
         transform.scale = Vec3::splat(visual_radius);
 
         // Sync Mesh Level of Detail (LOD) based on Body Type
-        let target_mesh = match body.body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf => {
-                visual_assets.star_mesh.clone()
+        let target_mesh = if body.body_type.is_star_or_remnant() {
+            visual_assets.star_mesh.clone()
+        } else {
+            match body.body_type {
+                BodyType::GasGiant
+                | BodyType::IceGiant
+                | BodyType::TerrestrialPlanet
+                | BodyType::Moon => visual_assets.planet_mesh.clone(),
+                _ => visual_assets.particle_mesh.clone(),
             }
-            BodyType::GasGiant
-            | BodyType::IceGiant
-            | BodyType::TerrestrialPlanet
-            | BodyType::Moon => visual_assets.planet_mesh.clone(),
-            _ => visual_assets.particle_mesh.clone(),
         };
         if mesh.0 != target_mesh {
             mesh.0 = target_mesh;
@@ -282,11 +283,13 @@ pub fn sync_celestial_transforms(
             let (br, bg, bb) = blackbody_to_srgb(temp.0);
             let (cr, cg, cb) = comp.visual_color_tint();
 
-            let color = if matches!(
-                body.body_type,
-                BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf
-            ) {
-                Color::srgb(br, bg, bb)
+            let is_star_like = body.body_type.is_star_or_remnant();
+            let color = if is_star_like {
+                if body.body_type == BodyType::BlackHole {
+                    Color::srgb(0.01, 0.01, 0.01)
+                } else {
+                    Color::srgb(br, bg, bb)
+                }
             } else {
                 Color::srgb(
                     (br * 0.25 + cr * 0.75).clamp(0.1, 1.0),
@@ -316,45 +319,60 @@ pub fn sync_celestial_transforms(
             );
             mat.extension.uniforms.climate_and_bio =
                 Vec4::new(ocean_frac, ice_frac, biomass_frac, cloud_density);
-            mat.extension.uniforms.planet_type = match body.body_type {
-                BodyType::Protostar | BodyType::MainSequenceStar => 0,
-                BodyType::GasGiant => 1,
-                BodyType::IceGiant => 2,
-                BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
-                    if norm_comp.gas_frac > 0.30 {
-                        1 // Gas Giant banded
-                    } else if norm_comp.ice_frac > 0.40 {
-                        2 // Ice Giant / Icy world
-                    } else {
-                        3 // Terrestrial
-                    }
+
+            if is_star_like {
+                if body.body_type == BodyType::BlackHole {
+                    mat.extension.uniforms.planet_type = 5;
+                    mat.base.unlit = false;
+                    mat.base.emissive = LinearRgba::BLACK;
+                } else {
+                    mat.extension.uniforms.planet_type = 0;
+                    mat.base.unlit = true;
+                    let mult = match body.body_type {
+                        BodyType::WhiteDwarf => 35.0,
+                        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => 45.0,
+                        BodyType::Protostar => 14.0,
+                        _ => 30.0,
+                    };
+                    mat.base.emissive = LinearRgba::from(color) * mult;
                 }
-                _ => 4, // Moon / Asteroid
-            };
-
-            if comp.metal_frac > 0.4 {
-                mat.base.metallic = 0.85;
-                mat.base.perceptual_roughness = 0.25;
-            } else if comp.ice_frac > 0.4 {
-                mat.base.metallic = 0.05;
-                mat.base.perceptual_roughness = 0.18;
-            } else if comp.gas_frac > 0.5 {
-                mat.base.metallic = 0.0;
-                mat.base.perceptual_roughness = 0.85;
             } else {
-                mat.base.metallic = 0.15;
-                mat.base.perceptual_roughness = 0.75;
-            }
+                mat.base.unlit = false;
+                mat.extension.uniforms.planet_type = match body.body_type {
+                    BodyType::GasGiant => 1,
+                    BodyType::IceGiant => 2,
+                    BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
+                        if norm_comp.gas_frac > 0.30 {
+                            1
+                        } else if norm_comp.ice_frac > 0.40 {
+                            2
+                        } else {
+                            3
+                        }
+                    }
+                    _ => 4,
+                };
 
-            if body.body_type == BodyType::MainSequenceStar {
-                mat.base.emissive = LinearRgba::from(color) * 32.0;
-            } else if body.body_type == BodyType::Protostar {
-                mat.base.emissive = LinearRgba::from(color) * 14.0;
-            } else if temp.0 > 600.0 {
-                mat.base.emissive =
-                    LinearRgba::from(color) * ((temp.0 as f32 - 600.0) / 600.0).clamp(0.0, 5.0);
-            } else {
-                mat.base.emissive = LinearRgba::BLACK;
+                if comp.metal_frac > 0.4 {
+                    mat.base.metallic = 0.85;
+                    mat.base.perceptual_roughness = 0.25;
+                } else if comp.ice_frac > 0.4 {
+                    mat.base.metallic = 0.05;
+                    mat.base.perceptual_roughness = 0.18;
+                } else if comp.gas_frac > 0.5 {
+                    mat.base.metallic = 0.0;
+                    mat.base.perceptual_roughness = 0.85;
+                } else {
+                    mat.base.metallic = 0.15;
+                    mat.base.perceptual_roughness = 0.75;
+                }
+
+                if temp.0 > 600.0 {
+                    mat.base.emissive =
+                        LinearRgba::from(color) * ((temp.0 as f32 - 600.0) / 600.0).clamp(0.0, 5.0);
+                } else {
+                    mat.base.emissive = LinearRgba::BLACK;
+                }
             }
         }
     }

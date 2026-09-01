@@ -419,26 +419,12 @@ pub fn process_accretion_and_collisions(
                         t.0 = (t.0 + 600.0).min(5000.0); // Impact heating
                         *comp = primary_comp;
 
-                        // Upgrade body type if crossed mass threshold or composition archetype
-                        if primary_comp.gas_frac > 0.35
-                            && total_primary_mass >= EARTH_MASS_SOLAR * 0.5
-                        {
-                            body.body_type = BodyType::GasGiant;
-                        } else if primary_comp.ice_frac > 0.40
-                            && total_primary_mass >= EARTH_MASS_SOLAR * 0.5
-                        {
-                            body.body_type = BodyType::IceGiant;
-                        } else if total_primary_mass >= JUPITER_MASS_SOLAR * 0.03 {
-                            body.body_type = if primary_comp.gas_frac > 0.3 {
-                                BodyType::GasGiant
-                            } else {
-                                BodyType::IceGiant
-                            };
-                        } else if total_primary_mass >= EARTH_MASS_SOLAR * 0.1 {
-                            body.body_type = BodyType::TerrestrialPlanet;
-                        } else if total_primary_mass >= EARTH_MASS_SOLAR * 0.005 {
-                            body.body_type = BodyType::Protoplanet;
-                        }
+                        // Upgrade body type using centralized hydrostatic and composition classifier
+                        body.body_type = classify_body_by_mass_and_comp(
+                            total_primary_mass,
+                            &primary_comp,
+                            false,
+                        );
 
                         let r_len = primary_pos.length().max(1e-4);
                         acc.0 = -(G_ASTRO * star_mass / (r_len * r_len * r_len)) * primary_pos;
@@ -580,36 +566,15 @@ pub fn process_accretion_and_collisions(
                     let delta_temp = (kinetic_loss * 5e5).clamp(0.0, 4000.0);
                     let new_temp = (temp1.max(temp2) + delta_temp).min(10000.0);
 
-                    let updated_type =
-                        if matches!(p_type, BodyType::Protostar | BodyType::MainSequenceStar) {
-                            p_type
-                        } else if merged_comp.gas_frac > 0.35
-                            && total_mass >= EARTH_MASS_SOLAR * 0.5
-                        {
-                            BodyType::GasGiant
-                        } else if merged_comp.ice_frac > 0.40
-                            && total_mass >= EARTH_MASS_SOLAR * 0.5
-                        {
-                            BodyType::IceGiant
-                        } else if total_mass >= JUPITER_MASS_SOLAR * 0.03 {
-                            if merged_comp.gas_frac > 0.3 {
-                                BodyType::GasGiant
-                            } else {
-                                BodyType::IceGiant
-                            }
-                        } else if total_mass >= EARTH_MASS_SOLAR * 0.1 {
-                            BodyType::TerrestrialPlanet
-                        } else if total_mass >= EARTH_MASS_SOLAR * 0.005 {
-                            BodyType::Protoplanet
-                        } else {
-                            BodyType::Planetesimal
-                        };
+                    let is_star_like = p_type.is_star_or_remnant();
+                    let updated_type = if is_star_like {
+                        p_type
+                    } else {
+                        classify_body_by_mass_and_comp(total_mass, &merged_comp, false)
+                    };
 
                     let r_len = merged_pos.length().max(1e-4);
-                    let new_acc = if !matches!(
-                        updated_type,
-                        BodyType::Protostar | BodyType::MainSequenceStar
-                    ) {
+                    let new_acc = if !updated_type.is_star_or_remnant() {
                         -(G_ASTRO * star_mass / (r_len * r_len * r_len)) * merged_pos
                     } else {
                         DVec3::ZERO

@@ -66,7 +66,23 @@ impl SimulationConfig {
         use crate::utils::constants::*;
 
         match body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar => 0.055,
+            BodyType::Protostar
+            | BodyType::MainSequenceStar
+            | BodyType::YellowDwarf
+            | BodyType::RedDwarf
+            | BodyType::BrownDwarf
+            | BodyType::BlueGiant
+            | BodyType::BlueSupergiant
+            | BodyType::RedGiant
+            | BodyType::RedSupergiant
+            | BodyType::Hypergiant
+            | BodyType::WolfRayet => {
+                let m_ratio = (mass_solar.max(0.01)).powf(0.25) as f32;
+                (0.055 * m_ratio).clamp(0.025, 0.150)
+            }
+            BodyType::WhiteDwarf => 0.012,
+            BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => 0.006,
+            BodyType::BlackHole => 0.010,
             BodyType::GasGiant => {
                 let m_ratio = (mass_solar / JUPITER_MASS_SOLAR).cbrt() as f32;
                 (0.045 * m_ratio).clamp(0.030, 0.065)

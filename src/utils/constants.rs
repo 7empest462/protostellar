@@ -58,6 +58,12 @@ pub const YEAR_SECONDS: f64 = 31557600.0; // Julian year: 365.25 days
 /// $1 \text{ AU/yr}$ in $\text{km/s}$
 pub const AU_PER_YR_TO_KM_PER_S: f64 = AU_TO_KM / YEAR_SECONDS; // ~4.74047 km/s
 
+/// Chandrasekhar mass limit for electron degeneracy pressure ($1.44\text{ M}_\odot$)
+pub const CHANDRASEKHAR_LIMIT_SOLAR: f64 = 1.44;
+
+/// Tolman-Oppenheimer-Volkoff (TOV) mass limit for neutron degeneracy pressure ($2.17\text{ M}_\odot$)
+pub const TOV_LIMIT_SOLAR: f64 = 2.17;
+
 /// Speed of light in AU/yr
 pub const SPEED_OF_LIGHT_AU_YR: f64 = (299792458.0 * YEAR_SECONDS) / AU_TO_METERS; // ~63241.077 AU/yr
 
