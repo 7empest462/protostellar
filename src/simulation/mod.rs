@@ -10,6 +10,7 @@ pub mod thermodynamics;
 use bevy::prelude::*;
 
 use crate::simulation::accretion::*;
+use crate::simulation::components::*;
 use crate::simulation::disk::*;
 use crate::simulation::physics::*;
 use crate::simulation::resources::*;
@@ -31,6 +32,7 @@ impl Plugin for SimulationPlugin {
             .add_message::<CollisionBounceEvent>()
             .add_message::<RocheDisruptionEvent>()
             .add_message::<StarIgnitionEvent>()
+            .add_message::<PlanetaryEngulfmentEvent>()
             .add_systems(Startup, setup_simulation)
             .add_systems(
                 Update,

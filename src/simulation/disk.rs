@@ -41,6 +41,7 @@ pub fn spawn_protoplanetary_disk(
                 is_ignited: false,
                 shockwave_radius: 0.0,
             },
+            StellarEvolutionState::default(),
         ))
         .id();
 

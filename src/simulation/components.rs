@@ -62,6 +62,8 @@ pub enum BodyType {
     Protostar,
     /// Hydrogen-burning ignited star
     MainSequenceStar,
+    /// Degenerate carbon-oxygen Earth-sized stellar remnant
+    WhiteDwarf,
     /// Minor rocky body
     Asteroid,
     /// Volatile-rich icy body
@@ -630,4 +632,64 @@ impl Default for BiosphereState {
             emergence_year: None,
         }
     }
+}
+
+/// Major evolutionary epochs across the multi-billion-year lifecycle of a star.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StellarEvolutionPhase {
+    /// Gravitational Kelvin-Helmholtz contraction before core hydrogen fusion
+    #[default]
+    ProtostarContraction,
+    /// Stable core hydrogen fusion (e.g. Current Sun, ~10 Billion Year Lifespan)
+    MainSequence,
+    /// Core hydrogen exhausted; hydrogen shell burning swells star into a Red Giant (R ~ 1.25 AU, L ~ 2500 L_sun)
+    RedGiantBranch,
+    /// Advanced shell-burning and helium flash pulsations
+    HeliumFlashAgb,
+    /// Stellar envelope pulsation and mass shedding into multi-layer ionized planetary nebulae
+    PlanetaryNebulaEjection,
+    /// Degenerate carbon-oxygen Earth-sized core remnant (R ~ 0.009 AU, T ~ 30,000 K)
+    WhiteDwarf,
+}
+
+/// Far-future stellar evolution, fuel consumption, and planetary nebula state.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StellarEvolutionState {
+    /// Current evolutionary phase of the central star
+    pub phase: StellarEvolutionPhase,
+    /// Core hydrogen nuclear fuel fraction remaining (1.0 = pristine, 0.0 = exhausted)
+    pub hydrogen_core_fraction: f32,
+    /// Core helium nuclear fuel fraction (0.0 to 1.0)
+    pub helium_core_fraction: f32,
+    /// Ongoing stellar wind mass loss rate in solar masses per year (M_sun / yr)
+    pub envelope_mass_loss_rate: f64,
+    /// Time spent in the current evolutionary phase in simulation years
+    pub phase_timer_years: f64,
+    /// Expanding planetary nebula ionized shell radius in AU
+    pub nebula_expansion_radius_au: f32,
+    /// Optical opacity of the ejected planetary nebula (0.0 = clear, 1.0 = opaque)
+    pub nebula_opacity: f32,
+}
+
+impl Default for StellarEvolutionState {
+    fn default() -> Self {
+        Self {
+            phase: StellarEvolutionPhase::ProtostarContraction,
+            hydrogen_core_fraction: 1.0,
+            helium_core_fraction: 0.0,
+            envelope_mass_loss_rate: 0.0,
+            phase_timer_years: 0.0,
+            nebula_expansion_radius_au: 0.0,
+            nebula_opacity: 0.0,
+        }
+    }
+}
+
+/// Event triggered when an inner planet enters the expanding Red Giant envelope and is vaporized.
+#[derive(Message, Debug, Clone)]
+pub struct PlanetaryEngulfmentEvent {
+    pub planet_entity: Entity,
+    pub planet_name: String,
+    pub distance_au: f64,
+    pub planet_mass_earth: f64,
 }

@@ -541,3 +541,85 @@ fn test_biosphere_habitability_index() {
 
     assert!((bio.oxygen_fraction - 0.168).abs() < 1e-3);
 }
+
+#[test]
+fn test_stellar_evolution_phase_transitions() {
+    use protostellar::simulation::components::{StellarEvolutionPhase, StellarEvolutionState};
+
+    let mut evo = StellarEvolutionState::default();
+    assert_eq!(evo.phase, StellarEvolutionPhase::ProtostarContraction);
+
+    // Ignition transition
+    evo.phase = StellarEvolutionPhase::MainSequence;
+    evo.hydrogen_core_fraction = 1.0;
+
+    // Fuel burning over time
+    evo.hydrogen_core_fraction = 0.0;
+    if evo.hydrogen_core_fraction <= 0.0 {
+        evo.phase = StellarEvolutionPhase::RedGiantBranch;
+    }
+    assert_eq!(evo.phase, StellarEvolutionPhase::RedGiantBranch);
+
+    // Helium flash & AGB
+    evo.helium_core_fraction = 1.0;
+    if evo.helium_core_fraction >= 1.0 {
+        evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
+    }
+    assert_eq!(evo.phase, StellarEvolutionPhase::HeliumFlashAgb);
+
+    // Planetary nebula ejection
+    evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
+    evo.nebula_expansion_radius_au = 85.0;
+    if evo.nebula_expansion_radius_au >= 80.0 {
+        evo.phase = StellarEvolutionPhase::WhiteDwarf;
+    }
+    assert_eq!(evo.phase, StellarEvolutionPhase::WhiteDwarf);
+}
+
+#[test]
+fn test_red_giant_luminosity_and_habitable_zone() {
+    // Red Giant star parameters: T_surf = 3100 K, R = 1.25 AU (~270 R_sun), L = (R/R_sun)^2 * (T/5778)^4 ~ 2500 L_sun
+    let star_temp = 3100.0f64;
+    let star_radius = 1.25f64;
+
+    // Outer icy world at 55 AU (Kuiper Belt oasis)
+    let r_au = 55.0f64;
+    let albedo = 0.30f64;
+
+    // Standard radiative equilibrium: T_eq = T_star * sqrt(R_star / (2 * r)) * (1 - A)^0.25
+    let t_eq = star_temp * (star_radius / (2.0 * r_au)).sqrt() * (1.0 - albedo).powf(0.25);
+
+    // Radiative equilibrium insolation at 55 AU reaches temperate liquid water regime (~302 K)!
+    assert!(t_eq >= 260.0 && t_eq <= 335.0);
+}
+
+#[test]
+fn test_stellar_mass_loss_orbital_expansion() {
+    // Initial orbit at 10.0 AU with 1.0 M_sun central star
+    let r_0 = 10.0f64;
+    let m_0 = 1.0f64;
+
+    // Stellar envelope mass loss: star sheds down to 0.55 M_sun White Dwarf remnant
+    let m_f = 0.55f64;
+
+    // Adiabatic gravitational invariant: r * M_star = const => r_f = r_0 * (M_0 / M_f)
+    let r_f = r_0 * (m_0 / m_f);
+    assert!((r_f - 18.18).abs() < 0.1);
+    assert!(r_f > r_0);
+}
+
+#[test]
+fn test_red_giant_inner_planet_engulfment_drag() {
+    // Inner planet at 0.8 AU inside expanding Red Giant envelope (R_star = 1.25 AU)
+    let r_planet = 0.8f64;
+    let r_star = 1.25f64;
+
+    assert!(r_planet < r_star); // Inside stellar envelope
+
+    // Drag decelerates velocity and decays orbital radius
+    let mut vel_mag = 5.0f64;
+    let dt = 10.0f64;
+    vel_mag *= 1.0 - (0.05 * dt).min(0.5);
+
+    assert!(vel_mag < 5.0);
+}

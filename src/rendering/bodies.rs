@@ -230,7 +230,7 @@ pub fn sync_celestial_transforms(
     for (
         pos,
         mass,
-        _radius,
+        radius,
         temp,
         comp,
         mut transform,
@@ -244,20 +244,29 @@ pub fn sync_celestial_transforms(
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
 
-        // Dynamically scale body mesh using mass cube-root hierarchy
-        let visual_radius = if matches!(
-            body.body_type,
-            BodyType::Protostar | BodyType::MainSequenceStar
-        ) {
-            SimulationConfig::calc_render_radius(mass.0, body.body_type)
-        } else {
-            SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale
+        // Dynamically scale body mesh using mass cube-root hierarchy and stellar evolution state
+        let visual_radius = match body.body_type {
+            BodyType::Protostar | BodyType::MainSequenceStar => {
+                if radius.0 > SOLAR_RADIUS_AU * 1.8 {
+                    // Red Giant / Supergiant envelope expansion
+                    (radius.0 as f32).clamp(0.055, 1.50)
+                } else {
+                    SimulationConfig::calc_render_radius(mass.0, body.body_type)
+                }
+            }
+            BodyType::WhiteDwarf => 0.018f32,
+            _ => {
+                SimulationConfig::calc_render_radius(mass.0, body.body_type)
+                    * config.body_render_scale
+            }
         };
         transform.scale = Vec3::splat(visual_radius);
 
         // Sync Mesh Level of Detail (LOD) based on Body Type
         let target_mesh = match body.body_type {
-            BodyType::Protostar | BodyType::MainSequenceStar => visual_assets.star_mesh.clone(),
+            BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf => {
+                visual_assets.star_mesh.clone()
+            }
             BodyType::GasGiant
             | BodyType::IceGiant
             | BodyType::TerrestrialPlanet
@@ -275,7 +284,7 @@ pub fn sync_celestial_transforms(
 
             let color = if matches!(
                 body.body_type,
-                BodyType::Protostar | BodyType::MainSequenceStar
+                BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf
             ) {
                 Color::srgb(br, bg, bb)
             } else {

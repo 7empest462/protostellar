@@ -27,7 +27,7 @@ pub fn handle_player_tools(
             &mut SimPosition,
             &mut SimVelocity,
             &mut Composition,
-            &CelestialBody,
+            &mut CelestialBody,
             Option<&mut InternalDifferentiation>,
             Option<&mut Transform>,
             Option<&mut IgnitionState>,
@@ -137,7 +137,7 @@ pub fn handle_player_tools(
             mut pos,
             mut vel,
             mut comp,
-            body,
+            mut body,
             mut diff_opt,
             mut trans_opt,
             mut ignition_opt,
@@ -349,6 +349,25 @@ pub fn handle_player_tools(
                     ));
                     comp.ice_frac = 0.08;
                     comp.gas_frac = 0.02;
+                }
+            }
+
+            // L. Stellar Evolution Metamorphosis (Key N on Star)
+            if keyboard.just_pressed(KeyCode::KeyN)
+                && matches!(
+                    body.body_type,
+                    BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf
+                )
+            {
+                if let Some(ref mut ignition) = ignition_opt {
+                    if !ignition.is_ignited {
+                        ignition.core_temperature = 1.0e7;
+                        ignition.is_ignited = true;
+                        ignition.fusion_fraction = 1.0;
+                        ignition.shockwave_radius = 1.6;
+                        body.body_type = BodyType::MainSequenceStar;
+                        body.name = "The Star (Main Sequence)".to_string();
+                    }
                 }
             }
         }

@@ -22,6 +22,8 @@ pub enum SystemPhase {
     LateHeavyBombardment,
     /// Cleared orbital lanes with stable rocky and giant worlds
     MatureSolarSystem,
+    /// Far-future stellar metamorphosis: Red Giant expansion and White Dwarf remnant
+    StellarMetamorphosis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,7 @@ pub enum MilestoneId {
     PlanetaryRingGenesis,
     DynamoMagneticShield,
     BiosphereGenesis,
+    StellarMetamorphosis,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +193,13 @@ impl Default for PhaseManager {
                     achieved: false,
                     achieve_timestamp: None,
                 },
+                ScientificMilestone {
+                    id: MilestoneId::StellarMetamorphosis,
+                    title: "🌟 13. Stellar Metamorphosis & White Dwarf Remnant",
+                    prompt: "Witness the central star expand into a Red Giant, engulf inner worlds, and contract into a degenerate White Dwarf.",
+                    achieved: false,
+                    achieve_timestamp: None,
+                },
             ],
             latest_unlocked_milestone: None,
             milestone_toast_timer: 0.0,
@@ -205,7 +215,7 @@ pub fn monitor_phase_transitions(
     mut next_phase: ResMut<NextState<SystemPhase>>,
     mut phase_mgr: ResMut<PhaseManager>,
     mut ignition_events: MessageReader<StarIgnitionEvent>,
-    star_query: Query<(&Mass, &IgnitionState), With<CentralStar>>,
+    star_query: Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
     bodies_query: Query<
         (
             &Mass,
@@ -233,6 +243,7 @@ pub fn monitor_phase_transitions(
     let mut has_biosphere = false;
     let mut total_delivered_water = 0.0;
     let mut remaining_disk_mass = 0.0;
+    let mut is_red_giant_or_wd = false;
 
     for (mass, body, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
         match body.body_type {
@@ -268,9 +279,20 @@ pub fn monitor_phase_transitions(
     phase_mgr.planetesimal_count = planetesimals;
     phase_mgr.disk_mass_remaining = remaining_disk_mass;
 
-    if let Ok((mass, ignition)) = star_query.single() {
+    if let Ok((mass, ignition, opt_evo)) = star_query.single() {
         phase_mgr.star_mass = mass.0;
         phase_mgr.is_star_ignited = ignition.is_ignited;
+        if let Some(evo) = opt_evo {
+            if matches!(
+                evo.phase,
+                StellarEvolutionPhase::RedGiantBranch
+                    | StellarEvolutionPhase::HeliumFlashAgb
+                    | StellarEvolutionPhase::PlanetaryNebulaEjection
+                    | StellarEvolutionPhase::WhiteDwarf
+            ) {
+                is_red_giant_or_wd = true;
+            }
+        }
     }
 
     // 2. Evaluate Scientific Milestones
@@ -296,6 +318,7 @@ pub fn monitor_phase_transitions(
             MilestoneId::PlanetaryRingGenesis => has_rings,
             MilestoneId::DynamoMagneticShield => has_dynamo,
             MilestoneId::BiosphereGenesis => has_biosphere,
+            MilestoneId::StellarMetamorphosis => is_red_giant_or_wd,
         };
 
         if passed {
@@ -346,6 +369,12 @@ pub fn monitor_phase_transitions(
             phase_mgr.phase_description =
                 "🌟 Orbits have relaxed into stable, clean architectures with water-bearing worlds.";
             next_phase.set(SystemPhase::MatureSolarSystem);
+        }
+        SystemPhase::MatureSolarSystem if is_red_giant_or_wd => {
+            phase_mgr.current_phase = SystemPhase::StellarMetamorphosis;
+            phase_mgr.phase_description =
+                "🌟 Stellar Metamorphosis! The star has swelled into a Red Giant or shed its envelope into a White Dwarf.";
+            next_phase.set(SystemPhase::StellarMetamorphosis);
         }
         _ => {}
     }

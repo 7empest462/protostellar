@@ -89,6 +89,7 @@ pub enum UiButtonAction {
     TriggerLhb,
     ShatterIntoRings,
     SeedLife,
+    AgeStar,
 }
 
 impl UiButtonAction {
@@ -113,17 +114,18 @@ impl UiButtonAction {
             UiButtonAction::ContractOrbit => "[L]: Brake orbital energy to contract orbital radius -10%.",
             UiButtonAction::CycleComposition => "[C]: Cycle composition between Rocky, Metallic, Icy, and Volatile.",
             UiButtonAction::BoostDeltaV => "[=]: Prograde orbital velocity acceleration boost.",
-            UiButtonAction::BrakeDeltaV => "[-]: Retrograde orbital velocity braking deceleration.",
-            UiButtonAction::InjectEmbryo => "[M]: Spawns an oligarchic protoplanetary embryo into the disk.",
-            UiButtonAction::VaporizeBody => "[Del]: Shatters the selected planet into thousands of debris particles.",
-            UiButtonAction::FocusLock => "[F]: Centers and locks the orbital camera onto target body.",
-            UiButtonAction::ResetView => "[R]: Resets camera angle and zooms out to system-wide perspective.",
-            UiButtonAction::DeselectBody => "[Esc]: Closes inspector and clears target selection.",
-            UiButtonAction::FixOrbit => "[K]: Circularizes and stabilizes orbital velocity.",
-            UiButtonAction::IgniteStar => "[I]: Triggers nuclear fusion ignition in the protostellar core.",
-            UiButtonAction::TriggerLhb => "[G]: Triggers Late Heavy Bombardment & Giant Planet 2:1 resonance migration.",
-            UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupts icy material into a luminous planetary ring system.",
-            UiButtonAction::SeedLife => "[E]: Seeds primordial photosynthetic life, oceans, and vegetation on selected world.",
+            UiButtonAction::BrakeDeltaV => "[-]: Retrograde orbital velocity braking burn.",
+            UiButtonAction::InjectEmbryo => "[M]: Spawn and inject a new planetary embryo / moon.",
+            UiButtonAction::VaporizeBody => "[Del]: Shatter selected celestial body into dust & fragments.",
+            UiButtonAction::FocusLock => "[F]: Focus & track camera onto selected celestial body.",
+            UiButtonAction::ResetView => "[R]: Reset camera to overview orientation.",
+            UiButtonAction::DeselectBody => "[Esc]: Close inspector and clear selection.",
+            UiButtonAction::FixOrbit => "[Z]: Circularize orbital eccentricity to 0.00.",
+            UiButtonAction::IgniteStar => "[I]: Force instant core ignition / coronal solar blast.",
+            UiButtonAction::TriggerLhb => "[G]: Trigger 2:1 resonance migration & Late Heavy Bombardment.",
+            UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupt selected moon/body into glowing planetary rings.",
+            UiButtonAction::SeedLife => "[E]: Seed primordial water oceans, atmosphere, and photosynthetic biosphere.",
+            UiButtonAction::AgeStar => "[N]: Step central star forward through far-future lifecycle (Red Giant -> Nebula -> White Dwarf).",
         }
     }
 }
@@ -387,6 +389,7 @@ pub fn setup_hud(mut commands: Commands) {
                                         create_button(row3, UiButtonAction::TriggerLhb, "Trigger LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
                                         create_button(row3, UiButtonAction::ShatterIntoRings, "Rings [X]", Color::srgba(0.18, 0.14, 0.06, 0.9), Color::srgb(1.0, 0.85, 0.35));
                                         create_button(row3, UiButtonAction::SeedLife, "Seed Life [E]", Color::srgba(0.04, 0.20, 0.08, 0.9), Color::srgb(0.35, 1.0, 0.45));
+                                        create_button(row3, UiButtonAction::AgeStar, "Age Star [N]", Color::srgba(0.24, 0.08, 0.16, 0.9), Color::srgb(1.0, 0.45, 0.75));
                                         create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
                                         create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
                                     });
@@ -506,7 +509,19 @@ pub fn handle_ui_button_interactions(
         Without<PanOrbitCamera>,
     >,
     mut camera_query: Query<&mut PanOrbitCamera>,
-    mut star_ignition_query: Query<&mut IgnitionState, With<CentralStar>>,
+    mut star_evo_query: Query<
+        (
+            Entity,
+            &mut Mass,
+            &mut Radius,
+            &mut Temperature,
+            &mut Luminosity,
+            &mut IgnitionState,
+            &mut CelestialBody,
+            Option<&mut StellarEvolutionState>,
+        ),
+        With<CentralStar>,
+    >,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
@@ -1078,9 +1093,19 @@ pub fn handle_ui_button_interactions(
                         toast.timer = 2.5;
                     }
                     UiButtonAction::IgniteStar => {
-                        if let Ok(mut ignition) = star_ignition_query.single_mut() {
+                        if let Ok((.., mut ignition, mut body, mut opt_evo)) =
+                            star_evo_query.single_mut()
+                        {
                             if !ignition.is_ignited {
                                 ignition.core_temperature = 1.0e7;
+                                ignition.is_ignited = true;
+                                ignition.fusion_fraction = 1.0;
+                                ignition.shockwave_radius = 1.6;
+                                body.body_type = BodyType::MainSequenceStar;
+                                body.name = "The Star (Main Sequence)".to_string();
+                                if let Some(ref mut evo) = opt_evo {
+                                    evo.phase = StellarEvolutionPhase::MainSequence;
+                                }
                                 toast.message =
                                     "⭐ Hydrogen Core Fusion Ignited! Solar Wind Shockwave Sweeping the System!".to_string();
                             } else {
@@ -1168,6 +1193,84 @@ pub fn handle_ui_button_interactions(
                             }
                         }
                     }
+                    UiButtonAction::AgeStar => {
+                        if let Ok((
+                            _ent,
+                            mut mass,
+                            mut radius,
+                            mut temp,
+                            mut lum,
+                            mut ignition,
+                            mut body,
+                            mut opt_evo,
+                        )) = star_evo_query.single_mut()
+                        {
+                            if !ignition.is_ignited {
+                                ignition.core_temperature = 1.0e7;
+                                ignition.is_ignited = true;
+                                ignition.fusion_fraction = 1.0;
+                                ignition.shockwave_radius = 1.6;
+                                body.body_type = BodyType::MainSequenceStar;
+                                body.name = "The Star (Main Sequence)".to_string();
+                                if let Some(ref mut evo) = opt_evo {
+                                    evo.phase = StellarEvolutionPhase::MainSequence;
+                                }
+                                toast.message =
+                                    "⭐ Hydrogen Core Fusion Ignited! (Main Sequence)".to_string();
+                            } else if let Some(ref mut evo) = opt_evo {
+                                match evo.phase {
+                                    StellarEvolutionPhase::ProtostarContraction
+                                    | StellarEvolutionPhase::MainSequence => {
+                                        evo.phase = StellarEvolutionPhase::RedGiantBranch;
+                                        evo.hydrogen_core_fraction = 0.0;
+                                        body.body_type = BodyType::MainSequenceStar;
+                                        body.name = "The Star (Red Giant Branch)".to_string();
+                                        radius.0 = 1.25;
+                                        temp.0 = 3100.0;
+                                        lum.0 = 2500.0;
+                                        toast.message =
+                                            "🔴 Star Expanded to Red Giant (R ~ 1.25 AU, L ~ 2500 L☉)! Inner planets engulfing!"
+                                                .to_string();
+                                    }
+                                    StellarEvolutionPhase::RedGiantBranch => {
+                                        evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
+                                        body.name = "The Star (AGB Supergiant)".to_string();
+                                        radius.0 = 1.50;
+                                        temp.0 = 2900.0;
+                                        lum.0 = 3500.0;
+                                        toast.message =
+                                            "🔥 Helium Flash & Asymptotic Giant Pulses (R ~ 1.50 AU, L ~ 3500 L☉)!"
+                                                .to_string();
+                                    }
+                                    StellarEvolutionPhase::HeliumFlashAgb => {
+                                        evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
+                                        body.name =
+                                            "The Star (Planetary Nebula Ejection)".to_string();
+                                        evo.nebula_expansion_radius_au = 2.0;
+                                        evo.nebula_opacity = 1.0;
+                                        mass.0 = 0.55;
+                                        toast.message =
+                                            "💨 Planetary Nebula Ejected! Star shed 45% mass, outer orbits expanding!"
+                                                .to_string();
+                                    }
+                                    StellarEvolutionPhase::PlanetaryNebulaEjection
+                                    | StellarEvolutionPhase::WhiteDwarf => {
+                                        evo.phase = StellarEvolutionPhase::WhiteDwarf;
+                                        body.body_type = BodyType::WhiteDwarf;
+                                        body.name = "The Star (White Dwarf Remnant)".to_string();
+                                        radius.0 = 0.009;
+                                        temp.0 = 30_000.0;
+                                        lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2)
+                                            * (temp.0 / 5778.0).powi(4);
+                                        toast.message =
+                                            "⚪ Degenerate White Dwarf Remnant (Earth-sized, T ~ 30,000 K)!"
+                                                .to_string();
+                                    }
+                                }
+                            }
+                            toast.timer = 6.0;
+                        }
+                    }
                 }
             }
         }
@@ -1200,6 +1303,7 @@ pub fn update_hud(
         Option<&PlanetaryRingSystem>,
         Option<&PlanetaryClimate>,
         Option<&BiosphereState>,
+        Option<&StellarEvolutionState>,
     )>,
     mut header_query: Query<
         &mut Text,
@@ -1272,6 +1376,7 @@ pub fn update_hud(
                 let type_name = match body.body_type {
                     BodyType::Protostar => "THE SUN (Protostar)",
                     BodyType::MainSequenceStar => "THE SUN (Main Sequence Star)",
+                    BodyType::WhiteDwarf => "THE SUN (White Dwarf Remnant)",
                     BodyType::GasGiant => "GAS GIANT",
                     BodyType::IceGiant => "ICE GIANT",
                     BodyType::TerrestrialPlanet => "TERRESTRIAL PLANET",
@@ -1343,6 +1448,9 @@ pub fn update_hud(
                 "LATE HEAVY BOMBARDMENT (2:1 RESONANCE & MIGRATION)"
             }
             crate::game::phases::SystemPhase::MatureSolarSystem => "MATURE SOLAR SYSTEM",
+            crate::game::phases::SystemPhase::StellarMetamorphosis => {
+                "STELLAR METAMORPHOSIS (RED GIANT / WHITE DWARF)"
+            }
         };
 
         let gas_status = if config.gas_density_scale > 0.05 {
@@ -1463,6 +1571,7 @@ pub fn update_hud(
                 opt_rings,
                 opt_climate,
                 opt_bio,
+                opt_evo,
             )) = bodies_query.get(selected_entity)
             {
                 let dist_au = if pos.0.is_finite() {
@@ -1499,7 +1608,7 @@ pub fn update_hud(
                 let period_str = if dist_au > 0.05
                     && !matches!(
                         body.body_type,
-                        BodyType::Protostar | BodyType::MainSequenceStar
+                        BodyType::Protostar | BodyType::MainSequenceStar | BodyType::WhiteDwarf
                     ) {
                     let p_yr = dist_au.powf(1.5) / phase_mgr.star_mass.max(0.1).sqrt();
                     if p_yr >= 1.0 {
@@ -1616,10 +1725,63 @@ pub fn update_hud(
                 let star_extra_str = if let Some(ignition) = opt_ignition {
                     let core_temp_mk = ignition.core_temperature / 1.0e6;
                     let fusion_pct = ignition.fusion_fraction * 100.0;
-                    let status = if ignition.is_ignited {
-                        format!("ACTIVE HYDROGEN FUSION (Main Sequence)\nSolar Wind Shockwave: {:.2} AU | Gas Dispersal: {:.0}%", ignition.shockwave_radius, (1.0 - config.gas_density_scale) * 100.0)
+                    let evo_str = if let Some(evo) = opt_evo {
+                        match evo.phase {
+                            StellarEvolutionPhase::ProtostarContraction => {
+                                format!(
+                                    "Hayashi Track Contraction (Fuel: {:.0}% H)",
+                                    evo.hydrogen_core_fraction * 100.0
+                                )
+                            }
+                            StellarEvolutionPhase::MainSequence => {
+                                format!(
+                                    "Stable Main Sequence (Core Fuel: {:.1}% H)",
+                                    evo.hydrogen_core_fraction * 100.0
+                                )
+                            }
+                            StellarEvolutionPhase::RedGiantBranch => {
+                                format!(
+                                    "RED GIANT BRANCH (R: {:.2} AU | L: {:.0} L☉ | Engulfing Inner Planets)",
+                                    rad.0,
+                                    (rad.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4)
+                                )
+                            }
+                            StellarEvolutionPhase::HeliumFlashAgb => {
+                                format!(
+                                    "AGB SUPERGIANT (Core He Fuel: {:.1}% | R: {:.2} AU)",
+                                    evo.helium_core_fraction * 100.0,
+                                    rad.0
+                                )
+                            }
+                            StellarEvolutionPhase::PlanetaryNebulaEjection => {
+                                format!(
+                                    "PLANETARY NEBULA EJECTION (Shell: {:.1} AU | Shedding Envelope Mass)",
+                                    evo.nebula_expansion_radius_au
+                                )
+                            }
+                            StellarEvolutionPhase::WhiteDwarf => {
+                                format!(
+                                    "DEGENERATE WHITE DWARF REMNANT (Earth-Sized Core | T: {:.0} K)",
+                                    temp.0
+                                )
+                            }
+                        }
                     } else {
-                        format!("Kelvin-Helmholtz Core Heating (Progress: {:.1}%)\nIgnition Threshold: 10.0 MK [Press 'I' or Click Button Below to Ignite]", fusion_pct)
+                        "Active Hydrogen Fusion".to_string()
+                    };
+
+                    let status = if ignition.is_ignited {
+                        format!(
+                            "{}\nSolar Wind Shockwave: {:.2} AU | Gas Dispersal: {:.0}%",
+                            evo_str,
+                            ignition.shockwave_radius,
+                            (1.0 - config.gas_density_scale) * 100.0
+                        )
+                    } else {
+                        format!(
+                            "Kelvin-Helmholtz Core Heating (Progress: {:.1}%)\nIgnition Threshold: 10.0 MK [Press 'I' or Click Button Below to Ignite]",
+                            fusion_pct
+                        )
                     };
                     format!(
                         "\nStellar Core Temp: {:.2} MK | Fusion: {:.1}%\nStellar State: {}",
@@ -1632,6 +1794,7 @@ pub fn update_hud(
                 let type_str = match body.body_type {
                     BodyType::Protostar => "Central Star (Protostar)",
                     BodyType::MainSequenceStar => "Main Sequence Star",
+                    BodyType::WhiteDwarf => "White Dwarf Remnant",
                     BodyType::GasGiant => "Gas Giant Planet",
                     BodyType::IceGiant => "Ice Giant Planet",
                     BodyType::TerrestrialPlanet => "Terrestrial Planet",

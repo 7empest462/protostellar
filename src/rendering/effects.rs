@@ -7,12 +7,13 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::math::*;
 
-/// Collects collision merger events and spawns expanding physical shockwaves.
+/// Collects collision merger and engulfment events and spawns expanding physical shockwaves.
 pub fn update_impact_shockwaves(
     time: Res<Time>,
     mut shockwave_pool: ResMut<ImpactShockwavePool>,
     mut merge_reader: MessageReader<AccretionMergeEvent>,
     mut bounce_reader: MessageReader<CollisionBounceEvent>,
+    mut engulf_reader: MessageReader<PlanetaryEngulfmentEvent>,
     bodies_query: Query<&SimPosition>,
 ) {
     let dt = time.delta_secs();
@@ -56,7 +57,20 @@ pub fn update_impact_shockwaves(
         }
     }
 
-    // 3. Update existing shockwaves
+    // 3. Process planetary engulfment incandescence flares
+    for ev in engulf_reader.read() {
+        let max_r = (1.5f32 + (ev.planet_mass_earth).cbrt() as f32 * 0.8f32).clamp(1.5f32, 5.0f32);
+        shockwave_pool.shockwaves.push(ImpactShockwave {
+            position: Vec3::ZERO,
+            radius: 0.2,
+            max_radius: max_r,
+            timer: 0.0,
+            max_timer: 3.5,
+            color: Color::srgba(1.0, 0.2, 0.1, 0.95), // Incandescent Red-Giant plasma flare
+        });
+    }
+
+    // 4. Update existing shockwaves
     shockwave_pool.shockwaves.retain_mut(|sw| {
         sw.timer += dt;
         let progress = sw.timer / sw.max_timer;
@@ -65,12 +79,20 @@ pub fn update_impact_shockwaves(
     });
 }
 
-/// Draws dynamic Keplerian orbit trails, selection brackets, shockwaves, and diagnostic overlays.
+/// Draws dynamic Keplerian orbit trails, selection brackets, shockwaves, planetary nebulae, and diagnostic overlays.
 pub fn draw_orbital_effects_and_gizmos(
     mut gizmos: Gizmos,
     player_state: Res<PlayerInteractionState>,
     shockwave_pool: Res<ImpactShockwavePool>,
-    star_query: Query<(&SimPosition, &Mass, &IgnitionState), With<CentralStar>>,
+    star_query: Query<
+        (
+            &SimPosition,
+            &Mass,
+            &IgnitionState,
+            Option<&StellarEvolutionState>,
+        ),
+        With<CentralStar>,
+    >,
     bodies_query: Query<(
         Entity,
         &SimPosition,
@@ -82,13 +104,54 @@ pub fn draw_orbital_effects_and_gizmos(
         Option<&SpinState>,
     )>,
 ) {
-    let Ok((star_pos, star_mass, ignition)) = star_query.single() else {
+    let Ok((star_pos, star_mass, ignition, opt_evo)) = star_query.single() else {
         return;
     };
 
     let star_vec = Vec3::new(star_pos.x as f32, star_pos.y as f32, star_pos.z as f32);
 
-    // 1. Draw Ignited Star Shockwave & Solar Wind Wavefront
+    // 1. Draw Expanding Ionized Planetary Nebula (Emerald [O III] + Crimson H-Alpha)
+    if let Some(evo) = opt_evo {
+        if evo.nebula_expansion_radius_au > 0.0 && evo.nebula_opacity > 0.01 {
+            let r_neb = evo.nebula_expansion_radius_au;
+            let op = evo.nebula_opacity;
+
+            // Outer Ruby H-Alpha Shell (656.3 nm)
+            gizmos.circle(
+                Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                r_neb,
+                Color::srgba(0.95, 0.22, 0.38, 0.65 * op),
+            );
+            gizmos.circle(
+                Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                r_neb,
+                Color::srgba(0.95, 0.22, 0.38, 0.40 * op),
+            );
+
+            // Inner Emerald [O III] Shell (500.7 nm)
+            if r_neb > 0.5 {
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    r_neb * 0.78,
+                    Color::srgba(0.12, 0.95, 0.68, 0.75 * op),
+                );
+                gizmos.sphere(
+                    Isometry3d::from_translation(star_vec),
+                    r_neb * 0.78,
+                    Color::srgba(0.12, 0.95, 0.68, 0.06 * op),
+                );
+            }
+
+            // Outer Diffuse Gas Shroud
+            gizmos.sphere(
+                Isometry3d::from_translation(star_vec),
+                r_neb,
+                Color::srgba(0.75, 0.20, 0.50, 0.04 * op),
+            );
+        }
+    }
+
+    // 1B. Draw Ignited Star Shockwave & Solar Wind Wavefront
     if ignition.is_ignited && ignition.shockwave_radius > 0.0 {
         let r = ignition.shockwave_radius as f32;
         let fade = (1.0 - (r / 35.0)).clamp(0.1, 1.0);
