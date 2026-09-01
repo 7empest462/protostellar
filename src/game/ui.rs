@@ -503,25 +503,16 @@ pub fn handle_ui_button_interactions(
             &mut SimPosition,
             &mut SimVelocity,
             &mut Composition,
-            &CelestialBody,
+            &mut CelestialBody,
             Option<&CentralStar>,
+            Option<&mut IgnitionState>,
+            Option<&mut StellarEvolutionState>,
+            Option<&mut Temperature>,
+            Option<&mut Luminosity>,
         ),
         Without<PanOrbitCamera>,
     >,
     mut camera_query: Query<&mut PanOrbitCamera>,
-    mut star_evo_query: Query<
-        (
-            Entity,
-            &mut Mass,
-            &mut Radius,
-            &mut Temperature,
-            &mut Luminosity,
-            &mut IgnitionState,
-            &mut CelestialBody,
-            Option<&mut StellarEvolutionState>,
-        ),
-        With<CentralStar>,
-    >,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
@@ -587,8 +578,8 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectStar => {
                         let star_ent = selected_query
                             .iter()
-                            .find(|(.., is_star)| is_star.is_some())
-                            .map(|(e, ..)| e);
+                            .find(|item| item.7.is_some())
+                            .map(|item| item.0);
                         if let Some(ent) = star_ent {
                             player_state.selected_entity = Some(ent);
                             if let Ok(mut cam) = camera_query.single_mut() {
@@ -602,7 +593,7 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectMercury => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|(.., is_star)| is_star.is_none())
+                            .filter(|item| item.7.is_none())
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -613,9 +604,9 @@ pub fn handle_ui_button_interactions(
                         // Prefer body named Mercury or closest inner body
                         let target = sorted
                             .iter()
-                            .find(|(.., body, _)| {
-                                body.name.to_lowercase().contains("mercury")
-                                    || body.name.to_lowercase().contains("ceres")
+                            .find(|item| {
+                                item.6.name.to_lowercase().contains("mercury")
+                                    || item.6.name.to_lowercase().contains("ceres")
                             })
                             .or_else(|| sorted.first());
 
@@ -633,7 +624,7 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectEarth => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|(.., is_star)| is_star.is_none())
+                            .filter(|item| item.7.is_none())
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -644,7 +635,7 @@ pub fn handle_ui_button_interactions(
                         // Prefer body named Earth, or closest planet near ~1.0-2.0 AU
                         let target = sorted
                             .iter()
-                            .find(|(.., body, _)| body.name.to_lowercase().contains("earth"))
+                            .find(|item| item.6.name.to_lowercase().contains("earth"))
                             .or_else(|| {
                                 sorted.iter().min_by(|a, b| {
                                     (a.3 .0.length() - 1.5)
@@ -669,7 +660,7 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectJupiter => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|(.., is_star)| is_star.is_none())
+                            .filter(|item| item.7.is_none())
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -680,7 +671,7 @@ pub fn handle_ui_button_interactions(
                         // Prefer body named Jupiter or massive outer planet near ~5.0-10.0 AU
                         let target = sorted
                             .iter()
-                            .find(|(.., body, _)| body.name.to_lowercase().contains("jupiter"))
+                            .find(|item| item.6.name.to_lowercase().contains("jupiter"))
                             .or_else(|| {
                                 sorted.iter().min_by(|a, b| {
                                     (a.3 .0.length() - 8.5)
@@ -705,7 +696,7 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectKuiper => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|(.., is_star)| is_star.is_none())
+                            .filter(|item| item.7.is_none())
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -833,7 +824,7 @@ pub fn handle_ui_button_interactions(
                     // Live Editor Actions
                     UiButtonAction::IncreaseMass => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, mut mass, mut radius, _, _, comp, body, _)) =
+                            if let Ok((_, mut mass, mut radius, _, _, comp, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 mass.0 *= 1.25;
@@ -855,7 +846,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::DecreaseMass => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, mut mass, mut radius, _, _, comp, body, _)) =
+                            if let Ok((_, mut mass, mut radius, _, _, comp, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 mass.0 *= 0.80;
@@ -877,7 +868,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::ExpandOrbit => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, _, _, mut pos, mut vel, _, body, _)) =
+                            if let Ok((_, _, _, mut pos, mut vel, _, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 pos.0 *= 1.10;
@@ -898,7 +889,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::ContractOrbit => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, _, _, mut pos, mut vel, _, body, _)) =
+                            if let Ok((_, _, _, mut pos, mut vel, _, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 pos.0 *= 0.90;
@@ -919,7 +910,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::CycleComposition => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, mut mass, mut radius, _, _, mut comp, body, _)) =
+                            if let Ok((_, mut mass, mut radius, _, _, mut comp, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 if comp.silicate_frac > 0.5 {
@@ -958,7 +949,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::BoostDeltaV => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, _, _, _, mut vel, _, body, _)) =
+                            if let Ok((_, _, _, _, mut vel, _, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 vel.0 *= 1.15;
@@ -972,7 +963,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::BrakeDeltaV => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, _, _, _, mut vel, _, body, _)) =
+                            if let Ok((_, _, _, _, mut vel, _, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 vel.0 *= 0.85;
@@ -986,7 +977,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::FixOrbit => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((_, _, _, mut pos, mut vel, _, body, _)) =
+                            if let Ok((_, _, _, mut pos, mut vel, _, body, ..)) =
                                 selected_query.get_mut(ent)
                             {
                                 if !matches!(
@@ -1052,7 +1043,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::VaporizeBody => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((.., body, _)) = selected_query.get(ent) {
+                            if let Ok((_, _, _, _, _, _, body, ..)) = selected_query.get(ent) {
                                 toast.message = format!("💥 Vaporized {}", body.name);
                                 toast.timer = 4.0;
                             }
@@ -1093,8 +1084,23 @@ pub fn handle_ui_button_interactions(
                         toast.timer = 2.5;
                     }
                     UiButtonAction::IgniteStar => {
-                        if let Ok((.., mut ignition, mut body, mut opt_evo)) =
-                            star_evo_query.single_mut()
+                        let mut star_opt = selected_query
+                            .iter_mut()
+                            .find(|(.., is_star, _, _, _, _)| is_star.is_some());
+                        if let Some((
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            _,
+                            mut body,
+                            _,
+                            Some(ref mut ignition),
+                            ref mut opt_evo,
+                            _,
+                            _,
+                        )) = star_opt
                         {
                             if !ignition.is_ignited {
                                 ignition.core_temperature = 1.0e7;
@@ -1126,7 +1132,7 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::ShatterIntoRings => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((.., body, is_star)) = selected_query.get(ent) {
+                            if let Ok((.., body, is_star, _, _, _, _)) = selected_query.get(ent) {
                                 if is_star.is_some() {
                                     toast.message =
                                         "⚠️ Cannot form planetary rings around the central star!"
@@ -1152,7 +1158,9 @@ pub fn handle_ui_button_interactions(
                     }
                     UiButtonAction::SeedLife => {
                         if let Some(ent) = player_state.selected_entity {
-                            if let Ok((.., mut comp, body, is_star)) = selected_query.get_mut(ent) {
+                            if let Ok((.., mut comp, body, is_star, _, _, _, _)) =
+                                selected_query.get_mut(ent)
+                            {
                                 if is_star.is_some() {
                                     toast.message =
                                         "⚠️ Cannot seed life onto a stellar plasma furnace!"
@@ -1194,16 +1202,23 @@ pub fn handle_ui_button_interactions(
                         }
                     }
                     UiButtonAction::AgeStar => {
-                        if let Ok((
+                        let mut star_opt = selected_query
+                            .iter_mut()
+                            .find(|(.., is_star, _, _, _, _)| is_star.is_some());
+                        if let Some((
                             _ent,
                             mut mass,
                             mut radius,
-                            mut temp,
-                            mut lum,
-                            mut ignition,
+                            _,
+                            _,
+                            _,
                             mut body,
-                            mut opt_evo,
-                        )) = star_evo_query.single_mut()
+                            _,
+                            Some(ref mut ignition),
+                            ref mut opt_evo,
+                            Some(ref mut temp),
+                            Some(ref mut lum),
+                        )) = star_opt
                         {
                             if !ignition.is_ignited {
                                 ignition.core_temperature = 1.0e7;
