@@ -149,10 +149,12 @@ pub fn handle_player_tools(
                 || keyboard.just_pressed(KeyCode::NumpadAdd)
             {
                 mass.0 *= 1.25; // +25% mass
-                let avg_density = comp.average_density();
-                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                    .cbrt()
-                    .max(EARTH_RADIUS_AU * 0.1);
+                if !body.body_type.is_star_or_remnant() {
+                    let avg_density = comp.average_density();
+                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                        .cbrt()
+                        .max(EARTH_RADIUS_AU * 0.1);
+                }
 
                 if let Some(ref mut diff) = diff_opt {
                     diff.recalculate(mass.0, radius.0, &comp);
@@ -169,10 +171,12 @@ pub fn handle_player_tools(
                 || keyboard.just_pressed(KeyCode::NumpadSubtract)
             {
                 mass.0 = (mass.0 * 0.8).max(1e-7 * EARTH_MASS_SOLAR);
-                let avg_density = comp.average_density();
-                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                    .cbrt()
-                    .max(EARTH_RADIUS_AU * 0.1);
+                if !body.body_type.is_star_or_remnant() {
+                    let avg_density = comp.average_density();
+                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                        .cbrt()
+                        .max(EARTH_RADIUS_AU * 0.1);
+                }
 
                 if let Some(ref mut diff) = diff_opt {
                     diff.recalculate(mass.0, radius.0, &comp);
@@ -184,12 +188,7 @@ pub fn handle_player_tools(
             }
 
             // C. Expand Orbit (Key O)
-            if keyboard.just_pressed(KeyCode::KeyO)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyO) && !body.body_type.is_star_or_remnant() {
                 pos.0 *= 1.10;
                 let r = pos.0.length().max(0.1);
                 let v_circ = (G_ASTRO * star_mass / r).sqrt();
@@ -198,12 +197,7 @@ pub fn handle_player_tools(
             }
 
             // D. Contract Orbit (Key L)
-            if keyboard.just_pressed(KeyCode::KeyL)
-                && !matches!(
-                    body.body_type,
-                    BodyType::Protostar | BodyType::MainSequenceStar
-                )
-            {
+            if keyboard.just_pressed(KeyCode::KeyL) && !body.body_type.is_star_or_remnant() {
                 pos.0 = (pos.0 * 0.90).clamp_length_min(0.25);
                 let r = pos.0.length().max(0.1);
                 let v_circ = (G_ASTRO * star_mass / r).sqrt();
@@ -214,10 +208,12 @@ pub fn handle_player_tools(
             // E. Cycle Composition (Key C)
             if keyboard.just_pressed(KeyCode::KeyC) {
                 *comp = comp.cycle_next_composition();
-                let avg_density = comp.average_density();
-                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                    .cbrt()
-                    .max(EARTH_RADIUS_AU * 0.1);
+                if !body.body_type.is_star_or_remnant() {
+                    let avg_density = comp.average_density();
+                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                        .cbrt()
+                        .max(EARTH_RADIUS_AU * 0.1);
+                }
             }
 
             // F. Stellar Core Ignition (Key I on Star) or Prograde Delta-V Boost (Key I or B on Planets)

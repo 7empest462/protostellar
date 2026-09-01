@@ -252,10 +252,15 @@ pub fn sync_celestial_transforms(
 
         // Dynamically scale body mesh using mass cube-root hierarchy and stellar evolution state
         let visual_radius = if body.body_type.is_star_or_remnant() {
-            if radius.0 > SOLAR_RADIUS_AU * 1.8 {
-                (radius.0 as f32).clamp(0.055, 6.0)
-            } else {
-                SimulationConfig::calc_render_radius(mass.0, body.body_type)
+            match body.body_type {
+                BodyType::WhiteDwarf
+                | BodyType::NeutronStar
+                | BodyType::Pulsar
+                | BodyType::Magnetar
+                | BodyType::BlackHole => {
+                    SimulationConfig::calc_render_radius(mass.0, body.body_type)
+                }
+                _ => (radius.0 as f32).clamp(0.045, 6.0),
             }
         } else {
             SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale

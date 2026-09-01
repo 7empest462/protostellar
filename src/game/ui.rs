@@ -840,10 +840,12 @@ pub fn handle_ui_button_interactions(
                             )) = selected_query.get_mut(ent)
                             {
                                 mass.0 *= 1.25;
-                                let avg_density = comp.average_density();
-                                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                                    .cbrt()
-                                    .max(EARTH_RADIUS_AU * 0.1);
+                                if !is_star.is_some() && !body.body_type.is_star_or_remnant() {
+                                    let avg_density = comp.average_density();
+                                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                                        .cbrt()
+                                        .max(EARTH_RADIUS_AU * 0.1);
+                                }
 
                                 // Dynamically reclassify celestial body and promote comets/asteroids to planets
                                 let old_type = body.body_type;
@@ -890,10 +892,12 @@ pub fn handle_ui_button_interactions(
                             )) = selected_query.get_mut(ent)
                             {
                                 mass.0 *= 0.80;
-                                let avg_density = comp.average_density();
-                                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                                    .cbrt()
-                                    .max(EARTH_RADIUS_AU * 0.1);
+                                if !is_star.is_some() && !body.body_type.is_star_or_remnant() {
+                                    let avg_density = comp.average_density();
+                                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                                        .cbrt()
+                                        .max(EARTH_RADIUS_AU * 0.1);
+                                }
 
                                 let old_type = body.body_type;
                                 let new_type = classify_body_by_mass_and_comp(

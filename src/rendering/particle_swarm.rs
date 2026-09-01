@@ -438,26 +438,31 @@ pub fn update_particle_swarm(
 
     for (ent, _pos, mut mass, mut radius, mut comp, mut body) in massive_query.iter_mut() {
         if let Some(&gain) = mass_gains.get(&ent) {
-            // Accelerating Runaway accretion scaling: growth rate accelerates as mass increases!
-            let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).max(0.1);
-            let runaway_mult = 1.0 + 0.45 * m_earth_ratio.powf(0.65);
-            mass.0 += gain * runaway_mult;
+            if body.body_type.is_star_or_remnant() {
+                // Central Star accreted mass directly increases stellar mass
+                mass.0 += gain;
+            } else {
+                // Planets & Minor bodies: Accelerating Runaway accretion scaling
+                let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).max(0.1);
+                let runaway_mult = 1.0 + 0.45 * m_earth_ratio.powf(0.65);
+                mass.0 += gain * runaway_mult;
 
-            let avg_density = comp.average_density();
-            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI)).cbrt();
+                let avg_density = comp.average_density();
+                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI)).cbrt();
 
-            // Runaway classification & gas envelope collapse as planets grow
-            if mass.0 >= 8.0 * EARTH_MASS_SOLAR && comp.gas_frac < 0.40 {
-                comp.gas_frac = (comp.gas_frac + 0.06).min(0.88);
-                comp.ice_frac = (comp.ice_frac * 0.92).max(0.05);
-                body.body_type = BodyType::GasGiant;
-            } else if mass.0 >= 2.5 * EARTH_MASS_SOLAR
-                && matches!(
-                    body.body_type,
-                    BodyType::Protoplanet | BodyType::Planetesimal
-                )
-            {
-                body.body_type = BodyType::TerrestrialPlanet;
+                // Runaway classification & gas envelope collapse as planets grow
+                if mass.0 >= 8.0 * EARTH_MASS_SOLAR && comp.gas_frac < 0.40 {
+                    comp.gas_frac = (comp.gas_frac + 0.06).min(0.88);
+                    comp.ice_frac = (comp.ice_frac * 0.92).max(0.05);
+                    body.body_type = BodyType::GasGiant;
+                } else if mass.0 >= 2.5 * EARTH_MASS_SOLAR
+                    && matches!(
+                        body.body_type,
+                        BodyType::Protoplanet | BodyType::Planetesimal
+                    )
+                {
+                    body.body_type = BodyType::TerrestrialPlanet;
+                }
             }
         }
     }

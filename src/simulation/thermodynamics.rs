@@ -249,9 +249,10 @@ pub fn update_thermodynamics(
                 }
                 StellarEvolutionPhase::RedGiantBranch => {
                     let target_r = (1.25 * mass.0.powf(0.3)).clamp(0.8, 2.5);
-                    radius.0 += (target_r - radius.0) * (0.008 * dt_yr).min(0.25);
-                    temp.0 += (3100.0 - temp.0) * (0.008 * dt_yr).min(0.25);
-                    lum.0 += (2500.0 * mass.0 - lum.0) * (0.008 * dt_yr).min(0.25);
+                    let k = (1.0 - (-0.008 * dt_yr).exp()).clamp(0.0, 1.0);
+                    radius.0 += (target_r - radius.0) * k;
+                    temp.0 += (3100.0 - temp.0) * k;
+                    lum.0 += (2500.0 * mass.0 - lum.0) * k;
 
                     evo.helium_core_fraction =
                         (evo.helium_core_fraction + 0.0003 * dt_yr as f32).min(1.0);
@@ -263,9 +264,10 @@ pub fn update_thermodynamics(
                 }
                 StellarEvolutionPhase::HeliumFlashAgb => {
                     let target_r = 1.50f64;
-                    radius.0 += (target_r - radius.0) * (0.010 * dt_yr).min(0.25);
-                    lum.0 += (3500.0 - lum.0) * (0.010 * dt_yr).min(0.25);
-                    temp.0 += (2900.0 - temp.0) * (0.010 * dt_yr).min(0.25);
+                    let k = (1.0 - (-0.010 * dt_yr).exp()).clamp(0.0, 1.0);
+                    radius.0 += (target_r - radius.0) * k;
+                    lum.0 += (3500.0 - lum.0) * k;
+                    temp.0 += (2900.0 - temp.0) * k;
 
                     if evo.phase_timer_years > 2500.0 {
                         evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
@@ -278,10 +280,10 @@ pub fn update_thermodynamics(
                 StellarEvolutionPhase::RedSupergiantBranch => {
                     // Massive star supergiant expansion
                     let target_r = (4.5 * (mass.0 / 15.0).powf(0.5)).clamp(2.5, 7.5);
-                    radius.0 += (target_r - radius.0) * (0.012 * dt_yr).min(0.25);
-                    lum.0 +=
-                        (80_000.0 * (mass.0 / 15.0).powf(2.0) - lum.0) * (0.012 * dt_yr).min(0.25);
-                    temp.0 += (3300.0 - temp.0) * (0.012 * dt_yr).min(0.25);
+                    let k = (1.0 - (-0.012 * dt_yr).exp()).clamp(0.0, 1.0);
+                    radius.0 += (target_r - radius.0) * k;
+                    lum.0 += (80_000.0 * (mass.0 / 15.0).powf(2.0) - lum.0) * k;
+                    temp.0 += (3300.0 - temp.0) * k;
 
                     if evo.phase_timer_years > 2000.0 {
                         evo.phase = StellarEvolutionPhase::SupernovaExplosion;

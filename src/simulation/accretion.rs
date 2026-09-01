@@ -599,8 +599,10 @@ pub fn process_accretion_and_collisions(
                         pos.0 = merged_pos;
                         vel.0 = merged_vel;
                         acc.0 = new_acc;
-                        rad.0 = new_radius;
-                        t.0 = new_temp;
+                        if !is_star_like {
+                            rad.0 = new_radius;
+                            t.0 = new_temp;
+                        }
                         *comp = merged_comp;
                         body.body_type = updated_type;
 
