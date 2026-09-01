@@ -76,6 +76,7 @@ pub fn process_accretion_and_collisions(
         Option<&mut InternalDifferentiation>,
         Option<&mut SpinState>,
         Option<&mut SatelliteOf>,
+        Option<&CentralStar>,
     )>,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
@@ -96,10 +97,11 @@ pub fn process_accretion_and_collisions(
         BodyType,
         DVec3,
         String,
+        bool, // is_central_star
     )> = bodies_query
         .iter()
         .map(
-            |(e, m, pos, vel, _, rad, temp, comp, body, _, opt_spin, _)| {
+            |(e, m, pos, vel, _, rad, temp, comp, body, _, opt_spin, _, opt_central)| {
                 let spin_vec = opt_spin.map(|s| s.spin_vector).unwrap_or(DVec3::ZERO);
                 (
                     e,
@@ -112,6 +114,7 @@ pub fn process_accretion_and_collisions(
                     body.body_type,
                     spin_vec,
                     body.name.clone(),
+                    opt_central.is_some(),
                 )
             },
         )
@@ -127,12 +130,13 @@ pub fn process_accretion_and_collisions(
     let mut pending_despawns: SmallVec<[Entity; 32]> = SmallVec::new();
 
     for i in 0..n {
-        let (e1, m1, pos1, vel1, rad1, temp1, comp1, type1, spin1, name1) = bodies[i].clone();
+        let (e1, m1, pos1, vel1, rad1, temp1, comp1, type1, spin1, name1, is_central1) =
+            bodies[i].clone();
         if merged_away.contains(&e1) {
             continue;
         }
 
-        for (e2, m2, pos2, vel2, rad2, temp2, comp2, type2, spin2, name2) in
+        for (e2, m2, pos2, vel2, rad2, temp2, comp2, type2, spin2, name2, is_central2) in
             bodies.iter().skip(i + 1).cloned()
         {
             if merged_away.contains(&e2) {
@@ -193,7 +197,7 @@ pub fn process_accretion_and_collisions(
                     / (v_rel.max(1e-8) * effective_collision_radius.max(1e-8)))
                 .clamp(0.0, 1.0);
 
-                // Sort into primary (larger) and secondary (smaller impactor)
+                // Sort into primary (larger or central) and secondary (smaller impactor)
                 let (
                     primary_entity,
                     p_m,
@@ -203,6 +207,7 @@ pub fn process_accretion_and_collisions(
                     p_type,
                     p_spin,
                     p_name,
+                    p_is_central,
                     secondary_entity,
                     s_m,
                     s_pos,
@@ -211,7 +216,8 @@ pub fn process_accretion_and_collisions(
                     _s_type,
                     s_spin,
                     _s_name,
-                ) = if m1 >= m2 {
+                    _s_is_central,
+                ) = if is_central1 || (!is_central2 && m1 >= m2) {
                     (
                         e1,
                         m1,
@@ -221,6 +227,7 @@ pub fn process_accretion_and_collisions(
                         type1,
                         spin1,
                         name1.clone(),
+                        is_central1,
                         e2,
                         m2,
                         pos2,
@@ -229,6 +236,7 @@ pub fn process_accretion_and_collisions(
                         type2,
                         spin2,
                         name2.clone(),
+                        is_central2,
                     )
                 } else {
                     (
@@ -240,6 +248,7 @@ pub fn process_accretion_and_collisions(
                         type2,
                         spin2,
                         name2.clone(),
+                        is_central2,
                         e1,
                         m1,
                         pos1,
@@ -248,6 +257,7 @@ pub fn process_accretion_and_collisions(
                         type1,
                         spin1,
                         name1.clone(),
+                        is_central1,
                     )
                 };
 
@@ -380,6 +390,7 @@ pub fn process_accretion_and_collisions(
                         opt_diff,
                         opt_spin_mut,
                         _,
+                        _,
                     )) = bodies_query.get_mut(primary_entity)
                     {
                         m.0 = total_primary_mass;
@@ -423,6 +434,7 @@ pub fn process_accretion_and_collisions(
                         opt_diff,
                         opt_spin_mut,
                         opt_sat_mut,
+                        _,
                     )) = bodies_query.get_mut(secondary_entity)
                     {
                         m.0 = moon_mass;
@@ -478,15 +490,15 @@ pub fn process_accretion_and_collisions(
                             -(1.0 + e_restitution) * v_rel_normal / (1.0 / m1 + 1.0 / m2);
                         let impulse = n_norm * impulse_mag;
 
-                        if !type1.is_star_or_remnant() {
-                            if let Ok((_, _, _, mut v1, _, _, _, _, _, _, _, _)) =
+                        if !is_central1 {
+                            if let Ok((_, _, _, mut v1, _, _, _, _, _, _, _, _, _)) =
                                 bodies_query.get_mut(e1)
                             {
                                 v1.0 += impulse / m1;
                             }
                         }
-                        if !type2.is_star_or_remnant() {
-                            if let Ok((_, _, _, mut v2, _, _, _, _, _, _, _, _)) =
+                        if !is_central2 {
+                            if let Ok((_, _, _, mut v2, _, _, _, _, _, _, _, _, _)) =
                                 bodies_query.get_mut(e2)
                             {
                                 v2.0 -= impulse / m2;
@@ -507,13 +519,12 @@ pub fn process_accretion_and_collisions(
                     let total_mass = p_m + s_m;
 
                     // Exact Conservation of Linear Momentum (Central Star remains stationary at origin)
-                    let is_star = p_type.is_star_or_remnant();
-                    let merged_vel = if is_star {
+                    let merged_vel = if p_is_central {
                         DVec3::ZERO
                     } else {
                         (p_vel * p_m + s_vel * s_m) / total_mass
                     };
-                    let merged_pos = if is_star {
+                    let merged_pos = if p_is_central {
                         DVec3::ZERO
                     } else {
                         (p_pos * p_m + s_pos * s_m) / total_mass
@@ -548,7 +559,7 @@ pub fn process_accretion_and_collisions(
                     };
 
                     let r_len = merged_pos.length().max(1e-4);
-                    let new_acc = if !updated_type.is_star_or_remnant() {
+                    let new_acc = if !p_is_central {
                         -(G_ASTRO * star_mass / (r_len * r_len * r_len)) * merged_pos
                     } else {
                         DVec3::ZERO
@@ -566,6 +577,7 @@ pub fn process_accretion_and_collisions(
                         mut body,
                         opt_diff,
                         opt_spin_mut,
+                        _,
                         _,
                     )) = bodies_query.get_mut(primary_entity)
                     {
@@ -712,7 +724,7 @@ pub fn process_accretion_and_collisions(
                                 2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * p_m)).sqrt();
 
                             // Convert secondary body into a captured Moon
-                            if let Ok((_, _, _, _, _, _, _, _, mut body, _, _, opt_sat_mut)) =
+                            if let Ok((_, _, _, _, _, _, _, _, mut body, _, _, opt_sat_mut, _)) =
                                 bodies_query.get_mut(secondary_entity)
                             {
                                 // Only capture if it isn't already a moon

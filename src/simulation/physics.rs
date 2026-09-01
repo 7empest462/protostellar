@@ -26,6 +26,7 @@ pub fn step_physics_simulation(
         &Radius,
         &CelestialBody,
         Option<&mut SatelliteOf>,
+        Option<&CentralStar>,
     )>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
@@ -49,9 +50,10 @@ pub fn step_physics_simulation(
         f64,
         BodyType,
         Option<SatelliteOf>,
+        bool, // is_central_star
     )> = bodies_query
         .iter()
-        .map(|(e, m, pos, vel, acc, rad, body, sat)| {
+        .map(|(e, m, pos, vel, acc, rad, body, sat, opt_central)| {
             (
                 e,
                 m.0,
@@ -61,6 +63,7 @@ pub fn step_physics_simulation(
                 rad.0,
                 body.body_type,
                 sat.copied(),
+                opt_central.is_some(),
             )
         })
         .collect();
@@ -72,7 +75,7 @@ pub fn step_physics_simulation(
     // Find central star index if present
     let star_index = body_data
         .iter()
-        .position(|(_, _, _, _, _, _, t, _)| t.is_star_or_remnant());
+        .position(|(_, _, _, _, _, _, _, _, is_central)| *is_central);
 
     let (star_mass, star_pos) = if let Some(idx) = star_index {
         (body_data[idx].1, body_data[idx].2)
@@ -84,8 +87,9 @@ pub fn step_physics_simulation(
     let massive_indices: Vec<usize> = body_data
         .iter()
         .enumerate()
-        .filter(|(_, (_, m, _, _, _, _, t, _))| {
+        .filter(|(_, (_, m, _, _, _, _, t, _, is_central))| {
             *m > EARTH_MASS_SOLAR * 0.1
+                || *is_central
                 || t.is_star_or_remnant()
                 || matches!(
                     t,
@@ -119,7 +123,7 @@ pub fn step_physics_simulation(
             let r_vec = body.2 - star_pos;
             let dist_sq = r_vec.length_squared() + softening_sq;
             let dist = dist_sq.sqrt();
-            if !body.6.is_star_or_remnant() {
+            if !body.8 {
                 body.4 = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
             }
         }
@@ -128,7 +132,7 @@ pub fn step_physics_simulation(
     for _ in 0..n_substeps {
         // --- 1. Kick step (v += a * dt/2) ---
         for body in body_data.iter_mut() {
-            if !body.6.is_star_or_remnant() {
+            if !body.8 {
                 body.3 += body.4 * (sub_dt * 0.5);
             } else {
                 body.2 = DVec3::ZERO;
@@ -141,7 +145,7 @@ pub fn step_physics_simulation(
         // Pass A: Advance non-satellites (planets, embryos, asteroids) around the central star
         for body in body_data.iter_mut() {
             if body.7.is_none() {
-                if !body.6.is_star_or_remnant() {
+                if !body.8 {
                     let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z).sqrt().max(0.05);
                     let omega = (G_ASTRO * star_mass / (r_cyl * r_cyl * r_cyl)).sqrt();
                     let delta_phi = omega * sub_dt;
@@ -279,12 +283,14 @@ pub fn step_physics_simulation(
         let new_accelerations: Vec<DVec3> = body_data
             .iter()
             .enumerate()
-            .map(|(i, (_, _, pos, vel, _, rad, b_type, _))| compute_acc(i, pos, vel, *rad, *b_type))
+            .map(|(i, (_, _, pos, vel, _, rad, b_type, _, _))| {
+                compute_acc(i, pos, vel, *rad, *b_type)
+            })
             .collect();
 
         // Assign newly calculated accelerations
         for (i, body) in body_data.iter_mut().enumerate() {
-            if !body.6.is_star_or_remnant() {
+            if !body.8 {
                 body.4 = new_accelerations[i];
             } else {
                 body.4 = DVec3::ZERO;
@@ -301,7 +307,7 @@ pub fn step_physics_simulation(
             let mut jupiter_idx = None;
             let mut saturn_idx = None;
 
-            for (i, (_, m, pos, _, _, _, b_type, _)) in body_data.iter().enumerate() {
+            for (i, (_, m, pos, _, _, _, b_type, _, _)) in body_data.iter().enumerate() {
                 let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
                 if matches!(b_type, BodyType::GasGiant) || *m >= JUPITER_MASS_SOLAR * 0.15 {
                     if r < 10.0 && jupiter_idx.is_none() {
@@ -341,7 +347,7 @@ pub fn step_physics_simulation(
             }
 
             // Outward migration for Ice Giants and comet scattering
-            for (i, (_, _m, pos, vel, acc, _, b_type, _)) in body_data.iter_mut().enumerate() {
+            for (i, (_, _m, pos, vel, acc, _, b_type, _, _)) in body_data.iter_mut().enumerate() {
                 let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
                 let v_dir = vel.normalize_or_zero();
 
@@ -367,7 +373,7 @@ pub fn step_physics_simulation(
 
         // --- 4. Kick step (v += a * dt/2) & Physical Velocity Limiting ---
         for body in body_data.iter_mut() {
-            if !body.6.is_star_or_remnant() {
+            if !body.8 {
                 body.3 += body.4 * (sub_dt * 0.5);
 
                 // Sanitize non-finite vectors
@@ -415,8 +421,10 @@ pub fn step_physics_simulation(
     }
 
     // Write back updated positions, velocities, accelerations, and satellite states to ECS
-    for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat) in bodies_query.iter_mut() {
-        if body.body_type.is_star_or_remnant() {
+    for (e, mut m, mut pos, mut vel, mut acc, _, _body, opt_sat, opt_central) in
+        bodies_query.iter_mut()
+    {
+        if opt_central.is_some() {
             pos.0 = DVec3::ZERO;
             vel.0 = DVec3::ZERO;
             acc.0 = DVec3::ZERO;
@@ -435,7 +443,7 @@ pub fn step_physics_simulation(
     let mut kinetic_e = 0.0;
     let mut potential_e = 0.0;
 
-    for (i, (_, m, pos, vel, _, _, _, _)) in body_data.iter().enumerate() {
+    for (i, (_, m, pos, vel, _, _, _, _, _)) in body_data.iter().enumerate() {
         kinetic_e += 0.5 * m * vel.length_squared();
 
         // Potential energy against central star
