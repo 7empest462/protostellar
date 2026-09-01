@@ -84,6 +84,7 @@ pub fn handle_load_scenario_events(
     mut scenario_state: ResMut<ActiveScenarioState>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     bodies_query: Query<Entity, With<CelestialBody>>,
+    mut camera_query: Query<&mut crate::rendering::camera::PanOrbitCamera>,
 ) {
     for event in events.read() {
         let preset = event.0;
@@ -138,6 +139,26 @@ pub fn handle_load_scenario_events(
         };
 
         player_state.selected_entity = Some(central_star_ent);
+
+        // 4. Set optimal camera framing for each scenario
+        if let Some(mut cam) = camera_query.iter_mut().next() {
+            cam.focus = Vec3::ZERO;
+            cam.target_focus = Vec3::ZERO;
+            cam.target_entity = None;
+            let (target_r, target_yaw, target_pitch) = match preset {
+                ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
+                ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
+                ScenarioPreset::SolarNebulaMmsn => (16.0, 0.785, 0.62),
+                ScenarioPreset::HotJupiterMigration => (10.0, 0.785, 0.62),
+                ScenarioPreset::RoguePlanetFlyby => (35.0, 0.785, 0.62),
+            };
+            cam.radius = target_r;
+            cam.target_radius = target_r;
+            cam.yaw = target_yaw;
+            cam.target_yaw = target_yaw;
+            cam.pitch = target_pitch;
+            cam.target_pitch = target_pitch;
+        }
     }
 }
 

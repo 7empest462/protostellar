@@ -260,7 +260,18 @@ pub fn sync_celestial_transforms(
                 | BodyType::BlackHole => {
                     SimulationConfig::calc_render_radius(mass.0, body.body_type)
                 }
-                _ => (radius.0 as f32).clamp(0.045, 6.0),
+                BodyType::RedGiant | BodyType::RedSupergiant | BodyType::Hypergiant => {
+                    (radius.0 as f32).clamp(0.045, 10.0)
+                }
+                BodyType::RedDwarf | BodyType::BrownDwarf => {
+                    // Ultracool & red dwarfs (e.g. TRAPPIST-1, Proxima Centauri)
+                    // Scaled so close-in resonant planets at 0.01 - 0.06 AU orbit clearly outside the star
+                    ((radius.0 as f32) * 5.0).clamp(0.0028, 0.015)
+                }
+                _ => {
+                    // Main sequence stars (Sun, K-dwarfs, Blue Giants)
+                    ((radius.0 as f32) * 3.5).clamp(0.012, 0.080)
+                }
             }
         } else {
             SimulationConfig::calc_render_radius(mass.0, body.body_type) * config.body_render_scale

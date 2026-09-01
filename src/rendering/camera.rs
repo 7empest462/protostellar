@@ -45,7 +45,7 @@ impl Default for PanOrbitCamera {
             pitch: 0.62, // ~36 degrees inclination
             target_pitch: 0.62,
             target_entity: None,
-            min_radius: 0.05,
+            min_radius: 0.005,
             max_radius: 450.0,
             orbit_sensitivity: 0.005,
             zoom_sensitivity: 0.15,
@@ -66,7 +66,7 @@ pub fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            near: 0.005,
+            near: 0.001,
             far: 1500.0,
             ..default()
         }),
