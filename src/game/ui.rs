@@ -849,9 +849,34 @@ pub fn handle_ui_button_interactions(
                                 let new_type = classify_body_by_mass_and_comp(
                                     mass.0,
                                     &comp,
-                                    is_star.is_some(),
+                                    is_star.is_some() || body.body_type.is_star_or_remnant(),
                                 );
-                                if !is_star.is_some() && new_type != old_type {
+                                if is_star.is_some() || body.body_type.is_star_or_remnant() {
+                                    if !body.body_type.is_remnant() {
+                                        body.body_type = new_type;
+                                        body.name = match new_type {
+                                            BodyType::BrownDwarf => {
+                                                "The Star (Brown Dwarf)".to_string()
+                                            }
+                                            BodyType::RedDwarf => {
+                                                "The Star (Red Dwarf - M Type)".to_string()
+                                            }
+                                            BodyType::YellowDwarf => {
+                                                "The Star (Yellow Dwarf - G2V)".to_string()
+                                            }
+                                            BodyType::BlueGiant => {
+                                                "The Star (Blue Giant - B Type)".to_string()
+                                            }
+                                            BodyType::BlueSupergiant => {
+                                                "The Star (Blue Supergiant - O Type)".to_string()
+                                            }
+                                            BodyType::Hypergiant => {
+                                                "The Star (Luminous Hypergiant)".to_string()
+                                            }
+                                            _ => body.name.clone(),
+                                        };
+                                    }
+                                } else if new_type != old_type {
                                     body.body_type = new_type;
                                     if new_type.is_planet() && !body.name.starts_with("Planet") {
                                         body.name = format!("Planet ({:?})", new_type);
@@ -900,9 +925,34 @@ pub fn handle_ui_button_interactions(
                                 let new_type = classify_body_by_mass_and_comp(
                                     mass.0,
                                     &comp,
-                                    is_star.is_some(),
+                                    is_star.is_some() || body.body_type.is_star_or_remnant(),
                                 );
-                                if !is_star.is_some() && new_type != old_type {
+                                if is_star.is_some() || body.body_type.is_star_or_remnant() {
+                                    if !body.body_type.is_remnant() {
+                                        body.body_type = new_type;
+                                        body.name = match new_type {
+                                            BodyType::BrownDwarf => {
+                                                "The Star (Brown Dwarf)".to_string()
+                                            }
+                                            BodyType::RedDwarf => {
+                                                "The Star (Red Dwarf - M Type)".to_string()
+                                            }
+                                            BodyType::YellowDwarf => {
+                                                "The Star (Yellow Dwarf - G2V)".to_string()
+                                            }
+                                            BodyType::BlueGiant => {
+                                                "The Star (Blue Giant - B Type)".to_string()
+                                            }
+                                            BodyType::BlueSupergiant => {
+                                                "The Star (Blue Supergiant - O Type)".to_string()
+                                            }
+                                            BodyType::Hypergiant => {
+                                                "The Star (Luminous Hypergiant)".to_string()
+                                            }
+                                            _ => body.name.clone(),
+                                        };
+                                    }
+                                } else if new_type != old_type {
                                     body.body_type = new_type;
                                 }
 

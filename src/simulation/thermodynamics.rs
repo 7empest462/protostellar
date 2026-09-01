@@ -221,6 +221,14 @@ pub fn update_thermodynamics(
                     }
                 }
                 StellarEvolutionPhase::MainSequence => {
+                    let target_lum = mass.0.powf(3.5);
+                    let target_temp = 5778.0 * mass.0.powf(0.505);
+                    let target_rad = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.20);
+                    let k = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
+                    lum.0 += (target_lum - lum.0) * k;
+                    temp.0 += (target_temp - temp.0) * k;
+                    radius.0 += (target_rad - radius.0) * k;
+
                     let fuel_burn_rate = (1.0e-5 * mass.0.powf(2.5)).max(1e-7) as f32;
                     evo.hydrogen_core_fraction =
                         (evo.hydrogen_core_fraction - fuel_burn_rate * dt_yr as f32).max(0.0);

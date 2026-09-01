@@ -124,6 +124,18 @@ impl BodyType {
         )
     }
 
+    /// Returns true if this body is a degenerate compact remnant.
+    pub fn is_remnant(&self) -> bool {
+        matches!(
+            self,
+            BodyType::WhiteDwarf
+                | BodyType::NeutronStar
+                | BodyType::Pulsar
+                | BodyType::Magnetar
+                | BodyType::BlackHole
+        )
+    }
+
     /// Returns true if this body is a major planet.
     pub fn is_planet(&self) -> bool {
         matches!(
