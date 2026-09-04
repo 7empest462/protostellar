@@ -32,6 +32,7 @@ pub struct GpuParticleOrbitEngine {
     pub num_particles: u32,
     pub is_ready: bool,
     pub last_disk_outer_r: f32,
+    pub last_star_mass: f32,
 }
 
 /// Resource in the Main world that receives GPU particle readback data.
@@ -60,6 +61,7 @@ pub struct GpuSimExtractedParams {
     pub tractor_pos_mass: [f32; 4],
     pub massive_bodies: [MassiveBodyGpu; 32],
     pub count: u32,
+    pub elapsed_years: f64,
 }
 
 /// Extracts state from the Main App into the Render Sub-App.
@@ -68,6 +70,7 @@ pub fn extract_gpu_sim_data(
     config: Extract<Res<SimulationConfig>>,
     disk_params: Extract<Res<DiskParameters>>,
     time_warp: Extract<Res<TimeWarp>>,
+    sim_time: Extract<Res<SimTime>>,
     player_state: Extract<Res<PlayerInteractionState>>,
     star_query: Extract<
         Query<
@@ -137,6 +140,7 @@ pub fn extract_gpu_sim_data(
         tractor_pos_mass,
         massive_bodies,
         count: config.target_particle_count as u32,
+        elapsed_years: sim_time.elapsed_years,
     });
 }
 
@@ -320,6 +324,7 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) 
         num_particles: n_particles,
         is_ready: true,
         last_disk_outer_r: default_params.outer_radius_au as f32,
+        last_star_mass: default_params.central_star_mass as f32,
     });
 }
 
@@ -357,8 +362,10 @@ pub fn step_gpu_simulation_render_world(
         return;
     }
 
-    // Check if scenario geometry changed significantly (e.g. Little Red Dot disk 250 AU vs Solar 35 AU)
-    if (params.outer_radius - engine.last_disk_outer_r).abs() > 20.0 {
+    // Check if scenario changed (e.g. Little Red Dot disk 250 AU vs Solar 45 AU, Trappist 0.25 AU, etc.)
+    if (params.outer_radius - engine.last_disk_outer_r).abs() > 1.0
+        || (params.star_mass - engine.last_star_mass).abs() > 0.05
+    {
         let mut rng = rand::rng();
         let mut reseed_particles = Vec::with_capacity(engine.num_particles as usize);
         let disk_params = DiskParameters {
@@ -409,6 +416,7 @@ pub fn step_gpu_simulation_render_world(
             bytemuck::cast_slice(&reseed_particles),
         );
         engine.last_disk_outer_r = params.outer_radius;
+        engine.last_star_mass = params.star_mass;
     }
 
     let uniforms = GpuOrbitUniforms {
@@ -515,6 +523,7 @@ pub fn receive_gpu_readback(
     receiver: Option<Res<GpuReadbackReceiver>>,
     mut swarm: Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
     mut config: Option<ResMut<SimulationConfig>>,
+    sim_time: Option<Res<SimTime>>,
 ) {
     let Some(receiver) = receiver else {
         return;
@@ -534,8 +543,21 @@ pub fn receive_gpu_readback(
 
     let particles: &[GpuParticle] = bytemuck::cast_slice(&bytes);
     let n = data.count.min(particles.len());
+    let is_scenario_start = sim_time.map(|t| t.elapsed_years < 0.005).unwrap_or(false);
 
     for (i, p) in particles.iter().enumerate().take(n) {
+        // Never resurrect a particle that the CPU has already accreted/killed
+        if !is_scenario_start && data.masses[i] <= 0.0 {
+            continue;
+        }
+
+        // If GPU marked particle as dead, mark it dead on CPU permanently
+        if p.pos_mass[3] <= 0.0 {
+            data.masses[i] = 0.0;
+            data.positions[i] = [0.0, -5000.0, 0.0];
+            continue;
+        }
+
         data.positions[i] = [p.pos_mass[0], p.pos_mass[1], p.pos_mass[2]];
         data.velocities[i] = [p.vel_temp[0], p.vel_temp[1], p.vel_temp[2]];
         data.masses[i] = p.pos_mass[3];

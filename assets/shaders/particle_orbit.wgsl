@@ -110,6 +110,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let dist_sq = dot(to_body, to_body) + uniforms.softening_sq;
         let dist = sqrt(dist_sq);
 
+        // Planetary Accretion Check: If particle enters physical/bound envelope, absorb it!
+        let p_dist_au = max(length(mb.xyz), 0.05);
+        let hill_r = p_dist_au * pow(m_body_mass / (3.0 * uniforms.star_mass), 0.3333333);
+        let physical_r = clamp(0.005 * pow(m_body_mass / 0.000003003, 0.3333333), 0.002, 0.040);
+        let is_massive = uniforms.star_mass > 10.0;
+        let max_acc = select(0.35, 12.0, is_massive);
+        let acc_r = clamp(physical_r + 0.60 * hill_r, physical_r, max_acc);
+
+        if (dist < acc_r) {
+            // Accreted! Zero out mass and hide off-screen permanently
+            p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, 0.0);
+            p.vel_temp = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+            particles[idx] = p;
+            return;
+        }
+
         // Planetary Hill-Sphere resonance
         let inv_dist3 = 1.0 / (dist_sq * dist);
         let f_grav = uniforms.g_const * m_body_mass * inv_dist3;

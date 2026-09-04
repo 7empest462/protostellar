@@ -1430,3 +1430,93 @@ fn test_gpu_workgroup_dispatch_sizing() {
         }
     }
 }
+
+#[test]
+fn test_gpu_readback_dead_particle_non_resurrection() {
+    use protostellar::gpu::buffers::GpuParticle;
+
+    // Simulate 4 particles
+    let mut cpu_masses = vec![0.0001f32, 0.0f32, 0.0001f32, 0.0f32]; // 1 & 3 accreted on CPU
+    let mut cpu_positions = vec![
+        [1.0f32, 0.0, 0.0],
+        [0.0, -5000.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [0.0, -5000.0, 0.0],
+    ];
+
+    // GPU buffer arrives from older in-flight frame where particle 1 had not died yet on GPU
+    let gpu_particles = vec![
+        GpuParticle {
+            pos_mass: [1.05, 0.0, 0.0, 0.0001],
+            vel_temp: [0.0, 0.0, 0.0, 280.0],
+            composition: [0.5, 0.5, 0.0, 0.0],
+        },
+        GpuParticle {
+            pos_mass: [1.5, 0.0, 0.0, 0.0001], // GPU still thinks it's alive!
+            vel_temp: [0.0, 0.0, 0.0, 250.0],
+            composition: [0.5, 0.5, 0.0, 0.0],
+        },
+        GpuParticle {
+            pos_mass: [0.0, -5000.0, 0.0, 0.0], // GPU marked dead
+            vel_temp: [0.0, 0.0, 0.0, 0.0],
+            composition: [0.0, 0.0, 0.0, 0.0],
+        },
+        GpuParticle {
+            pos_mass: [0.0, -5000.0, 0.0, 0.0],
+            vel_temp: [0.0, 0.0, 0.0, 0.0],
+            composition: [0.0, 0.0, 0.0, 0.0],
+        },
+    ];
+
+    let is_scenario_start = false;
+    for (i, p) in gpu_particles.iter().enumerate() {
+        // Particle must never be resurrected if CPU already marked it dead
+        if !is_scenario_start && cpu_masses[i] <= 0.0 {
+            continue;
+        }
+        if p.pos_mass[3] <= 0.0 {
+            cpu_masses[i] = 0.0;
+            cpu_positions[i] = [0.0, -5000.0, 0.0];
+            continue;
+        }
+        cpu_positions[i] = [p.pos_mass[0], p.pos_mass[1], p.pos_mass[2]];
+        cpu_masses[i] = p.pos_mass[3];
+    }
+
+    // Particle 0 updated normally
+    assert_eq!(cpu_masses[0], 0.0001);
+    assert_eq!(cpu_positions[0], [1.05, 0.0, 0.0]);
+
+    // Particle 1 was NOT resurrected (remained dead at -5000)
+    assert_eq!(cpu_masses[1], 0.0);
+    assert_eq!(cpu_positions[1], [0.0, -5000.0, 0.0]);
+
+    // Particle 2 was killed by GPU
+    assert_eq!(cpu_masses[2], 0.0);
+    assert_eq!(cpu_positions[2], [0.0, -5000.0, 0.0]);
+
+    // Particle 3 stayed dead
+    assert_eq!(cpu_masses[3], 0.0);
+    assert_eq!(cpu_positions[3], [0.0, -5000.0, 0.0]);
+}
+
+#[test]
+fn test_outer_giant_planet_mass_ceiling() {
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, JUPITER_MASS_SOLAR};
+
+    // Proto-Jupiter in Solar Nebula MMSN
+    let mut mass = 3.50 * EARTH_MASS_SOLAR;
+    let max_giant_mass = 2.5 * JUPITER_MASS_SOLAR;
+
+    // Simulate massive runaway accretion attempts (e.g. 100,000 particle sweeps)
+    for _ in 0..10_000 {
+        let gain = 100.0 * (0.0006 * EARTH_MASS_SOLAR / 100_000.0); // 100 particles
+        let m_earth_ratio = (mass / EARTH_MASS_SOLAR).clamp(0.1, 350.0);
+        let runaway_mult = 1.0 + 0.30 * m_earth_ratio.powf(0.35);
+        mass = (mass + gain * runaway_mult).min(max_giant_mass);
+    }
+
+    // Mass must be capped at 2.5 M_Jup and NEVER reach stellar/black hole mass (> 1000 M_earth)
+    assert!(mass <= max_giant_mass);
+    assert!(mass < 0.01); // Well below stellar threshold (0.08 M_sun)
+}

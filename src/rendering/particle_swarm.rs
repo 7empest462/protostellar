@@ -414,21 +414,18 @@ pub fn update_particle_swarm(
 
                             let acc_r = if is_major_body {
                                 if is_inner_terrestrial && !is_massive_disk {
-                                    ((physical_r + 1.25 * effective_grav_r) * warp_sweep)
-                                        .clamp(physical_r, 0.250)
+                                    ((physical_r + 0.50 * hill_r) * warp_sweep)
+                                        .clamp(physical_r, 0.150)
+                                } else if is_massive_disk {
+                                    ((physical_r + 0.90 * effective_grav_r) * warp_sweep)
+                                        .clamp(physical_r, 12.0)
                                 } else {
-                                    let m_growth_factor =
-                                        ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32)
-                                            .powf(0.30);
-                                    let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
-                                    ((physical_r + 0.90 * effective_grav_r * m_growth_factor)
-                                        * warp_sweep)
-                                        .clamp(physical_r, max_clamp)
+                                    // Realistic accretion envelope for gas giants in normal star systems
+                                    ((physical_r + 0.60 * hill_r) * warp_sweep)
+                                        .clamp(physical_r, 0.350)
                                 }
                             } else {
-                                ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32)
-                                    * warp_sweep)
-                                    .clamp(0.00005, 0.0015)
+                                ((physical_r * 1.5) * warp_sweep).clamp(0.00005, 0.0015)
                             };
 
                             if p_dist < acc_r {
@@ -509,21 +506,18 @@ pub fn update_particle_swarm(
 
                             let acc_r = if is_major_body {
                                 if is_inner_terrestrial && !is_massive_disk {
-                                    ((physical_r + 1.25 * effective_grav_r) * warp_sweep)
-                                        .clamp(physical_r, 0.250)
+                                    ((physical_r + 0.50 * hill_r) * warp_sweep)
+                                        .clamp(physical_r, 0.150)
+                                } else if is_massive_disk {
+                                    ((physical_r + 0.90 * effective_grav_r) * warp_sweep)
+                                        .clamp(physical_r, 12.0)
                                 } else {
-                                    let m_growth_factor =
-                                        ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32)
-                                            .powf(0.30);
-                                    let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
-                                    ((physical_r + 0.90 * effective_grav_r * m_growth_factor)
-                                        * warp_sweep)
-                                        .clamp(physical_r, max_clamp)
+                                    // Realistic accretion envelope for gas giants in normal star systems
+                                    ((physical_r + 0.60 * hill_r) * warp_sweep)
+                                        .clamp(physical_r, 0.350)
                                 }
                             } else {
-                                ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32)
-                                    * warp_sweep)
-                                    .clamp(0.00005, 0.0015)
+                                ((physical_r * 1.5) * warp_sweep).clamp(0.00005, 0.0015)
                             };
 
                             if p_dist < acc_r {
@@ -552,7 +546,7 @@ pub fn update_particle_swarm(
         .flatten()
         .collect();
 
-    // 1B. Apply accumulated accreted particle masses to ECS Celestial Bodies & Trigger Accelerating Runaway Growth
+    // 1B. Apply accumulated accreted particle masses to ECS Celestial Bodies & Trigger Realistic Planetary Growth
     let mut mass_gains: hashbrown::HashMap<Entity, f64> = hashbrown::HashMap::new();
     for (ent, delta_m) in accreted_events {
         *mass_gains.entry(ent).or_insert(0.0) += delta_m;
@@ -571,7 +565,6 @@ pub fn update_particle_swarm(
                 let is_massive_disk = star_mass.0 > 10.0;
 
                 // Planets, Protoplanetary embryos, and Stars
-                let warp_gain_boost = 1.0 + (speed_mult.log10().max(0.0) * 0.45) as f64;
                 if !is_beyond_snowline && !is_massive_disk {
                     // Terrestrial Feeding Zone Isolation Mass Limit (Solar Nebula):
                     // Inside 2.7 AU, the total solid mass in a terrestrial feeding zone is physically limited (~1.0 - 1.05 M_earth).
@@ -579,14 +572,23 @@ pub fn update_particle_swarm(
                     if mass.0 < 1.05 * EARTH_MASS_SOLAR {
                         let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).clamp(0.1, 1.0);
                         let runaway_mult = 1.0 + 0.35 * m_earth_ratio;
-                        mass.0 = (mass.0 + gain * runaway_mult * warp_gain_boost)
-                            .min(1.02 * EARTH_MASS_SOLAR);
+                        mass.0 = (mass.0 + gain * runaway_mult).min(1.02 * EARTH_MASS_SOLAR);
+                    }
+                } else if !is_massive_disk {
+                    // Outer giant planet in normal planetary system:
+                    // Cannot exceed gas gap-opening limit (e.g. 2.5 M_Jup = 0.00238 M_sun)
+                    let max_giant_mass = 2.5 * JUPITER_MASS_SOLAR;
+                    if mass.0 < max_giant_mass {
+                        let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).clamp(0.1, 350.0);
+                        let runaway_mult = 1.0 + 0.30 * m_earth_ratio.powf(0.35);
+                        mass.0 = (mass.0 + gain * runaway_mult).min(max_giant_mass);
                     }
                 } else {
-                    // Outer giant planet & stellar runaway accretion: soaking up pushed gas and dust from the disk
+                    // Circum-nuclear accretion in supermassive disks (Little Red Dot [F6]):
+                    // Stellar-mass seeds can grow into Pop-III hypergiants
                     let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).max(0.1);
                     let runaway_mult = 1.0 + 0.65 * m_earth_ratio.powf(0.65);
-                    mass.0 += gain * runaway_mult * warp_gain_boost;
+                    mass.0 += gain * runaway_mult;
                 }
 
                 // Update physical radius based on whether it is a planet or star
