@@ -271,75 +271,133 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     star_light += (l1 + l2 + l3) * skybox.tuning.x;
 
     // 6. Deep Space Star Clusters & Objects (100% Spherically Isotropic)
-    // Pleiades-like Open Cluster (Seven Sisters in Taurus)
+    // =========================================================================
+    // A. PLEIADES OPEN CLUSTER (M45 / Seven Sisters in Taurus)
+    // =========================================================================
     let pleiades_dir = normalize(vec3<f32>(0.62, 0.44, -0.65));
     let delta_p = dir - pleiades_dir;
     let th2_p = dot(delta_p, delta_p);
-    if (th2_p < 0.008) {
-        // Ethereal sapphire reflection nebula (soft, subtle Gaussian)
-        let haze = exp(-th2_p / 0.0006) * 0.45;
-        let neb_color = vec3<f32>(0.20, 0.45, 1.20) * haze;
+    if (th2_p < 0.016) {
+        // Ethereal luminous sapphire reflection nebula (smooth layered Gaussian)
+        let neb_core = exp(-th2_p / 0.0007) * 0.85;
+        let neb_halo = exp(-th2_p / 0.0028) * 0.35;
+        let neb_color = vec3<f32>(0.22, 0.55, 1.45) * (neb_core + neb_halo);
         star_light += neb_color;
 
         // Tangent frame at pleiades_dir
         let p_right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), pleiades_dir));
         let p_up = cross(pleiades_dir, p_right);
 
-        // Physical relative positions and magnitudes of the primary cluster stars
-        // (Alcyone, Atlas, Electra, Maia, Merope, Taygeta, Pleione)
-        let s0 = normalize(pleiades_dir + p_right * 0.0000 + p_up * 0.0000);
-        let s1 = normalize(pleiades_dir + p_right * 0.0092 - p_up * 0.0035);
-        let s2 = normalize(pleiades_dir - p_right * 0.0105 + p_up * 0.0038);
-        let s3 = normalize(pleiades_dir - p_right * 0.0022 + p_up * 0.0090);
-        let s4 = normalize(pleiades_dir - p_right * 0.0038 - p_up * 0.0075);
-        let s5 = normalize(pleiades_dir - p_right * 0.0125 + p_up * 0.0130);
-        let s6 = normalize(pleiades_dir + p_right * 0.0100 + p_up * 0.0012);
+        // Astronomical relative coordinates of the Seven Sisters (mini-dipper asterism)
+        let s_alcyone = normalize(pleiades_dir + p_right * 0.0000 + p_up * 0.0000); // Alcyone (Eta Tauri, central supergiant)
+        let s_atlas   = normalize(pleiades_dir + p_right * 0.0125 - p_up * 0.0045); // Atlas
+        let s_pleione = normalize(pleiades_dir + p_right * 0.0135 + p_up * 0.0018); // Pleione
+        let s_electra = normalize(pleiades_dir - p_right * 0.0138 + p_up * 0.0050); // Electra
+        let s_maia    = normalize(pleiades_dir - p_right * 0.0030 + p_up * 0.0120); // Maia
+        let s_merope  = normalize(pleiades_dir - p_right * 0.0050 - p_up * 0.0100); // Merope
+        let s_taygeta = normalize(pleiades_dir - p_right * 0.0165 + p_up * 0.0175); // Taygeta
+        let s_celaeno = normalize(pleiades_dir - p_right * 0.0120 + p_up * 0.0110); // Celaeno
+        let s_asterope= normalize(pleiades_dir - p_right * 0.0085 + p_up * 0.0210); // Asterope
 
-        let star_col = vec3<f32>(0.45, 0.75, 1.65);
-        var p_stars = 0.0;
+        let star_blue = vec3<f32>(0.35, 0.70, 1.80);
+        let star_white = vec3<f32>(0.75, 0.90, 1.35);
+        var p_stars = vec3<f32>(0.0);
 
-        let d0 = dot(dir - s0, dir - s0);
-        if (d0 < 0.000015) { p_stars += exp(-d0 / (0.0010 * 0.0010)) * 1.1; }
-        let d1 = dot(dir - s1, dir - s1);
-        if (d1 < 0.000015) { p_stars += exp(-d1 / (0.0008 * 0.0008)) * 0.8; }
-        let d2 = dot(dir - s2, dir - s2);
-        if (d2 < 0.000015) { p_stars += exp(-d2 / (0.0008 * 0.0008)) * 0.75; }
-        let d3 = dot(dir - s3, dir - s3);
-        if (d3 < 0.000015) { p_stars += exp(-d3 / (0.00075 * 0.00075)) * 0.65; }
-        let d4 = dot(dir - s4, dir - s4);
-        if (d4 < 0.000015) { p_stars += exp(-d4 / (0.00075 * 0.00075)) * 0.60; }
-        let d5 = dot(dir - s5, dir - s5);
-        if (d5 < 0.000015) { p_stars += exp(-d5 / (0.0007 * 0.0007)) * 0.50; }
-        let d6 = dot(dir - s6, dir - s6);
-        if (d6 < 0.000015) { p_stars += exp(-d6 / (0.0007 * 0.0007)) * 0.45; }
+        // Alcyone (brightest, magnitude 2.8, brilliant sapphire with soft aura)
+        let da = dot(dir - s_alcyone, dir - s_alcyone);
+        if (da < 0.00004) {
+            let core = exp(-da / (0.0013 * 0.0013)) * 2.2;
+            let aura = exp(-da / (0.0035 * 0.0035)) * 0.35;
+            p_stars += star_blue * (core + aura);
+        }
 
-        star_light += star_col * p_stars;
+        // Atlas (magnitude 3.6)
+        let d_at = dot(dir - s_atlas, dir - s_atlas);
+        if (d_at < 0.00003) { p_stars += star_blue * exp(-d_at / (0.0011 * 0.0011)) * 1.6; }
+
+        // Pleione (magnitude 5.0)
+        let d_pl = dot(dir - s_pleione, dir - s_pleione);
+        if (d_pl < 0.00003) { p_stars += star_white * exp(-d_pl / (0.0009 * 0.0009)) * 1.1; }
+
+        // Electra (magnitude 3.7)
+        let d_el = dot(dir - s_electra, dir - s_electra);
+        if (d_el < 0.00003) { p_stars += star_blue * exp(-d_el / (0.0011 * 0.0011)) * 1.5; }
+
+        // Maia (magnitude 3.8)
+        let d_ma = dot(dir - s_maia, dir - s_maia);
+        if (d_ma < 0.00003) { p_stars += star_blue * exp(-d_ma / (0.0010 * 0.0010)) * 1.4; }
+
+        // Merope (magnitude 4.1, illuminates Merope reflection nebula)
+        let d_me = dot(dir - s_merope, dir - s_merope);
+        if (d_me < 0.00003) { p_stars += star_blue * exp(-d_me / (0.0010 * 0.0010)) * 1.3; }
+
+        // Taygeta (magnitude 4.3)
+        let d_ta = dot(dir - s_taygeta, dir - s_taygeta);
+        if (d_ta < 0.00003) { p_stars += star_white * exp(-d_ta / (0.0009 * 0.0009)) * 1.2; }
+
+        // Celaeno & Asterope
+        let d_ce = dot(dir - s_celaeno, dir - s_celaeno);
+        if (d_ce < 0.00003) { p_stars += star_white * exp(-d_ce / (0.0008 * 0.0008)) * 0.9; }
+        let d_as = dot(dir - s_asterope, dir - s_asterope);
+        if (d_as < 0.00003) { p_stars += star_white * exp(-d_as / (0.0008 * 0.0008)) * 0.8; }
+
+        star_light += p_stars;
     }
 
-    // Globular Cluster (Omega Centauri analogue in galactic halo)
+    // =========================================================================
+    // B. OMEGA CENTAURI GLOBULAR CLUSTER (NGC 5139)
+    // =========================================================================
     let globular_dir = normalize(vec3<f32>(-0.45, 0.72, 0.52));
     let delta_g = dir - globular_dir;
     let th2_g = dot(delta_g, delta_g);
-    if (th2_g < 0.006) {
-        // Dense core with Plummer profile
-        let plummer = 1.0 / pow(1.0 + th2_g * 18000.0, 1.4);
-        let globular_glow = vec3<f32>(1.25, 0.95, 0.55) * plummer * 0.85;
+    if (th2_g < 0.010) {
+        // King / Plummer profile: I(r) = I0 / (1 + r^2 / rc^2)^(1.4)
+        let plummer = 1.0 / pow(1.0 + th2_g * 12000.0, 1.4);
+        let halo = exp(-th2_g / 0.0018) * 0.35;
+        let globular_glow = vec3<f32>(1.30, 1.05, 0.65) * (plummer * 1.35 + halo);
         star_light += globular_glow;
     }
 
-    // Andromeda Galaxy (M31 spiral galaxy in northern sky)
+    // =========================================================================
+    // C. ANDROMEDA GALAXY (M31 / Messier 31 Spiral Galaxy)
+    // =========================================================================
     let m31_dir = normalize(vec3<f32>(-0.32, -0.42, 0.85));
     let delta_m31 = dir - m31_dir;
-    if (dot(delta_m31, delta_m31) < 0.010) {
+    let th2_m31 = dot(delta_m31, delta_m31);
+    if (th2_m31 < 0.025) {
+        // Tangent frame aligned with Andromeda's major position angle (~35 degrees)
         let m31_up = normalize(vec3<f32>(0.2, 0.8, 0.3));
         let m31_r = normalize(cross(m31_up, m31_dir));
         let m31_u = cross(m31_dir, m31_r);
+
+        // Project onto inclined galactic plane (77.5 deg inclination angle: cos(77.5) ~ 0.22)
         let x_maj = dot(delta_m31, m31_r);
-        let y_min = dot(delta_m31, m31_u) / 0.32; // 71 deg inclination
+        let y_min = dot(delta_m31, m31_u) / 0.26; // Elongated along major axis
         let r_ellip = x_maj * x_maj + y_min * y_min;
-        let m31_core = exp(-r_ellip * 9000.0) * 0.85;
-        let m31_disk = exp(-r_ellip * 1400.0) * 0.30;
-        star_light += (vec3<f32>(1.15, 0.98, 0.72) * m31_core + vec3<f32>(0.60, 0.75, 1.15) * m31_disk);
+
+        // 1. Luminous Golden Galactic Nucleus (Supermassive BH + dense ancient bulge)
+        let nucleus = exp(-r_ellip * 16000.0) * 1.85;
+        let inner_bulge = exp(-r_ellip * 3500.0) * 0.95;
+        let bulge_color = vec3<f32>(1.35, 1.10, 0.72) * (nucleus + inner_bulge);
+
+        // 2. Extended Spiral Disk (young blue star-forming populations in outer arms)
+        let spiral_disk = exp(-r_ellip * 650.0) * 0.55;
+        let outer_halo = exp(-r_ellip * 180.0) * 0.18;
+        let disk_color = vec3<f32>(0.55, 0.78, 1.35) * spiral_disk + vec3<f32>(0.85, 0.92, 1.10) * outer_halo;
+
+        // 3. Silhouette Dust Lane (dark absorption lane on near side)
+        let dust_offset = dot(delta_m31, m31_u);
+        var dust_absorption = 1.0;
+        if (dust_offset > 0.001 && dust_offset < 0.012 && abs(x_maj) < 0.035) {
+            dust_absorption = 0.45; // Dark silhouette lane
+        }
+
+        // 4. Satellite Dwarf Galaxy: M32 (compact elliptical dwarf at angular offset)
+        let m32_offset = delta_m31 - (m31_r * 0.008 + m31_u * 0.012);
+        let m32_core = exp(-dot(m32_offset, m32_offset) * 25000.0) * 0.75;
+        let m32_color = vec3<f32>(1.20, 1.05, 0.80) * m32_core;
+
+        star_light += (bulge_color + disk_color) * dust_absorption + m32_color;
     }
 
     // Ambient interstellar darkness (faint cosmic infrared bath)
