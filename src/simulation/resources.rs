@@ -38,6 +38,10 @@ pub struct SimulationConfig {
     pub size_exaggeration: f32,
     /// Minimum visual radius floor (AU) to prevent tiny bodies (dust, planetesimals) from vanishing.
     pub min_body_visual_radius: f32,
+    /// Whether GPU Compute Pipeline is active for disk particle dynamics.
+    pub enable_gpu_compute: bool,
+    /// Live telemetry: whether GPU compute shader is successfully dispatching frames.
+    pub gpu_compute_active: bool,
 }
 
 impl Default for SimulationConfig {
@@ -50,13 +54,15 @@ impl Default for SimulationConfig {
             enable_gas_drag: true,
             enable_accretion: true,
             enable_thermodynamics: true,
-            target_particle_count: 50000,
+            target_particle_count: 100000,
             accretion_rate_multiplier: 120.0,
             gas_density_scale: 1.0,
-            active_particles: 50000,
+            active_particles: 100000,
             particle_render_scale: 0.3,
             size_exaggeration: 1.0,
             min_body_visual_radius: 0.0006,
+            enable_gpu_compute: true,
+            gpu_compute_active: false,
         }
     }
 }

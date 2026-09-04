@@ -2574,12 +2574,22 @@ pub fn update_hud(
             "".to_string()
         };
 
+        let compute_badge = if config.enable_gpu_compute && config.gpu_compute_active {
+            "⚡ GPU Compute [F8]"
+        } else if config.enable_gpu_compute {
+            "⚡ GPU Init [F8]"
+        } else {
+            "🖥️ CPU Fallback [F8]"
+        };
+
         text.0 = format!(
-            "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / 50,000 active particles | Gas: {}\nPlanets: {} | Protoplanets: {}{}\nGoal: {}",
+            "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / {} particles [{}] | Gas: {}\nPlanets: {} | Protoplanets: {}{}\nGoal: {}",
             phase_str,
             time_formatted,
             phase_mgr.star_mass,
             config.active_particles,
+            config.target_particle_count,
+            compute_badge,
             gas_status,
             phase_mgr.planet_count,
             phase_mgr.protoplanet_count,
@@ -2607,11 +2617,12 @@ pub fn update_hud(
         };
 
         text.0 = format!(
-            "SPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/.]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
+            "SPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
             speed_str,
             tool_str,
             player_state.overlay_mode.display_name(),
             config.size_exaggeration,
+            if config.enable_gpu_compute { "WGPU Compute (100k)" } else { "CPU Multithread" },
             config.accretion_rate_multiplier,
             drift_pct,
             sim_time.step_count,

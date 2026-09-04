@@ -1,4 +1,4 @@
-//! WGPU Compute Pipeline Engine for 50,000-particle protoplanetary Keplerian mechanics and gas drag.
+//! WGPU Compute Pipeline Engine for 100,000+ particle protoplanetary Keplerian mechanics and gas drag.
 
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
@@ -6,6 +6,8 @@ use bevy::render::Extract;
 use rand::prelude::*;
 use rand_distr::Normal;
 use std::f64::consts::PI;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::buffers::*;
@@ -13,16 +15,23 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
+pub const STAGING_STATE_IDLE: u8 = 0;
+pub const STAGING_STATE_MAPPING: u8 = 1;
+pub const STAGING_STATE_MAPPED: u8 = 2;
+
 /// Holds WGPU compute pipeline resources and VRAM-resident particle buffers.
 #[derive(Resource)]
 pub struct GpuParticleOrbitEngine {
     pub particle_buffer: wgpu::Buffer,
     pub uniform_buffer: wgpu::Buffer,
-    pub staging_buffer: wgpu::Buffer,
+    pub staging_buffers: [wgpu::Buffer; 2],
+    pub staging_states: [Arc<AtomicU8>; 2],
+    pub current_staging_idx: usize,
     pub bind_group: wgpu::BindGroup,
     pub pipeline: wgpu::ComputePipeline,
     pub num_particles: u32,
     pub is_ready: bool,
+    pub last_disk_outer_r: f32,
 }
 
 /// Resource in the Main world that receives GPU particle readback data.
@@ -36,6 +45,7 @@ pub struct GpuReadbackReceiver {
 pub struct GpuSimExtractedParams {
     pub is_paused: bool,
     pub step_once: bool,
+    pub enable_gpu_compute: bool,
     pub dt: f32,
     pub star_pos: [f32; 3],
     pub star_mass: f32,
@@ -112,6 +122,7 @@ pub fn extract_gpu_sim_data(
     commands.insert_resource(GpuSimExtractedParams {
         is_paused: time_warp.is_paused,
         step_once: time_warp.step_once,
+        enable_gpu_compute: config.enable_gpu_compute,
         dt: visual_flow_dt,
         star_pos,
         star_mass,
@@ -125,18 +136,18 @@ pub fn extract_gpu_sim_data(
         num_massive_bodies: num_bodies as u32,
         tractor_pos_mass,
         massive_bodies,
-        count: 50_000,
+        count: config.target_particle_count as u32,
     });
 }
 
-/// Initializes the 50,000 particle VRAM storage buffers and compiles WGSL compute pipelines in RenderApp.
+/// Initializes the 100,000 particle VRAM storage buffers and compiles WGSL compute pipelines in RenderApp.
 pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) {
     let device = render_dev.wgpu_device();
 
-    let n_particles = 50_000u32;
+    let n_particles = 100_000u32;
     let individual_mass = (0.02 / (n_particles as f64)) as f32;
 
-    // 1. Generate 50,000 multi-zone astrophysical particles for GPU VRAM
+    // 1. Generate 100,000 multi-zone astrophysical particles for GPU VRAM
     let mut rng = rand::rng();
     let default_params = DiskParameters::default();
     let mut initial_particles = Vec::with_capacity(n_particles as usize);
@@ -278,27 +289,41 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) 
         cache: None,
     });
 
-    // Create staging buffer for GPU→CPU readback
+    // Create double-buffered non-blocking staging buffers for GPU→CPU readback
     let staging_buffer_size = (n_particles as u64) * std::mem::size_of::<GpuParticle>() as u64;
-    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Protostellar Orbit Staging Readback Buffer"),
+    let staging_buffer_0 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Protostellar Orbit Staging Readback Buffer 0"),
+        size: staging_buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let staging_buffer_1 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Protostellar Orbit Staging Readback Buffer 1"),
         size: staging_buffer_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
 
+    let staging_states = [
+        Arc::new(AtomicU8::new(STAGING_STATE_IDLE)),
+        Arc::new(AtomicU8::new(STAGING_STATE_IDLE)),
+    ];
+
     commands.insert_resource(GpuParticleOrbitEngine {
         particle_buffer,
         uniform_buffer,
-        staging_buffer,
+        staging_buffers: [staging_buffer_0, staging_buffer_1],
+        staging_states,
+        current_staging_idx: 0,
         bind_group,
         pipeline,
         num_particles: n_particles,
         is_ready: true,
+        last_disk_outer_r: default_params.outer_radius_au as f32,
     });
 }
 
-/// Dispatches GPU compute passes inside the RenderApp every frame.
+/// Dispatches GPU compute passes inside the RenderApp every frame with zero-stall double buffering.
 pub fn step_gpu_simulation_render_world(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -311,6 +336,10 @@ pub fn step_gpu_simulation_render_world(
         return;
     };
 
+    if !params.enable_gpu_compute {
+        return;
+    }
+
     if params.is_paused && !params.step_once {
         return;
     }
@@ -320,12 +349,66 @@ pub fn step_gpu_simulation_render_world(
         return;
     }
 
-    let engine = gpu_engine.unwrap();
+    let mut engine = gpu_engine.unwrap();
     let queue = &render_queue;
     let device = render_device.wgpu_device();
 
     if !engine.is_ready {
         return;
+    }
+
+    // Check if scenario geometry changed significantly (e.g. Little Red Dot disk 250 AU vs Solar 35 AU)
+    if (params.outer_radius - engine.last_disk_outer_r).abs() > 20.0 {
+        let mut rng = rand::rng();
+        let mut reseed_particles = Vec::with_capacity(engine.num_particles as usize);
+        let disk_params = DiskParameters {
+            central_star_mass: params.star_mass as f64,
+            disk_mass: 0.02,
+            inner_radius_au: params.inner_radius as f64,
+            outer_radius_au: params.outer_radius as f64,
+            reference_temp_1au: params.ref_temp_1au as f64,
+            ..default()
+        };
+        let individual_mass = (0.02 / (engine.num_particles as f64)) as f32;
+        for _ in 0..engine.num_particles {
+            let (r, comp_struct) =
+                crate::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
+            let phi = rng.random_range(0.0..2.0 * PI);
+            let h_scale = 0.030 * r * (r / 1.0).powf(0.25);
+            let normal_dist = Normal::new(0.0, h_scale).unwrap();
+            let z_height: f64 = rng.sample(normal_dist);
+            let pos = [
+                (r * phi.cos()) as f32,
+                z_height as f32,
+                (r * phi.sin()) as f32,
+                individual_mass,
+            ];
+            let v_k = (G_ASTRO * params.star_mass as f64 / r).sqrt();
+            let v_phi = v_k as f32;
+            let vel = [
+                (-v_phi * phi.sin() as f32),
+                0.0,
+                (v_phi * phi.cos() as f32),
+                (params.ref_temp_1au as f64 * (r / 1.0).powf(-0.5)) as f32,
+            ];
+            let comp = [
+                comp_struct.silicate_frac as f32,
+                comp_struct.ice_frac as f32,
+                comp_struct.metal_frac as f32,
+                comp_struct.gas_frac as f32,
+            ];
+            reseed_particles.push(GpuParticle {
+                pos_mass: pos,
+                vel_temp: vel,
+                composition: comp,
+            });
+        }
+        queue.write_buffer(
+            &engine.particle_buffer,
+            0,
+            bytemuck::cast_slice(&reseed_particles),
+        );
+        engine.last_disk_outer_r = params.outer_radius;
     }
 
     let uniforms = GpuOrbitUniforms {
@@ -349,7 +432,20 @@ pub fn step_gpu_simulation_render_world(
 
     queue.write_buffer(&engine.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-    // Encode & Dispatch Compute Pass on GPU
+    // 1. Asynchronous read from any buffer that finished mapping
+    for i in 0..2 {
+        if engine.staging_states[i].load(Ordering::Acquire) == STAGING_STATE_MAPPED {
+            if let Some(ref sender) = sender {
+                let mapped = engine.staging_buffers[i].slice(..).get_mapped_range();
+                let _ = sender.tx.try_send(mapped.to_vec());
+                drop(mapped);
+            }
+            engine.staging_buffers[i].unmap();
+            engine.staging_states[i].store(STAGING_STATE_IDLE, Ordering::Release);
+        }
+    }
+
+    // 2. Encode & Dispatch Compute Pass on GPU
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Protostellar GPU Orbit Compute Encoder"),
     });
@@ -367,41 +463,58 @@ pub fn step_gpu_simulation_render_world(
         compute_pass.dispatch_workgroups(workgroups, 1, 1);
     }
 
-    // Copy particle buffer → staging buffer for CPU synchronization
-    let buf_size = (engine.num_particles as u64) * std::mem::size_of::<GpuParticle>() as u64;
-    encoder.copy_buffer_to_buffer(
-        &engine.particle_buffer,
-        0,
-        &engine.staging_buffer,
-        0,
-        buf_size,
-    );
+    // 3. Try to copy to an IDLE staging buffer
+    let write_idx = engine.current_staging_idx;
+    let mut copy_initiated = false;
+
+    if engine.staging_states[write_idx]
+        .compare_exchange(
+            STAGING_STATE_IDLE,
+            STAGING_STATE_MAPPING,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        )
+        .is_ok()
+    {
+        let buf_size = (engine.num_particles as u64) * std::mem::size_of::<GpuParticle>() as u64;
+        encoder.copy_buffer_to_buffer(
+            &engine.particle_buffer,
+            0,
+            &engine.staging_buffers[write_idx],
+            0,
+            buf_size,
+        );
+        copy_initiated = true;
+    }
 
     queue.submit(Some(encoder.finish()));
 
-    // Map staging buffer and send latest state over channel
-    if let Some(sender) = sender {
-        let staging_slice = engine.staging_buffer.slice(..);
-        staging_slice.map_async(wgpu::MapMode::Read, |_| {});
+    if copy_initiated {
+        let state_flag = engine.staging_states[write_idx].clone();
+        engine.staging_buffers[write_idx]
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                if result.is_ok() {
+                    state_flag.store(STAGING_STATE_MAPPED, Ordering::Release);
+                } else {
+                    state_flag.store(STAGING_STATE_IDLE, Ordering::Release);
+                }
+            });
 
-        let _ = render_device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
-
-        {
-            let mapped = staging_slice.get_mapped_range();
-            let _ = sender.tx.try_send(mapped.to_vec());
-        }
-        engine.staging_buffer.unmap();
+        // Advance to alternate staging buffer
+        engine.current_staging_idx = write_idx ^ 1;
     }
+
+    // Non-blocking driver poll
+    let _ = render_device.poll(wgpu::PollType::Poll);
 }
 
 /// Main-world system that receives GPU readback data and updates ParticleSwarmData positions.
-/// This bridges GPU compute results → CPU visual mesh and accretion.
+/// This bridges GPU compute results → CPU visual mesh and accretion without frame stalls.
 pub fn receive_gpu_readback(
     receiver: Option<Res<GpuReadbackReceiver>>,
     mut swarm: Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
+    mut config: Option<ResMut<SimulationConfig>>,
 ) {
     let Some(receiver) = receiver else {
         return;
@@ -427,5 +540,11 @@ pub fn receive_gpu_readback(
         data.velocities[i] = [p.vel_temp[0], p.vel_temp[1], p.vel_temp[2]];
         data.masses[i] = p.pos_mass[3];
         data.temperatures[i] = p.vel_temp[3];
+    }
+    data.is_dirty = true;
+
+    if let Some(ref mut cfg) = config {
+        cfg.gpu_compute_active = true;
+        cfg.active_particles = n as u32;
     }
 }

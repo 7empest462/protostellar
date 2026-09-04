@@ -442,6 +442,21 @@ pub fn handle_player_tools(
             crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
         ));
     }
+
+    // 6. GPU Compute Pipeline Toggle (F8)
+    if keyboard.just_pressed(KeyCode::F8) {
+        config.enable_gpu_compute = !config.enable_gpu_compute;
+        if !config.enable_gpu_compute {
+            config.gpu_compute_active = false;
+        }
+        let status = if config.enable_gpu_compute {
+            "⚡ GPU COMPUTE: Enabled (WGPU Compute Dispatch @ 100,000 Particles)"
+        } else {
+            "🖥️ CPU FALLBACK: Active (Rayon Multithreading)"
+        };
+        toast.message = status.to_string();
+        toast.timer = 4.0;
+    }
 }
 
 /// System that handles direct 3D plane click-to-place spawning when builder click mode is active.

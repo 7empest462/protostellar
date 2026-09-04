@@ -8,8 +8,8 @@ struct ViewUniforms {
 
 struct Particle {
     pos_mass: vec4<f32>,   // x, y, z in AU, w = mass in M_sun
-    vel_radius: vec4<f32>, // vx, vy, vz in AU/yr, w = radius in AU
-    temp_comp: vec4<f32>,  // x = Temp K, y = silicate, z = ice, w = metal
+    vel_temp: vec4<f32>,   // vx, vy, vz in AU/yr, w = temp in K
+    composition: vec4<f32>, // x = silicate, y = ice, z = metal, w = gas
 };
 
 @group(0) @binding(0) var<uniform> view: ViewUniforms;
@@ -60,7 +60,7 @@ fn vs_main(
     let p = particles[instance_index];
     let mass = p.pos_mass.w;
     let pos_world = p.pos_mass.xyz;
-    let temp_k = p.temp_comp.x;
+    let temp_k = p.vel_temp.w;
 
     var out: VertexOutput;
 
@@ -105,7 +105,7 @@ fn vs_main(
     out.uv = uv;
     out.temperature = temp_k;
     out.mass = mass;
-    out.composition = p.temp_comp.yzw;
+    out.composition = p.composition.xyz;
 
     return out;
 }

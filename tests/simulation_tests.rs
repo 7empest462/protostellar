@@ -1377,3 +1377,56 @@ fn test_photoevaporative_escape_mass_loss() {
     assert_eq!(post_strip_color.to_srgba().red, 1.0);
     assert_eq!(post_strip_color.to_srgba().green, 0.65);
 }
+
+#[test]
+fn test_gpu_particle_buffer_layouts_and_alignment() {
+    use protostellar::gpu::buffers::{GpuOrbitUniforms, GpuParticle, MassiveBodyGpu};
+
+    // 1. Validate GpuParticle 48-byte layout (3x vec4<f32>) and 16-byte std430 alignment
+    assert_eq!(std::mem::size_of::<GpuParticle>(), 48);
+    assert_eq!(std::mem::align_of::<GpuParticle>(), 16);
+
+    // 2. Validate MassiveBodyGpu 16-byte layout (vec4<f32>) and 16-byte alignment
+    assert_eq!(std::mem::size_of::<MassiveBodyGpu>(), 16);
+    assert_eq!(std::mem::align_of::<MassiveBodyGpu>(), 16);
+
+    // 3. Validate GpuOrbitUniforms layout (592 bytes) and 16-byte uniform alignment
+    assert_eq!(std::mem::size_of::<GpuOrbitUniforms>(), 592);
+    assert_eq!(std::mem::align_of::<GpuOrbitUniforms>(), 16);
+
+    // 4. Validate default values for uniform buffer
+    let uniforms = GpuOrbitUniforms::default();
+    assert_eq!(uniforms.num_particles, 50000);
+    assert_eq!(uniforms.massive_bodies.len(), 32);
+    assert_eq!(uniforms.star_mass, 1.0);
+    assert!(uniforms.g_const > 39.0);
+}
+
+#[test]
+fn test_gpu_workgroup_dispatch_sizing() {
+    // Validate GPU compute workgroup dispatch sizing for all particle scaling tiers
+    let workgroup_size = 64u32;
+
+    let tiers = [
+        (50_000u32, 782u32),
+        (100_000u32, 1563u32),
+        (250_000u32, 3907u32),
+        (500_000u32, 7813u32),
+        (1_000_000u32, 15625u32),
+    ];
+
+    for (particles, expected_workgroups) in tiers {
+        let workgroups = particles.div_ceil(workgroup_size);
+        assert_eq!(workgroups, expected_workgroups);
+
+        // Validate buffer size in VRAM
+        let buffer_size_bytes =
+            (particles as usize) * std::mem::size_of::<protostellar::gpu::buffers::GpuParticle>();
+        assert_eq!(buffer_size_bytes, (particles as usize) * 48);
+
+        // At 100k particles, storage buffer is ~4.8 MB (extremely lightweight in VRAM)
+        if particles == 100_000 {
+            assert_eq!(buffer_size_bytes, 4_800_000);
+        }
+    }
+}

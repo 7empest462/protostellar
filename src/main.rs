@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 
 use protostellar::game::GamePlugin;
+use protostellar::gpu::GpuSimPlugin;
 use protostellar::rendering::RenderingPlugin;
 use protostellar::simulation::SimulationPlugin;
 
@@ -24,6 +25,6 @@ fn main() {
                 })
                 .set(AssetPlugin { ..default() }),
         )
-        .add_plugins((SimulationPlugin, RenderingPlugin, GamePlugin))
+        .add_plugins((SimulationPlugin, RenderingPlugin, GamePlugin, GpuSimPlugin))
         .run();
 }

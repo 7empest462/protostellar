@@ -2,8 +2,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
-/// GPU representation of an individual disk simulation particle (48 bytes).
-#[repr(C)]
+/// GPU representation of an individual disk simulation particle (48 bytes, 16-byte aligned).
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuParticle {
     /// Position (x, y, z in AU) and Mass (w in Solar Masses)
@@ -15,7 +15,7 @@ pub struct GpuParticle {
 }
 
 /// GPU representation of a massive body (planet, embryo, or star).
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MassiveBodyGpu {
     /// Position (x, y, z in AU) and Mass (w in Solar Masses)
@@ -30,8 +30,8 @@ impl Default for MassiveBodyGpu {
     }
 }
 
-/// Uniforms passed to the particle orbit WGSL compute shader (592 bytes).
-#[repr(C)]
+/// Uniforms passed to the particle orbit WGSL compute shader (592 bytes, 16-byte aligned).
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuOrbitUniforms {
     pub star_pos: [f32; 3],

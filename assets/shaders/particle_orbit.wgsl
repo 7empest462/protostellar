@@ -1,10 +1,8 @@
-// WGSL Compute Shader for 50,000 Particle Keplerian Orbital Mechanics, Planetary Resonances & Gas Drag
+// WGSL Compute Shader for 100,000+ Particle Keplerian Orbital Mechanics, Planetary Resonances & Gas Drag
 
 struct Particle {
-    position: vec3<f32>,
-    mass: f32,
-    velocity: vec3<f32>,
-    temperature: f32,
+    pos_mass: vec4<f32>,   // xyz = position in AU, w = mass in M_sun
+    vel_temp: vec4<f32>,   // xyz = velocity in AU/yr, w = temp in K
     composition: vec4<f32>, // x: silicate, y: ice, z: metal, w: gas
 };
 
@@ -40,12 +38,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     var p = particles[idx];
-    if (p.mass <= 0.0) {
+    let mass = p.pos_mass.w;
+    if (mass <= 0.0) {
         return; // Absorbed or dead particle slot
     }
 
     let star = uniforms.star_pos;
-    var pos = p.position;
+    var pos = p.pos_mass.xyz;
     let dx = pos.x - star.x;
     let dz = pos.z - star.z;
     var r = max(sqrt(dx * dx + dz * dz), 0.08);
@@ -60,9 +59,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     phi = phi + omega * uniforms.dt;
     phi = phi - floor(phi / (2.0 * PI)) * (2.0 * PI);
 
-    // Aerodynamic Gas Drag & Secular Inward Drift
+    // Aerodynamic Gas Drag & Secular Inward Drift with 3D Flared Scale Height
     if (uniforms.enable_gas_drag != 0u && uniforms.gas_scale > 0.001) {
-        let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale;
+        let h_scale = max(0.030 * r * pow(r / 1.0, 0.25), 0.05);
+        let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
+        let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
         let drag_rate = min(0.000005 * gas_density, 0.0005);
         let migration = min(r * drag_rate * uniforms.dt, r * 0.005);
         r = max(r - migration, uniforms.inner_radius * 0.8);
@@ -72,8 +73,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (uniforms.shockwave_radius > 0.0) {
         if (r < uniforms.shockwave_radius) {
             if (r < 1.6 || r < uniforms.shockwave_radius * 0.85) {
-                p.mass = 0.0;
-                p.position = vec3<f32>(0.0, -5000.0, 0.0);
+                p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, 0.0);
                 particles[idx] = p;
                 return;
             } else {
@@ -129,11 +129,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     vel = vel + a_pert * uniforms.dt;
     pos = pos + a_pert * (0.5 * uniforms.dt * uniforms.dt);
 
-    p.velocity = vel;
-    p.position = pos;
-
     // Blackbody temperature calculation
-    p.temperature = uniforms.ref_temp_1au * pow(r / 1.0, -0.5);
+    let temp = uniforms.ref_temp_1au * pow(r / 1.0, -0.5);
+
+    p.pos_mass = vec4<f32>(pos, mass);
+    p.vel_temp = vec4<f32>(vel, temp);
 
     particles[idx] = p;
 }

@@ -87,7 +87,7 @@ pub fn setup_particle_swarm(
     disk_params: Res<DiskParameters>,
     config: Res<SimulationConfig>,
 ) {
-    let n_particles = 50_000usize;
+    let n_particles = config.target_particle_count.max(50_000);
     let individual_mass = (disk_params.disk_mass / (n_particles as f64)) as f32;
 
     let mut rng = rand::rng();
@@ -334,6 +334,8 @@ pub fn update_particle_swarm(
     let speed_mult = time_warp.multiplier as f32;
     let visual_flow_dt = (0.002 * (1.0 + speed_mult.log10().max(0.0) * 2.0)).min(0.08);
 
+    let gpu_active = config.enable_gpu_compute && config.gpu_compute_active;
+
     let accreted_events: Vec<(Entity, f64)> = positions
         .par_chunks_mut(4096)
         .zip(velocities.par_chunks_mut(4096))
@@ -350,138 +352,199 @@ pub fn update_particle_swarm(
                     }
                     let mut pos = pos_chunk[i];
                     let mut vel = vel_chunk[i];
-                    let dx = pos[0] - star_pos_f32[0];
-                    let dz = pos[2] - star_pos_f32[2];
-                    let mut r = (dx * dx + dz * dz).sqrt().max(0.08);
-                    let mut phi = dz.atan2(dx);
-                    let m_eff = star_m * (1.0 - 0.0005);
-                    let omega = (g_const * m_eff / (r * r * r)).sqrt();
-                    let v_k = omega * r;
-                    phi = (phi + omega * visual_flow_dt) % (2.0 * PI as f32);
-                    if phi < 0.0 {
-                        phi += 2.0 * PI as f32;
-                    }
-                    if enable_gas_drag && gas_scale > 0.001 {
-                        let gas_density = 1.0e-4 * (r / 1.0).powf(-2.25) * gas_scale;
-                        let drag_rate = (0.000005 * gas_density).min(0.0005);
-                        let migration = (r * drag_rate * visual_flow_dt).min(r * 0.005);
-                        r = (r - migration).max(disk_params.inner_radius_au as f32 * 0.8);
-                    }
-                    if quasar_blown_out && r < 25.0 {
-                        // Clear ONLY the center yellow part (r < 25.0 AU)!
-                        // The rest of the outer disk (r >= 25.0 AU) stays intact,
-                        // allowing the player to watch outer planets and stars form.
-                        mass_chunk[i] = 0.0;
-                        pos_chunk[i] = [0.0, -5000.0, 0.0];
-                        col_chunk[i][3] = 0.0;
-                        continue;
-                    } else if shockwave_r > 0.0 {
-                        // Solar radiation pressure pushes volatile gas & dust outward towards the giant planet zone (r >= 3.5 - 8.5 AU)
-                        if r < shockwave_r {
-                            let push_rate = 1.80 * visual_flow_dt;
-                            r = (r + push_rate).min(disk_params.outer_radius_au as f32);
-                        } else if (r - shockwave_r).abs() < 3.0 {
-                            // Dense swept-up accretion compression ring feeding Jupiter
-                            let shock_boost = (3.0 - (r - shockwave_r).abs()) / 3.0;
-                            r += shock_boost * 2.2 * visual_flow_dt;
+
+                    if !gpu_active {
+                        let dx = pos[0] - star_pos_f32[0];
+                        let dz = pos[2] - star_pos_f32[2];
+                        let mut r = (dx * dx + dz * dz).sqrt().max(0.08);
+                        let mut phi = dz.atan2(dx);
+                        let m_eff = star_m * (1.0 - 0.0005);
+                        let omega = (g_const * m_eff / (r * r * r)).sqrt();
+                        let v_k = omega * r;
+                        phi = (phi + omega * visual_flow_dt) % (2.0 * PI as f32);
+                        if phi < 0.0 {
+                            phi += 2.0 * PI as f32;
                         }
-                    }
-
-                    let mut accreted = false;
-                    for &(p_ent, p_pos, p_m, p_type) in &massive_bodies {
-                        let is_major_body = p_m >= 0.01 * EARTH_MASS_SOLAR
-                            && !matches!(p_type, BodyType::Asteroid | BodyType::Comet);
-
-                        let pdx = pos[0] - p_pos.x as f32;
-                        let pdz = pos[2] - p_pos.z as f32;
-                        let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
-
-                        let p_dist_au = p_pos.length() as f32;
-                        let is_inner_terrestrial = p_dist_au < 2.7;
-                        let warp_sweep = (1.0 + speed_mult.log10().max(0.0) * 0.30).min(2.2);
-                        let is_massive_disk = star_m > 10.0;
-                        let hill_r = p_dist_au * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
-                        let bondi_r = if is_massive_disk {
-                            (0.08 * (p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.05, 8.0)
-                        } else {
-                            0.0
-                        };
-                        let effective_grav_r = hill_r.max(bondi_r);
-                        let physical_r = if p_m >= 0.08 {
-                            (0.00465 * (p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
-                        } else {
-                            (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
-                        };
-
-                        let acc_r = if is_major_body {
-                            if is_inner_terrestrial && !is_massive_disk {
-                                // Inner terrestrial planets have an annular feeding zone (~0.12 - 0.15 AU) to sweep local planetesimals
-                                ((physical_r + 1.25 * effective_grav_r) * warp_sweep)
-                                    .clamp(physical_r, 0.250)
-                            } else {
-                                let m_growth_factor =
-                                    ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32).powf(0.30);
-                                let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
-                                ((physical_r + 0.90 * effective_grav_r * m_growth_factor)
-                                    * warp_sweep)
-                                    .clamp(physical_r, max_clamp)
-                            }
-                        } else {
-                            // Minor asteroids / comets have only their tiny physical radius (e.g. ~50-500 km ~ 0.00005 AU)
-                            ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32)
-                                * warp_sweep)
-                                .clamp(0.00005, 0.0015)
-                        };
-
-                        if p_dist < acc_r {
-                            chunk_accretions.push((p_ent, m as f64));
+                        if enable_gas_drag && gas_scale > 0.001 {
+                            let gas_density = 1.0e-4 * (r / 1.0).powf(-2.25) * gas_scale;
+                            let drag_rate = (0.000005 * gas_density).min(0.0005);
+                            let migration = (r * drag_rate * visual_flow_dt).min(r * 0.005);
+                            r = (r - migration).max(disk_params.inner_radius_au as f32 * 0.8);
+                        }
+                        if quasar_blown_out && r < 25.0 {
                             mass_chunk[i] = 0.0;
                             pos_chunk[i] = [0.0, -5000.0, 0.0];
-                            accreted = true;
-                            break;
-                        }
-
-                        // Gentle gravitational resonance stirring when passing planets
-                        if is_major_body {
-                            let hill_r = p_pos.length() as f32
-                                * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
-                            if p_dist < hill_r * 2.5 {
-                                let kick = (g_const * p_m as f32 / (p_dist * p_dist + 0.01))
-                                    * visual_flow_dt.min(0.02);
-                                r += (pdx * kick * 0.04).clamp(-0.08, 0.08);
+                            col_chunk[i][3] = 0.0;
+                            continue;
+                        } else if shockwave_r > 0.0 {
+                            if r < shockwave_r {
+                                let push_rate = 1.80 * visual_flow_dt;
+                                r = (r + push_rate).min(disk_params.outer_radius_au as f32);
+                            } else if (r - shockwave_r).abs() < 3.0 {
+                                let shock_boost = (3.0 - (r - shockwave_r).abs()) / 3.0;
+                                r += shock_boost * 2.2 * visual_flow_dt;
                             }
                         }
+
+                        let mut accreted = false;
+                        for &(p_ent, p_pos, p_m, p_type) in &massive_bodies {
+                            let is_major_body = p_m >= 0.01 * EARTH_MASS_SOLAR
+                                && !matches!(p_type, BodyType::Asteroid | BodyType::Comet);
+
+                            let pdx = pos[0] - p_pos.x as f32;
+                            let pdz = pos[2] - p_pos.z as f32;
+                            let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
+
+                            let p_dist_au = p_pos.length() as f32;
+                            let is_inner_terrestrial = p_dist_au < 2.7;
+                            let warp_sweep = (1.0 + speed_mult.log10().max(0.0) * 0.30).min(2.2);
+                            let is_massive_disk = star_m > 10.0;
+                            let hill_r = p_dist_au * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
+                            let bondi_r = if is_massive_disk {
+                                (0.08 * (p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.05, 8.0)
+                            } else {
+                                0.0
+                            };
+                            let effective_grav_r = hill_r.max(bondi_r);
+                            let physical_r = if p_m >= 0.08 {
+                                (0.00465 * (p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
+                            } else {
+                                (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
+                            };
+
+                            let acc_r = if is_major_body {
+                                if is_inner_terrestrial && !is_massive_disk {
+                                    ((physical_r + 1.25 * effective_grav_r) * warp_sweep)
+                                        .clamp(physical_r, 0.250)
+                                } else {
+                                    let m_growth_factor =
+                                        ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32)
+                                            .powf(0.30);
+                                    let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
+                                    ((physical_r + 0.90 * effective_grav_r * m_growth_factor)
+                                        * warp_sweep)
+                                        .clamp(physical_r, max_clamp)
+                                }
+                            } else {
+                                ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32)
+                                    * warp_sweep)
+                                    .clamp(0.00005, 0.0015)
+                            };
+
+                            if p_dist < acc_r {
+                                chunk_accretions.push((p_ent, m as f64));
+                                mass_chunk[i] = 0.0;
+                                pos_chunk[i] = [0.0, -5000.0, 0.0];
+                                accreted = true;
+                                break;
+                            }
+
+                            if is_major_body {
+                                let hill_r = p_pos.length() as f32
+                                    * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
+                                if p_dist < hill_r * 2.5 {
+                                    let kick = (g_const * p_m as f32 / (p_dist * p_dist + 0.01))
+                                        * visual_flow_dt.min(0.02);
+                                    r += (pdx * kick * 0.04).clamp(-0.08, 0.08);
+                                }
+                            }
+                        }
+                        if accreted {
+                            continue;
+                        }
+                        if tractor_pos_mass[3] > 0.0 {
+                            let tdx = tractor_pos_mass[0] - pos[0];
+                            let tdz = tractor_pos_mass[2] - pos[2];
+                            let t_dist = (tdx * tdx + tdz * tdz).sqrt().max(0.1);
+                            let pull = (g_const * tractor_pos_mass[3] / (t_dist * t_dist + 0.1))
+                                * visual_flow_dt.min(0.05);
+                            r += (tdx * pull * 0.05).clamp(-0.2, 0.2);
+                        }
+                        r = r.clamp(
+                            disk_params.inner_radius_au as f32 * 0.80,
+                            disk_params.outer_radius_au as f32 * 1.05,
+                        );
+                        pos[0] = star_pos_f32[0] + r * phi.cos();
+                        pos[1] *= (-0.005 * visual_flow_dt).exp();
+                        pos[2] = star_pos_f32[2] + r * phi.sin();
+                        vel[0] = -v_k * phi.sin();
+                        vel[1] = 0.0;
+                        vel[2] = v_k * phi.cos();
+                        let temp = (disk_params.reference_temp_1au as f32) * (r / 1.0).powf(-0.5);
+                        temp_chunk[i] = temp;
+                        let (br, bg, bb) = blackbody_to_srgb(temp as f64);
+                        let col = &mut col_chunk[i];
+                        col[0] = (br * 0.4 + col[0] * 0.6).clamp(0.25, 1.0);
+                        col[1] = (bg * 0.4 + col[1] * 0.6).clamp(0.2, 1.0);
+                        col[2] = (bb * 0.4 + col[2] * 0.6).clamp(0.2, 1.0);
+                        pos_chunk[i] = pos;
+                        vel_chunk[i] = vel;
+                    } else {
+                        // Fast path: GPU compute already integrated position, velocity, and temperature!
+                        let mut accreted = false;
+                        for &(p_ent, p_pos, p_m, p_type) in &massive_bodies {
+                            let is_major_body = p_m >= 0.01 * EARTH_MASS_SOLAR
+                                && !matches!(p_type, BodyType::Asteroid | BodyType::Comet);
+
+                            let pdx = pos[0] - p_pos.x as f32;
+                            let pdz = pos[2] - p_pos.z as f32;
+                            let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
+
+                            let p_dist_au = p_pos.length() as f32;
+                            let is_inner_terrestrial = p_dist_au < 2.7;
+                            let warp_sweep = (1.0 + speed_mult.log10().max(0.0) * 0.30).min(2.2);
+                            let is_massive_disk = star_m > 10.0;
+                            let hill_r = p_dist_au * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
+                            let bondi_r = if is_massive_disk {
+                                (0.08 * (p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.05, 8.0)
+                            } else {
+                                0.0
+                            };
+                            let effective_grav_r = hill_r.max(bondi_r);
+                            let physical_r = if p_m >= 0.08 {
+                                (0.00465 * (p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
+                            } else {
+                                (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
+                            };
+
+                            let acc_r = if is_major_body {
+                                if is_inner_terrestrial && !is_massive_disk {
+                                    ((physical_r + 1.25 * effective_grav_r) * warp_sweep)
+                                        .clamp(physical_r, 0.250)
+                                } else {
+                                    let m_growth_factor =
+                                        ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32)
+                                            .powf(0.30);
+                                    let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
+                                    ((physical_r + 0.90 * effective_grav_r * m_growth_factor)
+                                        * warp_sweep)
+                                        .clamp(physical_r, max_clamp)
+                                }
+                            } else {
+                                ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32)
+                                    * warp_sweep)
+                                    .clamp(0.00005, 0.0015)
+                            };
+
+                            if p_dist < acc_r {
+                                chunk_accretions.push((p_ent, m as f64));
+                                mass_chunk[i] = 0.0;
+                                pos_chunk[i] = [0.0, -5000.0, 0.0];
+                                accreted = true;
+                                break;
+                            }
+                        }
+                        if accreted {
+                            continue;
+                        }
+
+                        let temp = temp_chunk[i];
+                        let (br, bg, bb) = blackbody_to_srgb(temp as f64);
+                        let col = &mut col_chunk[i];
+                        col[0] = (br * 0.4 + col[0] * 0.6).clamp(0.25, 1.0);
+                        col[1] = (bg * 0.4 + col[1] * 0.6).clamp(0.2, 1.0);
+                        col[2] = (bb * 0.4 + col[2] * 0.6).clamp(0.2, 1.0);
                     }
-                    if accreted {
-                        continue;
-                    }
-                    if tractor_pos_mass[3] > 0.0 {
-                        let tdx = tractor_pos_mass[0] - pos[0];
-                        let tdz = tractor_pos_mass[2] - pos[2];
-                        let t_dist = (tdx * tdx + tdz * tdz).sqrt().max(0.1);
-                        let pull = (g_const * tractor_pos_mass[3] / (t_dist * t_dist + 0.1))
-                            * visual_flow_dt.min(0.05);
-                        r += (tdx * pull * 0.05).clamp(-0.2, 0.2);
-                    }
-                    r = r.clamp(
-                        disk_params.inner_radius_au as f32 * 0.80,
-                        disk_params.outer_radius_au as f32 * 1.05,
-                    );
-                    pos[0] = star_pos_f32[0] + r * phi.cos();
-                    pos[1] *= (-0.005 * visual_flow_dt).exp();
-                    pos[2] = star_pos_f32[2] + r * phi.sin();
-                    vel[0] = -v_k * phi.sin();
-                    vel[1] = 0.0;
-                    vel[2] = v_k * phi.cos();
-                    let temp = (disk_params.reference_temp_1au as f32) * (r / 1.0).powf(-0.5);
-                    temp_chunk[i] = temp;
-                    let (br, bg, bb) = blackbody_to_srgb(temp as f64);
-                    let col = &mut col_chunk[i];
-                    col[0] = (br * 0.4 + col[0] * 0.6).clamp(0.25, 1.0);
-                    col[1] = (bg * 0.4 + col[1] * 0.6).clamp(0.2, 1.0);
-                    col[2] = (bb * 0.4 + col[2] * 0.6).clamp(0.2, 1.0);
-                    pos_chunk[i] = pos;
-                    vel_chunk[i] = vel;
                 }
                 chunk_accretions
             },
