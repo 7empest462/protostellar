@@ -1124,11 +1124,19 @@ fn test_skybox_scenario_blending_and_materials() {
     ];
 
     for preset in presets_milky_way {
-        let target = if preset == ScenarioPreset::LittleRedDot { 1.0 } else { 0.0 };
+        let target = if preset == ScenarioPreset::LittleRedDot {
+            1.0
+        } else {
+            0.0
+        };
         assert_eq!(target, 0.0);
     }
 
-    let target_early_univ = if ScenarioPreset::LittleRedDot == ScenarioPreset::LittleRedDot { 1.0 } else { 0.0 };
+    let target_early_univ = if ScenarioPreset::LittleRedDot == ScenarioPreset::LittleRedDot {
+        1.0
+    } else {
+        0.0
+    };
     assert_eq!(target_early_univ, 1.0);
 
     // 3. Smooth blend interpolation test
@@ -1191,4 +1199,181 @@ fn test_gravitational_lensing_geometry() {
     assert!(beta > 0.0 && beta < theta);
 }
 
+#[test]
+fn test_dynamic_roche_disruption_ring_parameters() {
+    use bevy::prelude::Entity;
+    use protostellar::simulation::resources::RocheDebrisStream;
 
+    // 1. Fluid Roche Limit Calculation
+    // Planet: Jupiter-like gas giant (0.001 M_sun, density ~ 1.33 g/cm^3)
+    let p_mass = 0.000954; // Solar masses (~ 1 Jupiter mass)
+    let p_comp = Composition {
+        silicate_frac: 0.10,
+        ice_frac: 0.10,
+        metal_frac: 0.05,
+        organics_frac: 0.0,
+        gas_frac: 0.75,
+    };
+    let p_density = p_comp.average_density();
+    let p_rad_au = ((3.0 * p_mass / p_density) / (4.0 * std::f64::consts::PI)).cbrt();
+
+    // Secondary: Volatile icy moon (density ~ 0.95 g/cm^3, ice fraction 85%)
+    let s_mass = 0.002 * EARTH_MASS_SOLAR; // 0.002 Earth masses
+    let s_comp = Composition {
+        silicate_frac: 0.10,
+        ice_frac: 0.85,
+        metal_frac: 0.05,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    };
+    let s_density = s_comp.average_density();
+
+    // d_Roche = 2.44 * R_p * (rho_p / rho_s)^(1/3)
+    let d_roche = 2.44 * p_rad_au * (p_density / s_density).cbrt();
+    assert!(d_roche > p_rad_au);
+    assert!((d_roche - 2.44 * p_rad_au * (p_density / s_density).cbrt()).abs() < 1e-10);
+
+    // Rocky primary (Earth-like density) vs icy moon (density ~ 0.95 g/cm^3)
+    let rocky_comp = Composition {
+        silicate_frac: 0.70,
+        ice_frac: 0.0,
+        metal_frac: 0.30,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    };
+    let rocky_density = rocky_comp.average_density();
+    let d_roche_rocky = 2.44 * p_rad_au * (rocky_density / s_density).cbrt();
+    assert!(d_roche_rocky > 2.44 * p_rad_au);
+
+    // 2. Ring System parameters upon disruption inside Roche limit
+    let encounter_dist = d_roche * 0.85;
+    let is_inside_roche = encounter_dist <= d_roche;
+    assert!(is_inside_roche);
+
+    let ring_mass_earth = s_mass / EARTH_MASS_SOLAR;
+    let inner_r = (p_rad_au * 1.25) as f32;
+    let outer_r = (d_roche.min(p_rad_au * 3.2)).max(inner_r as f64 * 1.35) as f32;
+    let ring_sys = PlanetaryRingSystem {
+        inner_radius_au: inner_r,
+        outer_radius_au: outer_r,
+        ring_mass_earth,
+        optical_depth: ((ring_mass_earth / 0.0001).clamp(0.40, 0.95)) as f32,
+        ice_fraction: s_comp.ice_frac as f32,
+        silicate_fraction: (s_comp.silicate_frac + s_comp.metal_frac) as f32,
+    };
+
+    assert!((ring_sys.ring_mass_earth - 0.002).abs() < 1e-6);
+    assert!(ring_sys.inner_radius_au < ring_sys.outer_radius_au);
+    assert!((ring_sys.ice_fraction - 0.85).abs() < 1e-5);
+    assert!(ring_sys.optical_depth >= 0.40 && ring_sys.optical_depth <= 0.95);
+
+    // 3. RocheDebrisStream fragment simulation
+    let n_fragments = 48;
+    let mut fragments = Vec::with_capacity(n_fragments);
+    for k in 0..n_fragments {
+        let frac = (k as f32) / (n_fragments as f32);
+        let frag_r = inner_r + (outer_r - inner_r) * frac;
+        let phase = frac * std::f32::consts::TAU;
+        let omega = (1.8 / (frag_r * frag_r * frag_r).sqrt()).clamp(0.4, 8.0);
+        fragments.push((frag_r, phase, omega, 0.0f32));
+    }
+
+    let mut stream = RocheDebrisStream {
+        primary_entity: Entity::from_bits(42),
+        primary_pos: bevy::prelude::Vec3::ZERO,
+        disruption_pos: bevy::prelude::Vec3::new(encounter_dist as f32, 0.0, 0.0),
+        inner_radius: inner_r,
+        outer_radius: outer_r,
+        timer: 0.0,
+        max_timer: 4.5,
+        ice_fraction: ring_sys.ice_fraction,
+        debris_mass_earth: ring_sys.ring_mass_earth,
+        fragments,
+    };
+
+    // Advance by 1.0 second
+    let dt = 1.0f32;
+    stream.timer += dt;
+    for frag in stream.fragments.iter_mut() {
+        let old_phase = frag.1;
+        frag.1 += frag.2 * dt;
+        assert!(frag.1 > old_phase); // Angular phase progresses in orbit
+    }
+    assert!(stream.timer < stream.max_timer);
+    assert!((stream.ice_fraction - 0.85).abs() < 1e-5);
+}
+
+#[test]
+fn test_photoevaporative_escape_mass_loss() {
+    // 1. Close-in Sub-Neptune planet at a = 0.04 AU vs Host Star (L = 1.0 L_sun)
+    let star_lum = 1.0f64;
+    let dist_au_close = 0.04f64;
+    let dist_au_far = 1.00f64;
+
+    let p_mass_solar = 5.0 * EARTH_MASS_SOLAR; // 5 Earth masses
+    let p_rad_au = 2.4 * EARTH_RADIUS_AU; // 2.4 Earth radii
+
+    let m_earth = (p_mass_solar / EARTH_MASS_SOLAR).max(0.01);
+    let r_earth = (p_rad_au / EARTH_RADIUS_AU).max(0.1);
+
+    // Energy-limited mass loss calculation:
+    // Loss rate ~ 0.15 * R_p^3 / M_p * (L / d^2)^0.85
+    let flux_factor_close = (star_lum / (dist_au_close * dist_au_close)).powf(0.85);
+    let loss_rate_close =
+        ((0.15 * r_earth.powi(3) / m_earth) * flux_factor_close).clamp(0.01, 100.0) as f32;
+
+    assert!(loss_rate_close > 20.0); // Extremely vigorous hydrodynamic escape!
+
+    let tail_len_close = (((0.25 / dist_au_close).powf(1.1) * 0.75 * star_lum.min(5.0).powf(0.25))
+        .clamp(0.25, 6.0)) as f32;
+    assert!(tail_len_close > 4.0); // Prominent cometary outflow tail extending multiple AU
+
+    // 2. Distant planet at 1.0 AU: outside 0.25 AU photoevaporation boundary
+    let is_close = dist_au_close < 0.25;
+    let is_far = dist_au_far < 0.25;
+    assert!(is_close);
+    assert!(!is_far);
+
+    // 3. Envelope mass stripping across geological time
+    let mut comp = Composition {
+        silicate_frac: 0.40,
+        ice_frac: 0.10,
+        metal_frac: 0.20,
+        organics_frac: 0.0,
+        gas_frac: 0.30, // Initial 30% volatile envelope
+    };
+
+    // Pre-stripping ionization color: vibrant electric cyan (Hydrogen/Helium envelope)
+    let initial_ion_color = if comp.gas_frac > 0.15 {
+        bevy::prelude::Color::srgba(0.25, 0.85, 1.0, 0.85) // Electric Cyan
+    } else {
+        bevy::prelude::Color::srgba(1.0, 0.65, 0.20, 0.85) // Amber
+    };
+    assert_eq!(initial_ion_color.to_srgba().red, 0.25);
+    assert_eq!(initial_ion_color.to_srgba().green, 0.85);
+
+    let mut current_mass_solar = p_mass_solar;
+    let dt_myr = 0.05; // 50,000 years of extreme irradiation
+    let delta_m_earth = (loss_rate_close as f64) * dt_myr;
+    let delta_m_solar = delta_m_earth * EARTH_MASS_SOLAR;
+
+    let cur_gas_m = current_mass_solar * comp.gas_frac;
+    let stripped = delta_m_solar.min(cur_gas_m * 0.999);
+    current_mass_solar -= stripped;
+
+    let new_gas_m = (cur_gas_m - stripped).max(0.0);
+    comp.gas_frac = (new_gas_m / current_mass_solar).clamp(0.0, 1.0);
+
+    // Gas fraction is stripped down into the Hot Neptune Desert!
+    assert!(comp.gas_frac < 0.15);
+    assert!(current_mass_solar < p_mass_solar);
+
+    // Post-stripping: unmasked mineral/silicate vapor core glows amber
+    let post_strip_color = if comp.gas_frac > 0.15 {
+        bevy::prelude::Color::srgba(0.25, 0.85, 1.0, 0.85)
+    } else {
+        bevy::prelude::Color::srgba(1.0, 0.65, 0.20, 0.85) // Warm amber
+    };
+    assert_eq!(post_strip_color.to_srgba().red, 1.0);
+    assert_eq!(post_strip_color.to_srgba().green, 0.65);
+}

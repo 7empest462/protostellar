@@ -989,3 +989,27 @@ pub struct SupernovaEvent {
     pub remnant_type: BodyType,
     pub shockwave_velocity_km_s: f64,
 }
+
+/// Atmospheric escape and photoevaporative cometary tail component.
+#[derive(Component, Debug, Clone, Reflect)]
+pub struct AtmosphericEscapeTail {
+    /// Mass loss rate in Earth masses per million years
+    pub loss_rate_m_earth_per_myr: f32,
+    /// Dynamic tail length in AU (driven by XUV flux and solar wind)
+    pub tail_length_au: f32,
+    /// Ionization color based on atmospheric composition (cyan for H/He, amber for mineral vapor)
+    pub ion_color: Color,
+    /// True if planet is actively undergoing hydrodynamic escape
+    pub is_active: bool,
+}
+
+impl Default for AtmosphericEscapeTail {
+    fn default() -> Self {
+        Self {
+            loss_rate_m_earth_per_myr: 0.0,
+            tail_length_au: 0.0,
+            ion_color: Color::srgba(0.35, 0.85, 1.0, 0.75),
+            is_active: false,
+        }
+    }
+}

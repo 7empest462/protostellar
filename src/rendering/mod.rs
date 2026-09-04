@@ -17,13 +17,14 @@ use crate::rendering::gas_clouds::*;
 use crate::rendering::materials::*;
 use crate::rendering::particle_swarm::*;
 use crate::rendering::skybox::*;
-use crate::simulation::resources::ImpactShockwavePool;
+use crate::simulation::resources::{ImpactShockwavePool, RocheDebrisPool};
 
 pub struct RenderingPlugin;
 
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ImpactShockwavePool>()
+            .init_resource::<RocheDebrisPool>()
             .add_plugins((
                 GasCloudPlugin,
                 ParticleSwarmPlugin,
@@ -46,6 +47,7 @@ impl Plugin for RenderingPlugin {
                     sync_planetary_rings,
                     sync_quasar_beams,
                     update_impact_shockwaves,
+                    update_roche_debris_streams,
                     draw_orbital_effects_and_gizmos,
                 ),
             );

@@ -134,4 +134,3 @@ impl Material for SkyboxMaterial {
         Ok(())
     }
 }
-

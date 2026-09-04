@@ -676,3 +676,157 @@ pub fn update_thermodynamics(
         }
     }
 }
+
+/// Updates photoevaporative hydrodynamic atmospheric escape for close-in planets (a < 0.25 AU).
+/// High-energy extreme ultraviolet (EUV / XUV) flux from the host star heats the upper planetary envelope
+/// beyond the gravitational escape velocity, driving supersonic hydrodynamic mass loss (Parker-type wind).
+/// This physically strips volatile hydrogen/helium envelopes, sculpting mini-Neptunes into bare rocky cores
+/// (the "Hot Neptune Desert") and feeding prominent 3D cometary outflow tails.
+pub fn update_photoevaporative_escape(
+    mut commands: Commands,
+    config: Res<SimulationConfig>,
+    time_warp: Res<TimeWarp>,
+    sim_time: Res<SimTime>,
+    star_query: Query<
+        (
+            &SimPosition,
+            &Luminosity,
+            &Radius,
+            &IgnitionState,
+            &CelestialBody,
+        ),
+        With<CentralStar>,
+    >,
+    mut planets_query: Query<
+        (
+            Entity,
+            &mut Mass,
+            &SimPosition,
+            &Radius,
+            &mut Composition,
+            &CelestialBody,
+            Option<&mut AtmosphericEscapeTail>,
+            Option<&mut VolatileInventory>,
+        ),
+        Without<CentralStar>,
+    >,
+) {
+    if (!config.enable_thermodynamics || time_warp.is_paused) && !time_warp.step_once {
+        return;
+    }
+
+    let Ok((star_pos, star_lum, _star_rad, _ignition, _star_body)) = star_query.single() else {
+        return;
+    };
+
+    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
+    let lum_val = star_lum.0.max(0.01);
+
+    for (planet_ent, mut p_mass, p_pos, p_rad, mut comp, b_body, mut opt_tail, mut opt_vol) in
+        planets_query.iter_mut()
+    {
+        if b_body.body_type.is_star_or_remnant() {
+            continue;
+        }
+
+        let dist_au = (p_pos.0 - star_pos.0).length().max(0.01);
+
+        // Photoevaporation threshold: close-in orbit (< 0.25 AU)
+        if dist_au < 0.25 {
+            let has_gas = comp.gas_frac > 0.0001;
+            let has_ice = comp.ice_frac > 0.005;
+            let has_atm = opt_vol
+                .as_ref()
+                .map(|v| v.atmospheric_pressure_bar > 0.005)
+                .unwrap_or(false);
+
+            let can_escape = has_gas || has_ice || has_atm;
+
+            if can_escape {
+                let m_earth = (p_mass.0 / EARTH_MASS_SOLAR).max(0.01);
+                let r_earth = (p_rad.0 / EARTH_RADIUS_AU).max(0.1);
+
+                // Energy-limited hydrodynamic mass loss rate (Watson et al. 1981, Erkaev et al. 2007)
+                // \dot{M} ~ \eta * \pi * R_p^3 * F_EUV / (G * M_p)
+                // In units of Earth masses per Million Years (M_earth / Myr)
+                let flux_factor = (lum_val / (dist_au * dist_au)).powf(0.85);
+                let loss_rate_m_earth_per_myr =
+                    ((0.15 * r_earth.powi(3) / m_earth) * flux_factor).clamp(0.01, 100.0) as f32;
+
+                // Anti-stellar cometary outflow tail length in AU
+                let tail_length_au =
+                    (((0.25 / dist_au).powf(1.1) * 0.75 * lum_val.min(5.0).powf(0.25))
+                        .clamp(0.25, 6.0)) as f32;
+
+                // Ionization glow color based on atmospheric composition
+                let ion_color = if comp.gas_frac > 0.15 {
+                    // Predominantly Hydrogen/Helium envelope: vibrant cyan / electric blue
+                    Color::srgba(0.25, 0.85, 1.0, 0.85)
+                } else if comp.ice_frac > 0.10 {
+                    // Water / hydroxyl / volatile icy vapor: soft sky-blue / pearl
+                    Color::srgba(0.60, 0.85, 1.0, 0.80)
+                } else {
+                    // Sodium / evaporated mineral silicate vapor: warm incandescent amber
+                    Color::srgba(1.0, 0.65, 0.20, 0.85)
+                };
+
+                // Mass loss applied across timestep dt_yr
+                let delta_m_earth = (loss_rate_m_earth_per_myr as f64) * (dt_yr / 1.0e6);
+                let delta_m_solar = delta_m_earth * EARTH_MASS_SOLAR;
+
+                if comp.gas_frac > 0.0 {
+                    let cur_gas_m = p_mass.0 * comp.gas_frac;
+                    let stripped = delta_m_solar.min(cur_gas_m * 0.999);
+                    p_mass.0 = (p_mass.0 - stripped).max(EARTH_MASS_SOLAR * 0.001);
+
+                    let new_gas_m = (cur_gas_m - stripped).max(0.0);
+                    comp.gas_frac = (new_gas_m / p_mass.0).clamp(0.0, 1.0);
+
+                    // Re-normalize composition fractions
+                    let sum = comp.silicate_frac
+                        + comp.metal_frac
+                        + comp.ice_frac
+                        + comp.organics_frac
+                        + comp.gas_frac;
+                    if sum > 0.0 {
+                        comp.silicate_frac /= sum;
+                        comp.metal_frac /= sum;
+                        comp.ice_frac /= sum;
+                        comp.organics_frac /= sum;
+                        comp.gas_frac /= sum;
+                    }
+                }
+
+                // Strip atmospheric pressure in volatile inventory
+                if let Some(ref mut vol) = opt_vol {
+                    let pressure_loss = (loss_rate_m_earth_per_myr * 0.02 * dt_yr as f32)
+                        .min(vol.atmospheric_pressure_bar);
+                    vol.atmospheric_pressure_bar =
+                        (vol.atmospheric_pressure_bar - pressure_loss).max(0.0);
+                }
+
+                if let Some(ref mut tail) = opt_tail {
+                    tail.loss_rate_m_earth_per_myr = loss_rate_m_earth_per_myr;
+                    tail.tail_length_au = tail_length_au;
+                    tail.ion_color = ion_color;
+                    tail.is_active = true;
+                } else {
+                    commands.entity(planet_ent).insert(AtmosphericEscapeTail {
+                        loss_rate_m_earth_per_myr,
+                        tail_length_au,
+                        ion_color,
+                        is_active: true,
+                    });
+                }
+            } else if let Some(ref mut tail) = opt_tail {
+                tail.is_active = false;
+                tail.loss_rate_m_earth_per_myr = 0.0;
+                tail.tail_length_au = 0.0;
+            }
+        } else if let Some(ref mut tail) = opt_tail {
+            tail.is_active = false;
+            tail.loss_rate_m_earth_per_myr = 0.0;
+            tail.tail_length_au = 0.0;
+        }
+    }
+}

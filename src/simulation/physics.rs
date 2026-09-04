@@ -219,75 +219,80 @@ pub fn step_physics_simulation(
             })
             .collect();
 
-        let compute_acc =
-            |i: usize, pos: &DVec3, vel: &DVec3, b_mass: f64, _rad: f64, b_type: BodyType| -> DVec3 {
-                let mut acc = DVec3::ZERO;
+        let compute_acc = |i: usize,
+                           pos: &DVec3,
+                           vel: &DVec3,
+                           b_mass: f64,
+                           _rad: f64,
+                           b_type: BodyType|
+         -> DVec3 {
+            let mut acc = DVec3::ZERO;
 
-                // Non-Keplerian perturbations (Gas Aerodynamic Drag & Eccentricity Damping)
-                if !b_type.is_star_or_remnant() {
-                    // Gas aerodynamic drag and orbital circularization
-                    if config.enable_gas_drag && config.gas_density_scale > 0.001 {
-                        let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.1);
-                        let v_k = (G_ASTRO * star_mass / r_cyl).sqrt();
-                        let v_gas_mag = v_k * 0.998;
-                        let phi = pos.z.atan2(pos.x);
-                        let v_gas = DVec3::new(-v_gas_mag * phi.sin(), 0.0, v_gas_mag * phi.cos());
+            // Non-Keplerian perturbations (Gas Aerodynamic Drag & Eccentricity Damping)
+            if !b_type.is_star_or_remnant() {
+                // Gas aerodynamic drag and orbital circularization
+                if config.enable_gas_drag && config.gas_density_scale > 0.001 {
+                    let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.1);
+                    let v_k = (G_ASTRO * star_mass / r_cyl).sqrt();
+                    let v_gas_mag = v_k * 0.998;
+                    let phi = pos.z.atan2(pos.x);
+                    let v_gas = DVec3::new(-v_gas_mag * phi.sin(), 0.0, v_gas_mag * phi.cos());
 
-                        let rel_v = *vel - v_gas;
-                        let rel_speed = rel_v.length();
-                        let gas_density =
-                            1e-4 * (r_cyl / 1.0).powf(-2.25) * (config.gas_density_scale as f64);
+                    let rel_v = *vel - v_gas;
+                    let rel_speed = rel_v.length();
+                    let gas_density =
+                        1e-4 * (r_cyl / 1.0).powf(-2.25) * (config.gas_density_scale as f64);
 
-                        // Physical Aerodynamic Drag Scaling: a_drag = F_drag / m ~ (rho * R^2 * v^2) / m
-                        // Small planetesimals & dust grains feel circularizing and settling drag,
-                        // while massive protoplanets, giant worlds, and stars have massive inertia and feel negligible drag.
-                        let m_earth = b_mass / EARTH_MASS_SOLAR;
-                        let inertia_suppression = (1.0 / (1.0 + m_earth * 150.0)).clamp(0.0, 1.0);
+                    // Physical Aerodynamic Drag Scaling: a_drag = F_drag / m ~ (rho * R^2 * v^2) / m
+                    // Small planetesimals & dust grains feel circularizing and settling drag,
+                    // while massive protoplanets, giant worlds, and stars have massive inertia and feel negligible drag.
+                    let m_earth = b_mass / EARTH_MASS_SOLAR;
+                    let inertia_suppression = (1.0 / (1.0 + m_earth * 150.0)).clamp(0.0, 1.0);
 
-                        let drag_coeff = 0.025 * gas_density * inertia_suppression;
-                        acc -= drag_coeff * rel_speed * rel_v;
+                    let drag_coeff = 0.025 * gas_density * inertia_suppression;
+                    acc -= drag_coeff * rel_speed * rel_v;
 
-                        // Eccentricity damping (damps non-circular radial velocity v_r and vertical velocity v_y)
-                        let r_unit = DVec3::new(pos.x / r_cyl, 0.0, pos.z / r_cyl);
-                        let v_radial = vel.dot(r_unit);
-                        let damp_rate = 0.08 * gas_density * inertia_suppression;
-                        acc -= r_unit * (v_radial * damp_rate);
-                        acc.y -= vel.y * damp_rate * 2.0;
-                    }
+                    // Eccentricity damping (damps non-circular radial velocity v_r and vertical velocity v_y)
+                    let r_unit = DVec3::new(pos.x / r_cyl, 0.0, pos.z / r_cyl);
+                    let v_radial = vel.dot(r_unit);
+                    let damp_rate = 0.08 * gas_density * inertia_suppression;
+                    acc -= r_unit * (v_radial * damp_rate);
+                    acc.y -= vel.y * damp_rate * 2.0;
                 }
+            }
 
-                // Mutual N-body interactions with Adaptive Softening
-                for &(m_pos, m_mass, m_rad, m_idx) in &massive_data {
-                    if m_idx == i {
-                        continue;
-                    }
-                    let r_vec = *pos - m_pos;
-                    let pair_softening_sq = softening_sq.max((m_rad * 0.5).powi(2)).max(1e-4);
-                    let dist_sq = r_vec.length_squared() + pair_softening_sq;
-                    let dist = dist_sq.sqrt();
-                    acc -= (G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
+            // Mutual N-body interactions with Adaptive Softening
+            for &(m_pos, m_mass, m_rad, m_idx) in &massive_data {
+                if m_idx == i {
+                    continue;
                 }
+                let r_vec = *pos - m_pos;
+                let pair_softening_sq = softening_sq.max((m_rad * 0.5).powi(2)).max(1e-4);
+                let dist_sq = r_vec.length_squared() + pair_softening_sq;
+                let dist = dist_sq.sqrt();
+                acc -= (G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
+            }
 
-                // Gravitational tractor tool acceleration
-                if let Some((t_pos, t_mass)) = tractor {
-                    let r_vec = *pos - t_pos;
-                    let dist_sq = r_vec.length_squared() + softening_sq;
-                    let dist = dist_sq.sqrt();
-                    acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
-                }
+            // Gravitational tractor tool acceleration
+            if let Some((t_pos, t_mass)) = tractor {
+                let r_vec = *pos - t_pos;
+                let dist_sq = r_vec.length_squared() + softening_sq;
+                let dist = dist_sq.sqrt();
+                acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
+            }
 
-                // Acceleration Limiting: Bound maximum acceleration to prevent high-warp numerical explosions
-                let acc_mag = acc.length();
-                if acc_mag > 80.0 {
-                    acc *= 80.0 / acc_mag;
-                }
+            // Acceleration Limiting: Bound maximum acceleration to prevent high-warp numerical explosions
+            let acc_mag = acc.length();
+            if acc_mag > 80.0 {
+                acc *= 80.0 / acc_mag;
+            }
 
-                if !acc.is_finite() {
-                    DVec3::ZERO
-                } else {
-                    acc
-                }
-            };
+            if !acc.is_finite() {
+                DVec3::ZERO
+            } else {
+                acc
+            }
+        };
 
         // Compute accelerations sequentially (<64 bodies)
         let new_accelerations: Vec<DVec3> = body_data

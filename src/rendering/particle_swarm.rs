@@ -416,17 +416,20 @@ pub fn update_particle_swarm(
                         let acc_r = if is_major_body {
                             if is_inner_terrestrial && !is_massive_disk {
                                 // Inner terrestrial planets have an annular feeding zone (~0.12 - 0.15 AU) to sweep local planetesimals
-                                ((physical_r + 1.25 * effective_grav_r) * warp_sweep).clamp(physical_r, 0.250)
+                                ((physical_r + 1.25 * effective_grav_r) * warp_sweep)
+                                    .clamp(physical_r, 0.250)
                             } else {
                                 let m_growth_factor =
                                     ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32).powf(0.30);
                                 let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
-                                ((physical_r + 0.90 * effective_grav_r * m_growth_factor) * warp_sweep)
+                                ((physical_r + 0.90 * effective_grav_r * m_growth_factor)
+                                    * warp_sweep)
                                     .clamp(physical_r, max_clamp)
                             }
                         } else {
                             // Minor asteroids / comets have only their tiny physical radius (e.g. ~50-500 km ~ 0.00005 AU)
-                            ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32) * warp_sweep)
+                            ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32)
+                                * warp_sweep)
                                 .clamp(0.00005, 0.0015)
                         };
 
@@ -513,7 +516,8 @@ pub fn update_particle_swarm(
                     if mass.0 < 1.05 * EARTH_MASS_SOLAR {
                         let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).clamp(0.1, 1.0);
                         let runaway_mult = 1.0 + 0.35 * m_earth_ratio;
-                        mass.0 = (mass.0 + gain * runaway_mult * warp_gain_boost).min(1.02 * EARTH_MASS_SOLAR);
+                        mass.0 = (mass.0 + gain * runaway_mult * warp_gain_boost)
+                            .min(1.02 * EARTH_MASS_SOLAR);
                     }
                 } else {
                     // Outer giant planet & stellar runaway accretion: soaking up pushed gas and dust from the disk
@@ -558,11 +562,15 @@ pub fn update_particle_swarm(
                 // Dynamic naming across the full spectrum from planetesimals to Pop-III stars
                 body.name = match updated_type {
                     BodyType::Hypergiant => format!("Pop-III Hypergiant ({:.1} M☉)", mass.0),
-                    BodyType::BlueSupergiant => format!("Pop-III Blue Supergiant ({:.1} M☉)", mass.0),
+                    BodyType::BlueSupergiant => {
+                        format!("Pop-III Blue Supergiant ({:.1} M☉)", mass.0)
+                    }
                     BodyType::BlueGiant => format!("Pop-III Blue Giant ({:.1} M☉)", mass.0),
                     BodyType::YellowDwarf => format!("Pop-III Yellow Star ({:.2} M☉)", mass.0),
                     BodyType::RedDwarf => format!("Red Dwarf ({:.2} M☉)", mass.0),
-                    BodyType::BrownDwarf => format!("Brown Dwarf ({:.1} M_J)", mass.0 / JUPITER_MASS_SOLAR),
+                    BodyType::BrownDwarf => {
+                        format!("Brown Dwarf ({:.1} M_J)", mass.0 / JUPITER_MASS_SOLAR)
+                    }
                     BodyType::GasGiant => {
                         if mass.0 >= JUPITER_MASS_SOLAR {
                             format!("Super-Jupiter ({:.1} M_J)", mass.0 / JUPITER_MASS_SOLAR)
@@ -637,7 +645,8 @@ pub fn update_particle_swarm(
                         let mass_factor = (masses[idx_a] / b_mass).cbrt().clamp(1.0, 6.0);
                         let warp_stick_boost = (1.0 + speed_mult.log10().max(0.0) * 0.22).min(1.8);
                         let r_acc =
-                            (0.012 * sticky_boost * zone_boost * mass_factor * warp_stick_boost).clamp(0.005, 0.080);
+                            (0.012 * sticky_boost * zone_boost * mass_factor * warp_stick_boost)
+                                .clamp(0.005, 0.080);
 
                         if dist_sq < r_acc * r_acc {
                             let vel_a = velocities[idx_a];

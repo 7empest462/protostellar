@@ -355,6 +355,28 @@ pub struct ImpactShockwavePool {
     pub shockwaves: Vec<ImpactShockwave>,
 }
 
+/// Active visual debris stream created during tidal Roche disruption of a moon or comet.
+#[derive(Debug, Clone)]
+pub struct RocheDebrisStream {
+    pub primary_entity: Entity,
+    pub primary_pos: Vec3,
+    pub disruption_pos: Vec3,
+    pub inner_radius: f32,
+    pub outer_radius: f32,
+    pub timer: f32,
+    pub max_timer: f32,
+    pub ice_fraction: f32,
+    pub debris_mass_earth: f64,
+    /// (radius_au, current_phase_rad, orbital_speed_rad_per_s, z_offset)
+    pub fragments: Vec<(f32, f32, f32, f32)>,
+}
+
+/// Pool of active visual tidal disruption debris streams.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct RocheDebrisPool {
+    pub streams: Vec<RocheDebrisStream>,
+}
+
 /// Available player tools for interacting with and shaping the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PlayerTool {

@@ -47,6 +47,13 @@ pub struct RocheDisruptionEvent {
     pub disrupted_entity: Entity,
     pub primary_entity: Entity,
     pub disruption_radius: f64,
+    pub ring_mass_earth: f64,
+    pub ice_fraction: f32,
+    pub silicate_fraction: f32,
+    pub primary_pos: Vec3,
+    pub disruption_pos: Vec3,
+    pub primary_name: String,
+    pub disrupted_name: String,
 }
 
 /// Detects close-contact collisions and processes physical collision regimes:
@@ -213,7 +220,7 @@ pub fn process_accretion_and_collisions(
                     s_comp,
                     _s_type,
                     s_spin,
-                    _s_name,
+                    s_name,
                     _s_is_central,
                 ) = if is_central1 || (!is_central2 && m1 >= m2) {
                     (
@@ -286,7 +293,7 @@ pub fn process_accretion_and_collisions(
                     // ==========================================
                     let ring_mass_earth = s_m / EARTH_MASS_SOLAR;
                     let inner_r = (p_rad_au * 1.25) as f32;
-                    let outer_r = (d_roche.min(p_rad_au * 3.2)) as f32;
+                    let outer_r = (d_roche.min(p_rad_au * 3.2)).max(inner_r as f64 * 1.35) as f32;
 
                     if let Ok(mut p_cmd) = commands.get_entity(primary_entity) {
                         p_cmd
@@ -316,6 +323,13 @@ pub fn process_accretion_and_collisions(
                         disrupted_entity: secondary_entity,
                         primary_entity,
                         disruption_radius: min_dist,
+                        ring_mass_earth,
+                        ice_fraction: s_comp.ice_frac as f32,
+                        silicate_fraction: (s_comp.silicate_frac + s_comp.metal_frac) as f32,
+                        primary_pos: Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                        disruption_pos: Vec3::new(s_pos.x as f32, s_pos.y as f32, s_pos.z as f32),
+                        primary_name: p_name.clone(),
+                        disrupted_name: s_name.clone(),
                     });
 
                     // Seamlessly transfer player selection if secondary entity was merged
@@ -830,8 +844,18 @@ pub fn direct_nebular_gas_accretion(
     let star_mass = disk_params.central_star_mass;
     let is_massive_disk = star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 
-    for (_entity, mut mass, pos, mut rad, mut comp, mut body, opt_diff, opt_spin, mut opt_vol, opt_temp) in
-        bodies_query.iter_mut()
+    for (
+        _entity,
+        mut mass,
+        pos,
+        mut rad,
+        mut comp,
+        mut body,
+        opt_diff,
+        opt_spin,
+        mut opt_vol,
+        opt_temp,
+    ) in bodies_query.iter_mut()
     {
         let actual_r = pos.0.length();
         // Strict boundary check: If a body is outside the gaseous disk, there is no ambient gas to accrete!

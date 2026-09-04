@@ -30,7 +30,25 @@
   - Epoch of Reionization (EoR) Strömgren ionization bubbles with glowing shock rims.
   - Pristine Population III hypergiant starburst knots and distant ruby mini-quasars.
 
-### 4. 🌍 Planetary Geology, Atmospheres & Cometary Water Delivery
+### 4. 🪐 Dynamic Roche Disruption & Planetary Ring Spawning
+- **Fluid Roche Limit Shredding**: When a moon, comet, or planetesimal ventures inside a primary's fluid Roche limit $d_{\text{Roche}} \approx 2.44 R_p \left(\frac{\rho_p}{\rho_s}\right)^{1/3}$, tidal forces overcome self-gravity, stretching the body into an ellipsoid before shattering it.
+- **Keplerian Spiral Debris Streams**: Renders expanding, 48-fragment Keplerian debris streamers wrapping around the planet's equatorial plane, simulating the dynamic transition from fragmented rubble into a circularized ring plane over time.
+- **Composition-Dependent Ring Albedo**: Rings dynamically adopt the color and optical depth of the disrupted body:
+  - Brilliant reflective silver-white (`ice >= 70%`, Saturn-like).
+  - Warm sand-cream tones (`35% - 70%` ice/dust mixture).
+  - Dark charcoal / anthracite (`< 35%` ice, Uranus/Jupiter-like silicate rings).
+- **Interactive Experiment**: Trigger on demand via the Planet Builder (`[P]` $\to$ `[ 💥 Insert Sub-Roche Moon ]`).
+
+### 5. 💨 Atmospheric Photoevaporation & Cometary Outflow Tails
+- **Extreme UV (EUV) Hydrodynamic Escape**: Close-in worlds ($a < 0.25\text{ AU}$, e.g. Hot Jupiter `[F4]`, TRAPPIST-1b/c `[F2]`) absorb intense high-energy radiation, driving supersonic Parker-type hydrodynamic winds.
+- **Energy-Limited Mass Stripping**: Computes mass loss rates $\dot{M}_{\text{loss}} \approx \frac{\eta \pi R_p^3 F_{\text{EUV}}}{G M_p}$, stripping volatile hydrogen/helium envelopes down to bare rocky cores over geological time (the "Hot Neptune Desert").
+- **3D Anti-Stellar Cometary Tails**:
+  - Central supersonic ion core spine extending $0.25 - 6.0\text{ AU}$ away from the host star with orbital aberration tilt.
+  - Parabolic expanding cometary bow shock sheath with 4 flaring azimuthal streamer ribs.
+  - Traveling ionization knot pulses flowing down the tail.
+  - Composition-dependent ionization glow: electric cyan for Hydrogen/Helium envelopes vs warm incandescent amber for evaporated mineral/sodium vapor.
+
+### 6. 🌍 Planetary Geology, Atmospheres & Cometary Water Delivery
 - **Thermal Evolution & Magma Oceans**: Cooling crust plates drift over convective, pulsating lava rifts on molten protoplanets ($T > 600\text{ K}$).
 - **Core Differentiation & Geodynamo Shielding**: Iron cores differentiate to generate magnetic fields that shield volatile atmospheres from solar wind hydrodynamic stripping.
 - **Late Heavy Bombardment (`[G]`)**: Nice-model $2:1$ resonance migration perturbs outer icy comets into inner orbits. Real-time water delivery builds liquid blue oceans and cloud decks on Proto-Earth.

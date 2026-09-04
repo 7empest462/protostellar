@@ -48,6 +48,7 @@ impl Plugin for SimulationPlugin {
                     process_accretion_and_collisions.after(step_physics_simulation),
                     direct_nebular_gas_accretion.after(step_physics_simulation),
                     update_thermodynamics.after(step_physics_simulation),
+                    update_photoevaporative_escape.after(update_thermodynamics),
                     auto_spawn_planetesimals.after(step_physics_simulation),
                     auto_spawn_delayed_proto_earth.after(step_physics_simulation),
                     update_black_hole_star_dynamics.after(step_physics_simulation),

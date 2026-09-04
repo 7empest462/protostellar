@@ -693,19 +693,21 @@ pub fn sync_planetary_rings(
                         mat.uniforms.outer_radius = ring_sys.outer_radius_au;
                         mat.uniforms.optical_depth = ring_sys.optical_depth;
                         mat.uniforms.ice_fraction = ring_sys.ice_fraction;
+                        mat.uniforms.ring_color = calc_ring_color(ring_sys.ice_fraction);
                     }
                 }
             }
         }
 
         if !found_child {
+            let ring_color = calc_ring_color(ring_sys.ice_fraction);
             let material = ring_materials.add(RingMaterial {
                 uniforms: RingUniforms {
                     inner_radius: ring_sys.inner_radius_au,
                     outer_radius: ring_sys.outer_radius_au,
                     optical_depth: ring_sys.optical_depth,
                     ice_fraction: ring_sys.ice_fraction,
-                    ring_color: Vec4::ONE,
+                    ring_color,
                 },
             });
 
@@ -722,6 +724,20 @@ pub fn sync_planetary_rings(
                 });
             }
         }
+    }
+}
+
+/// Dynamically calculates ring albedo and tone based on water ice vs silicate/metal composition.
+fn calc_ring_color(ice_fraction: f32) -> Vec4 {
+    if ice_fraction >= 0.70 {
+        // High ice fraction (>= 70%): brilliant silver-white (Saturn-like)
+        Vec4::new(0.96, 0.97, 1.0, 0.95)
+    } else if ice_fraction >= 0.35 {
+        // Mixed ice & dust (35-70%): warm sand-cream tone
+        Vec4::new(0.85, 0.78, 0.68, 0.85)
+    } else {
+        // Silicate / carbonaceous (< 35%): dark anthracite / charcoal (Uranus / Jovian-like)
+        Vec4::new(0.38, 0.35, 0.32, 0.65)
     }
 }
 
@@ -780,8 +796,11 @@ pub fn sync_quasar_beams(
     };
 
     let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let is_blown_out = opt_qs.map(|qs| qs.is_blown_out).unwrap_or(false) || body.name.contains("Quasar");
-    let light_dist = opt_qs.map(|qs| qs.jet_travel_distance_au as f32).unwrap_or(0.0);
+    let is_blown_out =
+        opt_qs.map(|qs| qs.is_blown_out).unwrap_or(false) || body.name.contains("Quasar");
+    let light_dist = opt_qs
+        .map(|qs| qs.jet_travel_distance_au as f32)
+        .unwrap_or(0.0);
 
     // CRITICAL: Do NOT spawn or render quasar laser beams before the cocoon has blown out!
     // The laser beams emerge ONLY after blowout, and travel outward across space at the speed of light c continuously!
@@ -803,9 +822,9 @@ pub fn sync_quasar_beams(
     let beam_center = pole_start + beam_len * 0.5;
 
     // Slim, highly-collimated laser beam proportions
-    let core_r = 0.06f32;  // Razor-thin brilliant white laser filament
+    let core_r = 0.06f32; // Razor-thin brilliant white laser filament
     let sheath_r = 0.18f32; // Subtle translucent cyan relativistic plasma sheath
-    let lobe_r = 0.55f32;  // Sleek bow shock cap at the light front
+    let lobe_r = 0.55f32; // Sleek bow shock cap at the light front
 
     if let Some((_, mut root_trans)) = root_query.iter_mut().next() {
         root_trans.translation = world_pos;
@@ -888,8 +907,7 @@ pub fn sync_quasar_beams(
                     QuasarBeamPart::NorthLobe,
                     Mesh3d(assets.star_mesh.clone()),
                     MeshMaterial3d(lobe_mat.clone()),
-                    Transform::from_xyz(0.0, jet_len, 0.0)
-                        .with_scale(Vec3::splat(lobe_r)),
+                    Transform::from_xyz(0.0, jet_len, 0.0).with_scale(Vec3::splat(lobe_r)),
                     NotShadowCaster,
                 ));
 
@@ -914,8 +932,7 @@ pub fn sync_quasar_beams(
                     QuasarBeamPart::SouthLobe,
                     Mesh3d(assets.star_mesh.clone()),
                     MeshMaterial3d(lobe_mat.clone()),
-                    Transform::from_xyz(0.0, -jet_len, 0.0)
-                        .with_scale(Vec3::splat(lobe_r)),
+                    Transform::from_xyz(0.0, -jet_len, 0.0).with_scale(Vec3::splat(lobe_r)),
                     NotShadowCaster,
                 ));
             });

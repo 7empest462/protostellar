@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 
 use crate::game::phases::PhaseManager;
 use crate::rendering::camera::PanOrbitCamera;
+use crate::simulation::accretion::RocheDisruptionEvent;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
@@ -283,6 +284,7 @@ pub enum UiButtonAction {
     BuilderCycleComposition,
     BuilderToggleClickSpawn,
     BuilderExecuteSpawn,
+    SpawnSubRocheMoon,
     // Scientific Instruments & Overlays
     CycleOverlayMode,
     ToggleTractor,
@@ -343,6 +345,7 @@ impl UiButtonAction {
             UiButtonAction::BuilderCycleComposition => "Cycle composition fractions (Rocky, Oceanic Ice, Metal Core, Gas Giant).",
             UiButtonAction::BuilderToggleClickSpawn => "Toggle 3D plane click-to-place mode (click disk to place world).",
             UiButtonAction::BuilderExecuteSpawn => "Spawn the configured celestial world into orbit immediately!",
+            UiButtonAction::SpawnSubRocheMoon => "Spawn a volatile-rich moon directly inside the selected planet's fluid Roche limit to trigger tidal shredding and ring creation!",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
@@ -892,6 +895,21 @@ pub fn setup_hud(mut commands: Commands) {
                     create_button(row, UiButtonAction::BuilderExecuteSpawn, "🚀 Insert into Orbit", Color::srgba(0.06, 0.24, 0.14, 0.95), Color::srgb(0.3, 0.95, 0.6));
                     create_button(row, UiButtonAction::BuilderToggleClickSpawn, "🎯 Click-in-3D Mode", Color::srgba(0.20, 0.12, 0.04, 0.95), Color::srgb(1.0, 0.75, 0.3));
                 });
+
+                // Special Astrophysical Experiments
+                panel.spawn((
+                    Text::new("── 4. ASTROPHYSICAL EXPERIMENTS ──"),
+                    TextFont { font_size: FontSize::Px(10.0), ..default() },
+                    TextColor(Color::srgb(0.5, 0.8, 1.0)),
+                ));
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    margin: UiRect::top(Val::Px(4.0)),
+                    ..default()
+                }).with_children(|row| {
+                    create_button(row, UiButtonAction::SpawnSubRocheMoon, "💥 Insert Sub-Roche Moon", Color::srgba(0.28, 0.08, 0.16, 0.95), Color::srgb(1.0, 0.45, 0.65));
+                });
             });
         });
 }
@@ -1385,6 +1403,106 @@ pub fn handle_ui_button_interactions(
                             &mut camera_query,
                             &mut toast,
                         );
+                    }
+                    UiButtonAction::SpawnSubRocheMoon => {
+                        let mut target_candidate = None;
+
+                        if let Some(sel_ent) = player_state.selected_entity {
+                            if let Ok((ent, m, rad, pos, vel, comp, body, opt_star, _, _, _, _)) =
+                                selected_query.get(sel_ent)
+                            {
+                                if opt_star.is_none()
+                                    && !body.body_type.is_star_or_remnant()
+                                    && m.0 >= EARTH_MASS_SOLAR * 0.01
+                                {
+                                    target_candidate = Some((
+                                        ent,
+                                        m.0,
+                                        rad.0,
+                                        pos.0,
+                                        vel.0,
+                                        *comp,
+                                        body.name.clone(),
+                                    ));
+                                }
+                            }
+                        }
+
+                        if target_candidate.is_none() {
+                            let mut best_m = 0.0;
+                            for (ent, m, rad, pos, vel, comp, body, opt_star, _, _, _, _) in
+                                selected_query.iter()
+                            {
+                                if opt_star.is_none()
+                                    && !body.body_type.is_star_or_remnant()
+                                    && m.0 > best_m
+                                {
+                                    best_m = m.0;
+                                    target_candidate = Some((
+                                        ent,
+                                        m.0,
+                                        rad.0,
+                                        pos.0,
+                                        vel.0,
+                                        *comp,
+                                        body.name.clone(),
+                                    ));
+                                }
+                            }
+                        }
+
+                        if let Some((target_ent, p_m, p_rad, p_pos, p_vel, p_comp, p_name)) =
+                            target_candidate
+                        {
+                            player_state.selected_entity = Some(target_ent);
+
+                            let p_density = p_comp.average_density();
+                            let moon_density = 0.95e-3;
+                            let d_roche = 2.44 * p_rad * (p_density / moon_density).cbrt();
+
+                            let r_moon = (d_roche * 0.85).max(p_rad * 1.35);
+
+                            let moon_pos = p_pos + DVec3::new(r_moon, 0.0, r_moon * 0.25);
+                            let v_circ = (G_ASTRO * p_m / r_moon.max(1e-5)).sqrt();
+                            let moon_vel = p_vel + DVec3::new(-v_circ * 0.35, 0.0, v_circ * 0.85);
+
+                            let moon_mass = (p_m * 0.003)
+                                .clamp(EARTH_MASS_SOLAR * 0.0001, EARTH_MASS_SOLAR * 0.05);
+                            let moon_comp = Composition {
+                                silicate_frac: 0.15,
+                                ice_frac: 0.80,
+                                metal_frac: 0.05,
+                                organics_frac: 0.0,
+                                gas_frac: 0.0,
+                            };
+                            let moon_rad = ((3.0 * moon_mass / moon_comp.average_density())
+                                / (4.0 * PI))
+                                .cbrt();
+
+                            commands.spawn((
+                                SimPosition(moon_pos),
+                                SimVelocity(moon_vel),
+                                SimAcceleration(DVec3::ZERO),
+                                Mass(moon_mass),
+                                Radius(moon_rad),
+                                Temperature(110.0),
+                                moon_comp,
+                                CelestialBody {
+                                    name: format!("Sub-Roche Moon ({})", p_name),
+                                    body_type: BodyType::Planetesimal,
+                                },
+                            ));
+
+                            toast.message = format!(
+                                "💥 Inserted Sub-Roche Icy Moon into {}'s Roche Limit ({:.4} AU)!",
+                                p_name, d_roche
+                            );
+                            toast.timer = 5.0;
+                        } else {
+                            toast.message =
+                                "⚠️ Please select a planet or gas giant first!".to_string();
+                            toast.timer = 3.5;
+                        }
                     }
 
                     // Scientific Instruments & Overlays
@@ -2220,6 +2338,20 @@ pub fn handle_ui_button_interactions(
     }
 }
 
+/// Handles Roche tidal disruption events to display toast alerts.
+pub fn handle_roche_disruption_toasts(
+    mut roche_reader: MessageReader<RocheDisruptionEvent>,
+    mut toast: ResMut<NotificationToast>,
+) {
+    for ev in roche_reader.read() {
+        toast.message = format!(
+            "🪐 Tidal Disruption! {} shredded inside {}'s Roche Limit into a new Ring System!",
+            ev.disrupted_name, ev.primary_name
+        );
+        toast.timer = 5.0;
+    }
+}
+
 /// Updates the dynamic content of the HUD and notification toast banner every frame.
 pub fn update_hud(
     time: Res<Time>,
@@ -2232,21 +2364,26 @@ pub fn update_hud(
     player_state: Res<PlayerInteractionState>,
     mut toast: ResMut<NotificationToast>,
     bodies_query: Query<(
-        &SimPosition,
-        &SimVelocity,
-        &Mass,
-        &Radius,
-        &Temperature,
-        &Composition,
-        &CelestialBody,
-        Option<&InternalDifferentiation>,
-        Option<&SpinState>,
-        Option<&IgnitionState>,
-        Option<&VolatileInventory>,
-        Option<&PlanetaryRingSystem>,
-        Option<&PlanetaryClimate>,
-        Option<&BiosphereState>,
-        Option<&StellarEvolutionState>,
+        (
+            &SimPosition,
+            &SimVelocity,
+            &Mass,
+            &Radius,
+            &Temperature,
+            &Composition,
+            &CelestialBody,
+        ),
+        (
+            Option<&InternalDifferentiation>,
+            Option<&SpinState>,
+            Option<&IgnitionState>,
+            Option<&VolatileInventory>,
+            Option<&PlanetaryRingSystem>,
+            Option<&AtmosphericEscapeTail>,
+            Option<&PlanetaryClimate>,
+            Option<&BiosphereState>,
+            Option<&StellarEvolutionState>,
+        ),
     )>,
     quasi_hud_query: Query<&BlackHoleStarState>,
     mut header_query: Query<
@@ -2301,6 +2438,7 @@ pub fn update_hud(
     >,
 ) {
     // 0. Update Toast Notification Timer & Active Selection Header
+
     if toast.timer > 0.0 {
         toast.timer -= time.delta_secs();
     }
@@ -2314,7 +2452,7 @@ pub fn update_hud(
         } else if toast.timer > 0.0 {
             toast_text.0 = toast.message.clone();
         } else if let Some(selected_entity) = player_state.selected_entity {
-            if let Ok((pos, vel, mass, rad, temp, _comp, body, ..)) =
+            if let Ok(((pos, vel, mass, rad, temp, _comp, body), ..)) =
                 bodies_query.get(selected_entity)
             {
                 let type_name = match body.body_type {
@@ -2517,21 +2655,18 @@ pub fn update_hud(
     if let Ok(mut text) = inspector_query.single_mut() {
         if let Some(selected_entity) = player_state.selected_entity {
             if let Ok((
-                pos,
-                vel,
-                mass,
-                rad,
-                temp,
-                comp,
-                body,
-                opt_diff,
-                opt_spin,
-                opt_ignition,
-                opt_vol,
-                opt_rings,
-                opt_climate,
-                opt_bio,
-                opt_evo,
+                (pos, vel, mass, rad, temp, comp, body),
+                (
+                    opt_diff,
+                    opt_spin,
+                    opt_ignition,
+                    opt_vol,
+                    opt_rings,
+                    opt_tail,
+                    opt_climate,
+                    opt_bio,
+                    opt_evo,
+                ),
             )) = bodies_query.get(selected_entity)
             {
                 let dist_au = if pos.0.is_finite() {
@@ -2626,6 +2761,19 @@ pub fn update_hud(
                         ring.optical_depth * 100.0,
                         ring.ice_fraction * 100.0
                     )
+                } else {
+                    "".to_string()
+                };
+
+                let tail_str = if let Some(tail) = opt_tail {
+                    if tail.is_active && tail.tail_length_au > 0.01 {
+                        format!(
+                            "\nPhotoevaporation: Active (Loss: {:.2} M_earth/Myr | Tail: {:.2} AU)",
+                            tail.loss_rate_m_earth_per_myr, tail.tail_length_au
+                        )
+                    } else {
+                        "".to_string()
+                    }
                 } else {
                     "".to_string()
                 };
@@ -2808,7 +2956,7 @@ pub fn update_hud(
                 let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
 
                 text.0 = format!(
-                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}{}{}",
+                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}{}{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,
@@ -2827,6 +2975,7 @@ pub fn update_hud(
                     diff_str,
                     vol_str,
                     rings_str,
+                    tail_str,
                     climate_str,
                     bio_str,
                     star_extra_str,

@@ -106,7 +106,10 @@ pub fn update_skybox_uniforms(
     };
 
     // 2. Gravitational Lensing Parameters Calculation
-    let camera_pos = camera_query.single().map(|tf| tf.translation).unwrap_or(Vec3::ZERO);
+    let camera_pos = camera_query
+        .single()
+        .map(|tf| tf.translation)
+        .unwrap_or(Vec3::ZERO);
     let mut lens_pos_and_mass = Vec4::ZERO;
     let mut lens_params = Vec4::ZERO;
 
@@ -121,7 +124,9 @@ pub fn update_skybox_uniforms(
 
             let visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
             let is_blown_out = opt_bhs.map(|s| s.is_blown_out).unwrap_or(is_massive_bh);
-            let blowout_p = opt_bhs.map(|s| s.blowout_progress).unwrap_or(if is_blown_out { 1.0 } else { 0.0 });
+            let blowout_p = opt_bhs
+                .map(|s| s.blowout_progress)
+                .unwrap_or(if is_blown_out { 1.0 } else { 0.0 });
 
             // Effective gravitational Einstein radius (physical + visual aesthetic scaling)
             // Pre-blowout: spans outside the 60 AU envelope (R ~ 72 AU).
@@ -148,7 +153,8 @@ pub fn update_skybox_uniforms(
             // Smooth exponential lerp toward target mode (transition speed ~ 2.2 / sec)
             let current_blend = mat.uniforms.params.y;
             let blend_speed = 2.2;
-            let new_blend = current_blend + (target_blend - current_blend) * (dt * blend_speed).min(1.0);
+            let new_blend =
+                current_blend + (target_blend - current_blend) * (dt * blend_speed).min(1.0);
 
             // Update parameters
             mat.uniforms.params.x += dt; // Animation time
