@@ -94,6 +94,80 @@ fn to_galactic(d: vec3<f32>) -> vec3<f32> {
 // PART 1: MODERN MILKY WAY & STAR CLUSTERS
 // ============================================================================
 
+// Evaluates an isotropic, unskewed, non-flared celestial starfield layer on the unit sphere
+fn render_star_layer(
+    dir: vec3<f32>,
+    scale: f32,
+    seed_offset: vec3<f32>,
+    threshold: f32,
+    core_sigma: f32,
+    halo_sigma: f32,
+    halo_intensity: f32,
+    time: f32,
+    twinkle_strength: f32,
+) -> vec3<f32> {
+    let p = dir * scale;
+    let b = floor(p);
+    var accum = vec3<f32>(0.0);
+
+    // Minimum squared chord distance cone covering 3.2 sigma of the star profile
+    let max_sigma = max(core_sigma, halo_sigma);
+    let max_th = max_sigma * 3.2;
+    let max_dist_sq = max_th * max_th;
+
+    // Check 8 surrounding lattice nodes (strictly encloses any star within cone)
+    for (var z = 0; z <= 1; z = z + 1) {
+        for (var y = 0; y <= 1; y = y + 1) {
+            for (var x = 0; x <= 1; x = x + 1) {
+                let node = b + vec3<f32>(f32(x), f32(y), f32(z));
+                let rand = hash33(node + seed_offset);
+
+                if (rand.x > threshold) {
+                    // Star celestial position is fixed to the node and spherically projected
+                    let star_pos = node + (rand - 0.5) * 0.85;
+                    let star_dir = normalize(star_pos);
+                    let delta = dir - star_dir;
+                    let th2 = dot(delta, delta);
+
+                    if (th2 < max_dist_sq) {
+                        // Mathematically circular angular distance on celestial sphere: ||d - s||^2
+                        let core = exp(-th2 / (core_sigma * core_sigma));
+                        let halo = halo_intensity * exp(-th2 / (halo_sigma * halo_sigma));
+                        let profile = core + halo;
+
+                        // Morgan-Keenan spectral classification
+                        var spectral = vec3<f32>(1.0);
+                        let spec = rand.z;
+                        if (spec < 0.12) {
+                            // O/B Blue Supergiant
+                            spectral = vec3<f32>(0.70, 0.85, 1.35) * 1.5;
+                        } else if (spec < 0.38) {
+                            // A/F White Main Sequence
+                            spectral = vec3<f32>(0.96, 0.98, 1.06) * 1.2;
+                        } else if (spec < 0.68) {
+                            // G Yellow Solar-Type
+                            spectral = vec3<f32>(1.06, 0.98, 0.82) * 1.1;
+                        } else if (spec < 0.86) {
+                            // K Orange Giant
+                            spectral = vec3<f32>(1.18, 0.74, 0.40) * 1.05;
+                        } else {
+                            // M Red Dwarf / Supergiant
+                            spectral = vec3<f32>(1.25, 0.38, 0.20) * 1.0;
+                        }
+
+                        let mag = 0.75 + (1.0 - rand.y) * 2.5;
+                        let twinkle = 1.0 + sin(time * 3.2 + rand.x * 45.0) * 0.15 * twinkle_strength;
+
+                        accum += spectral * (profile * mag * twinkle);
+                    }
+                }
+            }
+        }
+    }
+
+    return accum;
+}
+
 fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     let g = to_galactic(dir);
     let b = g.y; // Galactic latitude sin(b)
@@ -134,101 +208,121 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     let o_iii_mask = smoothstep(0.60, 0.90, fbm3(neb_coord * 1.6 + vec3<f32>(2.0, -1.5, 0.8), 3)) * exp(-abs_b / 0.08);
     let o_iii_color = vec3<f32>(0.15, 0.85, 0.80) * o_iii_mask * 0.9 * dust_transmission;
 
-    // 5. Multi-Spectral Procedural Starfield
-    // Cell grid for resolved individual stars
+    // 5. Multi-Spectral Procedural Starfield (Spherically Isotropic, Zero Skew, Zero Flare)
     var star_light = vec3<f32>(0.0);
 
-    // Layer A: Micro-stars (dense unresolved background wash)
-    let micro_cell = floor(dir * 180.0);
-    let micro_hash = hash31(micro_cell);
-    if (micro_hash > 0.88) {
-        let micro_pt = (hash33(micro_cell) - 0.5) * 0.8;
-        let micro_d = length(fract(dir * 180.0) - 0.5 - micro_pt);
-        let micro_br = exp(-micro_d * micro_d * 40.0) * (micro_hash - 0.88) * 6.5;
-        // Boost micro-stars along galactic equator
-        let lat_boost = 1.0 + exp(-abs_b / 0.10) * 3.5;
-        star_light += vec3<f32>(0.92, 0.95, 1.0) * micro_br * lat_boost;
-    }
+    // Layer 1: Bright Constellation & Field Stars (1st to 4th magnitude)
+    let l1 = render_star_layer(
+        dir,
+        24.0,
+        vec3<f32>(0.0, 0.0, 0.0),
+        0.78,
+        0.0016,
+        0.0040,
+        0.12,
+        time,
+        skybox.params.w,
+    );
 
-    // Layer B: Distinct Resolved Multi-Spectral Stars (O/B, A/F, G, K, M)
-    let star_grid = dir * 65.0;
-    let cell_i = floor(star_grid);
-    let cell_f = fract(star_grid);
-    let star_rand = hash33(cell_i);
+    // Layer 2: Medium Field Stars (5th to 7th magnitude)
+    let l2 = render_star_layer(
+        dir,
+        46.0,
+        vec3<f32>(173.1, 311.7, 729.3),
+        0.66,
+        0.0011,
+        0.0022,
+        0.05,
+        time,
+        skybox.params.w * 0.7,
+    );
 
-    if (star_rand.x > 0.72) {
-        let star_pos = star_rand * 0.8 + 0.1;
-        let d_star = length(cell_f - star_pos);
+    // Layer 3: Faint Milky Way Stardust / Background Stars (8th to 12th magnitude)
+    let lat_boost = 1.0 + exp(-abs_b / 0.12) * 2.8;
+    let l3 = render_star_layer(
+        dir,
+        84.0,
+        vec3<f32>(541.3, 887.1, 239.5),
+        0.56,
+        0.0008,
+        0.0008,
+        0.0,
+        time,
+        0.0,
+    ) * lat_boost;
 
-        // Core radius & intensity
-        let magnitude = star_rand.y; // 0.0 = bright 1st magnitude, 1.0 = dim 6th magnitude
-        let peak_br = exp(-d_star * d_star * (50.0 + (1.0 - magnitude) * 120.0));
+    star_light += (l1 + l2 + l3) * skybox.tuning.x;
 
-        // Stellar Spectral Classes
-        var star_spectral = vec3<f32>(1.0);
-        let spec_val = star_rand.z;
-        if (spec_val < 0.10) {
-            // O/B Blue Supergiants (Hot, luminous, electric cyan)
-            star_spectral = vec3<f32>(0.65, 0.85, 1.35) * 1.6;
-        } else if (spec_val < 0.35) {
-            // A/F White Main Sequence
-            star_spectral = vec3<f32>(0.95, 0.98, 1.05) * 1.2;
-        } else if (spec_val < 0.65) {
-            // G Yellow Solar-Type
-            star_spectral = vec3<f32>(1.05, 0.96, 0.78) * 1.1;
-        } else if (spec_val < 0.85) {
-            // K Orange Giants
-            star_spectral = vec3<f32>(1.15, 0.72, 0.38) * 1.05;
-        } else {
-            // M Red Dwarfs / Supergiants
-            star_spectral = vec3<f32>(1.25, 0.35, 0.18) * 1.0;
-        }
-
-        // Star twinkle
-        let twinkle = 1.0 + sin(time * 3.5 + star_rand.x * 37.0) * 0.18 * skybox.params.w;
-
-        // Sub-pixel diffraction cross for bright 1st-magnitude stars
-        var spike_glow = 0.0;
-        if (magnitude > 0.85) {
-            let dx = abs(cell_f.x - star_pos.x);
-            let dy = abs(cell_f.y - star_pos.y);
-            let spike_h = exp(-dy * dy * 450.0) * exp(-dx * 16.0);
-            let spike_v = exp(-dx * dx * 450.0) * exp(-dy * 16.0);
-            spike_glow = (spike_h + spike_v) * 0.45;
-        }
-
-        star_light += star_spectral * (peak_br + spike_glow) * (1.0 + (1.0 - magnitude) * 2.2) * twinkle;
-    }
-
-    // 6. Deep Space Star Clusters
+    // 6. Deep Space Star Clusters & Objects (100% Spherically Isotropic)
     // Pleiades-like Open Cluster (Seven Sisters in Taurus)
     let pleiades_dir = normalize(vec3<f32>(0.62, 0.44, -0.65));
-    let pleiades_dist = length(dir - pleiades_dir);
-    if (pleiades_dist < 0.08) {
-        // Glowing electric-blue reflection nebula
-        let cluster_haze = exp(-pleiades_dist * pleiades_dist * 800.0) * 0.95;
-        let cluster_nebula = vec3<f32>(0.35, 0.68, 1.30) * cluster_haze;
+    let delta_p = dir - pleiades_dir;
+    let th2_p = dot(delta_p, delta_p);
+    if (th2_p < 0.010) {
+        // Ethereal sapphire reflection nebula (smooth Gaussian)
+        let haze = exp(-th2_p / 0.0007) * 0.85;
+        let neb_color = vec3<f32>(0.28, 0.55, 1.25) * haze;
+        star_light += neb_color;
 
-        // Multiple concentrated brilliant blue cluster stars
-        let c_grid = (dir - pleiades_dir) * 450.0;
-        let c_cell = floor(c_grid);
-        let c_hash = hash31(c_cell);
-        var c_stars = 0.0;
-        if (c_hash > 0.82) {
-            let c_d = length(fract(c_grid) - 0.5);
-            c_stars = exp(-c_d * c_d * 60.0) * 2.5;
-        }
-        star_light += cluster_nebula + vec3<f32>(0.75, 0.90, 1.4) * c_stars;
+        // Tangent frame at pleiades_dir
+        let p_right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), pleiades_dir));
+        let p_up = cross(pleiades_dir, p_right);
+
+        // Physical relative positions and magnitudes of the primary cluster stars
+        // (Alcyone, Atlas, Electra, Maia, Merope, Taygeta, Pleione)
+        let s0 = normalize(pleiades_dir + p_right * 0.0000 + p_up * 0.0000);
+        let s1 = normalize(pleiades_dir + p_right * 0.0092 - p_up * 0.0035);
+        let s2 = normalize(pleiades_dir - p_right * 0.0105 + p_up * 0.0038);
+        let s3 = normalize(pleiades_dir - p_right * 0.0022 + p_up * 0.0090);
+        let s4 = normalize(pleiades_dir - p_right * 0.0038 - p_up * 0.0075);
+        let s5 = normalize(pleiades_dir - p_right * 0.0125 + p_up * 0.0130);
+        let s6 = normalize(pleiades_dir + p_right * 0.0100 + p_up * 0.0012);
+
+        let star_col = vec3<f32>(0.72, 0.88, 1.40);
+        var p_stars = 0.0;
+
+        let d0 = dot(dir - s0, dir - s0);
+        if (d0 < 0.00002) { p_stars += exp(-d0 / (0.0014 * 0.0014)) * 2.8; }
+        let d1 = dot(dir - s1, dir - s1);
+        if (d1 < 0.00002) { p_stars += exp(-d1 / (0.0012 * 0.0012)) * 1.9; }
+        let d2 = dot(dir - s2, dir - s2);
+        if (d2 < 0.00002) { p_stars += exp(-d2 / (0.0012 * 0.0012)) * 1.8; }
+        let d3 = dot(dir - s3, dir - s3);
+        if (d3 < 0.00002) { p_stars += exp(-d3 / (0.0011 * 0.0011)) * 1.6; }
+        let d4 = dot(dir - s4, dir - s4);
+        if (d4 < 0.00002) { p_stars += exp(-d4 / (0.0011 * 0.0011)) * 1.5; }
+        let d5 = dot(dir - s5, dir - s5);
+        if (d5 < 0.00002) { p_stars += exp(-d5 / (0.0010 * 0.0010)) * 1.3; }
+        let d6 = dot(dir - s6, dir - s6);
+        if (d6 < 0.00002) { p_stars += exp(-d6 / (0.0010 * 0.0010)) * 1.2; }
+
+        star_light += star_col * p_stars;
     }
 
     // Globular Cluster (Omega Centauri analogue in galactic halo)
     let globular_dir = normalize(vec3<f32>(-0.45, 0.72, 0.52));
-    let globular_dist = length(dir - globular_dir);
-    if (globular_dist < 0.06) {
+    let delta_g = dir - globular_dir;
+    let th2_g = dot(delta_g, delta_g);
+    if (th2_g < 0.008) {
         // Dense core with Plummer profile
-        let plummer = 1.0 / pow(1.0 + globular_dist * globular_dist * 2500.0, 1.5);
-        let globular_glow = vec3<f32>(1.0, 0.92, 0.75) * plummer * 1.4;
+        let plummer = 1.0 / pow(1.0 + th2_g * 14000.0, 1.4);
+        let globular_glow = vec3<f32>(1.05, 0.94, 0.75) * plummer * 1.5;
         star_light += globular_glow;
+    }
+
+    // Andromeda Galaxy (M31 spiral galaxy in northern sky)
+    let m31_dir = normalize(vec3<f32>(-0.32, -0.42, 0.85));
+    let delta_m31 = dir - m31_dir;
+    if (dot(delta_m31, delta_m31) < 0.012) {
+        let m31_up = normalize(vec3<f32>(0.2, 0.8, 0.3));
+        let m31_r = normalize(cross(m31_up, m31_dir));
+        let m31_u = cross(m31_dir, m31_r);
+        let x_maj = dot(delta_m31, m31_r);
+        let y_min = dot(delta_m31, m31_u) / 0.32; // 71 deg inclination
+        let r_ellip = x_maj * x_maj + y_min * y_min;
+        let m31_core = exp(-r_ellip * 7500.0) * 1.5;
+        let m31_disk = exp(-r_ellip * 1100.0) * 0.5;
+        star_light += (vec3<f32>(1.0, 0.94, 0.82) * m31_core + vec3<f32>(0.75, 0.85, 1.1) * m31_disk);
     }
 
     // Ambient interstellar darkness (faint cosmic infrared bath)

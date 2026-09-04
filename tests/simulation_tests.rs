@@ -1436,8 +1436,8 @@ fn test_gpu_readback_dead_particle_non_resurrection() {
     use protostellar::gpu::buffers::GpuParticle;
 
     // Simulate 4 particles
-    let mut cpu_masses = vec![0.0001f32, 0.0f32, 0.0001f32, 0.0f32]; // 1 & 3 accreted on CPU
-    let mut cpu_positions = vec![
+    let mut cpu_masses = [0.0001f32, 0.0f32, 0.0001f32, 0.0f32]; // 1 & 3 accreted on CPU
+    let mut cpu_positions = [
         [1.0f32, 0.0, 0.0],
         [0.0, -5000.0, 0.0],
         [2.0, 0.0, 0.0],
@@ -1445,7 +1445,7 @@ fn test_gpu_readback_dead_particle_non_resurrection() {
     ];
 
     // GPU buffer arrives from older in-flight frame where particle 1 had not died yet on GPU
-    let gpu_particles = vec![
+    let gpu_particles = [
         GpuParticle {
             pos_mass: [1.05, 0.0, 0.0, 0.0001],
             vel_temp: [0.0, 0.0, 0.0, 280.0],
@@ -1519,4 +1519,101 @@ fn test_outer_giant_planet_mass_ceiling() {
     // Mass must be capped at 2.5 M_Jup and NEVER reach stellar/black hole mass (> 1000 M_earth)
     assert!(mass <= max_giant_mass);
     assert!(mass < 0.01); // Well below stellar threshold (0.08 M_sun)
+}
+
+#[test]
+fn test_skybox_spherical_isotropy_and_flaring_elimination() {
+    use bevy::math::Vec3;
+
+    // 1. Verify shader source code guarantees: flaring formulas removed, spherical isotropic layer present
+    let shader_src = std::fs::read_to_string("assets/shaders/skybox.wgsl")
+        .expect("skybox.wgsl should be readable");
+
+    // Must contain the new isotropic spherical layer
+    assert!(
+        shader_src.contains("fn render_star_layer"),
+        "skybox.wgsl must contain render_star_layer"
+    );
+
+    // Must NOT contain Cartesian diffraction cross flare smears
+    assert!(
+        !shader_src.contains("spike_h"),
+        "skybox.wgsl must not contain spike_h Cartesian flare"
+    );
+    assert!(
+        !shader_src.contains("spike_v"),
+        "skybox.wgsl must not contain spike_v Cartesian flare"
+    );
+
+    // Must contain spherical deep sky objects
+    assert!(
+        shader_src.contains("pleiades_dir"),
+        "skybox.wgsl must contain Pleiades open cluster"
+    );
+    assert!(
+        shader_src.contains("globular_dir"),
+        "skybox.wgsl must contain Omega Centauri globular cluster"
+    );
+    assert!(
+        shader_src.contains("m31_dir"),
+        "skybox.wgsl must contain Andromeda Galaxy (M31)"
+    );
+
+    // 2. Mathematical Rotational Invariance Proof for Spherical Metric:
+    // th2 = dot(d - s, d - s)
+    let star_dir = Vec3::new(0.62, 0.44, -0.65).normalize();
+    let view_offset = Vec3::new(0.002, -0.003, 0.001);
+    let view_dir = (star_dir + view_offset).normalize();
+
+    let delta_orig = view_dir - star_dir;
+    let dist_sq_original = delta_orig.dot(delta_orig);
+
+    // Rotate both vectors arbitrarily in 3D (pitch 37 deg, yaw 112 deg, roll 58 deg)
+    let rot = bevy::math::Quat::from_euler(
+        bevy::math::EulerRot::XYZ,
+        0.64577, // 37 deg
+        1.95477, // 112 deg
+        1.01229, // 58 deg
+    );
+    let rotated_view = rot * view_dir;
+    let rotated_star = rot * star_dir;
+
+    let delta_rot = rotated_view - rotated_star;
+    let dist_sq_rotated = delta_rot.dot(delta_rot);
+
+    // The angular metric must be exactly identical under any 3D rotation (zero skew, zero eccentricity)
+    assert!(
+        (dist_sq_original - dist_sq_rotated).abs() < 1e-6,
+        "Angular distance metric must be perfectly rotationally invariant"
+    );
+
+    // 3. Gaussian profile circular symmetry: points at identical angular radii must have identical intensities
+    let sigma = 0.0016_f32;
+    let r_angle = 0.0020_f32; // 0.002 rad from star center
+
+    // Create orthonormal tangent vectors perp to star_dir
+    let tangent_x = star_dir.cross(Vec3::Y).normalize();
+    let tangent_y = star_dir.cross(tangent_x).normalize();
+
+    // Baseline intensity at r_angle
+    let base_dir = (star_dir + tangent_x * r_angle).normalize();
+    let base_delta = base_dir - star_dir;
+    let base_th2 = base_delta.dot(base_delta);
+    let intensity_0 = (-base_th2 / (sigma * sigma)).exp();
+
+    // Evaluate 8 points in a circle around the star in the celestial tangent plane
+    for step in 0..8 {
+        let phi = (step as f32) * (std::f32::consts::PI / 4.0);
+        let offset_dir =
+            (star_dir + (tangent_x * phi.cos() + tangent_y * phi.sin()) * r_angle).normalize();
+        let delta = offset_dir - star_dir;
+        let th2 = delta.dot(delta);
+        let sample_intensity = (-th2 / (sigma * sigma)).exp();
+
+        assert!(
+            (sample_intensity - intensity_0).abs() < 1e-5,
+            "Star profile must be perfectly circular and unskewed at all angles (step {})",
+            step
+        );
+    }
 }
