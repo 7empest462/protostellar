@@ -54,6 +54,8 @@ pub enum BodyType {
     Protoplanet,
     /// Cleared-orbit rocky world (Mercury, Venus, Earth, Mars type)
     TerrestrialPlanet,
+    /// Massive rocky / terrestrial planet (1.5 - 10 Earth masses, e.g. Kepler-10b, 55 Cancri e)
+    SuperEarth,
     /// Massive hydrogen/helium envelope world (Jupiter, Saturn type)
     GasGiant,
     /// Water/ammonia/methane mantle world (Uranus, Neptune type)
@@ -90,6 +92,8 @@ pub enum BodyType {
     Magnetar,
     /// Gravitational singularity with event horizon and accretion disk
     BlackHole,
+    /// JWST Little Red Dot / Black Hole Star: Supermassive black hole seed encased in a dense 60 AU hydrogen cocoon
+    QuasiStar,
     /// Minor rocky body
     Asteroid,
     /// Volatile-rich icy body
@@ -121,6 +125,7 @@ impl BodyType {
                 | BodyType::Pulsar
                 | BodyType::Magnetar
                 | BodyType::BlackHole
+                | BodyType::QuasiStar
         )
     }
 
@@ -133,6 +138,7 @@ impl BodyType {
                 | BodyType::Pulsar
                 | BodyType::Magnetar
                 | BodyType::BlackHole
+                | BodyType::QuasiStar
         )
     }
 
@@ -141,6 +147,7 @@ impl BodyType {
         matches!(
             self,
             BodyType::TerrestrialPlanet
+                | BodyType::SuperEarth
                 | BodyType::GasGiant
                 | BodyType::IceGiant
                 | BodyType::Protoplanet
@@ -173,25 +180,63 @@ pub fn classify_body_by_mass_and_comp(
         }
     } else {
         // Planetary / Minor body classification
-        if mass_solar >= 0.0125 {
+        if mass_solar >= 0.0125 - 1e-7 {
             // ~13 Jupiter Masses
             BodyType::BrownDwarf
-        } else if mass_jupiter >= 0.05 || mass_earth >= 15.0 {
-            if comp.gas_frac > 0.30 {
+        } else if mass_jupiter >= 0.05 - 1e-6 || mass_earth >= 12.0 - 1e-5 {
+            let norm = comp.normalized();
+            let refractory_frac = norm.silicate_frac + norm.metal_frac + norm.organics_frac;
+            // Giant Planet Regime (>= 12 Earth Masses / >= 16 M_earth):
+            // 1. Gas Giant: Dominant hydrogen/helium envelope (gas > 20%).
+            // 2. Ice Giant: MUST have a hefty volatile ice/water percentage (ice >= 25%).
+            // 3. Mega-Earth / Massive Terrestrial: Dominantly rocky/metallic (refractory >= 55%, gas <= 12%, ice < 25%).
+            if norm.gas_frac > 0.20 {
+                BodyType::GasGiant
+            } else if norm.ice_frac >= 0.25 {
+                BodyType::IceGiant
+            } else if refractory_frac >= 0.55 && norm.gas_frac <= 0.12 {
+                BodyType::SuperEarth // Mega-Earth / massive rocky terrestrial world
+            } else if norm.gas_frac > 0.12 {
                 BodyType::GasGiant
             } else {
-                BodyType::IceGiant
+                BodyType::SuperEarth
             }
-        } else if mass_earth >= 0.02 {
-            if comp.gas_frac > 0.40 {
+        } else if mass_earth >= 1.75 - 1e-5 {
+            let norm = comp.normalized();
+            let refractory_frac = norm.silicate_frac + norm.metal_frac + norm.organics_frac;
+            // Physical & Material Limits for Super-Earth Classification:
+            // 1. Gas Envelope Limit: True Super-Earths have solid rocky/iron surfaces with only a thin
+            //    secondary atmosphere (gas <= 0.08, or <= 8% by mass). If gas > 0.15, it is a Gas Dwarf / Mini-Neptune.
+            // 2. Refractory Limit: Must be dominantly rock and iron core (silicates + metal + organics >= 0.55).
+            // 3. Volatile Ice Limit: If ice >= 0.25, it is a volatile-rich Water World / Sub-Neptune (Ice Giant).
+            // 4. Bulk Density Limit: Must have high rocky/metallic density (rho >= 0.80 * DENSITY_ROCK_ASTRO, ~2640 kg/m^3).
+            if norm.gas_frac > 0.15 {
+                BodyType::GasGiant // Gas Dwarf / Mini-Neptune
+            } else if norm.ice_frac >= 0.25 || (norm.gas_frac > 0.08 && norm.ice_frac > 0.15) {
+                BodyType::IceGiant // Sub-Neptune / Water World (MUST have hefty ice!)
+            } else if norm.gas_frac <= 0.08
+                && refractory_frac >= 0.55
+                && norm.average_density() >= 0.80 * crate::utils::constants::DENSITY_ROCK_ASTRO
+            {
+                BodyType::SuperEarth // True Rocky Super-Earth!
+            } else if norm.gas_frac > 0.08 {
+                BodyType::GasGiant // Thick volatile envelope
+            } else {
+                BodyType::TerrestrialPlanet
+            }
+        } else if mass_earth >= 0.40 - 1e-5 {
+            let norm = comp.normalized();
+            if norm.gas_frac > 0.20 {
                 BodyType::GasGiant
-            } else if comp.ice_frac > 0.40 {
+            } else if norm.ice_frac >= 0.25 {
                 BodyType::IceGiant
             } else {
                 BodyType::TerrestrialPlanet
             }
-        } else if mass_earth >= 0.002 {
+        } else if mass_earth >= 0.02 - 1e-5 {
             BodyType::Protoplanet
+        } else if mass_earth >= 0.001 - 1e-6 {
+            BodyType::Planetesimal
         } else if comp.ice_frac > 0.35 {
             BodyType::Comet
         } else {
@@ -310,6 +355,67 @@ impl SpinState {
     }
 }
 
+/// State tracking the internal dynamics of a JWST Little Red Dot / Black Hole Star (Quasi-Star).
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct BlackHoleStarState {
+    /// Mass of the central supermassive black hole seed in $M_\odot$ (~100,000 M_sun).
+    pub black_hole_mass_solar: f64,
+    /// Mass of the surrounding pristine hydrogen gas cocoon in $M_\odot$ (~50,000 M_sun).
+    pub cocoon_mass_solar: f64,
+    /// Radius of the outer hydrogen photosphere in AU (~60 AU).
+    pub cocoon_radius_au: f64,
+    /// Current accretion rate onto the central black hole relative to the Eddington limit ($L / L_{\text{Edd}}$).
+    pub eddington_ratio: f64,
+    /// Progress of radiative envelope blow-off (0.0 = intact cocoon, 1.0 = fully blown-off Quasar).
+    pub blowout_progress: f32,
+    /// Whether super-Eddington hyper-accretion mode is currently active.
+    pub super_eddington_active: bool,
+    /// Whether the envelope has been blown off into interstellar space.
+    pub is_blown_out: bool,
+    /// Cumulative mass swallowed by the black hole seed in $M_\odot$.
+    pub accreted_envelope_mass: f64,
+    /// Cumulative propagation distance of the relativistic polar laser light beams in AU (advances at speed of light c).
+    pub jet_travel_distance_au: f64,
+}
+
+impl Default for BlackHoleStarState {
+    fn default() -> Self {
+        Self {
+            black_hole_mass_solar: 400_000.0,
+            cocoon_mass_solar: 50_000.0,
+            cocoon_radius_au: 60.0,
+            eddington_ratio: 3.5,
+            blowout_progress: 0.0,
+            super_eddington_active: true,
+            is_blown_out: false,
+            accreted_envelope_mass: 0.0,
+            jet_travel_distance_au: 0.0,
+        }
+    }
+}
+
+impl BlackHoleStarState {
+    /// Returns the total combined mass of the black hole seed plus remaining cocoon.
+    pub fn total_mass_solar(&self) -> f64 {
+        self.black_hole_mass_solar + self.cocoon_mass_solar
+    }
+
+    /// Triggers envelope blowout into a naked active Quasar.
+    pub fn trigger_blowout(&mut self) {
+        self.is_blown_out = true;
+    }
+
+    /// Toggles super-Eddington hyper-accretion on/off.
+    pub fn toggle_super_eddington(&mut self) {
+        self.super_eddington_active = !self.super_eddington_active;
+        self.eddington_ratio = if self.super_eddington_active {
+            4.5
+        } else {
+            0.9
+        };
+    }
+}
+
 /// Fractional chemical/bulk composition of the body (sums to 1.0).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Composition {
@@ -401,6 +507,17 @@ impl Composition {
             ice_frac: 0.015,
             organics_frac: 0.000,
             gas_frac: 0.980,
+        }
+    }
+
+    /// Pristine dust-free primordial hydrogen gas (JWST Little Red Dot / Population III environment)
+    pub fn pure_hydrogen() -> Self {
+        Self {
+            metal_frac: 0.0,
+            silicate_frac: 0.0,
+            ice_frac: 0.0,
+            organics_frac: 0.0,
+            gas_frac: 1.0,
         }
     }
 

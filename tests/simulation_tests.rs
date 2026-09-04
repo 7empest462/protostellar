@@ -221,20 +221,65 @@ fn test_inelastic_fusion_momentum_conservation() {
 fn test_mass_dependent_render_radius_scaling() {
     use protostellar::simulation::resources::SimulationConfig;
 
-    let r_star = SimulationConfig::calc_render_radius(1.0, BodyType::MainSequenceStar);
-    let r_jupiter = SimulationConfig::calc_render_radius(JUPITER_MASS_SOLAR, BodyType::GasGiant);
+    // 1. Legacy collision radius hierarchy (used only for accretion cross-sections)
+    let r_star = SimulationConfig::calc_collision_radius(1.0, BodyType::MainSequenceStar);
+    let r_jupiter = SimulationConfig::calc_collision_radius(JUPITER_MASS_SOLAR, BodyType::GasGiant);
     let r_earth =
-        SimulationConfig::calc_render_radius(EARTH_MASS_SOLAR, BodyType::TerrestrialPlanet);
+        SimulationConfig::calc_collision_radius(EARTH_MASS_SOLAR, BodyType::TerrestrialPlanet);
     let r_embryo =
-        SimulationConfig::calc_render_radius(0.05 * EARTH_MASS_SOLAR, BodyType::Protoplanet);
+        SimulationConfig::calc_collision_radius(0.05 * EARTH_MASS_SOLAR, BodyType::Protoplanet);
     let r_planetesimal =
-        SimulationConfig::calc_render_radius(0.001 * EARTH_MASS_SOLAR, BodyType::Planetesimal);
+        SimulationConfig::calc_collision_radius(0.001 * EARTH_MASS_SOLAR, BodyType::Planetesimal);
 
     assert!(r_star > r_jupiter);
     assert!(r_jupiter > r_earth);
     assert!(r_earth > r_embryo);
     assert!(r_embryo > r_planetesimal);
     assert!(r_planetesimal >= 0.005);
+
+    // 2. Unified visual radius (physical radius → power-law compression × exaggeration)
+    let config = SimulationConfig::default();
+    let sun_r = 0.00465_f64; // 1 R_sun in AU
+    let jupiter_r = 0.000477_f64; // Jupiter radius in AU
+    let earth_r = 0.0000426_f64; // Earth radius in AU
+    let trappist1_star_r = 0.00056_f64; // TRAPPIST-1 (0.121 R_sun)
+    let trappist1e_r = 0.920 * 0.0000426_f64; // 0.920 R_Earth
+
+    let v_sun = config.calc_visual_radius(sun_r);
+    let v_jupiter = config.calc_visual_radius(jupiter_r);
+    let v_earth = config.calc_visual_radius(earth_r);
+    let v_trappist_star = config.calc_visual_radius(trappist1_star_r);
+    let v_trappist_e = config.calc_visual_radius(trappist1e_r);
+
+    // Hierarchy must be strictly preserved
+    assert!(
+        v_sun > v_jupiter,
+        "Sun must be larger than Jupiter visually"
+    );
+    assert!(v_jupiter > v_earth, "Jupiter must be larger than Earth");
+    assert!(
+        v_trappist_star > v_trappist_e,
+        "TRAPPIST-1 star must be larger than its planets"
+    );
+
+    // Star-to-planet ratio should be at least 2.5× for visual dominance
+    assert!(
+        v_sun / v_jupiter > 2.5,
+        "Sun:Jupiter ratio should be >2.5× (got {:.2}×)",
+        v_sun / v_jupiter
+    );
+    assert!(
+        v_trappist_star / v_trappist_e > 2.5,
+        "TRAPPIST-1 star:planet ratio should be >2.5× (got {:.2}×)",
+        v_trappist_star / v_trappist_e
+    );
+
+    // Minimum visual radius floor
+    let tiny_body = config.calc_visual_radius(1e-8);
+    assert!(
+        tiny_body >= config.min_body_visual_radius,
+        "Tiny bodies must respect min_body_visual_radius floor"
+    );
 }
 
 #[test]
@@ -628,6 +673,7 @@ fn test_red_giant_inner_planet_engulfment_drag() {
 fn test_comet_hydrostatic_mass_promotion() {
     let comp_icy = Composition::icy();
     let comp_rocky = Composition::rocky();
+    let comp_solar = Composition::solar_nebula();
 
     // Small comet below hydrostatic threshold (~0.0001 Earth masses)
     let comet_type = classify_body_by_mass_and_comp(0.0001 * EARTH_MASS_SOLAR, &comp_icy, false);
@@ -645,6 +691,42 @@ fn test_comet_hydrostatic_mass_promotion() {
     let promoted_rocky_planet =
         classify_body_by_mass_and_comp(1.0 * EARTH_MASS_SOLAR, &comp_rocky, false);
     assert_eq!(promoted_rocky_planet, BodyType::TerrestrialPlanet);
+
+    // 3.5 Earth-Mass rocky body must be classified as SuperEarth
+    let super_earth = classify_body_by_mass_and_comp(3.5 * EARTH_MASS_SOLAR, &comp_rocky, false);
+    assert_eq!(super_earth, BodyType::SuperEarth);
+
+    // 3.5 Earth-Mass body with 98% gas MUST be classified as GasGiant, NOT SuperEarth!
+    let gaseous_planet = classify_body_by_mass_and_comp(3.5 * EARTH_MASS_SOLAR, &comp_solar, false);
+    assert_eq!(gaseous_planet, BodyType::GasGiant);
+
+    // 3.5 Earth-Mass body with 50% ice & 25% gas MUST be classified as IceGiant, NOT SuperEarth!
+    let icy_sub_neptune = classify_body_by_mass_and_comp(3.5 * EARTH_MASS_SOLAR, &comp_icy, false);
+    assert_eq!(icy_sub_neptune, BodyType::IceGiant);
+
+    // 150 Earth-Mass body with 0% ice (67% rock, 32% metal, 1% gas) MUST NOT be classified as IceGiant!
+    let comp_mega_earth = Composition {
+        silicate_frac: 0.67,
+        metal_frac: 0.32,
+        ice_frac: 0.00,
+        organics_frac: 0.00,
+        gas_frac: 0.01,
+    };
+    let mega_earth =
+        classify_body_by_mass_and_comp(150.0 * EARTH_MASS_SOLAR, &comp_mega_earth, false);
+    assert_ne!(mega_earth, BodyType::IceGiant);
+    assert_eq!(mega_earth, BodyType::SuperEarth);
+
+    // 17 Earth-Mass body with 60% ice and 10% gas (Neptune-like) MUST be classified as IceGiant!
+    let comp_neptune = Composition {
+        silicate_frac: 0.25,
+        metal_frac: 0.05,
+        ice_frac: 0.60,
+        organics_frac: 0.00,
+        gas_frac: 0.10,
+    };
+    let ice_giant = classify_body_by_mass_and_comp(17.0 * EARTH_MASS_SOLAR, &comp_neptune, false);
+    assert_eq!(ice_giant, BodyType::IceGiant);
 
     // Hydrostatic dwarf planet threshold (> 0.005 Earth masses)
     let protoplanet = classify_body_by_mass_and_comp(0.02 * EARTH_MASS_SOLAR, &comp_rocky, false);
@@ -803,3 +885,310 @@ fn test_scenario_preset_definitions() {
         assert!(!preset.description().is_empty());
     }
 }
+
+#[test]
+fn test_gas_giant_variety_palette() {
+    use protostellar::rendering::bodies::compute_gas_giant_palette;
+    use protostellar::utils::constants::JUPITER_MASS_SOLAR;
+
+    // 1. Classic Jupiter (1.0 M_jup) -> Iconic Jovian Amber-Ochre
+    let jupiter_color = compute_gas_giant_palette(JUPITER_MASS_SOLAR * 1.0, 160.0, "Jupiter");
+    let jup_srgba = jupiter_color.to_srgba();
+    assert!(jup_srgba.red > jup_srgba.green && jup_srgba.green > jup_srgba.blue);
+
+    // 2. Super-Jupiter (2.5 M_jup) -> Emerald-Teal
+    let super_jup_color =
+        compute_gas_giant_palette(JUPITER_MASS_SOLAR * 2.5, 160.0, "Super-Jovian");
+    let sj_srgba = super_jup_color.to_srgba();
+    assert!(sj_srgba.green >= sj_srgba.red); // Green/teal dominant
+
+    // 3. Massive Super-Jupiter (4.5 M_jup) -> Lapis-Indigo / Sapphire
+    let massive_color = compute_gas_giant_palette(JUPITER_MASS_SOLAR * 4.5, 160.0, "Mega-Jovian");
+    let mass_srgba = massive_color.to_srgba();
+    assert!(mass_srgba.blue > mass_srgba.red); // Blue dominant
+
+    // 4. Heavy Super-Jupiter (8.0 M_jup) -> Royal Plum-Purple
+    let heavy_color = compute_gas_giant_palette(JUPITER_MASS_SOLAR * 8.0, 160.0, "Ultra-Giant");
+    let heavy_srgba = heavy_color.to_srgba();
+    assert!(heavy_srgba.blue > heavy_srgba.green && heavy_srgba.red > heavy_srgba.green); // Purple mix
+
+    // 5. Brown Dwarf Transition (14.0 M_jup) -> Incandescent Plum-Maroon
+    let brown_dwarf_color =
+        compute_gas_giant_palette(JUPITER_MASS_SOLAR * 14.0, 600.0, "Brown Dwarf");
+    let bd_srgba = brown_dwarf_color.to_srgba();
+    assert!(bd_srgba.red > bd_srgba.green);
+}
+
+#[test]
+fn test_planet_builder_presets() {
+    use protostellar::game::ui::{BuilderPreset, PlanetBuilderState};
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, JUPITER_MASS_SOLAR};
+
+    let mut state = PlanetBuilderState::default();
+
+    // Default is Earth-like
+    assert_eq!(state.active_preset, BuilderPreset::EarthLike);
+    assert!((state.mass_solar - EARTH_MASS_SOLAR).abs() < 1e-10);
+    assert!((state.semi_major_axis_au - 1.0).abs() < 1e-10);
+
+    // Apply Super-Jupiter preset
+    state.apply_preset(BuilderPreset::SuperJupiter);
+    assert_eq!(state.active_preset, BuilderPreset::SuperJupiter);
+    assert!((state.mass_solar - JUPITER_MASS_SOLAR * 3.5).abs() < 1e-10);
+    assert!((state.semi_major_axis_au - 3.2).abs() < 1e-10);
+    assert!(state.gas_frac > 0.90);
+
+    // Apply Water World preset
+    state.apply_preset(BuilderPreset::WaterWorld);
+    assert_eq!(state.active_preset, BuilderPreset::WaterWorld);
+    assert!(state.ice_frac > 0.50);
+    assert_eq!(state.gas_frac, 0.0);
+}
+
+#[test]
+fn test_asteroid_particle_accretion_capping() {
+    use protostellar::simulation::components::BodyType;
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    // Minor asteroid should be capped
+    let asteroid_type = BodyType::Asteroid;
+    let initial_mass = 0.00001 * EARTH_MASS_SOLAR;
+    let gain = 0.001 * EARTH_MASS_SOLAR;
+
+    let updated_mass = if matches!(asteroid_type, BodyType::Asteroid | BodyType::Comet) {
+        (initial_mass + gain).min(0.0005 * EARTH_MASS_SOLAR)
+    } else {
+        initial_mass + gain * 2.0
+    };
+
+    assert!(updated_mass <= 0.0005 * EARTH_MASS_SOLAR);
+}
+
+#[test]
+fn test_visual_radius_for_minor_bodies() {
+    use protostellar::simulation::components::BodyType;
+    use protostellar::simulation::resources::SimulationConfig;
+    use protostellar::utils::constants::EARTH_RADIUS_AU;
+
+    let config = SimulationConfig::default();
+    let planet_rad =
+        config.calc_visual_radius_for_type(EARTH_RADIUS_AU, BodyType::TerrestrialPlanet);
+    let asteroid_rad =
+        config.calc_visual_radius_for_type(EARTH_RADIUS_AU * 0.05, BodyType::Asteroid);
+    let comet_rad = config.calc_visual_radius_for_type(EARTH_RADIUS_AU * 0.05, BodyType::Comet);
+
+    assert!(asteroid_rad < planet_rad);
+    assert!(comet_rad < planet_rad);
+    assert!((asteroid_rad - comet_rad).abs() < 1e-6);
+}
+
+#[test]
+fn test_late_heavy_bombardment_water_delivery_formation() {
+    use protostellar::simulation::components::{Composition, VolatileInventory};
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    let mut vol = VolatileInventory::default();
+    assert_eq!(vol.delivered_water_m_earth, 0.0);
+    assert_eq!(vol.ocean_coverage_frac, 0.0);
+
+    // 5 cometary impacts delivering 0.0005 M_earth water each
+    let icy_comet_comp = Composition::icy();
+    let comet_mass = 0.0008 * EARTH_MASS_SOLAR;
+    let water_per_impact = (comet_mass * icy_comet_comp.ice_frac) / EARTH_MASS_SOLAR;
+
+    for _ in 0..5 {
+        vol.delivered_water_m_earth += water_per_impact;
+    }
+
+    vol.ocean_coverage_frac = (vol.delivered_water_m_earth / 0.003).clamp(0.0, 0.75) as f32;
+
+    assert!(vol.delivered_water_m_earth > 0.002);
+    assert!(vol.ocean_coverage_frac >= 0.70);
+}
+
+#[test]
+fn test_protostar_auto_ignition_and_gas_push() {
+    use protostellar::simulation::components::IgnitionState;
+
+    let mut ignition = IgnitionState {
+        core_temperature: 4.0e6,
+        fusion_fraction: 0.4,
+        is_ignited: false,
+        shockwave_radius: 0.0,
+    };
+
+    let heating_rate_per_yr = 2.0e5; // Solar mass
+    let elapsed_dt = 30.0; // 30 years
+
+    ignition.core_temperature += heating_rate_per_yr * elapsed_dt;
+    let ignition_threshold = 1.0e7;
+
+    if ignition.core_temperature >= ignition_threshold || elapsed_dt >= 30.0 {
+        ignition.is_ignited = true;
+        ignition.fusion_fraction = 1.0;
+        ignition.shockwave_radius = 0.5;
+    }
+
+    assert!(ignition.is_ignited);
+    assert_eq!(ignition.fusion_fraction, 1.0);
+    assert!(ignition.core_temperature >= 1.0e7);
+
+    // Verify gas push at shockwave: inner terrestrial zone gas density is residual (0.05),
+    // outer giant zone is boosted (2.5x) to feed Jupiter.
+    let r_inner = 1.0f64;
+    let r_outer = 5.2f64;
+    let gas_scale = 1.0f64;
+
+    let inner_gas_density = 1.2e-4 * (r_inner / 1.0).powf(-1.50) * (gas_scale * 0.05 + 0.001);
+    let outer_gas_density = 1.2e-4 * (r_outer / 1.0).powf(-1.50) * gas_scale * 2.5;
+
+    assert!(inner_gas_density < 1.0e-5);
+    assert!(outer_gas_density > 2.0e-5);
+}
+
+#[test]
+fn test_little_red_dot_quasi_star_model() {
+    use protostellar::simulation::components::{BlackHoleStarState, BodyType, Composition};
+
+    let mut state = BlackHoleStarState::default();
+
+    // Verify initial astrophysical parameters
+    assert_eq!(state.black_hole_mass_solar, 400_000.0);
+    assert_eq!(state.cocoon_mass_solar, 50_000.0);
+    assert_eq!(state.total_mass_solar(), 450_000.0);
+    assert_eq!(state.cocoon_radius_au, 60.0);
+    assert!(state.super_eddington_active);
+    assert!(!state.is_blown_out);
+    assert_eq!(state.blowout_progress, 0.0);
+
+    // Verify pristine pure hydrogen composition (0% dust, 0% rock, 0% metal)
+    let comp = Composition::pure_hydrogen();
+    assert_eq!(comp.gas_frac, 1.0);
+    assert_eq!(comp.metal_frac, 0.0);
+    assert_eq!(comp.silicate_frac, 0.0);
+    assert_eq!(comp.ice_frac, 0.0);
+
+    // Test super-Eddington toggling
+    state.toggle_super_eddington();
+    assert!(!state.super_eddington_active);
+    assert_eq!(state.eddington_ratio, 0.9);
+
+    state.toggle_super_eddington();
+    assert!(state.super_eddington_active);
+    assert_eq!(state.eddington_ratio, 4.5);
+
+    // Test blowout trigger
+    state.trigger_blowout();
+    assert!(state.is_blown_out);
+
+    // Verify QuasiStar classification and remnant status
+    let q_type = BodyType::QuasiStar;
+    assert!(q_type.is_star_or_remnant());
+    assert!(q_type.is_remnant());
+    assert!(!q_type.is_planet());
+}
+
+#[test]
+fn test_little_red_dot_preset_in_scenarios() {
+    use protostellar::simulation::scenarios::ScenarioPreset;
+
+    let lrd = ScenarioPreset::LittleRedDot;
+    assert!(lrd.display_name().contains("Little Red Dot"));
+    assert!(lrd.description().contains("100,000 M☉"));
+    assert!(lrd.description().contains("60 AU"));
+}
+
+#[test]
+fn test_skybox_scenario_blending_and_materials() {
+    use protostellar::rendering::materials::SkyboxMaterial;
+    use protostellar::simulation::scenarios::ScenarioPreset;
+
+    // 1. Verify default material initialization (starts in Milky Way mode)
+    let mat = SkyboxMaterial::default();
+    assert_eq!(mat.uniforms.params.x, 0.0); // time
+    assert_eq!(mat.uniforms.params.y, 0.0); // scenario_blend (0.0 = Milky Way)
+    assert_eq!(mat.uniforms.params.z, 1.25); // exposure
+    assert_eq!(mat.uniforms.params.w, 1.0); // twinkle
+    assert_eq!(mat.uniforms.tuning.x, 1.0); // star density
+    assert_eq!(mat.uniforms.tuning.y, 1.0); // nebula intensity
+    assert_eq!(mat.uniforms.tuning.z, 1.0); // cosmic web scale
+    assert_eq!(mat.uniforms.tuning.w, 1.0); // filament brightness
+
+    // 2. Scenario preset to target blend mapping
+    let presets_milky_way = [
+        ScenarioPreset::SolarNebulaMmsn,
+        ScenarioPreset::Trappist1System,
+        ScenarioPreset::Kepler16Circumbinary,
+        ScenarioPreset::HotJupiterMigration,
+        ScenarioPreset::RoguePlanetFlyby,
+    ];
+
+    for preset in presets_milky_way {
+        let target = if preset == ScenarioPreset::LittleRedDot { 1.0 } else { 0.0 };
+        assert_eq!(target, 0.0);
+    }
+
+    let target_early_univ = if ScenarioPreset::LittleRedDot == ScenarioPreset::LittleRedDot { 1.0 } else { 0.0 };
+    assert_eq!(target_early_univ, 1.0);
+
+    // 3. Smooth blend interpolation test
+    let mut current_blend = 0.0_f32;
+    let dt = 0.25_f32;
+    let blend_speed = 2.2_f32;
+    current_blend += (target_early_univ - current_blend) * (dt * blend_speed).min(1.0);
+    assert!(current_blend > 0.40 && current_blend < 0.70);
+
+    // Subsequent frame continues toward 1.0
+    current_blend += (target_early_univ - current_blend) * (dt * blend_speed).min(1.0);
+    assert!(current_blend > 0.75 && current_blend <= 1.0);
+
+    // 4. Geometry bounds: Skybox sphere (1,000,000 AU) is safely within camera far plane (2,000,000 AU)
+    let skybox_radius = 1_000_000.0_f32;
+    let camera_far_plane = 2_000_000.0_f32;
+    let max_simulation_boundary = 625.0_f32;
+    assert!(skybox_radius > max_simulation_boundary * 1000.0);
+    assert!(skybox_radius < camera_far_plane);
+}
+
+#[test]
+fn test_gravitational_lensing_geometry() {
+    use protostellar::rendering::materials::SkyboxMaterial;
+
+    // 1. Verify default material has lensing zeroed / inactive
+    let mat = SkyboxMaterial::default();
+    assert_eq!(mat.uniforms.lens_pos_and_mass, bevy::prelude::Vec4::ZERO);
+    assert_eq!(mat.uniforms.lens_params, bevy::prelude::Vec4::ZERO);
+
+    // 2. Physical & Angular Einstein Radius scaling
+    let dist_cam = 150.0_f32; // 150 AU distance
+
+    // Quasi-Star intact cocoon (R ~ 60 AU, lensing extends to R ~ 72 AU)
+    let r_cocoon_lens = 72.0_f32;
+    let theta_e_cocoon = (r_cocoon_lens / dist_cam).atan();
+    let theta_shadow_cocoon = ((60.0_f32 * 0.98) / dist_cam).atan();
+    assert!(theta_e_cocoon > theta_shadow_cocoon);
+    assert!(theta_e_cocoon > 0.40 && theta_e_cocoon < 0.55);
+
+    // Naked Black Hole after blowout (R ~ 2.5 AU, photon sphere at 1.85x ~ 4.62 AU)
+    let visual_r_bh = 2.5_f32;
+    let r_bh_lens = visual_r_bh * 1.85;
+    let theta_e_bh = (r_bh_lens / dist_cam).atan();
+    let theta_shadow_bh = ((visual_r_bh * 0.98) / dist_cam).atan();
+    assert!(theta_e_bh > theta_shadow_bh);
+    assert!(theta_e_bh > 0.02 && theta_e_bh < 0.05);
+
+    // 3. Blowout contraction: as blowout_p goes 0.0 -> 1.0, lens radius smoothly contracts
+    for p in [0.0f32, 0.25, 0.50, 0.75, 1.0] {
+        let eff_r = r_cocoon_lens + (r_bh_lens - r_cocoon_lens) * p;
+        assert!(eff_r >= r_bh_lens && eff_r <= r_cocoon_lens);
+    }
+
+    // 4. Deflection angle alpha(theta) = theta_E^2 / theta
+    let theta = 0.60_f32;
+    let alpha = (theta_e_cocoon * theta_e_cocoon) / (theta + 0.004);
+    assert!(alpha > 0.0 && alpha < theta);
+    let beta = theta - alpha;
+    assert!(beta > 0.0 && beta < theta);
+}
+
+

@@ -114,17 +114,18 @@ fn fragment(
     let neptune_gap = smoothstep(0.0, 2.8, abs(r_cyl - 40.0));
     let gap_clearance = clamp(jupiter_gap * saturn_gap * uranus_gap * neptune_gap, 0.15, 1.0);
 
-    // 4. Stellar Wind & Photo-evaporation Inner Clearance Gradient
-    // When the star ignites, radiation sweeps the inner terrestrial zone (r < 3.5 AU),
-    // leaving a ~5% residual gas level for primordial planetary atmospheres.
+    // 4. Stellar Wind & Outward Gas Push Compression Wave
+    // When the star ignites, radiation sweeps the inner terrestrial zone (r < 2.7 AU),
+    // pushing gas outward into a dense swept-up compression ring feeding Jupiter & Saturn (r ~ 4.5 - 10.0 AU).
     let shockwave_r = gas.star_params.w;
     var inner_clear_factor: f32 = 1.0;
     if (shockwave_r > 0.0) {
-        if (r_cyl < 3.5) {
-            inner_clear_factor = 0.06; // Residual atmosphere gas in terrestrial zone
-        } else if (r_cyl < shockwave_r) {
-            let t_trans = (r_cyl - 3.5) / max(shockwave_r - 3.5, 0.1);
-            inner_clear_factor = mix(0.06, 1.0, clamp(t_trans, 0.0, 1.0));
+        if (r_cyl < 2.7) {
+            inner_clear_factor = 0.05; // Residual thin atmosphere gas in terrestrial zone
+        } else if (r_cyl < shockwave_r + 5.0) {
+            // Outward pushed gas compression wave feeding Jupiter and Saturn
+            let compression = 1.0 + 1.4 * exp(-pow((r_cyl - (shockwave_r + 1.5)) / 2.5, 2.0));
+            inner_clear_factor = compression;
         }
     }
 
@@ -132,22 +133,27 @@ fn fragment(
     let temp = 280.0 * pow(max(r_cyl, 0.4), -0.5);
     var color = vec3<f32>(0.20, 0.55, 0.95); // Celestial cyan-azure
 
-    if (r_cyl < 3.5) {
-        // Inner terrestrial zone: Warm sunlit golden peach
+    if (r_cyl < 25.0) {
+        // Inner zone: Warm sunlit golden luminescence (Little Red Dot inner yellow)
         color = vec3<f32>(1.0, 0.72, 0.38);
-    } else if (temp > 180.0) {
-        // Snow line & giant zone: Ethereal glowing turquoise
+    } else if (temp > 180.0 || r_cyl < 55.0) {
+        // Mid giant zone: Ethereal glowing turquoise
         color = vec3<f32>(0.32, 0.88, 0.82);
-    } else if (r_cyl > 22.0) {
+    } else {
         // Outer giant & Kuiper zone: Deep cosmic violet / lavender
         color = vec3<f32>(0.42, 0.32, 0.82);
     }
 
-    // 6. Very Wispy, Delicate, Translucent Alpha Visibility
-    let density = (wisps * 0.55 + 0.20) * radial_mask * gap_clearance * inner_clear_factor * gas_density_scale;
-    let alpha = clamp(density * 0.16, 0.0, 0.22); // Translucent see-through mist
+    // 6. 3D Volumetric Flared Scale-Height Vertical Attenuation
+    let h_scale = max(0.08 * pow(r_cyl, 1.15), 0.18);
+    let y_dist = abs(pos_world.y);
+    let vertical_falloff = exp(-0.5 * pow(y_dist / h_scale, 2.0));
 
-    if (alpha < 0.005) {
+    // 7. Very Wispy, Delicate, Translucent Alpha Visibility
+    let density = (wisps * 0.55 + 0.20) * radial_mask * gap_clearance * inner_clear_factor * gas_density_scale * vertical_falloff;
+    let alpha = clamp(density * 0.18, 0.0, 0.26); // Translucent see-through mist
+
+    if (alpha < 0.003) {
         discard;
     }
 

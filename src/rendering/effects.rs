@@ -82,6 +82,7 @@ pub fn update_impact_shockwaves(
 /// Draws dynamic Keplerian orbit trails, selection brackets, shockwaves, planetary nebulae, and diagnostic overlays.
 pub fn draw_orbital_effects_and_gizmos(
     mut gizmos: Gizmos,
+    config: Res<SimulationConfig>,
     player_state: Res<PlayerInteractionState>,
     shockwave_pool: Res<ImpactShockwavePool>,
     time: Res<Time>,
@@ -89,10 +90,12 @@ pub fn draw_orbital_effects_and_gizmos(
         (
             &SimPosition,
             &Mass,
+            &Radius,
             &IgnitionState,
             &CelestialBody,
             Option<&StellarEvolutionState>,
             Option<&ElectromagneticFieldState>,
+            Option<&BlackHoleStarState>,
         ),
         With<CentralStar>,
     >,
@@ -107,7 +110,8 @@ pub fn draw_orbital_effects_and_gizmos(
         Option<&SpinState>,
     )>,
 ) {
-    let Ok((star_pos, star_mass, ignition, star_body, opt_evo, _opt_em)) = star_query.single()
+    let Ok((star_pos, star_mass, star_radius, ignition, star_body, opt_evo, _opt_em, opt_quasi)) =
+        star_query.single()
     else {
         return;
     };
@@ -255,8 +259,463 @@ pub fn draw_orbital_effects_and_gizmos(
                 Color::srgba(0.5, 0.3, 1.0, 0.40),
             );
         }
+    } else if opt_quasi.is_some()
+        || star_body.body_type == BodyType::QuasiStar
+        || star_body.name.contains("Quasar")
+        || (star_body.body_type == BodyType::BlackHole && star_mass.0 > 500.0)
+    {
+        // =========================================================================
+        // SUPERMASSIVE QUASAR / QUASI-STAR: Relativistic Beams, Synchrotron Sheath, Accretion Disk
+        // =========================================================================
+        let is_blown_out = opt_quasi.map(|qs| qs.is_blown_out).unwrap_or(false) || star_body.name.contains("Quasar");
+        let blowout_p = opt_quasi.map(|qs| qs.blowout_progress).unwrap_or(if is_blown_out { 1.0 } else { 0.0 });
+        let light_dist = opt_quasi.map(|qs| qs.jet_travel_distance_au as f32).unwrap_or(0.0);
+        let disk_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+
+        // A. BRILLIANT WHITE RELATIVISTIC LASER BEAMS & ACCRETION DISK (ONLY POST-BLOWOUT AT SPEED c)
+        if is_blown_out && light_dist > 0.5 {
+            let jet_len = light_dist;
+            let current_visual_radius = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
+            let pole_start = (current_visual_radius * 0.90).max(0.05);
+
+            for &(dir, sign) in &[(Vec3::Y, 1.0f32), (-Vec3::Y, -1.0f32)] {
+                let base = star_vec + dir * pole_start;
+                let tip = star_vec + dir * jet_len;
+
+                // 1. Central Core Laser Filament: Blinding pure white
+                gizmos.line(base, tip, Color::WHITE);
+
+                // Concentric thin laser beam core bundle (8 longitudinal lines at r = 0.06 AU)
+                let core_r = 0.06f32;
+                for k in 0..8 {
+                    let theta = (k as f32) * (std::f32::consts::PI / 4.0);
+                    let offset = Vec3::new(theta.cos() * core_r, 0.0, theta.sin() * core_r);
+                    gizmos.line(
+                        base + offset,
+                        tip + offset,
+                        Color::srgba(0.95, 0.98, 1.0, 0.95),
+                    );
+                }
+
+                // 2. Ionized Synchrotron Sheath (12 lines at r = 0.18 AU)
+                let sheath_r = 0.18f32;
+                for k in 0..12 {
+                    let theta = (k as f32) * (std::f32::consts::PI / 6.0);
+                    let base_offset = Vec3::new(theta.cos() * sheath_r * 0.8, 0.0, theta.sin() * sheath_r * 0.8);
+                    let tip_offset = Vec3::new(theta.cos() * sheath_r, 0.0, theta.sin() * sheath_r);
+                    let sheath_color = if k % 2 == 0 {
+                        Color::srgba(0.20, 0.75, 1.0, 0.75) // Electric Cyan
+                    } else {
+                        Color::srgba(0.75, 0.35, 1.0, 0.70) // Royal Violet
+                    };
+                    gizmos.line(base + base_offset, tip + tip_offset, sheath_color);
+                }
+
+                // 3. Relativistic Helical Magnetic Coils (Twisting 3D Plasma Spirals)
+                let helix_len = jet_len.min(400.0);
+                let n_segments = 100;
+                let dz = (helix_len - pole_start).max(1.0) / (n_segments as f32);
+                for s in 0..n_segments {
+                    let z1 = pole_start + (s as f32) * dz;
+                    let z2 = pole_start + ((s + 1) as f32) * dz;
+                    let r1 = 0.12 + 0.0002 * z1;
+                    let r2 = 0.12 + 0.0002 * z2;
+                    let ang1 = z1 * 0.28 - elapsed * 16.0;
+                    let ang2 = z2 * 0.28 - elapsed * 16.0;
+
+                    // Helix 1 (Cyan/White)
+                    let p1 = star_vec + Vec3::new(r1 * ang1.cos(), sign * z1, r1 * ang1.sin());
+                    let p2 = star_vec + Vec3::new(r2 * ang2.cos(), sign * z2, r2 * ang2.sin());
+                    gizmos.line(p1, p2, Color::srgba(0.40, 0.85, 1.0, 0.85));
+
+                    // Helix 2 (Violet/Magenta opposite phase)
+                    let ang1_b = ang1 + std::f32::consts::PI;
+                    let ang2_b = ang2 + std::f32::consts::PI;
+                    let p1_b = star_vec + Vec3::new(r1 * ang1_b.cos(), sign * z1, r1 * ang1_b.sin());
+                    let p2_b = star_vec + Vec3::new(r2 * ang2_b.cos(), sign * z2, r2 * ang2_b.sin());
+                    gizmos.line(p1_b, p2_b, Color::srgba(0.85, 0.35, 1.0, 0.80));
+                }
+
+                // 4. Collimation Mach Shock Disks (Periodic bright shock knots spaced along beam)
+                let mut kd = 25.0f32;
+                let mut step = 40.0f32;
+                while kd < jet_len && kd < 5000.0 {
+                    let knot_pos = star_vec + dir * kd;
+                    let knot_r = 0.14 + kd * 0.0005;
+                    gizmos.circle(
+                        Isometry3d::new(
+                            knot_pos,
+                            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                        ),
+                        knot_r,
+                        Color::WHITE,
+                    );
+                    gizmos.circle(
+                        Isometry3d::new(
+                            knot_pos,
+                            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                        ),
+                        knot_r * 1.5,
+                        Color::srgba(0.30, 0.75, 1.0, 0.65),
+                    );
+                    kd += step;
+                    step *= 1.35;
+                }
+
+                // 5. Terminal Relativistic Bow Shock Hotspot (Expanding Radio Lobes at light front)
+                let lobe_r = 0.55f32;
+                gizmos.sphere(
+                    Isometry3d::from_translation(tip),
+                    lobe_r,
+                    Color::srgba(0.85, 0.95, 1.0, 0.80),
+                );
+                gizmos.circle(
+                    Isometry3d::new(tip, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    lobe_r * 1.5,
+                    Color::srgba(0.35, 0.80, 1.0, 0.75),
+                );
+                gizmos.circle(
+                    Isometry3d::new(tip, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                    lobe_r * 1.5,
+                    Color::srgba(0.80, 0.35, 1.0, 0.60),
+                );
+            }
+
+            // B. RELATIVISTIC PARTICLE STREAKS ORBITING NEAR ISCO (POST-BLOWOUT)
+            // After the hydrogen cocoon is blown away, the exposed supermassive black hole
+            // has almost nothing left to illuminate. Instead of a luminous accretion disk,
+            // we render individual high-speed particles racing in tight orbits near the
+            // Innermost Stable Circular Orbit (ISCO) at close to the speed of light.
+            //
+            // 24 particles in 3 orbital tiers (ISCO, mid, outer) with short comet-like
+            // tails that fade behind each particle, creating a sparse but dynamic effect.
+
+            let current_visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
+            let isco_r = (current_visual_r * 1.15).max(2.8); // Just outside the visible event horizon
+
+            // Particle orbital tiers: (orbit radius multiplier, particle count, angular speed, color)
+            let particle_tiers: [(f32, u32, f32, Color); 3] = [
+                // Inner tier: ISCO particles — fastest, brilliant white-cyan
+                (1.0, 10, 18.0, Color::srgba(0.85, 0.95, 1.0, 0.95)),
+                // Mid tier: slightly farther out, electric blue
+                (1.6, 8,  12.0, Color::srgba(0.30, 0.75, 1.0, 0.85)),
+                // Outer tier: widest orbit, dimmer cyan-violet
+                (2.4, 6,   7.5, Color::srgba(0.55, 0.40, 1.0, 0.70)),
+            ];
+
+            let tail_segments = 6u32;
+            let tail_dt = 0.012f32; // Time step between trail dots
+
+            for &(r_mult, count, omega, col) in &particle_tiers {
+                let orbit_r = isco_r * r_mult;
+
+                for p_idx in 0..count {
+                    // Each particle has a unique phase offset
+                    let phase_offset = (p_idx as f32) * (std::f32::consts::TAU / count as f32)
+                        + (p_idx as f32) * 1.618; // Golden ratio spread
+                    let y_wobble = ((p_idx as f32) * 0.7 + elapsed * 2.5).sin() * orbit_r * 0.04;
+
+                    // Draw the comet-like tail (fading segments behind the particle)
+                    let mut prev_pt: Option<Vec3> = None;
+                    for seg in (0..=tail_segments).rev() {
+                        let t = elapsed - (seg as f32) * tail_dt;
+                        let theta = phase_offset + t * omega;
+                        let pt = star_vec + Vec3::new(
+                            orbit_r * theta.cos(),
+                            y_wobble,
+                            orbit_r * theta.sin(),
+                        );
+
+                        if let Some(prev) = prev_pt {
+                            let fade = 1.0 - (seg as f32 / tail_segments as f32);
+                            let seg_col = Color::srgba(
+                                col.to_srgba().red,
+                                col.to_srgba().green,
+                                col.to_srgba().blue,
+                                col.to_srgba().alpha * fade * fade,
+                            );
+                            gizmos.line(prev, pt, seg_col);
+                        }
+                        prev_pt = Some(pt);
+                    }
+
+                    // Bright head particle (current position)
+                    let head_theta = phase_offset + elapsed * omega;
+                    let head_pt = star_vec + Vec3::new(
+                        orbit_r * head_theta.cos(),
+                        y_wobble,
+                        orbit_r * head_theta.sin(),
+                    );
+                    // Draw a tiny bright cross at the particle head
+                    let cross_size = 0.12f32;
+                    gizmos.line(
+                        head_pt - Vec3::X * cross_size,
+                        head_pt + Vec3::X * cross_size,
+                        Color::WHITE,
+                    );
+                    gizmos.line(
+                        head_pt - Vec3::Z * cross_size,
+                        head_pt + Vec3::Z * cross_size,
+                        Color::WHITE,
+                    );
+                }
+            }
+
+            // Faint ISCO reference ring — just a whisper of the innermost stable orbit
+            gizmos.circle(
+                Isometry3d::new(star_vec, disk_rot),
+                isco_r,
+                Color::srgba(0.40, 0.75, 1.0, 0.12),
+            );
+        }
+
+        // C. EXPANDING COCOON BLOWOUT SHOCKWAVE BLAST (HYDROGEN ENVELOPE DISPERSION)
+        if blowout_p > 0.001 && blowout_p < 1.0 {
+            let r_blast = (60.0 + blowout_p * 240.0).clamp(60.0, 300.0);
+            let blast_fade = (1.0 - blowout_p).clamp(0.0, 1.0);
+            gizmos.circle(
+                Isometry3d::new(
+                    star_vec,
+                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                ),
+                r_blast,
+                Color::srgba(1.0, 0.45, 0.20, 0.90 * blast_fade),
+            );
+            gizmos.circle(
+                Isometry3d::new(
+                    star_vec,
+                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                ),
+                r_blast * 0.97,
+                Color::srgba(1.0, 0.75, 0.30, 0.75 * blast_fade),
+            );
+            gizmos.circle(
+                Isometry3d::new(
+                    star_vec,
+                    Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                ),
+                r_blast,
+                Color::srgba(0.85, 0.25, 0.15, 0.50 * blast_fade),
+            );
+            gizmos.sphere(
+                Isometry3d::from_translation(star_vec),
+                r_blast,
+                Color::srgba(0.70, 0.20, 0.10, 0.06 * blast_fade),
+            );
+        } else if star_body.body_type == BodyType::QuasiStar {
+            // Intact 60 AU Quasi-Star (JWST Little Red Dot): Extreme Luminosity & 2.5 MegaGauss Blandford-Znajek Magnetosphere
+            let envelope_r = 60.0f32;
+
+            // 1. Multi-tier Radiant Envelope Boundaries & Incandescent Photosphere Halos
+            for (dr, alpha, col) in [
+                (0.0f32, 0.70, Color::srgba(1.0, 0.28, 0.08, 0.70)),
+                (2.5f32, 0.45, Color::srgba(1.0, 0.48, 0.12, 0.45)),
+                (6.0f32, 0.25, Color::srgba(1.0, 0.70, 0.20, 0.25)),
+                (12.0f32, 0.12, Color::srgba(0.95, 0.85, 0.35, 0.12)),
+            ] {
+                let r = envelope_r + dr;
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    r,
+                    col,
+                );
+                gizmos.circle(
+                    Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                    r,
+                    col,
+                );
+                gizmos.sphere(
+                    Isometry3d::from_translation(star_vec),
+                    r,
+                    Color::srgba(col.to_srgba().red, col.to_srgba().green, col.to_srgba().blue, alpha * 0.08),
+                );
+            }
+
+            // 2. Towering Relativistic Magnetic Dipole Field Arches (Poloidal Magnetosphere)
+            // 8 great magnetic dipole loops revolving with the black hole star's rotation
+            let mag_spin = Quat::from_rotation_y(elapsed * 0.25) * Quat::from_rotation_x(0.22);
+            for i in 0..8 {
+                let phi = (i as f32) * (std::f32::consts::PI / 4.0);
+                let r0 = 95.0 + ((i % 3) as f32) * 18.0; // Arch apex at 95 - 131 AU
+                let mut prev_pt: Option<Vec3> = None;
+                let n_pts = 28;
+
+                for s in 0..=n_pts {
+                    let theta = 0.38 + (std::f32::consts::PI - 0.76) * (s as f32 / n_pts as f32);
+                    let r_dipole = r0 * theta.sin().powi(2);
+                    if r_dipole >= envelope_r * 0.95 {
+                        let local_p = Vec3::new(
+                            r_dipole * theta.sin() * phi.cos(),
+                            r_dipole * theta.cos(),
+                            r_dipole * theta.sin() * phi.sin(),
+                        );
+                        let world_p = star_vec + mag_spin * local_p;
+                        if let Some(p_prev) = prev_pt {
+                            let line_col = if i % 2 == 0 {
+                                Color::srgba(0.25, 0.88, 1.0, 0.75) // Electric Cyan Synchrotron
+                            } else {
+                                Color::srgba(1.0, 0.75, 0.25, 0.70) // Solar Gold
+                            };
+                            gizmos.line(p_prev, world_p, line_col);
+                        }
+                        prev_pt = Some(world_p);
+                    }
+                }
+            }
+
+            // 3. Toroidal Magnetic Confinement Belts (Twisting Alfvén Flux Ropes)
+            for (y_lat, belt_r, wave_speed) in [
+                (0.0f32, envelope_r + 1.8, 4.0f32),
+                (22.0f32, envelope_r * 0.92, -3.5f32),
+                (-22.0f32, envelope_r * 0.92, 3.5f32),
+                (38.0f32, envelope_r * 0.75, -5.0f32),
+                (-38.0f32, envelope_r * 0.75, 5.0f32),
+            ] {
+                let n_seg = 48;
+                let d_theta = std::f32::consts::TAU / (n_seg as f32);
+                for k in 0..n_seg {
+                    let th1 = (k as f32) * d_theta;
+                    let th2 = ((k + 1) as f32) * d_theta;
+                    let wave1 = (th1 * 8.0 + elapsed * wave_speed).sin() * 1.6;
+                    let wave2 = (th2 * 8.0 + elapsed * wave_speed).sin() * 1.6;
+                    let r1 = belt_r + wave1;
+                    let r2 = belt_r + wave2;
+
+                    let p1 = star_vec + Vec3::new(r1 * th1.cos(), y_lat, r1 * th1.sin());
+                    let p2 = star_vec + Vec3::new(r2 * th2.cos(), y_lat, r2 * th2.sin());
+                    gizmos.line(p1, p2, Color::srgba(0.85, 0.35, 1.0, 0.65)); // Royal Violet Alfvén Wave
+                }
+            }
+
+            // 4. Pulsating Synchrotron Auroral Rings (North & South Magnetic Caps)
+            for sign in [1.0f32, -1.0f32] {
+                let cap_center = star_vec + mag_spin * Vec3::new(0.0, sign * 58.5, 0.0);
+                let cap_rot = mag_spin * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+                let auroral_r = 18.0 + (elapsed * 3.0 + sign).sin() * 2.0;
+
+                gizmos.circle(
+                    Isometry3d::new(cap_center, cap_rot),
+                    auroral_r,
+                    Color::srgba(0.20, 0.95, 1.0, 0.90), // Electric Cyan Synchrotron Oval
+                );
+                gizmos.circle(
+                    Isometry3d::new(cap_center, cap_rot),
+                    auroral_r * 1.25,
+                    Color::srgba(0.35, 1.0, 0.50, 0.75), // Aurora Emerald Glow
+                );
+            }
+
+            // 5. Giant Magnetic Plasma Prominences (Coronal Plasma Ejections)
+            for p in 0..6 {
+                let base_ang = (p as f32) * (std::f32::consts::PI / 3.0) + elapsed * 0.08;
+                let prom_height = 14.0 + ((p * 7) as f32 % 5.0) * 3.5;
+                let apex_vec = Vec3::new(base_ang.cos(), 0.35 * ((p % 2) as f32 * 2.0 - 1.0), base_ang.sin()).normalize();
+                let prom_apex = star_vec + apex_vec * (envelope_r + prom_height);
+
+                let foot1_ang = base_ang - 0.18;
+                let foot2_ang = base_ang + 0.18;
+                let foot1 = star_vec + Vec3::new(foot1_ang.cos(), 0.0, foot1_ang.sin()) * envelope_r;
+                let foot2 = star_vec + Vec3::new(foot2_ang.cos(), 0.0, foot2_ang.sin()) * envelope_r;
+
+                // Parabolic prominence loop
+                let mut prev = foot1;
+                for step in 1..=12 {
+                    let t = step as f32 / 12.0;
+                    let base_interp = foot1.lerp(foot2, t);
+                    let loop_pt = base_interp + (prom_apex - star_vec) * (4.0 * t * (1.0 - t));
+                    gizmos.line(prev, loop_pt, Color::srgba(1.0, 0.40, 0.10, 0.80));
+                    prev = loop_pt;
+                }
+            }
+        }
+
+        // =========================================================================
+        // D. GENERAL RELATIVISTIC GRAVITATIONAL LENSING & SPATIAL WARPING SHELLS
+        // =========================================================================
+        // Because the black hole / Quasi-Star has an enormous mass (400,000 - 450,000 M_sun),
+        // it bends and warps the space around it into distinct General Relativistic caustics:
+        // 1. Photon Sphere Caustic Ring: Luminous ring at r ~ 1.5 R_horizon where light orbits
+        // 2. Concentric Einstein Deflection Rings: 5 tiered gravitational caustic shells
+        // 3. Spacetime Geodesic Funnel Arcs: Curving field lines tracing spatial metric curvature
+        //
+        // Dynamic scaling:
+        // - Intact Quasi-Star: Visual radius is 60 AU, lensing caustics span 65 - 180 AU.
+        // - Blown out Black Hole: Visual radius is ~2.5 AU, lensing caustics focus tightly at 3.75 - 20 AU.
+        // - During blowout: Shells smoothly contract in lockstep with the event horizon.
+
+        let current_visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
+        let base_lens_r = (current_visual_r * 1.50).max(3.6); // Photon sphere caustic radius
+
+        // 1. Primary Photon Sphere Caustic Ring & Concentric Gravitational Deflection Shells
+        for (ring_scale, alpha_mul, col) in [
+            (1.00f32, 0.95f32, Color::srgba(1.0, 0.96, 0.88, 0.95)), // Blinding white-gold photon caustic
+            (1.04f32, 0.70f32, Color::srgba(0.35, 0.85, 1.0, 0.70)),  // Blueshifted inner relativistic edge
+            (1.18f32, 0.45f32, Color::srgba(1.0, 0.65, 0.20, 0.45)),  // Gravitationally redshifted amber
+            (1.45f32, 0.25f32, Color::srgba(0.85, 0.25, 0.50, 0.25)), // Secondary Einstein ring
+            (2.20f32, 0.12f32, Color::srgba(0.50, 0.20, 0.85, 0.12)), // Tertiary deflection caustic
+        ] {
+            let r_ring = base_lens_r * ring_scale;
+            // Horizontal plane ring
+            gizmos.circle(
+                Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                r_ring,
+                col,
+            );
+            // Cross-axial Einstein ring (orthogonal plane highlighting 3D gravitational sphere)
+            gizmos.circle(
+                Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                r_ring,
+                Color::srgba(col.to_srgba().red, col.to_srgba().green, col.to_srgba().blue, alpha_mul * 0.35),
+            );
+            // Subtle 3D gravitational distortion sphere
+            if ring_scale < 1.3 {
+                gizmos.sphere(
+                    Isometry3d::from_translation(star_vec),
+                    r_ring,
+                    Color::srgba(col.to_srgba().red, col.to_srgba().green, col.to_srgba().blue, alpha_mul * 0.04),
+                );
+            }
+        }
+
+        // 2. Spacetime Curvature Geodesic Funnel Arcs (Kerr Metric Frame-Dragging)
+        // 12 spiral arcs showing the dragging and funneling of space into the gravitational singularity
+        let n_geodesics = 12u32;
+        let spin_rot = Quat::from_rotation_y(elapsed * 0.35);
+        for g_idx in 0..n_geodesics {
+            let base_angle = (g_idx as f32) * (std::f32::consts::TAU / n_geodesics as f32);
+            let mut prev_geo: Option<Vec3> = None;
+            let n_steps = 24;
+
+            for step in 0..=n_steps {
+                let frac = step as f32 / n_steps as f32;
+                // Radius from outer warped space (3.5x photon sphere) down to event horizon
+                let r_geo = base_lens_r * (3.5 - frac * 2.3);
+                // Relativistic frame-dragging spiral angle: logarithmic inward wrap
+                let theta_geo = base_angle + frac * 2.8 + (1.0 - frac) * 0.5;
+                // Subtle vertical funneling (embedding diagram / gravitational potential well)
+                let y_funnel = -((frac * 1.8).powi(2)) * (base_lens_r * 0.08);
+
+                let local_pt = Vec3::new(
+                    r_geo * theta_geo.cos(),
+                    y_funnel,
+                    r_geo * theta_geo.sin(),
+                );
+                let world_pt = star_vec + spin_rot * local_pt;
+
+                if let Some(prev) = prev_geo {
+                    let fade = (1.0 - frac * 0.75) * (0.35 + (g_idx % 2) as f32 * 0.25);
+                    let geo_col = if is_blown_out {
+                        Color::srgba(0.40, 0.80, 1.0, 0.45 * fade) // Electric relativistic cyan
+                    } else {
+                        Color::srgba(1.0, 0.45, 0.15, 0.40 * fade) // Primordial cosmic dawn amber
+                    };
+                    gizmos.line(prev, world_pt, geo_col);
+                }
+                prev_geo = Some(world_pt);
+            }
+        }
     } else if star_body.body_type == BodyType::BlackHole {
-        // Black Hole: Relativistic Accretion Disk & Polar Jets
+        // Standard stellar-mass Black Hole: Relativistic Accretion Disk & Polar Jets
         let disk_inner = 0.08f32;
         let disk_outer = 0.55f32;
         let disk_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -279,7 +738,7 @@ pub fn draw_orbital_effects_and_gizmos(
         );
 
         // Collimated Relativistic Polar Jets
-        let jet_len = 5.0f32;
+        let jet_len = 12.0f32;
         let jet_color = Color::srgba(0.4, 0.85, 1.0, 0.75);
         gizmos.line(star_vec, star_vec + Vec3::Y * jet_len, jet_color);
         gizmos.line(star_vec, star_vec - Vec3::Y * jet_len, jet_color);
@@ -288,7 +747,7 @@ pub fn draw_orbital_effects_and_gizmos(
                 star_vec + Vec3::Y * jet_len,
                 Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
             ),
-            0.35,
+            0.65,
             jet_color,
         );
         gizmos.circle(
@@ -296,7 +755,7 @@ pub fn draw_orbital_effects_and_gizmos(
                 star_vec - Vec3::Y * jet_len,
                 Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
             ),
-            0.35,
+            0.65,
             jet_color,
         );
     }
@@ -401,6 +860,7 @@ pub fn draw_orbital_effects_and_gizmos(
             body.body_type,
             BodyType::Protoplanet
                 | BodyType::TerrestrialPlanet
+                | BodyType::SuperEarth
                 | BodyType::GasGiant
                 | BodyType::IceGiant
         );
@@ -495,6 +955,7 @@ pub fn draw_orbital_effects_and_gizmos(
                             match body.body_type {
                                 BodyType::GasGiant => Color::srgba(0.9, 0.6, 0.2, 0.5),
                                 BodyType::IceGiant => Color::srgba(0.3, 0.8, 0.9, 0.5),
+                                BodyType::SuperEarth => Color::srgba(0.25, 0.85, 0.75, 0.5),
                                 BodyType::TerrestrialPlanet => Color::srgba(0.4, 0.9, 0.4, 0.5),
                                 _ => Color::srgba(0.6, 0.6, 0.6, 0.3),
                             }

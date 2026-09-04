@@ -75,9 +75,19 @@ pub fn update_thermodynamics(
         opt_em,
     ) in star_query.iter_mut()
     {
+        // Quasi-Stars (JWST Little Red Dot) and Black Holes are exotic supermassive objects
+        // governed by super-Eddington accretion physics and envelope mechanics in `accretion.rs`.
+        // They must NOT undergo standard main-sequence contraction, hydrogen exhaustion, or radius clamping to 0.20 AU!
+        if body.body_type == BodyType::QuasiStar || body.body_type == BodyType::BlackHole {
+            continue;
+        }
+
         if !ignition.is_ignited {
-            // Core temperature heats up via gravitational Kelvin-Helmholtz contraction
-            let heating_rate_per_yr = 1.0e4 * mass.0;
+            // Core temperature heats up via gravitational Kelvin-Helmholtz contraction.
+            // Calibrated so a solar-mass protostar auto-ignites at T ~ 30 yr, allowing
+            // Earth and terrestrial embryos adequate time to sweep their feeding zone and grow to full maturity
+            // before solar radiation pressure pushes remaining particles out to the gas giants.
+            let heating_rate_per_yr = 2.0e5 * mass.0;
             ignition.core_temperature += heating_rate_per_yr * dt_yr;
 
             let ignition_threshold = 1.0e7; // 10 Million Kelvin (Hydrogen Fusion)
@@ -99,10 +109,11 @@ pub fn update_thermodynamics(
                 SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ignition.fusion_fraction as f64));
             radius.0 = target_radius;
 
-            if ignition.core_temperature >= ignition_threshold {
+            if ignition.core_temperature >= ignition_threshold || sim_time.elapsed_years >= 30.0 {
                 ignition.is_ignited = true;
                 ignition.fusion_fraction = 1.0;
-                ignition.shockwave_radius = 1.6;
+                ignition.core_temperature = ignition.core_temperature.max(ignition_threshold);
+                ignition.shockwave_radius = 0.5;
 
                 // Classify star based on initial mass
                 let (assigned_type, name_str) = if mass.0 < 0.08 {
@@ -153,8 +164,9 @@ pub fn update_thermodynamics(
                 });
             }
         } else {
-            let blast_speed = 3.5;
-            ignition.shockwave_radius += blast_speed * dt_yr;
+            // Radiation pressure shockwave expands outward, pushing volatile gas into the giant zone
+            let blast_speed = 0.65;
+            ignition.shockwave_radius = (ignition.shockwave_radius + blast_speed * dt_yr).min(30.0);
             let time_decay = (1.0 - (sim_time.elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
             config.gas_density_scale = time_decay;
         }
@@ -229,7 +241,11 @@ pub fn update_thermodynamics(
                     temp.0 += (target_temp - temp.0) * k;
                     radius.0 += (target_rad - radius.0) * k;
 
-                    let fuel_burn_rate = (1.0e-5 * mass.0.powf(2.5)).max(1e-7) as f32;
+                    // Astrophysical Main-Sequence Lifetime: tau_MS = 10^10 yr * (M / M_sun)^(-2.5)
+                    // Sun lives ~10 Billion years (10 Gyr).
+                    // Massive stars (15 M_sun) live ~11.5 Myr. Red dwarfs (0.2 M_sun) live > 500 Gyr.
+                    let main_seq_lifetime_yr = (1.0e10 * (mass.0).powf(-2.5)).clamp(1.0e6, 1.0e13);
+                    let fuel_burn_rate = (1.0 / main_seq_lifetime_yr) as f32;
                     evo.hydrogen_core_fraction =
                         (evo.hydrogen_core_fraction - fuel_burn_rate * dt_yr as f32).max(0.0);
 
@@ -437,17 +453,20 @@ pub fn update_thermodynamics(
             let mut magnetic_field_gauss = 0.0f32;
             if let Some(ref mut diff) = opt_diff {
                 if diff.is_differentiated {
-                    if diff.core_temp_k > 1800.0 {
-                        let temp_factor = ((diff.core_temp_k - 1800.0) / 2000.0).clamp(0.0, 1.5);
+                    if diff.core_temp_k > 1200.0 {
+                        let temp_factor = ((diff.core_temp_k - 1200.0) / 2000.0).clamp(0.0, 1.5);
                         let spin_factor = (24.0 / period_hrs.max(1.0)).sqrt().clamp(0.2, 3.0);
                         let core_mass_frac = (diff.core_radius_au
                             / (diff.mantle_radius_au.max(1e-5)))
                         .powi(3)
                         .clamp(0.05, 0.60);
 
-                        let b_gauss =
-                            (0.35 * core_mass_frac.sqrt() * spin_factor * temp_factor.powf(0.33))
-                                .clamp(0.0, 5.0);
+                        let b_gauss = (0.35
+                            * (b_mass.0 / EARTH_MASS_SOLAR).sqrt().max(0.1)
+                            * core_mass_frac.sqrt()
+                            * spin_factor
+                            * temp_factor.powf(0.33))
+                        .clamp(0.0, 5.0);
 
                         diff.magnetic_field_gauss = b_gauss;
                         magnetic_field_gauss = b_gauss as f32;
@@ -459,12 +478,23 @@ pub fn update_thermodynamics(
                 }
             }
 
-            // C. Unshielded Solar Wind Atmospheric Stripping
-            if ignition.is_ignited && magnetic_field_gauss < 0.10 && r < 3.0 {
+            // C. Solar Wind Atmospheric Stripping (Shielded by Planetary Magnetic Field)
+            if ignition.is_ignited && r < 3.5 {
                 if let Some(ref mut vol) = opt_vol {
-                    let strip_rate = (0.0002 * (1.0 / (r * r)) * dt_yr) as f32;
-                    vol.atmospheric_pressure_bar =
-                        (vol.atmospheric_pressure_bar - strip_rate).max(0.0);
+                    if magnetic_field_gauss >= 0.12 {
+                        // Geodynamo magnetic shield deflects the solar wind, preserving the atmosphere!
+                    } else {
+                        // Unshielded stripping (e.g. Mercury, or Mars when its dynamo freezes)
+                        let unshielded_factor =
+                            (1.0 - (magnetic_field_gauss / 0.12)).clamp(0.0, 1.0);
+                        let strip_rate =
+                            (0.00015 * (1.0 / (r * r)) * unshielded_factor as f64 * dt_yr) as f32;
+                        vol.atmospheric_pressure_bar =
+                            (vol.atmospheric_pressure_bar - strip_rate).max(0.0);
+                        if vol.atmospheric_pressure_bar <= 0.001 {
+                            comp.gas_frac = (comp.gas_frac - (strip_rate * 0.0001) as f64).max(0.0);
+                        }
+                    }
                 }
             }
 
@@ -557,7 +587,7 @@ pub fn update_thermodynamics(
                 climate.climate_regime = climate_regime;
             } else if matches!(
                 b_body.body_type,
-                BodyType::TerrestrialPlanet | BodyType::Protoplanet
+                BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
             ) {
                 if let Ok(mut cmd) = commands.get_entity(body_ent) {
                     cmd.insert(PlanetaryClimate {
@@ -575,7 +605,7 @@ pub fn update_thermodynamics(
             // F. Biosphere Habitability & Life Colonization Engine
             if matches!(
                 b_body.body_type,
-                BodyType::TerrestrialPlanet | BodyType::Protoplanet
+                BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
             ) {
                 let temp_score =
                     (1.0 - ((surface_temp as f32 - 288.0) / 45.0).powi(2)).clamp(0.0, 1.0);

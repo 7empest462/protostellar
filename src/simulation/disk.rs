@@ -48,7 +48,7 @@ pub fn spawn_protoplanetary_disk(
     // 2. Spawn Major Protoplanetary Seeds across the active disk zones
     let major_seeds = [
         (
-            0.50,
+            0.40,
             0.06 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.40,
             "Proto-Mercury",
@@ -57,34 +57,34 @@ pub fn spawn_protoplanetary_disk(
             0.05,
         ),
         (
-            0.95,
-            0.55 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.85,
+            0.72,
+            0.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.80,
             "Proto-Venus",
             Composition::rocky(),
             BodyType::Protoplanet,
             0.01,
         ),
         (
-            1.50,
-            0.65 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.90,
+            1.00,
+            0.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.82,
             "Proto-Earth",
             Composition::rocky(),
             BodyType::Protoplanet,
-            0.02,
+            0.016,
         ),
         (
-            1.90,
-            0.12 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.50,
+            1.25,
+            0.10 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.48,
             "Theia Embryo",
             Composition::rocky(),
             BodyType::Protoplanet,
             0.04,
         ),
         (
-            2.60,
+            1.52,
             0.11 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.53,
             "Proto-Mars",
@@ -93,7 +93,7 @@ pub fn spawn_protoplanetary_disk(
             0.07,
         ),
         (
-            8.50,
+            5.20,
             3.50 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.50,
             "Proto-Jupiter",
@@ -102,7 +102,7 @@ pub fn spawn_protoplanetary_disk(
             0.03,
         ),
         (
-            11.50,
+            7.50,
             0.05 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.38,
             "Callisto Embryo",
@@ -111,7 +111,7 @@ pub fn spawn_protoplanetary_disk(
             0.02,
         ),
         (
-            15.50,
+            9.50,
             2.20 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.25,
             "Proto-Saturn",
@@ -120,7 +120,7 @@ pub fn spawn_protoplanetary_disk(
             0.04,
         ),
         (
-            20.50,
+            14.00,
             0.05 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.38,
             "Titan Embryo",
@@ -129,7 +129,7 @@ pub fn spawn_protoplanetary_disk(
             0.03,
         ),
         (
-            28.00,
+            19.20,
             1.20 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.05,
             "Proto-Uranus",
@@ -138,7 +138,7 @@ pub fn spawn_protoplanetary_disk(
             0.05,
         ),
         (
-            40.00,
+            30.00,
             1.20 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.05,
             "Proto-Neptune",
@@ -453,41 +453,60 @@ pub fn sample_disk_radius<R: rand::Rng + ?Sized>(
     rng: &mut R,
     disk_params: &DiskParameters,
 ) -> (f64, Composition) {
-    let roll: f64 = rng.random_range(0.0..1.0);
-
-    if roll < 0.25 {
-        // Zone 1: Terrestrial Rocky Zone (0.06 - 2.50 AU) - 25% of particles
-        let u = roll / 0.25;
-        let r_in_sq = disk_params.inner_radius_au * disk_params.inner_radius_au;
-        let r_out_sq = 2.50 * 2.50;
-        let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
-        let comp = if r < 0.60 {
-            Composition::metal_rich()
+    let is_massive = disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
+    if is_massive {
+        // Little Red Dot / Massive Circum-Nuclear Disk:
+        // Spans outside the 60 AU Quasi-Star cocoon, from 65 AU out to the visible outer disk radius (250 AU).
+        let r_in = (disk_params.inner_radius_au).max(65.0);
+        let r_out = (disk_params.outer_radius_au).max(r_in + 20.0);
+        let u: f64 = rng.random_range(0.0..1.0);
+        // Flared surface density profile: dN/dr ~ r^-0.5
+        let r = (r_in * r_in + u * (r_out * r_out - r_in * r_in)).sqrt();
+        let comp = if u < 0.65 {
+            Composition::pure_hydrogen()
+        } else if u < 0.90 {
+            Composition::solar_gas()
         } else {
-            Composition::rocky()
+            Composition::icy()
         };
         (r, comp)
-    } else if roll < 0.40 {
-        // Zone 2: Snowline Transition & Asteroid Belt (2.50 - 4.50 AU) - 15% of particles
-        let u = (roll - 0.25) / 0.15;
-        let r_in_sq = 2.50 * 2.50;
-        let r_out_sq = 4.50 * 4.50;
-        let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
-        (r, Composition::carbonaceous())
-    } else if roll < 0.85 {
-        // Zone 3: Giant Planet Accretion Reservoir (4.50 - 25.0 AU) - 45% of all disk mass!
-        let u = (roll - 0.40) / 0.45;
-        let r_in_sq = 4.50 * 4.50;
-        let r_out_sq = 25.0 * 25.0;
-        let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
-        (r, Composition::icy())
     } else {
-        // Zone 4: Outer Kuiper Belt (25.0 - 45.0 AU) - 15% of particles
-        let u = (roll - 0.85) / 0.15;
-        let r_in_sq = 25.0 * 25.0;
-        let r_out_sq = 45.0 * 45.0;
-        let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
-        (r, Composition::icy())
+        let roll: f64 = rng.random_range(0.0..1.0);
+
+        if roll < 0.25 {
+            // Zone 1: Terrestrial Rocky Zone (0.06 - 2.50 AU) - 25% of particles
+            let u = roll / 0.25;
+            let r_in_sq = disk_params.inner_radius_au * disk_params.inner_radius_au;
+            let r_out_sq = 2.50 * 2.50;
+            let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
+            let comp = if r < 0.60 {
+                Composition::metal_rich()
+            } else {
+                Composition::rocky()
+            };
+            (r, comp)
+        } else if roll < 0.40 {
+            // Zone 2: Snowline Transition & Asteroid Belt (2.50 - 4.50 AU) - 15% of particles
+            let u = (roll - 0.25) / 0.15;
+            let r_in_sq = 2.50 * 2.50;
+            let r_out_sq = 4.50 * 4.50;
+            let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
+            (r, Composition::carbonaceous())
+        } else if roll < 0.85 {
+            // Zone 3: Giant Planet Accretion Reservoir (4.50 - 25.0 AU) - 45% of all disk mass!
+            let u = (roll - 0.40) / 0.45;
+            let r_in_sq = 4.50 * 4.50;
+            let r_out_sq = 25.0 * 25.0;
+            let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
+            (r, Composition::icy())
+        } else {
+            // Zone 4: Outer Kuiper Belt (25.0 - 45.0 AU) - 15% of particles
+            let u = (roll - 0.85) / 0.15;
+            let r_in_sq = 25.0 * 25.0;
+            let r_out_sq = 45.0 * 45.0;
+            let r = (r_in_sq + u * (r_out_sq - r_in_sq)).sqrt();
+            (r, Composition::icy())
+        }
     }
 }
 
@@ -572,8 +591,8 @@ pub fn auto_spawn_planetesimals(
     //   t = 700k yr:  one every ~5,400 yr
     //   t = 1.4M yr:  one every ~14,800 yr
     //   t = 2.8M yr:  one every ~109,000 yr  (disk nearly exhausted)
-    let base_interval_yr = 600.0;
-    let tau_depletion = disk_params.gas_disk_lifetime_yr / 5.0;
+    let base_interval_yr = 350.0;
+    let tau_depletion = disk_params.gas_disk_lifetime_yr / 4.0;
     let spawn_interval = base_interval_yr * (t / tau_depletion).exp();
 
     let time_since_last = t - spawner.last_spawn_yr;
@@ -586,8 +605,41 @@ pub fn auto_spawn_planetesimals(
     use rand::prelude::*;
     use std::f64::consts::PI;
 
-    // Use the existing astrophysical disk profile for radial placement
-    let (r, comp) = sample_disk_radius(&mut rng, &disk_params);
+    let is_massive_disk =
+        disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
+
+    // Canonical zone seeding for the first 8 planetesimal births, guaranteed across any time warp speed
+    let (r, comp) = if (spawner.total_spawned as usize) < 8 {
+        if is_massive_disk {
+            // Little Red Dot / Massive Circum-Nuclear Disk:
+            // The central Quasi-Star cocoon is 60 AU! Spawn all bodies safely OUTSIDE the 60 AU cocoon
+            // in the rich gas cloud and particle ring (70 - 245 AU) so they orbit stably!
+            match spawner.total_spawned {
+                0 => (rng.random_range(72.0..88.0), Composition::solar_gas()), // Inner circum-nuclear giant seed
+                1 => (rng.random_range(92.0..112.0), Composition::pure_hydrogen()), // Dense hydrogen cloudlet seed
+                2 => (rng.random_range(118.0..142.0), Composition::solar_gas()), // Circum-nuclear embryo
+                3 => (rng.random_range(148.0..178.0), Composition::pure_hydrogen()), // Pop-III stellar accretion seed
+                4 => (rng.random_range(185.0..215.0), Composition::solar_gas()), // Outer circum-nuclear giant core
+                5 => (rng.random_range(220.0..245.0), Composition::pure_hydrogen()), // Outer cloudlet
+                6 => (rng.random_range(80.0..130.0), Composition::icy()), // Rocky/icy embryo in particle ring
+                _ => (rng.random_range(140.0..220.0), Composition::solar_gas()), // Secondary stellar companion seed
+            }
+        } else {
+            // Hayashi Solar Nebula: Canonical solar system niches (0.38 - 45 AU)
+            match spawner.total_spawned {
+                0 => (rng.random_range(0.38..0.72), Composition::rocky()), // Inner Terrestrial (Mercury/Venus)
+                1 => (rng.random_range(0.95..1.52), Composition::rocky()), // Habitable Zone (Earth/Mars)
+                2 => (rng.random_range(2.4..3.6), Composition::carbonaceous()), // Asteroid Belt Chondrites
+                3 => (rng.random_range(5.0..6.2), Composition::icy()), // Jovian Gas Giant Core (Jupiter)
+                4 => (rng.random_range(8.8..10.5), Composition::icy()), // Ringed Gas Giant Core (Saturn)
+                5 => (rng.random_range(18.0..22.0), Composition::icy()), // Ice Giant Core (Uranus)
+                6 => (rng.random_range(28.0..32.0), Composition::icy()), // Outer Ice Giant Core (Neptune)
+                _ => (rng.random_range(36.0..45.0), Composition::icy()), // Kuiper Belt Object
+            }
+        }
+    } else {
+        sample_disk_radius(&mut rng, &disk_params)
+    };
 
     // Random azimuthal angle for orbital placement
     let phi: f64 = rng.random_range(0.0..2.0 * PI);
@@ -604,10 +656,21 @@ pub fn auto_spawn_planetesimals(
     let v_mag = v_k * ecc_kick;
     let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
 
-    // Bimodal mass distribution: 45% substantive Protoplanets, 55% Planetesimals
-    let is_protoplanet: bool = rng.random_bool(0.45);
+    // Bimodal mass distribution: canonical giant cores start with 0.06 - 0.25 M_earth, terrestrial embryos 0.02 - 0.10 M_earth
+    let is_protoplanet: bool = if (spawner.total_spawned as usize) < 8 {
+        true
+    } else {
+        rng.random_bool(0.45)
+    };
     let log_mass_earth: f64 = if is_protoplanet {
-        rng.random_range(-2.0..-0.8) // 0.01 to 0.16 Earth masses
+        if is_massive_disk {
+            // Massive circum-nuclear disk seeds: 1.0 to 50.0 Earth masses (giant planet & stellar seeds)
+            rng.random_range(0.0..1.7)
+        } else if r > disk_params.snow_line_au {
+            rng.random_range(-1.2..-0.6) // 0.06 to 0.25 Earth masses for giant cores
+        } else {
+            rng.random_range(-1.7..-1.0) // 0.02 to 0.10 Earth masses for rocky embryos
+        }
     } else {
         rng.random_range(-3.5..-2.1) // 0.0003 to 0.008 Earth masses
     };
@@ -671,7 +734,7 @@ pub fn auto_spawn_planetesimals(
         spin,
     ));
 
-    spawner.last_spawn_yr = t;
+    spawner.last_spawn_yr = (spawner.last_spawn_yr + spawn_interval).min(t);
     spawner.total_spawned += 1;
 }
 
@@ -710,4 +773,92 @@ pub fn dissipate_gas_disk(
     } else {
         config.active_particles = config.target_particle_count as u32;
     }
+}
+
+/// Delayed spawner for Proto-Earth.
+///
+/// Prevents early explosive runaway accretion by holding Proto-Earth until
+/// the central star ignites and begins radiation clearing (~15 years into the simulation).
+/// When elapsed time passes the threshold, Proto-Earth emerges in its canonical 1.00 AU orbit
+/// as an oligarchic embryo (~0.55 M_earth) ready for the late giant impact phase.
+pub fn auto_spawn_delayed_proto_earth(
+    mut spawned: Local<bool>,
+    mut commands: Commands,
+    sim_time: Res<SimTime>,
+    time_warp: Res<TimeWarp>,
+    disk_params: Res<DiskParameters>,
+    query: Query<&CelestialBody>,
+) {
+    if *spawned {
+        return;
+    }
+
+    // If Proto-Earth or Earth already exists, do not spawn another
+    let exists = query.iter().any(|b| {
+        b.name == "Proto-Earth"
+            || b.name == "Earth"
+            || b.name.contains("Proto-Earth")
+            || b.name.contains("1AU")
+            || b.name.contains("Earth")
+    });
+    if exists {
+        *spawned = true;
+        return;
+    }
+
+    if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+
+    // Delay spawning until T >= 15.0 years (after protostellar ignition and initial clearing)
+    if sim_time.elapsed_years < 15.0 {
+        return;
+    }
+
+    *spawned = true;
+
+    // Spawn Proto-Earth in its canonical 1.00 AU orbit
+    let r_au = 1.00;
+    let mass_s = 0.55 * EARTH_MASS_SOLAR;
+    let rad_au = EARTH_RADIUS_AU * 0.85;
+    let comp = Composition::rocky();
+    let v_circ = (G_ASTRO * disk_params.central_star_mass / r_au).sqrt();
+    let pos = DVec3::new(r_au, 0.0, 0.0);
+    let vel = DVec3::new(0.0, 0.0, v_circ);
+
+    let mut diff = InternalDifferentiation::default();
+    diff.recalculate(mass_s, rad_au, &comp);
+
+    let temp_k = disk_params.reference_temp_1au;
+
+    commands.spawn((
+        SimPosition(pos),
+        SimVelocity(vel),
+        SimAcceleration(DVec3::ZERO),
+        Mass(mass_s),
+        Radius(rad_au),
+        Temperature(temp_k),
+        comp,
+        diff,
+        CelestialBody {
+            name: "Proto-Earth".to_string(),
+            body_type: BodyType::Protoplanet,
+        },
+        VolatileInventory {
+            delivered_water_m_earth: 0.00005,
+            cometary_impact_count: 0,
+            ocean_coverage_frac: 0.05,
+            atmospheric_pressure_bar: 0.20,
+        },
+        SpinState {
+            spin_vector: DVec3::new(0.0, 1e-12, 0.0),
+            rotation_period_hours: 24.0,
+            axial_tilt_degrees: 0.0,
+        },
+    ));
+
+    info!(
+        "🌍 Proto-Earth spawned at 1.00 AU at T + {:.1} yr into cleared circumstellar disk.",
+        sim_time.elapsed_years
+    );
 }

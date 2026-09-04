@@ -15,9 +15,12 @@ pub fn handle_player_tools(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
     disk_params: Res<DiskParameters>,
+    mut config: ResMut<SimulationConfig>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
+    mut toast: ResMut<crate::game::ui::NotificationToast>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut selected_query: Query<
         (
@@ -32,6 +35,7 @@ pub fn handle_player_tools(
             Option<&mut InternalDifferentiation>,
             Option<&mut Transform>,
             Option<&mut IgnitionState>,
+            Option<&mut BlackHoleStarState>,
         ),
         Without<PanOrbitCamera>,
     >,
@@ -39,26 +43,38 @@ pub fn handle_player_tools(
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
 
+    // Hotkey [P]: Toggle Planet Builder Panel
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        builder_state.is_open = !builder_state.is_open;
+        toast.message = if builder_state.is_open {
+            "🛠️ Planet Builder & Spawner Opened [P]".to_string()
+        } else {
+            "🛠️ Planet Builder Closed [P]".to_string()
+        };
+        toast.timer = 2.5;
+    }
+
     // 0. Tab Key: Deterministic Numerical Cycling Through All Celestial Bodies & The Star
     // Sorted strictly from the Central Star (0) outward by orbital distance (1..N)
     if keyboard.just_pressed(KeyCode::Tab) {
-        let mut star_entity: Option<Entity> = None;
+        let mut stars: Vec<(Entity, f64)> = Vec::new();
         let mut planets: Vec<(Entity, f64)> = Vec::new();
 
         for (e, _, _, _, pos, _, _, body, ..) in selected_query.iter() {
             if body.body_type.is_star_or_remnant() {
-                star_entity = Some(e);
+                stars.push((e, pos.0.length()));
             } else {
                 planets.push((e, pos.0.length()));
             }
         }
 
-        // Sort planets from innermost to outermost
+        // Sort stars and planets from innermost to outermost
+        stars.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         planets.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut all_entities: Vec<Entity> = Vec::new();
-        if let Some(star) = star_entity {
-            all_entities.push(star);
+        for (s_ent, _) in stars {
+            all_entities.push(s_ent);
         }
         for (p_ent, _) in planets {
             all_entities.push(p_ent);
@@ -94,7 +110,17 @@ pub fn handle_player_tools(
         }
     }
 
-    // 0A. Escape Key: Deselect Current Target
+    // 0A. Size Exaggeration Slider (Comma = decrease, Period = increase)
+    if keyboard.just_pressed(KeyCode::Comma) {
+        config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
+        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
+    }
+    if keyboard.just_pressed(KeyCode::Period) {
+        config.size_exaggeration = (config.size_exaggeration * 1.4).min(20.0);
+        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
+    }
+
+    // 0B. Escape Key: Deselect Current Target
     if keyboard.just_pressed(KeyCode::Escape) {
         player_state.selected_entity = None;
     }
@@ -139,6 +165,7 @@ pub fn handle_player_tools(
             mut diff_opt,
             mut trans_opt,
             mut ignition_opt,
+            mut opt_quasi,
         )) = selected_query.get_mut(selected_ent)
         {
             // A. Increase Mass (Key U or Key + / =)
@@ -328,6 +355,25 @@ pub fn handle_player_tools(
                     }
                 }
             }
+
+            // M. JWST Little Red Dot / Black Hole Star Experiments (Keys X, B)
+            if let Some(ref mut qs) = opt_quasi {
+                if keyboard.just_pressed(KeyCode::KeyX) {
+                    qs.toggle_super_eddington();
+                    let mode = if qs.super_eddington_active {
+                        "4.5x Eddington (Hyper-Accretion Active)"
+                    } else {
+                        "0.9x Eddington (Sub-Eddington Normal)"
+                    };
+                    toast.message = format!("⚡ Inflow Rate: {} on {}", mode, body.name);
+                    toast.timer = 4.5;
+                }
+                if keyboard.just_pressed(KeyCode::KeyB) {
+                    qs.trigger_blowout();
+                    toast.message = "💥 COCOON BLOWOUT: Radiation pressure shedding hydrogen envelope into Quasar!".to_string();
+                    toast.timer = 6.0;
+                }
+            }
         }
     }
 
@@ -391,5 +437,68 @@ pub fn handle_player_tools(
         scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
             crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby,
         ));
+    } else if keyboard.just_pressed(KeyCode::F6) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
+        ));
+    }
+}
+
+/// System that handles direct 3D plane click-to-place spawning when builder click mode is active.
+pub fn handle_planet_builder_click_spawn(
+    mut commands: Commands,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    window_query: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<PanOrbitCamera>>,
+    mut pan_orbit_query: Query<&mut PanOrbitCamera>,
+    mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
+    disk_params: Res<DiskParameters>,
+    mut player_state: ResMut<PlayerInteractionState>,
+    mut toast: ResMut<crate::game::ui::NotificationToast>,
+    ui_interaction_query: Query<&Interaction, With<Button>>,
+) {
+    if !builder_state.is_open || !builder_state.click_to_spawn_mode {
+        return;
+    }
+
+    // Don't spawn if cursor is clicking/hovering any UI button
+    let clicking_ui = ui_interaction_query
+        .iter()
+        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+    if clicking_ui {
+        return;
+    }
+
+    if mouse_buttons.just_pressed(MouseButton::Left) {
+        let Ok(window) = window_query.single() else {
+            return;
+        };
+        let Ok((camera, camera_transform)) = camera_query.single() else {
+            return;
+        };
+
+        if let Some(cursor_pos) = window.cursor_position() {
+            if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) {
+                // Intersect ray with the orbital disk plane Y = 0
+                if ray.direction.y.abs() > 1e-5 {
+                    let t = -ray.origin.y / ray.direction.y;
+                    if t > 0.0 {
+                        let hit = ray.origin + *ray.direction * t;
+                        let spawn_coords = DVec3::new(hit.x as f64, 0.0, hit.z as f64);
+                        crate::game::ui::spawn_custom_builder_world(
+                            &mut commands,
+                            &builder_state,
+                            disk_params.central_star_mass,
+                            Some(spawn_coords),
+                            &mut player_state,
+                            &mut pan_orbit_query,
+                            &mut toast,
+                        );
+                        // Exit click-to-spawn mode after placement
+                        builder_state.click_to_spawn_mode = false;
+                    }
+                }
+            }
+        }
     }
 }

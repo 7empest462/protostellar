@@ -128,7 +128,15 @@ pub fn setup_particle_swarm(
 
         let (br, bg, bb) = blackbody_to_srgb(temp as f64);
         let (cr, cg, cb) = comp.visual_color_tint();
-        let final_color = if comp.gas_frac > 0.35 {
+        let final_color = if comp.gas_frac > 0.95 && comp.metal_frac == 0.0 {
+            // Pristine Primordial Hydrogen Cocoon (JWST Little Red Dot): Deep ruby-crimson luminescence
+            [
+                (br * 0.40 + 0.95).clamp(0.6, 1.8),
+                (bg * 0.15 + 0.18).clamp(0.1, 0.45),
+                (bb * 0.15 + 0.12).clamp(0.05, 0.35),
+                1.0f32,
+            ]
+        } else if comp.gas_frac > 0.35 {
             // Primordial gaseous envelope: ethereal cyan-blue glow
             [
                 (br * 0.20 + 0.35).clamp(0.2, 1.2),
@@ -233,7 +241,16 @@ pub fn update_particle_swarm(
     mut config: ResMut<SimulationConfig>,
     disk_params: Res<DiskParameters>,
     player_state: Res<PlayerInteractionState>,
-    star_query: Query<(&SimPosition, &Mass, &IgnitionState), With<CentralStar>>,
+    star_query: Query<
+        (
+            &SimPosition,
+            &Mass,
+            &IgnitionState,
+            Option<&BlackHoleStarState>,
+            &CelestialBody,
+        ),
+        With<CentralStar>,
+    >,
     mut massive_query: Query<
         (
             Entity,
@@ -255,7 +272,7 @@ pub fn update_particle_swarm(
     let Some(mut data) = swarm else {
         return;
     };
-    let Ok((star_pos, star_mass, ignition)) = star_query.single() else {
+    let Ok((star_pos, star_mass, ignition, opt_bhs, star_body)) = star_query.single() else {
         return;
     };
 
@@ -265,9 +282,9 @@ pub fn update_particle_swarm(
         (Vec3::X, Vec3::Y)
     };
 
-    let massive_bodies: Vec<(Entity, DVec3, f64)> = massive_query
+    let massive_bodies: Vec<(Entity, DVec3, f64, BodyType)> = massive_query
         .iter()
-        .map(|(e, p, m, ..)| (e, p.0, m.0))
+        .map(|(e, p, m, _, _, body)| (e, p.0, m.0, body.body_type))
         .collect();
     let star_pos_f32 = [star_pos.x as f32, star_pos.y as f32, star_pos.z as f32];
     let star_m = star_mass.0 as f32;
@@ -276,6 +293,11 @@ pub fn update_particle_swarm(
     let enable_gas_drag = config.enable_gas_drag;
     let gas_scale = config.gas_density_scale;
     let p_render_scale = config.particle_render_scale;
+
+    // If the Quasi-Star cocoon has blown out or the central star is a Black Hole,
+    // the quasar's cataclysmic radiation pressure obliterates the entire protoplanetary disk.
+    let quasar_blown_out = opt_bhs.map(|s| s.is_blown_out).unwrap_or(false)
+        || star_body.body_type == BodyType::BlackHole;
 
     let tractor_pos_mass = if let (PlayerTool::GravitationalTractor, Some(pos)) =
         (player_state.active_tool, player_state.tractor_position)
@@ -345,38 +367,68 @@ pub fn update_particle_swarm(
                         let migration = (r * drag_rate * visual_flow_dt).min(r * 0.005);
                         r = (r - migration).max(disk_params.inner_radius_au as f32 * 0.8);
                     }
-                    if shockwave_r > 0.0 {
-                        // Solar radiation pressure sweeps and photo-evaporates dust close to the star
+                    if quasar_blown_out && r < 25.0 {
+                        // Clear ONLY the center yellow part (r < 25.0 AU)!
+                        // The rest of the outer disk (r >= 25.0 AU) stays intact,
+                        // allowing the player to watch outer planets and stars form.
+                        mass_chunk[i] = 0.0;
+                        pos_chunk[i] = [0.0, -5000.0, 0.0];
+                        col_chunk[i][3] = 0.0;
+                        continue;
+                    } else if shockwave_r > 0.0 {
+                        // Solar radiation pressure pushes volatile gas & dust outward towards the giant planet zone (r >= 3.5 - 8.5 AU)
                         if r < shockwave_r {
-                            if r < 1.6 || r < shockwave_r * 0.85 {
-                                mass_chunk[i] = 0.0;
-                                pos_chunk[i] = [0.0, -5000.0, 0.0];
-                                continue;
-                            } else {
-                                r = (shockwave_r + 0.15).min(disk_params.outer_radius_au as f32);
-                            }
-                        } else if (r - shockwave_r).abs() < 1.0 {
-                            let shock_boost = (1.0 - (r - shockwave_r).abs()) / 1.0;
-                            r += shock_boost * 1.5 * visual_flow_dt;
+                            let push_rate = 1.80 * visual_flow_dt;
+                            r = (r + push_rate).min(disk_params.outer_radius_au as f32);
+                        } else if (r - shockwave_r).abs() < 3.0 {
+                            // Dense swept-up accretion compression ring feeding Jupiter
+                            let shock_boost = (3.0 - (r - shockwave_r).abs()) / 3.0;
+                            r += shock_boost * 2.2 * visual_flow_dt;
                         }
                     }
 
                     let mut accreted = false;
-                    for &(p_ent, p_pos, p_m) in &massive_bodies {
+                    for &(p_ent, p_pos, p_m, p_type) in &massive_bodies {
+                        let is_major_body = p_m >= 0.01 * EARTH_MASS_SOLAR
+                            && !matches!(p_type, BodyType::Asteroid | BodyType::Comet);
+
                         let pdx = pos[0] - p_pos.x as f32;
                         let pdz = pos[2] - p_pos.z as f32;
                         let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
-                        let hill_r =
-                            p_pos.length() as f32 * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
 
-                        // Accelerating Runaway Gravitational Focusing Cross-Section
-                        // As planet mass increases, capture radius expands by (M / M_0)^0.30 (cross section grows as M^1.4)
-                        let m_growth_factor =
-                            ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32).powf(0.30);
-                        let physical_r =
-                            (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040);
-                        let acc_r =
-                            (physical_r + 0.90 * hill_r * m_growth_factor).clamp(physical_r, 0.90);
+                        let p_dist_au = p_pos.length() as f32;
+                        let is_inner_terrestrial = p_dist_au < 2.7;
+                        let warp_sweep = (1.0 + speed_mult.log10().max(0.0) * 0.30).min(2.2);
+                        let is_massive_disk = star_m > 10.0;
+                        let hill_r = p_dist_au * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
+                        let bondi_r = if is_massive_disk {
+                            (0.08 * (p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.05, 8.0)
+                        } else {
+                            0.0
+                        };
+                        let effective_grav_r = hill_r.max(bondi_r);
+                        let physical_r = if p_m >= 0.08 {
+                            (0.00465 * (p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
+                        } else {
+                            (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
+                        };
+
+                        let acc_r = if is_major_body {
+                            if is_inner_terrestrial && !is_massive_disk {
+                                // Inner terrestrial planets have an annular feeding zone (~0.12 - 0.15 AU) to sweep local planetesimals
+                                ((physical_r + 1.25 * effective_grav_r) * warp_sweep).clamp(physical_r, 0.250)
+                            } else {
+                                let m_growth_factor =
+                                    ((p_m / (0.10 * EARTH_MASS_SOLAR)).max(1.0) as f32).powf(0.30);
+                                let max_clamp = if is_massive_disk { 12.0 } else { 1.20 };
+                                ((physical_r + 0.90 * effective_grav_r * m_growth_factor) * warp_sweep)
+                                    .clamp(physical_r, max_clamp)
+                            }
+                        } else {
+                            // Minor asteroids / comets have only their tiny physical radius (e.g. ~50-500 km ~ 0.00005 AU)
+                            ((0.0003 * (p_m / (0.0001 * EARTH_MASS_SOLAR)).cbrt() as f32) * warp_sweep)
+                                .clamp(0.00005, 0.0015)
+                        };
 
                         if p_dist < acc_r {
                             chunk_accretions.push((p_ent, m as f64));
@@ -387,10 +439,14 @@ pub fn update_particle_swarm(
                         }
 
                         // Gentle gravitational resonance stirring when passing planets
-                        if p_dist < hill_r * 2.5 {
-                            let kick = (g_const * p_m as f32 / (p_dist * p_dist + 0.01))
-                                * visual_flow_dt.min(0.02);
-                            r += (pdx * kick * 0.04).clamp(-0.08, 0.08);
+                        if is_major_body {
+                            let hill_r = p_pos.length() as f32
+                                * ((p_m / (3.0 * star_m as f64)).cbrt() as f32);
+                            if p_dist < hill_r * 2.5 {
+                                let kick = (g_const * p_m as f32 / (p_dist * p_dist + 0.01))
+                                    * visual_flow_dt.min(0.02);
+                                r += (pdx * kick * 0.04).clamp(-0.08, 0.08);
+                            }
                         }
                     }
                     if accreted {
@@ -436,33 +492,92 @@ pub fn update_particle_swarm(
         *mass_gains.entry(ent).or_insert(0.0) += delta_m;
     }
 
-    for (ent, _pos, mut mass, mut radius, mut comp, mut body) in massive_query.iter_mut() {
+    for (ent, pos, mut mass, mut radius, mut comp, mut body) in massive_query.iter_mut() {
         if let Some(&gain) = mass_gains.get(&ent) {
-            if body.body_type.is_star_or_remnant() {
-                // Central Star accreted mass directly increases stellar mass
-                mass.0 += gain;
-            } else {
-                // Planets & Minor bodies: Accelerating Runaway accretion scaling
-                let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).max(0.1);
-                let runaway_mult = 1.0 + 0.45 * m_earth_ratio.powf(0.65);
-                mass.0 += gain * runaway_mult;
-
+            if matches!(body.body_type, BodyType::Asteroid | BodyType::Comet) {
+                // Minor asteroids only absorb small direct dust mass without runaway multiplier
+                mass.0 = (mass.0 + gain).min(0.0005 * EARTH_MASS_SOLAR);
                 let avg_density = comp.average_density();
                 radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI)).cbrt();
+            } else {
+                let r_au = pos.0.length();
+                let is_beyond_snowline = r_au >= 2.7;
+                let is_massive_disk = star_mass.0 > 10.0;
 
-                // Runaway classification & gas envelope collapse as planets grow
-                if mass.0 >= 8.0 * EARTH_MASS_SOLAR && comp.gas_frac < 0.40 {
-                    comp.gas_frac = (comp.gas_frac + 0.06).min(0.88);
-                    comp.ice_frac = (comp.ice_frac * 0.92).max(0.05);
-                    body.body_type = BodyType::GasGiant;
-                } else if mass.0 >= 2.5 * EARTH_MASS_SOLAR
-                    && matches!(
-                        body.body_type,
-                        BodyType::Protoplanet | BodyType::Planetesimal
-                    )
-                {
-                    body.body_type = BodyType::TerrestrialPlanet;
+                // Planets, Protoplanetary embryos, and Stars
+                let warp_gain_boost = 1.0 + (speed_mult.log10().max(0.0) * 0.45) as f64;
+                if !is_beyond_snowline && !is_massive_disk {
+                    // Terrestrial Feeding Zone Isolation Mass Limit (Solar Nebula):
+                    // Inside 2.7 AU, the total solid mass in a terrestrial feeding zone is physically limited (~1.0 - 1.05 M_earth).
+                    // Once a terrestrial embryo reaches the isolation mass, local dust is depleted.
+                    if mass.0 < 1.05 * EARTH_MASS_SOLAR {
+                        let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).clamp(0.1, 1.0);
+                        let runaway_mult = 1.0 + 0.35 * m_earth_ratio;
+                        mass.0 = (mass.0 + gain * runaway_mult * warp_gain_boost).min(1.02 * EARTH_MASS_SOLAR);
+                    }
+                } else {
+                    // Outer giant planet & stellar runaway accretion: soaking up pushed gas and dust from the disk
+                    let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).max(0.1);
+                    let runaway_mult = 1.0 + 0.65 * m_earth_ratio.powf(0.65);
+                    mass.0 += gain * runaway_mult * warp_gain_boost;
                 }
+
+                // Update physical radius based on whether it is a planet or star
+                let new_radius = if mass.0 >= 0.08 {
+                    // Main-sequence / Giant star radius: R ~ R_sun * (M / M_sun)^0.8
+                    (0.00465 * (mass.0 / 1.0).powf(0.8)).clamp(0.003, 10.0)
+                } else {
+                    let avg_density = comp.average_density();
+                    ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                        .cbrt()
+                        .max(EARTH_RADIUS_AU * 0.2)
+                };
+                radius.0 = new_radius;
+
+                // Dynamic promotion and classification as bodies grow
+                // Jovian gas envelope runaway accretion beyond the snow line
+                if is_beyond_snowline && mass.0 >= 6.0 * EARTH_MASS_SOLAR && comp.gas_frac < 0.40 {
+                    comp.gas_frac = (comp.gas_frac + 0.08).min(0.92);
+                    comp.ice_frac = (comp.ice_frac * 0.90).max(0.04);
+                }
+                if mass.0 >= 13.0 * JUPITER_MASS_SOLAR {
+                    comp.gas_frac = (comp.gas_frac + 0.15).min(0.99);
+                }
+
+                // Terrestrial planets and Super-Earths inside the snow line maintain thin secondary atmospheres
+                if !is_beyond_snowline && !is_massive_disk && (mass.0 >= 0.02 * EARTH_MASS_SOLAR) {
+                    comp.gas_frac = comp.gas_frac.clamp(0.015, 0.025);
+                }
+
+                // Centralized, physically and materially accurate classification
+                let updated_type = crate::simulation::components::classify_body_by_mass_and_comp(
+                    mass.0, &comp, false,
+                );
+                body.body_type = updated_type;
+
+                // Dynamic naming across the full spectrum from planetesimals to Pop-III stars
+                body.name = match updated_type {
+                    BodyType::Hypergiant => format!("Pop-III Hypergiant ({:.1} M☉)", mass.0),
+                    BodyType::BlueSupergiant => format!("Pop-III Blue Supergiant ({:.1} M☉)", mass.0),
+                    BodyType::BlueGiant => format!("Pop-III Blue Giant ({:.1} M☉)", mass.0),
+                    BodyType::YellowDwarf => format!("Pop-III Yellow Star ({:.2} M☉)", mass.0),
+                    BodyType::RedDwarf => format!("Red Dwarf ({:.2} M☉)", mass.0),
+                    BodyType::BrownDwarf => format!("Brown Dwarf ({:.1} M_J)", mass.0 / JUPITER_MASS_SOLAR),
+                    BodyType::GasGiant => {
+                        if mass.0 >= JUPITER_MASS_SOLAR {
+                            format!("Super-Jupiter ({:.1} M_J)", mass.0 / JUPITER_MASS_SOLAR)
+                        } else {
+                            format!("Planet-{:.0}AU (Gas Giant)", r_au)
+                        }
+                    }
+                    BodyType::IceGiant => format!("Planet-{:.0}AU (Ice Giant)", r_au),
+                    BodyType::SuperEarth => format!("Planet-{:.0}AU (Super-Earth)", r_au),
+                    BodyType::TerrestrialPlanet => format!("Planet-{:.0}AU (Terrestrial)", r_au),
+                    BodyType::Protoplanet => format!("Protoplanet-{:.0}AU", r_au),
+                    BodyType::Planetesimal => format!("Planetesimal-{:.0}AU", r_au),
+                    BodyType::Comet => format!("Comet-{:.0}AU", r_au * 10.0),
+                    _ => body.name.clone(),
+                };
             }
         }
     }
@@ -518,10 +633,11 @@ pub fn update_particle_swarm(
                         };
                         let zone_boost = (r_body / 1.0).powf(0.55).clamp(1.0, 4.5);
 
-                        // Physical accretion cross-section scaling with mass (cube root)
+                        // Physical accretion cross-section scaling with mass (cube root) and high time warp compensation
                         let mass_factor = (masses[idx_a] / b_mass).cbrt().clamp(1.0, 6.0);
+                        let warp_stick_boost = (1.0 + speed_mult.log10().max(0.0) * 0.22).min(1.8);
                         let r_acc =
-                            (0.012 * sticky_boost * zone_boost * mass_factor).clamp(0.005, 0.050);
+                            (0.012 * sticky_boost * zone_boost * mass_factor * warp_stick_boost).clamp(0.005, 0.080);
 
                         if dist_sq < r_acc * r_acc {
                             let vel_a = velocities[idx_a];
@@ -608,13 +724,23 @@ pub fn update_particle_swarm(
             active_count += 1;
         }
         if m >= promo_threshold && promotions.is_empty() {
+            let pos = positions[i];
+            let r_sq = pos[0] * pos[0] + pos[2] * pos[2];
+            let r = r_sq.sqrt();
+            let is_massive_disk = star_m > 10.0;
+            let min_r = if is_massive_disk { 65.0 } else { 0.15 };
+            if r < min_r || pos[1] < -1000.0 {
+                masses[i] = 0.0;
+                positions[i] = [0.0, -5000.0, 0.0];
+                continue;
+            }
+
             let m_f64 = m as f64;
             let avg_density = compositions[i].average_density();
             let rad_f64 = ((3.0 * m_f64 / avg_density) / (4.0 * PI))
                 .cbrt()
                 .max(EARTH_RADIUS_AU * 0.2);
 
-            let pos = positions[i];
             let vel = velocities[i];
             promotions.push((
                 DVec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64),
@@ -634,13 +760,18 @@ pub fn update_particle_swarm(
     // 4. Spawn ECS entities for promoted embryos (visuals and PlanetMaterial automatically handled by bodies.rs)
     for (pos, vel, mass, radius, comp) in promotions {
         let r_dist = pos.length();
-        let (body_type, name) = if r_dist < 4.5 {
-            (
-                BodyType::Asteroid,
-                format!("Asteroid-{:.0}AU", r_dist * 10.0),
-            )
-        } else {
-            (BodyType::Comet, format!("Comet-{:.0}AU", r_dist * 10.0))
+        let body_type =
+            crate::simulation::components::classify_body_by_mass_and_comp(mass, &comp, false);
+        let name = match body_type {
+            BodyType::BrownDwarf => format!("Brown Dwarf ({:.1} M_J)", mass / JUPITER_MASS_SOLAR),
+            BodyType::GasGiant => format!("Planet-{:.0}AU (Gas Giant)", r_dist),
+            BodyType::IceGiant => format!("Planet-{:.0}AU (Ice Giant)", r_dist),
+            BodyType::SuperEarth => format!("Planet-{:.0}AU (Super-Earth)", r_dist),
+            BodyType::TerrestrialPlanet => format!("Planet-{:.0}AU (Terrestrial)", r_dist),
+            BodyType::Protoplanet => format!("Protoplanet-{:.0}AU", r_dist),
+            BodyType::Planetesimal => format!("Planetesimal-{:.0}AU", r_dist),
+            BodyType::Comet => format!("Comet-{:.0}AU", r_dist * 10.0),
+            _ => format!("Asteroid-{:.0}AU", r_dist * 10.0),
         };
         let temp = (disk_params.reference_temp_1au) * (r_dist / 1.0).powf(-0.5);
 
@@ -651,6 +782,13 @@ pub fn update_particle_swarm(
         let initial_spin =
             (mass * radius * radius * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
         spin.update_from_spin(initial_spin, mass, radius);
+
+        let vol = VolatileInventory {
+            delivered_water_m_earth: 0.0,
+            ocean_coverage_frac: 0.0,
+            atmospheric_pressure_bar: if r_dist < 2.7 { 0.5 } else { 0.0 },
+            cometary_impact_count: 0,
+        };
 
         commands.spawn((
             CelestialBody { body_type, name },
@@ -665,6 +803,7 @@ pub fn update_particle_swarm(
             comp,
             diff,
             spin,
+            vol,
         ));
     }
 
@@ -675,10 +814,11 @@ pub fn update_particle_swarm(
         && active_count < config.active_particles
     {
         let missing = config.active_particles.saturating_sub(active_count);
-        let mut replenished = 0u32;
         let mut rng = rand::rng();
+        let mut replenished = 0u32;
         let star_mass_f64 = disk_params.central_star_mass;
-        let max_replenish = missing.min(128);
+        let replenish_scale = 1.0 + (speed_mult.log10().max(0.0) * 1.25);
+        let max_replenish = missing.min((128.0 * replenish_scale) as u32);
 
         for i in 0..n {
             if masses[i] <= 0.0 && replenished < max_replenish {

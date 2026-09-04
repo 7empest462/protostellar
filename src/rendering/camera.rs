@@ -46,7 +46,7 @@ impl Default for PanOrbitCamera {
             target_pitch: 0.62,
             target_entity: None,
             min_radius: 0.005,
-            max_radius: 450.0,
+            max_radius: 250_000.0,
             orbit_sensitivity: 0.005,
             zoom_sensitivity: 0.15,
             pan_sensitivity: 0.02,
@@ -66,8 +66,8 @@ pub fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            near: 0.001,
-            far: 1500.0,
+            near: 0.01,
+            far: 2_000_000.0,
             ..default()
         }),
         Transform::from_translation(translation).looking_at(pan_orbit.focus, Vec3::Y),
@@ -108,13 +108,12 @@ pub fn update_pan_orbit_camera(
 
     // Update dynamic minimum zoom radius when locked on a body
     if let Some(target_ent) = camera.target_entity {
-        if let Ok((_, pos, _, body, mass)) = targets_query.get(target_ent) {
+        if let Ok((_, pos, radius, _body, _mass)) = targets_query.get(target_ent) {
             let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             camera.target_focus = target_vec;
 
             // Frame the planet in full view right in front of the camera without clipping
-            let visual_radius = SimulationConfig::calc_render_radius(mass.0, body.body_type)
-                * config.body_render_scale;
+            let visual_radius = config.calc_visual_radius(radius.0);
             camera.min_radius = (visual_radius * 3.6).max(0.08);
         } else {
             camera.target_entity = None;
@@ -172,6 +171,7 @@ pub fn update_pan_orbit_camera(
 
             if let Some(hit_entity) = best_target {
                 player_state.selected_entity = Some(hit_entity);
+                camera.target_entity = Some(hit_entity);
             }
         }
     }

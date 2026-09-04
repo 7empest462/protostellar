@@ -147,10 +147,8 @@ pub fn process_accretion_and_collisions(
             let dist = r_rel.length();
 
             // Visual and Gravitational Hill Sphere Collision Cross-Section
-            let r_vis_1 =
-                (SimulationConfig::calc_render_radius(m1, type1) * config.body_render_scale) as f64;
-            let r_vis_2 =
-                (SimulationConfig::calc_render_radius(m2, type2) * config.body_render_scale) as f64;
+            let r_vis_1 = (SimulationConfig::calc_collision_radius(m1, type1) * 0.08) as f64;
+            let r_vis_2 = (SimulationConfig::calc_collision_radius(m2, type2) * 0.08) as f64;
 
             // Base contact radius relies strictly on visual rendering scales so they merge exactly when they touch on-screen
             let r_contact = (r_vis_1 + r_vis_2).max(rad1 + rad2);
@@ -594,10 +592,35 @@ pub fn process_accretion_and_collisions(
 
                         if matches!(
                             updated_type,
-                            BodyType::TerrestrialPlanet | BodyType::GasGiant | BodyType::IceGiant
-                        ) && !body.name.starts_with("Planet")
+                            BodyType::TerrestrialPlanet
+                                | BodyType::SuperEarth
+                                | BodyType::GasGiant
+                                | BodyType::IceGiant
+                                | BodyType::Protoplanet
+                                | BodyType::Planetesimal
+                        ) && (body.name.contains("Comet")
+                            || body.name.contains("Asteroid")
+                            || (!body.name.starts_with("Planet")
+                                && matches!(
+                                    updated_type,
+                                    BodyType::TerrestrialPlanet
+                                        | BodyType::SuperEarth
+                                        | BodyType::GasGiant
+                                        | BodyType::IceGiant
+                                )))
                         {
-                            body.name = format!("Planet ({:?})", updated_type);
+                            body.name = match updated_type {
+                                BodyType::TerrestrialPlanet => {
+                                    "Planet (Terrestrial World)".to_string()
+                                }
+                                BodyType::SuperEarth => "Planet (Super-Earth)".to_string(),
+                                BodyType::GasGiant => "Planet (Gas Giant)".to_string(),
+                                BodyType::IceGiant => "Planet (Ice Giant)".to_string(),
+                                BodyType::BrownDwarf => "Sub-Stellar Brown Dwarf".to_string(),
+                                BodyType::Protoplanet => "Protoplanet (Embryo)".to_string(),
+                                BodyType::Planetesimal => "Planetesimal".to_string(),
+                                _ => body.name.clone(),
+                            };
                         }
 
                         // Update internal core differentiation
@@ -770,6 +793,7 @@ pub fn direct_nebular_gas_accretion(
     time_warp: Res<TimeWarp>,
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
+    star_query: Query<&IgnitionState, With<CentralStar>>,
     mut bodies_query: Query<
         (
             Entity,
@@ -780,6 +804,8 @@ pub fn direct_nebular_gas_accretion(
             &mut CelestialBody,
             Option<&mut InternalDifferentiation>,
             Option<&mut SpinState>,
+            Option<&mut VolatileInventory>,
+            Option<&mut Temperature>,
         ),
         Without<CentralStar>,
     >,
@@ -793,36 +819,49 @@ pub fn direct_nebular_gas_accretion(
         return;
     }
 
+    let is_ignited = star_query
+        .iter()
+        .next()
+        .map(|ig| ig.is_ignited)
+        .unwrap_or(false);
+
     // Effective timestep scaled by warp
     let dt_yr = config.base_dt_yr * (time_warp.multiplier / 1.0).clamp(1.0, 50.0);
     let star_mass = disk_params.central_star_mass;
+    let is_massive_disk = star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 
-    for (_entity, mut mass, pos, mut rad, mut comp, mut body, opt_diff, opt_spin) in
+    for (_entity, mut mass, pos, mut rad, mut comp, mut body, opt_diff, opt_spin, mut opt_vol, opt_temp) in
         bodies_query.iter_mut()
     {
-        let r_au = pos
-            .0
-            .length()
-            .clamp(disk_params.inner_radius_au, disk_params.outer_radius_au);
+        let actual_r = pos.0.length();
+        // Strict boundary check: If a body is outside the gaseous disk, there is no ambient gas to accrete!
+        if actual_r > disk_params.outer_radius_au || actual_r < disk_params.inner_radius_au {
+            continue;
+        }
+        let r_au = actual_r;
         let m = mass.0;
 
         // 1. Zone-specific maximum mass and gas envelope saturation limits:
-        let (max_gas_mass, max_gas_frac, runaway_threshold_m_earth) = if r_au < 2.5 {
+        let (max_gas_mass, max_gas_frac, runaway_threshold_m_earth) = if is_massive_disk {
+            // Massive circum-nuclear disk / Little Red Dot:
+            // Bodies can grow from protoplanets to giant planets, brown dwarfs, and massive Pop-III stars!
+            (500.0, 1.0, 0.1) // Up to 500 Solar Masses, pure primordial gas, early runaway
+        } else if r_au < 2.7 {
             // Terrestrial Zone (Mercury, Venus, Earth, Mars):
-            // Thin to moderate atmosphere (1-3% gas fraction), capped at ~0.03 M_Earth of gas
-            (0.03 * EARTH_MASS_SOLAR, 0.035, 100.0) // Runaway disabled
+            // Thin secondary atmosphere (1-2.5% gas fraction), capped at ~0.025 M_Earth of gas
+            (0.025 * EARTH_MASS_SOLAR, 0.025, 100.0) // Runaway strictly disabled
         } else if r_au < 5.0 {
             // Asteroid Belt Zone (Ceres, Vesta):
-            // Trace volatile envelope (up to 4.5% gas fraction), capped at ~0.05 M_Earth of gas
-            (0.05 * EARTH_MASS_SOLAR, 0.045, 100.0) // Runaway disabled for small asteroid embryos
+            // Trace volatile envelope (up to 3.5% gas fraction), capped at ~0.04 M_Earth of gas
+            (0.04 * EARTH_MASS_SOLAR, 0.035, 100.0)
         } else if r_au < 12.0 {
             // Jupiter Zone:
-            // Massive gas giant runaway accretion up to 1.1 M_Jupiter (~350 M_Earth)
-            (JUPITER_MASS_SOLAR * 1.1, 0.92, 0.5) // Runaway enabled once core >= 0.5 M_Earth
+            // Massive gas giant runaway accretion up to 1.5 M_Jupiter (~480 M_Earth)
+            (JUPITER_MASS_SOLAR * 1.5, 0.94, 0.5) // Runaway enabled once core >= 0.5 M_Earth
         } else if r_au < 22.0 {
             // Saturn Zone:
-            // Gas giant runaway accretion up to 0.35 M_Jupiter (~110 M_Earth)
-            (JUPITER_MASS_SOLAR * 0.35, 0.85, 0.4)
+            // Gas giant runaway accretion up to 0.45 M_Jupiter (~140 M_Earth)
+            (JUPITER_MASS_SOLAR * 0.45, 0.88, 0.4)
         } else if r_au < 36.0 {
             // Uranus Zone (Ice Giant):
             // Capped at ~20 M_Earth (~15-22% gas envelope, dominated by ices/silicates)
@@ -832,26 +871,49 @@ pub fn direct_nebular_gas_accretion(
             // Capped at ~22 M_Earth (~15-22% gas envelope)
             (22.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
         } else {
-            // Kuiper Belt (Pluto / comets):
+            // Kuiper Belt (Pluto / comets in Solar Nebula):
             // Tenuous ice world atmosphere (< 2% gas)
             (0.02 * EARTH_MASS_SOLAR, 0.02, 100.0)
         };
 
-        if m >= max_gas_mass || comp.gas_frac >= max_gas_frac {
+        if m >= max_gas_mass {
+            continue;
+        }
+        // Only cap gas fraction for terrestrial worlds in the solar nebula to keep thin secondary atmospheres
+        if !is_massive_disk && r_au < 2.7 && comp.gas_frac >= max_gas_frac {
             continue;
         }
 
         // Local ambient gas disk density at orbital radius r
-        // Inside 3.5 AU (terrestrial zone), stellar wind and solar radiation clear most gas after ignition,
-        // leaving a ~5% residual level for primordial atmospheres.
-        let local_gas_density = if r_au < 3.5 {
-            1.2e-4 * (r_au / 1.0).powf(-1.50) * (gas_scale * 0.15 + 0.005)
+        let local_gas_density = if is_massive_disk {
+            // Dense primordial hydrogen cloudlet reservoir: 50,000 M_sun gas in a 250 AU cocoon
+            0.0025 * (disk_params.outer_radius_au / r_au).powf(0.5) * gas_scale
+        } else if r_au < 2.7 {
+            if is_ignited {
+                1.2e-4 * (r_au / 1.0).powf(-1.50) * (gas_scale * 0.05 + 0.001)
+            } else {
+                1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale
+            }
+        } else if r_au < 12.0 {
+            if is_ignited {
+                // Jupiter / Saturn zone soaks up pushed gas flux!
+                1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale * 2.5
+            } else {
+                1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale
+            }
         } else {
             1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale
         };
 
-        // Hill radius R_H = r * (M / 3 M_star)^(1/3)
+        // Gravitational capture radius:
+        // In massive circum-nuclear disks, Bondi-Hoyle accretion governs gas sweeping in addition to Hill shear
         let r_hill = r_au * (m / (3.0 * star_mass)).cbrt();
+        let r_bondi = if is_massive_disk {
+            (0.15 * (m / JUPITER_MASS_SOLAR).sqrt()).clamp(0.08, 15.0)
+        } else {
+            0.0
+        };
+        let r_capture = r_hill.max(r_bondi);
         let omega_k = (G_ASTRO * star_mass / (r_au * r_au * r_au)).sqrt();
 
         let m_earth = m / EARTH_MASS_SOLAR;
@@ -866,14 +928,14 @@ pub fn direct_nebular_gas_accretion(
         let gap_factor = (1.0 - (m / max_gas_mass)).clamp(0.02, 1.0);
         let c_gas = 180.0 * (config.accretion_rate_multiplier as f64 / 120.0);
         let d_mass_gas = (c_gas
-            * r_hill
-            * r_hill
+            * r_capture
+            * r_capture
             * local_gas_density
             * omega_k
             * dt_yr
             * gap_factor
             * runaway_boost)
-            .min(m * 0.015) // Max 1.5% mass growth per sub-step for numerical stability
+            .min(m * 0.05) // Max 5% mass growth per sub-step for numerical stability during active feeding
             .min(max_gas_mass - m);
 
         if d_mass_gas > 1e-16 {
@@ -883,22 +945,65 @@ pub fn direct_nebular_gas_accretion(
 
             // Merge pure primordial solar gas into the planet's bulk composition
             *comp = comp.mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas);
+            if !is_massive_disk && r_au < 2.7 {
+                comp.gas_frac = comp.gas_frac.clamp(0.005, 0.025);
+            }
 
-            // Recalculate physical radius with the new gaseous envelope
-            let density = comp.average_density();
-            let volume = new_mass / density;
-            let new_radius = ((3.0 * volume) / (4.0 * PI))
-                .cbrt()
-                .max(EARTH_RADIUS_AU * 0.2);
+            // Recalculate physical radius with the new gaseous envelope or stellar structure
+            let new_radius = if new_mass >= 0.08 {
+                // Main-sequence / Giant star radius: R ~ R_sun * (M / M_sun)^0.8
+                (0.00465 * (new_mass / 1.0).powf(0.8)).clamp(0.003, 10.0)
+            } else {
+                let density = comp.average_density();
+                let volume = new_mass / density;
+                ((3.0 * volume) / (4.0 * PI))
+                    .cbrt()
+                    .max(EARTH_RADIUS_AU * 0.2)
+            };
             rad.0 = new_radius;
 
-            // Dynamically upgrade body type based on gas & ice fraction
-            if comp.gas_frac > 0.35 && new_mass >= EARTH_MASS_SOLAR * 0.5 {
-                body.body_type = BodyType::GasGiant;
-            } else if (comp.ice_frac > 0.30 && comp.gas_frac > 0.10)
-                || (comp.ice_frac > 0.40 && new_mass >= EARTH_MASS_SOLAR * 0.4)
-            {
-                body.body_type = BodyType::IceGiant;
+            // Dynamically upgrade body type based on updated mass and composition
+            let updated_type = classify_body_by_mass_and_comp(new_mass, &comp, false);
+            body.body_type = updated_type;
+
+            // Dynamically update name to reflect current evolutionary stage
+            body.name = match updated_type {
+                BodyType::Hypergiant => format!("Pop-III Hypergiant ({:.1} M☉)", new_mass),
+                BodyType::BlueSupergiant => format!("Pop-III Blue Supergiant ({:.1} M☉)", new_mass),
+                BodyType::BlueGiant => format!("Pop-III Blue Giant ({:.1} M☉)", new_mass),
+                BodyType::YellowDwarf => format!("Pop-III Yellow Star ({:.2} M☉)", new_mass),
+                BodyType::RedDwarf => format!("Red Dwarf ({:.2} M☉)", new_mass),
+                BodyType::BrownDwarf => {
+                    format!("Brown Dwarf ({:.1} M_J)", new_mass / JUPITER_MASS_SOLAR)
+                }
+                BodyType::GasGiant => {
+                    if new_mass >= JUPITER_MASS_SOLAR {
+                        format!("Super-Jupiter ({:.1} M_J)", new_mass / JUPITER_MASS_SOLAR)
+                    } else {
+                        format!("Planet-{:.0}AU (Gas Giant)", r_au)
+                    }
+                }
+                BodyType::IceGiant => format!("Planet-{:.0}AU (Ice Giant)", r_au),
+                BodyType::SuperEarth => format!("Planet-{:.0}AU (Super-Earth)", r_au),
+                BodyType::TerrestrialPlanet => format!("Planet-{:.0}AU (Terrestrial)", r_au),
+                _ => body.name.clone(),
+            };
+
+            // Stellar surface heating for newborn stars
+            if let Some(mut temp) = opt_temp {
+                if new_mass >= 25.0 {
+                    temp.0 = 35_000.0;
+                } else if new_mass >= 8.0 {
+                    temp.0 = 20_000.0;
+                } else if new_mass >= 1.4 {
+                    temp.0 = 9_500.0;
+                } else if new_mass >= 0.5 {
+                    temp.0 = 5_800.0;
+                } else if new_mass >= 0.08 {
+                    temp.0 = 3_200.0;
+                } else if new_mass >= 13.0 * JUPITER_MASS_SOLAR {
+                    temp.0 = 1_800.0;
+                }
             }
 
             if let Some(mut diff) = opt_diff {
@@ -907,6 +1012,133 @@ pub fn direct_nebular_gas_accretion(
             if let Some(mut spin) = opt_spin {
                 let spin_vec = spin.spin_vector;
                 spin.update_from_spin(spin_vec, new_mass, new_radius);
+            }
+            if let Some(ref mut vol) = opt_vol {
+                let gas_growth = d_mass_gas / EARTH_MASS_SOLAR;
+                vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
+                    + (gas_growth * 400.0) as f32)
+                    .clamp(0.01, if r_au < 2.7 { 95.0 } else { 1000.0 });
+            }
+        }
+    }
+}
+
+/// Updates the internal dynamics, super-Eddington accretion, cocoon blowout,
+/// and tidal disruptions for a JWST Little Red Dot (Black Hole Star / Quasi-Star).
+pub fn update_black_hole_star_dynamics(
+    mut commands: Commands,
+    time_warp: Res<TimeWarp>,
+    sim_time: Res<SimTime>,
+    mut quasi_star_query: Query<(
+        Entity,
+        &mut BlackHoleStarState,
+        &mut Mass,
+        &mut Radius,
+        &mut Temperature,
+        &mut Luminosity,
+        &mut CelestialBody,
+        &SimPosition,
+    )>,
+    mut satellites_query: Query<
+        (
+            Entity,
+            &mut Mass,
+            &mut SimVelocity,
+            &SimPosition,
+            &Radius,
+            &CelestialBody,
+        ),
+        Without<BlackHoleStarState>,
+    >,
+) {
+    if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+
+    let dt = sim_time.current_dt_yr;
+    if dt <= 0.0 {
+        return;
+    }
+
+    for (_qs_ent, mut state, mut mass, mut radius, mut temp, mut lum, mut body, qs_pos) in
+        quasi_star_query.iter_mut()
+    {
+        // 1. Super-Eddington Inflow onto Central Black Hole Seed
+        if state.super_eddington_active && state.cocoon_mass_solar > 10.0 {
+            // Eddington accretion rate: dM/dt_Edd ≈ 2.2e-8 * M_BH M_sun/yr
+            let m_bh = state.black_hole_mass_solar;
+            let m_dot_edd = 2.2e-8 * m_bh;
+            let actual_rate = m_dot_edd * state.eddington_ratio;
+            let dm = (actual_rate * dt * 50.0).min(state.cocoon_mass_solar);
+
+            state.black_hole_mass_solar += dm;
+            state.cocoon_mass_solar -= dm;
+            state.accreted_envelope_mass += dm;
+
+            mass.0 = state.total_mass_solar();
+        }
+
+        // 2. Cocoon Blowout & Quasar Emergence
+        if state.is_blown_out {
+            state.blowout_progress = (state.blowout_progress + 0.45 * dt as f32).min(1.0);
+            // Relativistic laser beams propagate outward at the speed of light c (~63,241 AU/yr)
+            // Light never stops traveling across deep space unless the simulation is paused!
+            state.jet_travel_distance_au += crate::utils::constants::SPEED_OF_LIGHT_AU_YR * dt;
+            let p = state.blowout_progress as f64;
+
+            // Photosphere expands/disperses, then contracts to naked accretion disk
+            if p < 0.5 {
+                radius.0 = 60.0 * (1.0 + p * 2.0);
+                temp.0 = (3800.0 * (1.0 - p * 0.4)).max(1500.0);
+            } else {
+                let quasar_factor = (p - 0.5) * 2.0;
+                radius.0 = 60.0 * (1.0 - quasar_factor) + 8.0 * quasar_factor;
+                temp.0 = 3800.0 * (1.0 - quasar_factor) + 95000.0 * quasar_factor;
+                lum.0 = 1.2e7 * (1.0 - quasar_factor) + 1.5e10 * quasar_factor;
+
+                body.body_type = BodyType::BlackHole;
+                body.name = format!(
+                    "Supermassive Quasar ({:.0} M☉)",
+                    state.black_hole_mass_solar
+                );
+                state.super_eddington_active = true;
+            }
+        }
+
+        // 3. Tidal Disruption Events (TDE) & Aerodynamic Plunge for infalling bodies
+        let bh_m = state.black_hole_mass_solar;
+        let cocoon_r = radius.0;
+
+        for (sat_ent, sat_m, mut sat_vel, sat_pos, sat_rad, sat_body) in satellites_query.iter_mut()
+        {
+            let rel_pos = sat_pos.0 - qs_pos.0;
+            let dist = rel_pos.length();
+
+            // Gas drag inside the 60 AU dense hydrogen envelope
+            if dist < cocoon_r && !state.is_blown_out {
+                let v_dir = sat_vel.0.normalize_or_zero();
+                let drag = 0.08 * (1.0 - dist / cocoon_r).powf(1.5) * dt;
+                sat_vel.0 -= v_dir * drag;
+            }
+
+            // Tidal disruption radius: R_T ≈ R_* * (M_BH / M_*)^(1/3)
+            let m_ratio = (bh_m / sat_m.0.max(0.01)).cbrt();
+            let r_tidal = (sat_rad.0 * m_ratio).clamp(0.05, 5.0);
+
+            if dist < r_tidal || dist < 0.50 {
+                state.cocoon_mass_solar += sat_m.0 * 0.5;
+                state.black_hole_mass_solar += sat_m.0 * 0.5;
+                mass.0 = state.total_mass_solar();
+                lum.0 += 5.0e7;
+
+                info!(
+                    "💥 TIDAL DISRUPTION EVENT: '{}' shredded by the 100,000 M☉ Supermassive Black Hole Seed!",
+                    sat_body.name
+                );
+
+                if let Ok(mut e_cmd) = commands.get_entity(sat_ent) {
+                    e_cmd.despawn();
+                }
             }
         }
     }

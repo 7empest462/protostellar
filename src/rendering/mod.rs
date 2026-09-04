@@ -29,6 +29,7 @@ impl Plugin for RenderingPlugin {
                 ParticleSwarmPlugin,
                 MaterialPlugin::<PlanetMaterial>::default(),
                 MaterialPlugin::<RingMaterial>::default(),
+                MaterialPlugin::<SkyboxMaterial>::default(),
             ))
             .add_systems(
                 Startup,
@@ -38,9 +39,12 @@ impl Plugin for RenderingPlugin {
                 Update,
                 (
                     update_pan_orbit_camera,
+                    sync_skybox_to_camera,
+                    update_skybox_uniforms,
                     spawn_missing_visuals,
                     sync_celestial_transforms,
                     sync_planetary_rings,
+                    sync_quasar_beams,
                     update_impact_shockwaves,
                     draw_orbital_effects_and_gizmos,
                 ),

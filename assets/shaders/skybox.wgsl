@@ -1,0 +1,451 @@
+// ============================================================================
+// PROTOSTELLAR // Procedural Deep-Space Celestial Skybox Shader
+// Modern Milky Way & Star Clusters vs Early Universe High-Redshift Cosmic Web
+// ============================================================================
+
+#import bevy_pbr::forward_io::VertexOutput
+
+struct SkyboxUniforms {
+    params: vec4<f32>, // x: time, y: scenario_blend (0.0 = Milky Way, 1.0 = Early Universe), z: exposure, w: star_twinkle
+    tuning: vec4<f32>, // x: star_density, y: nebula_intensity, z: cosmic_web_scale, w: filament_brightness
+    lens_pos_and_mass: vec4<f32>, // x, y, z: black hole position relative to camera in AU, w: theta_E in radians
+    lens_params: vec4<f32>, // x: shadow radius (radians), y: photon ring width (radians), z: is_active (1.0 or 0.0), w: boost
+};
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+var<uniform> skybox: SkyboxUniforms;
+
+// --- FAST 3D HASH & VALUE NOISE FUNCTIONS ---
+
+fn hash31(p: vec3<f32>) -> f32 {
+    var p3 = fract(p * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+fn hash33(p: vec3<f32>) -> vec3<f32> {
+    var p3 = fract(p * vec3<f32>(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yxz + 33.33);
+    return fract((p3.xxy + p3.yxx) * p3.zyx);
+}
+
+fn noise3(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+
+    let n000 = hash31(i + vec3<f32>(0.0, 0.0, 0.0));
+    let n100 = hash31(i + vec3<f32>(1.0, 0.0, 0.0));
+    let n010 = hash31(i + vec3<f32>(0.0, 1.0, 0.0));
+    let n110 = hash31(i + vec3<f32>(1.0, 1.0, 0.0));
+    let n001 = hash31(i + vec3<f32>(0.0, 0.0, 1.0));
+    let n101 = hash31(i + vec3<f32>(1.0, 0.0, 1.0));
+    let n011 = hash31(i + vec3<f32>(0.0, 1.0, 1.0));
+    let n111 = hash31(i + vec3<f32>(1.0, 1.0, 1.0));
+
+    let x00 = mix(n000, n100, u.x);
+    let x10 = mix(n010, n110, u.x);
+    let x01 = mix(n001, n101, u.x);
+    let x11 = mix(n011, n111, u.x);
+
+    let y0 = mix(x00, x10, u.y);
+    let y1 = mix(x01, x11, u.y);
+
+    return mix(y0, y1, u.z);
+}
+
+fn fbm3(p: vec3<f32>, octaves: i32) -> f32 {
+    var val: f32 = 0.0;
+    var amp: f32 = 0.5;
+    var pos = p;
+    for (var i = 0; i < octaves; i = i + 1) {
+        val += amp * noise3(pos);
+        pos = pos * 2.02 + vec3<f32>(13.1, 41.7, 19.3);
+        amp *= 0.5;
+    }
+    return val;
+}
+
+fn ridge_fbm3(p: vec3<f32>, octaves: i32) -> f32 {
+    var val: f32 = 0.0;
+    var amp: f32 = 0.5;
+    var pos = p;
+    for (var i = 0; i < octaves; i = i + 1) {
+        let n = noise3(pos);
+        let ridge = 1.0 - abs(n * 2.0 - 1.0);
+        val += amp * ridge * ridge;
+        pos = pos * 2.05 + vec3<f32>(27.3, 11.9, 37.1);
+        amp *= 0.5;
+    }
+    return val;
+}
+
+// Transform ecliptic direction into tilted Galactic coordinates (~60.2 deg tilt)
+fn to_galactic(d: vec3<f32>) -> vec3<f32> {
+    let c1 = 0.49697;  // cos(60.2 deg)
+    let s1 = 0.86776;  // sin(60.2 deg)
+    let p1 = vec3<f32>(d.x, c1 * d.y - s1 * d.z, s1 * d.y + c1 * d.z);
+    let c2 = 0.8746;   // cos(29.0 deg longitude offset)
+    let s2 = 0.4848;   // sin(29.0 deg)
+    return vec3<f32>(c2 * p1.x + s2 * p1.z, p1.y, -s2 * p1.x + c2 * p1.z);
+}
+
+// ============================================================================
+// PART 1: MODERN MILKY WAY & STAR CLUSTERS
+// ============================================================================
+
+fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
+    let g = to_galactic(dir);
+    let b = g.y; // Galactic latitude sin(b)
+    let abs_b = abs(b);
+
+    // 1. Galactic Disk Glow (thin disk + thick disk + halo)
+    let thin_disk = exp(-abs_b / 0.045) * 0.95;
+    let thick_disk = exp(-abs_b / 0.16) * 0.48;
+    let halo_glow = exp(-abs_b / 0.45) * 0.16;
+    let disk_profile = thin_disk + thick_disk + halo_glow;
+
+    // 2. Galactic Bulge (Sagittarius A* direction: g near (1.0, 0.0, 0.0))
+    let sgr_a_dist = length(g - vec3<f32>(1.0, 0.0, 0.0));
+    let bulge_core = exp(-sgr_a_dist * sgr_a_dist * 18.0) * 1.85;
+    let bulge_halo = exp(-sgr_a_dist * sgr_a_dist * 4.5) * 0.75;
+    let bulge_total = bulge_core + bulge_halo;
+
+    // Bulge warm golden-amber starlight tone
+    let bulge_color = vec3<f32>(1.0, 0.86, 0.65) * bulge_total;
+
+    // 3. The Great Rift & Dark Molecular Absorption Nebulae
+    // Obscures the galactic plane with realistic fractal dust lanes & Bok globules
+    let dust_coord = g * 14.0 + vec3<f32>(1.2, -0.4, 3.7);
+    let dust_noise = fbm3(dust_coord, 5);
+    let dust_fine = fbm3(dust_coord * 3.5, 3);
+    let dust_density = clamp(dust_noise * 1.6 + dust_fine * 0.45 - 0.45, 0.0, 2.5);
+    let dust_optical_depth = dust_density * exp(-abs_b / 0.065) * 2.8;
+    let dust_transmission = exp(-dust_optical_depth);
+
+    // Warm interstellar starlight wash
+    let disk_starlight = vec3<f32>(0.88, 0.92, 1.05) * disk_profile * dust_transmission;
+
+    // 4. H-Alpha Emission & O-III Reflection Nebulae
+    let neb_coord = g * 7.5 + vec3<f32>(5.4, 2.1, -1.8);
+    let h_alpha_mask = smoothstep(0.55, 0.85, fbm3(neb_coord, 4)) * exp(-abs_b / 0.09);
+    let h_alpha_color = vec3<f32>(1.0, 0.18, 0.52) * h_alpha_mask * 1.4 * dust_transmission;
+
+    let o_iii_mask = smoothstep(0.60, 0.90, fbm3(neb_coord * 1.6 + vec3<f32>(2.0, -1.5, 0.8), 3)) * exp(-abs_b / 0.08);
+    let o_iii_color = vec3<f32>(0.15, 0.85, 0.80) * o_iii_mask * 0.9 * dust_transmission;
+
+    // 5. Multi-Spectral Procedural Starfield
+    // Cell grid for resolved individual stars
+    var star_light = vec3<f32>(0.0);
+
+    // Layer A: Micro-stars (dense unresolved background wash)
+    let micro_cell = floor(dir * 180.0);
+    let micro_hash = hash31(micro_cell);
+    if (micro_hash > 0.88) {
+        let micro_pt = (hash33(micro_cell) - 0.5) * 0.8;
+        let micro_d = length(fract(dir * 180.0) - 0.5 - micro_pt);
+        let micro_br = exp(-micro_d * micro_d * 40.0) * (micro_hash - 0.88) * 6.5;
+        // Boost micro-stars along galactic equator
+        let lat_boost = 1.0 + exp(-abs_b / 0.10) * 3.5;
+        star_light += vec3<f32>(0.92, 0.95, 1.0) * micro_br * lat_boost;
+    }
+
+    // Layer B: Distinct Resolved Multi-Spectral Stars (O/B, A/F, G, K, M)
+    let star_grid = dir * 65.0;
+    let cell_i = floor(star_grid);
+    let cell_f = fract(star_grid);
+    let star_rand = hash33(cell_i);
+
+    if (star_rand.x > 0.72) {
+        let star_pos = star_rand * 0.8 + 0.1;
+        let d_star = length(cell_f - star_pos);
+
+        // Core radius & intensity
+        let magnitude = star_rand.y; // 0.0 = bright 1st magnitude, 1.0 = dim 6th magnitude
+        let peak_br = exp(-d_star * d_star * (50.0 + (1.0 - magnitude) * 120.0));
+
+        // Stellar Spectral Classes
+        var star_spectral = vec3<f32>(1.0);
+        let spec_val = star_rand.z;
+        if (spec_val < 0.10) {
+            // O/B Blue Supergiants (Hot, luminous, electric cyan)
+            star_spectral = vec3<f32>(0.65, 0.85, 1.35) * 1.6;
+        } else if (spec_val < 0.35) {
+            // A/F White Main Sequence
+            star_spectral = vec3<f32>(0.95, 0.98, 1.05) * 1.2;
+        } else if (spec_val < 0.65) {
+            // G Yellow Solar-Type
+            star_spectral = vec3<f32>(1.05, 0.96, 0.78) * 1.1;
+        } else if (spec_val < 0.85) {
+            // K Orange Giants
+            star_spectral = vec3<f32>(1.15, 0.72, 0.38) * 1.05;
+        } else {
+            // M Red Dwarfs / Supergiants
+            star_spectral = vec3<f32>(1.25, 0.35, 0.18) * 1.0;
+        }
+
+        // Star twinkle
+        let twinkle = 1.0 + sin(time * 3.5 + star_rand.x * 37.0) * 0.18 * skybox.params.w;
+
+        // Sub-pixel diffraction cross for bright 1st-magnitude stars
+        var spike_glow = 0.0;
+        if (magnitude > 0.85) {
+            let dx = abs(cell_f.x - star_pos.x);
+            let dy = abs(cell_f.y - star_pos.y);
+            let spike_h = exp(-dy * dy * 450.0) * exp(-dx * 16.0);
+            let spike_v = exp(-dx * dx * 450.0) * exp(-dy * 16.0);
+            spike_glow = (spike_h + spike_v) * 0.45;
+        }
+
+        star_light += star_spectral * (peak_br + spike_glow) * (1.0 + (1.0 - magnitude) * 2.2) * twinkle;
+    }
+
+    // 6. Deep Space Star Clusters
+    // Pleiades-like Open Cluster (Seven Sisters in Taurus)
+    let pleiades_dir = normalize(vec3<f32>(0.62, 0.44, -0.65));
+    let pleiades_dist = length(dir - pleiades_dir);
+    if (pleiades_dist < 0.08) {
+        // Glowing electric-blue reflection nebula
+        let cluster_haze = exp(-pleiades_dist * pleiades_dist * 800.0) * 0.95;
+        let cluster_nebula = vec3<f32>(0.35, 0.68, 1.30) * cluster_haze;
+
+        // Multiple concentrated brilliant blue cluster stars
+        let c_grid = (dir - pleiades_dir) * 450.0;
+        let c_cell = floor(c_grid);
+        let c_hash = hash31(c_cell);
+        var c_stars = 0.0;
+        if (c_hash > 0.82) {
+            let c_d = length(fract(c_grid) - 0.5);
+            c_stars = exp(-c_d * c_d * 60.0) * 2.5;
+        }
+        star_light += cluster_nebula + vec3<f32>(0.75, 0.90, 1.4) * c_stars;
+    }
+
+    // Globular Cluster (Omega Centauri analogue in galactic halo)
+    let globular_dir = normalize(vec3<f32>(-0.45, 0.72, 0.52));
+    let globular_dist = length(dir - globular_dir);
+    if (globular_dist < 0.06) {
+        // Dense core with Plummer profile
+        let plummer = 1.0 / pow(1.0 + globular_dist * globular_dist * 2500.0, 1.5);
+        let globular_glow = vec3<f32>(1.0, 0.92, 0.75) * plummer * 1.4;
+        star_light += globular_glow;
+    }
+
+    // Ambient interstellar darkness (faint cosmic infrared bath)
+    let ambient_space = vec3<f32>(0.005, 0.006, 0.010);
+
+    return ambient_space + disk_starlight + bulge_color + h_alpha_color + o_iii_color + star_light;
+}
+
+// ============================================================================
+// PART 2: EARLY UNIVERSE & HIGH-REDSHIFT COSMIC WEB (z ~ 8.5)
+// ============================================================================
+
+// 3D Voronoi Cellular Web Network (calculates F1 and F2 to find filament boundaries)
+fn voronoi_web3(p: vec3<f32>) -> vec4<f32> {
+    let pi = floor(p);
+    let pf = fract(p);
+
+    var f1 = 999.0;
+    var f2 = 999.0;
+    var node_seed = vec3<f32>(0.0);
+
+    for (var z = -1; z <= 1; z = z + 1) {
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
+                let cell_point = hash33(pi + neighbor) * 0.75 + 0.125;
+                let diff = neighbor + cell_point - pf;
+                let dist = length(diff);
+
+                if (dist < f1) {
+                    f2 = f1;
+                    f1 = dist;
+                    node_seed = pi + neighbor;
+                } else if (dist < f2) {
+                    f2 = dist;
+                }
+            }
+        }
+    }
+
+    // x: F1, y: F2, z: F2 - F1 (distance to filament boundary), w: node hash
+    return vec4<f32>(f1, f2, f2 - f1, hash31(node_seed));
+}
+
+fn render_early_universe(dir: vec3<f32>, time: f32) -> vec3<f32> {
+    // 1. Primordial Intergalactic Cosmic Web Filaments
+    // Scale the direction sphere into 3D cellular filament space
+    let web_scale = skybox.tuning.z * 5.2;
+    let web_data = voronoi_web3(dir * web_scale);
+
+    // Filament spine is located where F2 - F1 is minimal (cell wall boundary)
+    let boundary_dist = web_data.z;
+    let filament_spine = exp(-boundary_dist * boundary_dist * 45.0);
+
+    // Fine organic branching sub-strands via 3D ridge noise
+    let ridge_web = ridge_fbm3(dir * 12.5 + vec3<f32>(0.0, time * 0.008, 0.0), 4);
+    let web_density = (filament_spine * 0.75 + ridge_web * 0.45);
+
+    // Cosmologically Redshifted Lyman-Alpha & Hydrogen Glow
+    // At z ~ 8.5, Ly-alpha is stretched by 9.5x into deep ruby, fiery crimson, and amber-gold infrared hues!
+    let lyman_ruby = vec3<f32>(0.92, 0.10, 0.18);
+    let lyman_amber = vec3<f32>(1.0, 0.42, 0.08);
+    let lyman_deep_ir = vec3<f32>(0.75, 0.06, 0.35);
+
+    let web_color = mix(lyman_ruby, lyman_amber, filament_spine * 0.8) + lyman_deep_ir * (ridge_web * 0.5);
+    let filament_emission = web_color * web_density * skybox.tuning.w * 1.85;
+
+    // 2. Epoch of Reionization (EoR) Strömgren Ionization Bubbles
+    // The first quasars blow translucent ionized bubbles into the neutral hydrogen fog
+    let bubble_grid = dir * 2.8;
+    let bubble_f = fbm3(bubble_grid, 3);
+    // Bubble boundary shock front
+    let bubble_shock = smoothstep(0.48, 0.56, bubble_f) * (1.0 - smoothstep(0.56, 0.64, bubble_f));
+    let bubble_rim_glow = vec3<f32>(1.1, 0.68, 0.22) * bubble_shock * 1.25;
+
+    // 3. Pristine Population III Starburst Knots & Proto-Galactic Seeds
+    // Located at the intersection nodes of multiple cosmic filaments (where F1 ~ 0)
+    var pop3_starburst = vec3<f32>(0.0);
+    let node_proximity = web_data.x;
+    if (node_proximity < 0.22) {
+        let node_hash = web_data.w;
+        let node_d = node_proximity / 0.22;
+        let cluster_core = exp(-node_d * node_d * 24.0);
+
+        // Blinding violet-white Pop-III hypergiants (zero-metallicity stars, T > 50,000 K)
+        let pop3_core = vec3<f32>(1.8, 1.65, 2.2) * cluster_core * (0.8 + node_hash * 1.2);
+
+        // Surrounding ruby-crimson ionized hydrogen cloud
+        let pop3_halo = vec3<f32>(1.2, 0.18, 0.30) * exp(-node_d * 5.0) * 0.95;
+
+        pop3_starburst = pop3_core + pop3_halo;
+    }
+
+    // 4. Distant Primordial Mini-Quasars ("Little Red Dots")
+    // Compact, ruby-red active galactic nuclei shining across the early universe
+    let q_grid = dir * 32.0;
+    let q_cell = floor(q_grid);
+    let q_hash = hash33(q_cell);
+    var quasar_beacons = vec3<f32>(0.0);
+    if (q_hash.x > 0.95) {
+        let q_pos = q_hash * 0.7 + 0.15;
+        let q_d = length(fract(q_grid) - q_pos);
+        let q_peak = exp(-q_d * q_d * 120.0) * 2.2;
+        let q_halo = exp(-q_d * 14.0) * 0.6;
+        // Signature JWST Little Red Dot color: intense ruby core with warm crimson halo
+        quasar_beacons += vec3<f32>(1.35, 0.18, 0.25) * (q_peak + q_halo) * (1.0 + q_hash.y * 1.5);
+    }
+
+    // 5. Primordial Cosmic Dawn Ambient Bath
+    // The faint, warm 25 K CMB bath redshifted into a subtle, eerie infrared dusk
+    let cosmic_dawn_bath = vec3<f32>(0.016, 0.005, 0.008);
+
+    return cosmic_dawn_bath + filament_emission + bubble_rim_glow + pop3_starburst + quasar_beacons;
+}
+
+// ============================================================================
+// PART 3: GENERAL RELATIVISTIC GRAVITATIONAL LENSING & WARPING
+// ============================================================================
+
+struct LensingResult {
+    deflected_dir: vec3<f32>,
+    shadow_mask: f32,
+    photon_ring_emission: vec3<f32>,
+};
+
+fn compute_gravitational_lensing(view_dir: vec3<f32>) -> LensingResult {
+    var res: LensingResult;
+    res.deflected_dir = view_dir;
+    res.shadow_mask = 1.0;
+    res.photon_ring_emission = vec3<f32>(0.0);
+
+    if (skybox.lens_params.z < 0.5) {
+        return res; // Lensing inactive
+    }
+
+    let bh_rel = skybox.lens_pos_and_mass.xyz;
+    let dist_to_bh = length(bh_rel);
+    if (dist_to_bh < 0.001) {
+        return res;
+    }
+
+    let bh_dir = bh_rel / dist_to_bh;
+    let cos_theta = clamp(dot(view_dir, bh_dir), -1.0, 1.0);
+    let theta = acos(cos_theta);
+
+    let theta_E = skybox.lens_pos_and_mass.w;
+    let theta_shadow = skybox.lens_params.x;
+    let photon_ring_width = max(skybox.lens_params.y, 0.0015);
+
+    // 1. Photon Sphere Caustic Ring (at theta ~ theta_shadow)
+    let d_photon = abs(theta - theta_shadow) / photon_ring_width;
+    let photon_core = exp(-d_photon * d_photon * 8.0) * 3.2;
+    let photon_halo = exp(-d_photon * 2.5) * 1.1;
+
+    // Relativistic Doppler beaming asymmetry (frame-dragging along black hole rotation)
+    let phi_angle = atan2(view_dir.z, view_dir.x);
+    let doppler_boost = 1.0 + sin(phi_angle * 2.0) * 0.25 * skybox.lens_params.w;
+
+    let photon_ring_color = (vec3<f32>(1.0, 0.96, 0.88) * photon_core + vec3<f32>(0.35, 0.75, 1.25) * photon_halo) * doppler_boost;
+    res.photon_ring_emission = photon_ring_color;
+
+    // 2. Black Hole Event Horizon Shadow Mask
+    res.shadow_mask = smoothstep(theta_shadow * 0.94, theta_shadow * 1.02, theta);
+
+    // 3. General Relativistic Light Ray Deflection
+    // Deflection angle alpha(theta) = theta_E^2 / theta
+    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+    if (sin_theta > 0.0001) {
+        let v_perp = (view_dir - cos_theta * bh_dir) / sin_theta;
+
+        // Taper lensing smoothly away from black hole
+        let lens_falloff = exp(-theta * theta / 4.0);
+        let alpha = (theta_E * theta_E / (theta + 0.004)) * lens_falloff;
+        let beta = theta - alpha; // Source angular position
+
+        res.deflected_dir = normalize(cos(beta) * bh_dir + sin(beta) * v_perp);
+    }
+
+    return res;
+}
+
+// ============================================================================
+// MAIN FRAGMENT SHADER
+// ============================================================================
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Normal on celestial sphere is the exact unit viewing direction
+    let raw_dir = normalize(in.world_normal);
+    let time = skybox.params.x;
+    let blend = clamp(skybox.params.y, 0.0, 1.0);
+
+    // Apply General Relativistic Gravitational Lensing & Warping
+    let lens = compute_gravitational_lensing(raw_dir);
+    let dir = lens.deflected_dir;
+
+    var color = vec3<f32>(0.0);
+
+    if (blend <= 0.001) {
+        // Pure Modern Milky Way
+        color = render_milky_way(dir, time);
+    } else if (blend >= 0.999) {
+        // Pure Early Universe High-Redshift Cosmic Web
+        color = render_early_universe(dir, time);
+    } else {
+        // Smooth scenario interpolation between eras
+        let modern = render_milky_way(dir, time);
+        let early = render_early_universe(dir, time);
+        color = mix(modern, early, blend);
+    }
+
+    // Apply black hole shadow occlusion and add photon sphere caustic ring
+    color = color * lens.shadow_mask + lens.photon_ring_emission;
+
+    // Exposure tone multiplier
+    let final_color = color * skybox.params.z;
+
+    return vec4<f32>(final_color, 1.0);
+}
+

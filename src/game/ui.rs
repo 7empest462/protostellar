@@ -35,6 +35,209 @@ pub struct HudToastText;
 #[derive(Component)]
 pub struct HudBottomTimerText;
 
+/// Marker for the top-center body selector bar container.
+#[derive(Component)]
+pub struct QuickBodySelectorBar;
+
+/// State configuration for the top celestial body shortcut bar.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct QuickBarState {
+    pub is_minimized: bool,
+    pub show_minor_bodies: bool,
+}
+
+/// Planetary archetype templates for the Interactive Planet Builder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuilderPreset {
+    EarthLike,
+    SuperEarth,
+    JupiterLike,
+    SuperJupiter,
+    HeavySuperJupiter,
+    BrownDwarf,
+    WaterWorld,
+    MoltenProtoplanet,
+    IceGiant,
+    RogueInvader,
+    RedDwarfStar,
+}
+
+impl BuilderPreset {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            BuilderPreset::EarthLike => "🌍 Earth-like",
+            BuilderPreset::SuperEarth => "💎 Super-Earth (3.5 M_E)",
+            BuilderPreset::JupiterLike => "🪐 Jupiter-like",
+            BuilderPreset::SuperJupiter => "👑 Super-Jup (3.5 M_J)",
+            BuilderPreset::HeavySuperJupiter => "🔮 Heavy Super-J (8.0 M_J)",
+            BuilderPreset::BrownDwarf => "🟤 Brown Dwarf (30 M_J)",
+            BuilderPreset::WaterWorld => "🌊 Water World",
+            BuilderPreset::MoltenProtoplanet => "🌋 Molten Protoplanet",
+            BuilderPreset::IceGiant => "❄️ Ice Giant",
+            BuilderPreset::RogueInvader => "☄️ Rogue Invader",
+            BuilderPreset::RedDwarfStar => "☀️ Red Dwarf Star",
+        }
+    }
+}
+
+/// Interactive custom planet builder and spawner state.
+#[derive(Resource, Debug, Clone)]
+pub struct PlanetBuilderState {
+    pub is_open: bool,
+    pub active_preset: BuilderPreset,
+    pub custom_name: String,
+    pub mass_solar: f64,
+    pub semi_major_axis_au: f64,
+    pub eccentricity: f64,
+    pub rock_frac: f32,
+    pub ice_frac: f32,
+    pub metal_frac: f32,
+    pub gas_frac: f32,
+    pub click_to_spawn_mode: bool,
+}
+
+impl Default for PlanetBuilderState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            active_preset: BuilderPreset::EarthLike,
+            custom_name: "Proto-Earth".to_string(),
+            mass_solar: EARTH_MASS_SOLAR * 1.0,
+            semi_major_axis_au: 1.0,
+            eccentricity: 0.016,
+            rock_frac: 0.68,
+            ice_frac: 0.02,
+            metal_frac: 0.30,
+            gas_frac: 0.0,
+            click_to_spawn_mode: false,
+        }
+    }
+}
+
+impl PlanetBuilderState {
+    pub fn apply_preset(&mut self, preset: BuilderPreset) {
+        self.active_preset = preset;
+        match preset {
+            BuilderPreset::EarthLike => {
+                self.custom_name = "New Earth".to_string();
+                self.mass_solar = EARTH_MASS_SOLAR * 1.0;
+                self.semi_major_axis_au = 1.0;
+                self.eccentricity = 0.016;
+                self.rock_frac = 0.68;
+                self.ice_frac = 0.02;
+                self.metal_frac = 0.30;
+                self.gas_frac = 0.0;
+            }
+            BuilderPreset::SuperEarth => {
+                self.custom_name = "Kepler-SuperEarth".to_string();
+                self.mass_solar = EARTH_MASS_SOLAR * 3.5;
+                self.semi_major_axis_au = 1.35;
+                self.eccentricity = 0.025;
+                self.rock_frac = 0.65;
+                self.ice_frac = 0.03;
+                self.metal_frac = 0.30;
+                self.gas_frac = 0.02;
+            }
+            BuilderPreset::JupiterLike => {
+                self.custom_name = "Jovian-Prime".to_string();
+                self.mass_solar = JUPITER_MASS_SOLAR * 1.0;
+                self.semi_major_axis_au = 5.2;
+                self.eccentricity = 0.048;
+                self.rock_frac = 0.03;
+                self.ice_frac = 0.02;
+                self.metal_frac = 0.01;
+                self.gas_frac = 0.94;
+            }
+            BuilderPreset::SuperJupiter => {
+                self.custom_name = "Super-Jupiter".to_string();
+                self.mass_solar = JUPITER_MASS_SOLAR * 3.5;
+                self.semi_major_axis_au = 3.2;
+                self.eccentricity = 0.08;
+                self.rock_frac = 0.02;
+                self.ice_frac = 0.02;
+                self.metal_frac = 0.01;
+                self.gas_frac = 0.95;
+            }
+            BuilderPreset::HeavySuperJupiter => {
+                self.custom_name = "Mega-Jovian".to_string();
+                self.mass_solar = JUPITER_MASS_SOLAR * 8.0;
+                self.semi_major_axis_au = 9.5;
+                self.eccentricity = 0.06;
+                self.rock_frac = 0.01;
+                self.ice_frac = 0.01;
+                self.metal_frac = 0.01;
+                self.gas_frac = 0.97;
+            }
+            BuilderPreset::BrownDwarf => {
+                self.custom_name = "Sub-Stellar Dwarf".to_string();
+                self.mass_solar = JUPITER_MASS_SOLAR * 30.0;
+                self.semi_major_axis_au = 22.0;
+                self.eccentricity = 0.05;
+                self.rock_frac = 0.01;
+                self.ice_frac = 0.01;
+                self.metal_frac = 0.01;
+                self.gas_frac = 0.97;
+            }
+            BuilderPreset::WaterWorld => {
+                self.custom_name = "Oceania".to_string();
+                self.mass_solar = EARTH_MASS_SOLAR * 2.5;
+                self.semi_major_axis_au = 1.35;
+                self.eccentricity = 0.02;
+                self.rock_frac = 0.30;
+                self.ice_frac = 0.60;
+                self.metal_frac = 0.10;
+                self.gas_frac = 0.0;
+            }
+            BuilderPreset::MoltenProtoplanet => {
+                self.custom_name = "Vulcan".to_string();
+                self.mass_solar = EARTH_MASS_SOLAR * 0.15;
+                self.semi_major_axis_au = 0.45;
+                self.eccentricity = 0.15;
+                self.rock_frac = 0.75;
+                self.ice_frac = 0.0;
+                self.metal_frac = 0.25;
+                self.gas_frac = 0.0;
+            }
+            BuilderPreset::IceGiant => {
+                self.custom_name = "Sub-Neptune".to_string();
+                self.mass_solar = EARTH_MASS_SOLAR * 15.0;
+                self.semi_major_axis_au = 19.2;
+                self.eccentricity = 0.04;
+                self.rock_frac = 0.20;
+                self.ice_frac = 0.65;
+                self.metal_frac = 0.05;
+                self.gas_frac = 0.10;
+            }
+            BuilderPreset::RogueInvader => {
+                self.custom_name = "Nemesis-Invader".to_string();
+                self.mass_solar = JUPITER_MASS_SOLAR * 3.5;
+                self.semi_major_axis_au = 35.0;
+                self.eccentricity = 1.25;
+                self.rock_frac = 0.02;
+                self.ice_frac = 0.02;
+                self.metal_frac = 0.01;
+                self.gas_frac = 0.95;
+            }
+            BuilderPreset::RedDwarfStar => {
+                self.custom_name = "Companion Star".to_string();
+                self.mass_solar = 0.15;
+                self.semi_major_axis_au = 12.0;
+                self.eccentricity = 0.05;
+                self.rock_frac = 0.0;
+                self.ice_frac = 0.0;
+                self.metal_frac = 0.0;
+                self.gas_frac = 1.0;
+            }
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct PlanetBuilderPanel;
+
+#[derive(Component)]
+pub struct PlanetBuilderInfoText;
+
 /// On-screen notification toast resource.
 #[derive(Resource, Debug, Clone)]
 pub struct NotificationToast {
@@ -62,12 +265,24 @@ pub enum UiButtonAction {
     TimeSpeed10k,
     TimeSpeed1M,
     // Target Selection
+    SelectEntity(Entity),
     SelectStar,
     SelectMercury,
     SelectEarth,
     SelectJupiter,
     SelectKuiper,
     CycleTarget,
+    ToggleMinimizeQuickBar,
+    ToggleMinorBodies,
+    // Planet Builder Actions
+    TogglePlanetBuilder,
+    BuilderSelectPreset(BuilderPreset),
+    BuilderMassStep(i8),
+    BuilderDistanceStep(i8),
+    BuilderCycleEccentricity,
+    BuilderCycleComposition,
+    BuilderToggleClickSpawn,
+    BuilderExecuteSpawn,
     // Scientific Instruments & Overlays
     CycleOverlayMode,
     ToggleTractor,
@@ -96,6 +311,11 @@ pub enum UiButtonAction {
     LoadScenarioKepler16,
     LoadScenarioHotJupiter,
     LoadScenarioRoguePlanet,
+    LoadScenarioLittleRedDot,
+    // JWST Little Red Dot / Quasi-Star Experiments
+    ToggleSuperEddington,
+    TriggerBlowoutCocoon,
+    SpawnInfallPop3Star,
 }
 
 impl UiButtonAction {
@@ -106,12 +326,23 @@ impl UiButtonAction {
             UiButtonAction::TimeSpeed100 => "[2]: 100x Accelerated time progression.",
             UiButtonAction::TimeSpeed10k => "[3]: 10,000x High-speed planetary accretion flow (~10 kyr/sec).",
             UiButtonAction::TimeSpeed1M => "[4]: 1,000,000x Deep astronomical time-warp (~1 Myr/sec).",
+            UiButtonAction::SelectEntity(_) => "Focus and inspect this celestial body.",
             UiButtonAction::SelectStar => "Select the central star to inspect solar mass, temperature, and corona.",
             UiButtonAction::SelectMercury => "Select the innermost rocky terrestrial planet.",
             UiButtonAction::SelectEarth => "Select the habitable-zone terrestrial planet.",
             UiButtonAction::SelectJupiter => "Select the dominant outer gas giant planet.",
             UiButtonAction::SelectKuiper => "Select the outermost icy Kuiper belt planetesimal.",
             UiButtonAction::CycleTarget => "[Tab]: Cycle camera focus through all active celestial bodies.",
+            UiButtonAction::ToggleMinimizeQuickBar => "[H]: Minimize or expand the top celestial body shortcut bar.",
+            UiButtonAction::ToggleMinorBodies => "Toggle visibility of minor asteroids and planetesimals.",
+            UiButtonAction::TogglePlanetBuilder => "[P]: Open or close the interactive Planet Builder & Spawner panel.",
+            UiButtonAction::BuilderSelectPreset(_) => "Load this physical planetary archetype preset into the Planet Builder.",
+            UiButtonAction::BuilderMassStep(s) => if *s > 0 { "Scale up target world mass." } else { "Scale down target world mass." },
+            UiButtonAction::BuilderDistanceStep(s) => if *s > 0 { "Increase target orbital semi-major axis (radius in AU)." } else { "Decrease target orbital semi-major axis (radius in AU)." },
+            UiButtonAction::BuilderCycleEccentricity => "Cycle orbital eccentricity between Circular (0.00), Moderate (0.15), and High (0.60).",
+            UiButtonAction::BuilderCycleComposition => "Cycle composition fractions (Rocky, Oceanic Ice, Metal Core, Gas Giant).",
+            UiButtonAction::BuilderToggleClickSpawn => "Toggle 3D plane click-to-place mode (click disk to place world).",
+            UiButtonAction::BuilderExecuteSpawn => "Spawn the configured celestial world into orbit immediately!",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
@@ -137,6 +368,10 @@ impl UiButtonAction {
             UiButtonAction::LoadScenarioKepler16 => "[F3]: Load Kepler-16 'Tatooine' circumbinary system with K/M binary star pair and giant planet.",
             UiButtonAction::LoadScenarioHotJupiter => "[F4]: Load Hot Jupiter inward migration scenario (Type II disk migration from 5.2 AU -> 0.045 AU).",
             UiButtonAction::LoadScenarioRoguePlanet => "[F5]: Load Rogue Planet Flyby scenario (Hyperbolic 3.5 M_Jup interloper scattering the solar system).",
+            UiButtonAction::LoadScenarioLittleRedDot => "[F6]: Load JWST Little Red Dot (100,000 M☉ Black Hole Star encased in 60 AU hydrogen cocoon).",
+            UiButtonAction::ToggleSuperEddington => "[X]: Toggle Super-Eddington hyper-accretion onto the central black hole seed.",
+            UiButtonAction::TriggerBlowoutCocoon => "[B]: Trigger radiation envelope blowout to unveil the naked Supermassive Quasar.",
+            UiButtonAction::SpawnInfallPop3Star => "[T]: Spawn an infalling Population III hypergiant star to observe a Tidal Disruption Event (TDE).",
         }
     }
 }
@@ -233,27 +468,21 @@ pub fn setup_hud(mut commands: Commands) {
                         ..default()
                     })
                     .with_children(|center_col| {
-                        // Interactive Body Selector Buttons
-                        center_col
-                            .spawn((
-                                Node {
-                                    flex_direction: FlexDirection::Row,
-                                    padding: UiRect::all(Val::Px(4.0)),
-                                    align_items: AlignItems::Center,
-                                    margin: UiRect::bottom(Val::Px(6.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
-                                BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
-                            ))
-                            .with_children(|btn_row| {
-                                create_button(btn_row, UiButtonAction::SelectStar, "Sun", Color::srgba(0.25, 0.18, 0.04, 0.9), Color::srgb(0.9, 0.7, 0.2));
-                                create_button(btn_row, UiButtonAction::SelectEarth, "Proto-Earth", Color::srgba(0.05, 0.18, 0.15, 0.85), Color::srgb(0.3, 0.85, 0.6));
-                                create_button(btn_row, UiButtonAction::SelectMercury, "Ceres", Color::srgba(0.08, 0.12, 0.2, 0.85), Color::srgb(0.4, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::SelectJupiter, "Proto-Jupiter", Color::srgba(0.18, 0.12, 0.08, 0.85), Color::srgb(0.9, 0.6, 0.3));
-                                create_button(btn_row, UiButtonAction::SelectKuiper, "Kuiper", Color::srgba(0.08, 0.12, 0.22, 0.85), Color::srgb(0.4, 0.6, 0.95));
-                                create_button(btn_row, UiButtonAction::CycleTarget, "Cycle [Tab]", Color::srgba(0.12, 0.16, 0.26, 0.85), Color::srgb(0.5, 0.7, 1.0));
-                            });
+                        // Interactive Dynamic Body Selector Buttons Container
+                        center_col.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                padding: UiRect::all(Val::Px(4.0)),
+                                align_items: AlignItems::Center,
+                                margin: UiRect::bottom(Val::Px(6.0)),
+                                flex_wrap: FlexWrap::Wrap,
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                            BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
+                            QuickBodySelectorBar,
+                        ));
 
                         // Interactive Sandbox Scenario Presets Bar
                         center_col
@@ -274,6 +503,7 @@ pub fn setup_hud(mut commands: Commands) {
                                 create_button(scenario_row, UiButtonAction::LoadScenarioKepler16, "Kepler-16 [F3]", Color::srgba(0.20, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.7, 0.3));
                                 create_button(scenario_row, UiButtonAction::LoadScenarioHotJupiter, "Hot Jupiter [F4]", Color::srgba(0.18, 0.08, 0.22, 0.9), Color::srgb(0.85, 0.45, 1.0));
                                 create_button(scenario_row, UiButtonAction::LoadScenarioRoguePlanet, "Rogue Planet [F5]", Color::srgba(0.06, 0.16, 0.22, 0.9), Color::srgb(0.4, 0.85, 1.0));
+                                create_button(scenario_row, UiButtonAction::LoadScenarioLittleRedDot, "Little Red Dot [F6]", Color::srgba(0.24, 0.04, 0.06, 0.9), Color::srgb(1.0, 0.35, 0.4));
                             });
 
                         // Notification Toast Box
@@ -416,6 +646,7 @@ pub fn setup_hud(mut commands: Commands) {
                                         ..default()
                                     })
                                     .with_children(|row3| {
+                                        create_button(row3, UiButtonAction::TogglePlanetBuilder, "🪐 Planet Builder [P]", Color::srgba(0.10, 0.22, 0.36, 0.95), Color::srgb(0.4, 0.85, 1.0));
                                         create_button(row3, UiButtonAction::CycleComposition, "Change Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
                                         create_button(row3, UiButtonAction::InjectEmbryo, "Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                         create_button(row3, UiButtonAction::TriggerLhb, "Trigger LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
@@ -424,6 +655,20 @@ pub fn setup_hud(mut commands: Commands) {
                                         create_button(row3, UiButtonAction::AgeStar, "Age Star [N]", Color::srgba(0.24, 0.08, 0.16, 0.9), Color::srgb(1.0, 0.45, 0.75));
                                         create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
                                         create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
+                                    });
+
+                                // Row 4: JWST Little Red Dot / Black Hole Star Experiments
+                                actions
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Row,
+                                        margin: UiRect::bottom(Val::Px(4.0)),
+                                        flex_wrap: FlexWrap::Wrap,
+                                        ..default()
+                                    })
+                                    .with_children(|row4| {
+                                        create_button(row4, UiButtonAction::ToggleSuperEddington, "Hyper-Accretion [X]", Color::srgba(0.24, 0.06, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.5));
+                                        create_button(row4, UiButtonAction::TriggerBlowoutCocoon, "Blowout Cocoon (Quasar) [B]", Color::srgba(0.26, 0.08, 0.22, 0.9), Color::srgb(1.0, 0.45, 0.95));
+                                        create_button(row4, UiButtonAction::SpawnInfallPop3Star, "Spawn Pop-III TDE [T]", Color::srgba(0.08, 0.16, 0.28, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                     });
 
                                 // Dynamic Tooltip & Explanation Bar
@@ -463,29 +708,31 @@ pub fn setup_hud(mut commands: Commands) {
                             min_width: Val::Px(350.0),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.01, 0.04, 0.09, 0.95)),
-                        BorderColor::all(Color::srgb(0.3, 0.85, 1.0)),
+                        BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.92)),
+                        BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.7)),
                     ))
-                    .with_children(|timer_panel| {
-                        timer_panel.spawn((
-                            Text::new("SIMULATION ELAPSED TIME: 0.00 yr\nRATE: 1.0x (Real-time) | FLOWING"),
-                            TextFont { font_size: FontSize::Px(13.5), ..default() },
-                            TextColor(Color::srgb(0.4, 0.95, 1.0)),
+                    .with_children(|time_box| {
+                        // Digital Clock & Time Warp Multiplier Telemetry
+                        time_box.spawn((
+                            Text::new("T+ 0.00 yr | PAUSED"),
+                            TextFont { font_size: FontSize::Px(14.0), ..default() },
+                            TextColor(Color::srgb(1.0, 0.92, 0.4)),
                             HudBottomTimerText,
                         ));
 
-                        timer_panel
+                        // Speed Multiplier Action Bar
+                        time_box
                             .spawn(Node {
                                 flex_direction: FlexDirection::Row,
                                 margin: UiRect::top(Val::Px(6.0)),
                                 ..default()
                             })
-                            .with_children(|btn_row| {
-                                create_button(btn_row, UiButtonAction::TimePause, "Pause", Color::srgba(0.18, 0.08, 0.08, 0.85), Color::srgb(0.9, 0.4, 0.4));
-                                create_button(btn_row, UiButtonAction::TimeSpeed1, "1x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed100, "100x", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed10k, "10k/s", Color::srgba(0.06, 0.14, 0.22, 0.85), Color::srgb(0.3, 0.7, 0.9));
-                                create_button(btn_row, UiButtonAction::TimeSpeed1M, "1M/s", Color::srgba(0.12, 0.08, 0.22, 0.85), Color::srgb(0.7, 0.4, 0.95));
+                            .with_children(|speed_row| {
+                                create_button(speed_row, UiButtonAction::TimePause, "Pause [Space]", Color::srgba(0.24, 0.08, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.4));
+                                create_button(speed_row, UiButtonAction::TimeSpeed1, "1x [1]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
+                                create_button(speed_row, UiButtonAction::TimeSpeed100, "100x [2]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
+                                create_button(speed_row, UiButtonAction::TimeSpeed10k, "10k [3]", Color::srgba(0.12, 0.18, 0.28, 0.9), Color::srgb(0.5, 0.85, 1.0));
+                                create_button(speed_row, UiButtonAction::TimeSpeed1M, "1M [4]", Color::srgba(0.18, 0.14, 0.32, 0.9), Color::srgb(0.7, 0.6, 1.0));
                             });
                     });
 
@@ -507,6 +754,144 @@ pub fn setup_hud(mut commands: Commands) {
                             TextColor(Color::srgb(0.75, 0.82, 0.95)),
                         ));
                     });
+            });
+
+            // ==========================================
+            // FLOATING SIDEBAR: Interactive Planet Builder Panel
+            // ==========================================
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(16.0),
+                    top: Val::Px(65.0),
+                    width: Val::Px(380.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(10.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.012, 0.028, 0.065, 0.96)),
+                BorderColor::all(Color::srgba(0.35, 0.75, 1.0, 0.85)),
+                PlanetBuilderPanel,
+            ))
+            .with_children(|panel| {
+                // Header
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    margin: UiRect::bottom(Val::Px(6.0)),
+                    ..default()
+                }).with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new("🛠️ PLANET BUILDER & SPAWNER"),
+                        TextFont { font_size: FontSize::Px(13.0), ..default() },
+                        TextColor(Color::srgb(0.9, 0.95, 1.0)),
+                    ));
+                    create_button(hdr, UiButtonAction::TogglePlanetBuilder, "✕ Close [P]", Color::srgba(0.24, 0.08, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.4));
+                });
+
+                // Preset Archetypes Grid
+                panel.spawn((
+                    Text::new("── 1. SELECT ARCHETYPE PRESET ──"),
+                    TextFont { font_size: FontSize::Px(10.0), ..default() },
+                    TextColor(Color::srgb(0.5, 0.8, 1.0)),
+                ));
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    margin: UiRect::axes(Val::Px(0.0), Val::Px(4.0)),
+                    ..default()
+                }).with_children(|presets| {
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::EarthLike), "🌍 Earth", Color::srgba(0.05, 0.20, 0.15, 0.9), Color::srgb(0.3, 0.9, 0.6));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::SuperEarth), "💎 Super-E", Color::srgba(0.04, 0.22, 0.24, 0.9), Color::srgb(0.3, 0.88, 0.85));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::JupiterLike), "🪐 Jupiter", Color::srgba(0.22, 0.14, 0.06, 0.9), Color::srgb(0.95, 0.65, 0.3));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::SuperJupiter), "👑 Super-Jup", Color::srgba(0.08, 0.22, 0.25, 0.9), Color::srgb(0.2, 0.85, 0.8));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::HeavySuperJupiter), "🔮 Mega-Jov", Color::srgba(0.18, 0.08, 0.24, 0.9), Color::srgb(0.8, 0.4, 0.95));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::BrownDwarf), "🟤 Brown Dwarf", Color::srgba(0.24, 0.10, 0.16, 0.9), Color::srgb(0.85, 0.45, 0.65));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::WaterWorld), "🌊 Ocean", Color::srgba(0.06, 0.18, 0.28, 0.9), Color::srgb(0.3, 0.75, 1.0));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::MoltenProtoplanet), "🌋 Magma", Color::srgba(0.25, 0.08, 0.04, 0.9), Color::srgb(1.0, 0.45, 0.2));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::IceGiant), "❄️ Ice Giant", Color::srgba(0.08, 0.16, 0.26, 0.9), Color::srgb(0.5, 0.8, 1.0));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::RogueInvader), "☄️ Rogue", Color::srgba(0.26, 0.06, 0.14, 0.9), Color::srgb(1.0, 0.35, 0.5));
+                    create_button(presets, UiButtonAction::BuilderSelectPreset(BuilderPreset::RedDwarfStar), "☀️ M-Star", Color::srgba(0.28, 0.10, 0.04, 0.9), Color::srgb(1.0, 0.5, 0.2));
+                });
+
+                // Info Display Text Box
+                panel.spawn((
+                    Node {
+                        padding: UiRect::all(Val::Px(8.0)),
+                        margin: UiRect::axes(Val::Px(0.0), Val::Px(4.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.008, 0.016, 0.035, 0.95)),
+                    BorderColor::all(Color::srgba(0.25, 0.55, 0.85, 0.5)),
+                )).with_children(|box_node| {
+                    box_node.spawn((
+                        Text::new("Initializing Planet Builder..."),
+                        TextFont { font_size: FontSize::Px(11.0), ..default() },
+                        TextColor(Color::srgb(0.85, 0.95, 1.0)),
+                        PlanetBuilderInfoText,
+                    ));
+                });
+
+                // Parameter Steppers
+                panel.spawn((
+                    Text::new("── 2. ADJUST MASS & ORBIT ──"),
+                    TextFont { font_size: FontSize::Px(10.0), ..default() },
+                    TextColor(Color::srgb(0.5, 0.8, 1.0)),
+                ));
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    margin: UiRect::axes(Val::Px(0.0), Val::Px(3.0)),
+                    ..default()
+                }).with_children(|row| {
+                    create_button(row, UiButtonAction::BuilderMassStep(-2), "Mass ÷10", Color::srgba(0.18, 0.08, 0.08, 0.9), Color::srgb(0.9, 0.4, 0.4));
+                    create_button(row, UiButtonAction::BuilderMassStep(-1), "Mass ÷2", Color::srgba(0.15, 0.10, 0.08, 0.9), Color::srgb(0.9, 0.6, 0.4));
+                    create_button(row, UiButtonAction::BuilderMassStep(1), "Mass ×2", Color::srgba(0.08, 0.16, 0.10, 0.9), Color::srgb(0.4, 0.9, 0.5));
+                    create_button(row, UiButtonAction::BuilderMassStep(2), "Mass ×10", Color::srgba(0.06, 0.18, 0.12, 0.9), Color::srgb(0.3, 0.95, 0.6));
+                });
+
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    margin: UiRect::axes(Val::Px(0.0), Val::Px(3.0)),
+                    ..default()
+                }).with_children(|row| {
+                    create_button(row, UiButtonAction::BuilderDistanceStep(-2), "-1.0 AU", Color::srgba(0.06, 0.14, 0.22, 0.9), Color::srgb(0.3, 0.7, 0.9));
+                    create_button(row, UiButtonAction::BuilderDistanceStep(-1), "-0.2 AU", Color::srgba(0.06, 0.14, 0.22, 0.9), Color::srgb(0.3, 0.7, 0.9));
+                    create_button(row, UiButtonAction::BuilderDistanceStep(1), "+0.2 AU", Color::srgba(0.06, 0.14, 0.22, 0.9), Color::srgb(0.3, 0.7, 0.9));
+                    create_button(row, UiButtonAction::BuilderDistanceStep(2), "+1.0 AU", Color::srgba(0.06, 0.14, 0.22, 0.9), Color::srgb(0.3, 0.7, 0.9));
+                });
+
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    margin: UiRect::axes(Val::Px(0.0), Val::Px(3.0)),
+                    ..default()
+                }).with_children(|row| {
+                    create_button(row, UiButtonAction::BuilderCycleEccentricity, "Cycle Ecc", Color::srgba(0.12, 0.10, 0.22, 0.9), Color::srgb(0.7, 0.5, 0.95));
+                    create_button(row, UiButtonAction::BuilderCycleComposition, "Cycle Mix", Color::srgba(0.10, 0.16, 0.22, 0.9), Color::srgb(0.4, 0.75, 0.95));
+                });
+
+                // Execute Spawn Row
+                panel.spawn((
+                    Text::new("── 3. SPAWN WORLD ──"),
+                    TextFont { font_size: FontSize::Px(10.0), ..default() },
+                    TextColor(Color::srgb(0.5, 0.8, 1.0)),
+                ));
+                panel.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    margin: UiRect::top(Val::Px(4.0)),
+                    justify_content: JustifyContent::SpaceBetween,
+                    ..default()
+                }).with_children(|row| {
+                    create_button(row, UiButtonAction::BuilderExecuteSpawn, "🚀 Insert into Orbit", Color::srgba(0.06, 0.24, 0.14, 0.95), Color::srgb(0.3, 0.95, 0.6));
+                    create_button(row, UiButtonAction::BuilderToggleClickSpawn, "🎯 Click-in-3D Mode", Color::srgba(0.20, 0.12, 0.04, 0.95), Color::srgb(1.0, 0.75, 0.3));
+                });
             });
         });
 }
@@ -542,13 +927,16 @@ pub fn handle_ui_button_interactions(
             Option<&mut Temperature>,
             Option<&mut Luminosity>,
         ),
-        Without<PanOrbitCamera>,
+        (Without<PanOrbitCamera>, Without<BlackHoleStarState>),
     >,
     mut camera_query: Query<&mut PanOrbitCamera>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    mut quick_bar_state: ResMut<QuickBarState>,
+    mut builder_state: ResMut<PlanetBuilderState>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
+    mut quasi_star_query: Query<(&mut BlackHoleStarState, &CelestialBody)>,
 ) {
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
@@ -608,25 +996,62 @@ pub fn handle_ui_button_interactions(
                     }
 
                     // Body Selectors
+                    UiButtonAction::SelectEntity(target_ent) => {
+                        if let Ok(item) = selected_query.get(*target_ent) {
+                            let body_name = item.6.name.clone();
+                            player_state.selected_entity = Some(*target_ent);
+                            if let Ok(mut cam) = camera_query.single_mut() {
+                                cam.target_entity = Some(*target_ent);
+                            }
+                            let icon = if item.7.is_some() || item.6.body_type.is_star_or_remnant()
+                            {
+                                "☀️"
+                            } else if item.6.name.to_lowercase().contains("earth")
+                                || item.6.name.to_lowercase().contains("habitable")
+                                || item.6.name.to_lowercase().contains("1e")
+                                || item.6.name.to_lowercase().contains("1f")
+                                || item.6.name.to_lowercase().contains("1g")
+                            {
+                                "🌍"
+                            } else if item.6.body_type == BodyType::GasGiant
+                                || item.6.name.to_lowercase().contains("jupiter")
+                                || item.6.name.to_lowercase().contains("saturn")
+                            {
+                                "🪐"
+                            } else if item.6.name.to_lowercase().contains("rogue")
+                                || item.6.name.to_lowercase().contains("nemesis")
+                            {
+                                "☄️"
+                            } else {
+                                "🪨"
+                            };
+                            toast.message = format!("{} Selected: {}", icon, body_name);
+                            toast.timer = 4.0;
+                        }
+                    }
                     UiButtonAction::SelectStar => {
                         let star_ent = selected_query
                             .iter()
-                            .find(|item| item.7.is_some())
+                            .find(|item| item.7.is_some() || item.6.body_type.is_star_or_remnant())
                             .map(|item| item.0);
                         if let Some(ent) = star_ent {
-                            player_state.selected_entity = Some(ent);
-                            if let Ok(mut cam) = camera_query.single_mut() {
-                                cam.target_entity = Some(ent);
+                            if let Ok(item) = selected_query.get(ent) {
+                                let body_name = item.6.name.clone();
+                                player_state.selected_entity = Some(ent);
+                                if let Ok(mut cam) = camera_query.single_mut() {
+                                    cam.target_entity = Some(ent);
+                                }
+                                toast.message = format!("☀️ Selected: {}", body_name);
+                                toast.timer = 4.0;
                             }
-                            toast.message =
-                                "☀️ Selected: The Central Protostar (1.00 M☉)".to_string();
-                            toast.timer = 4.0;
                         }
                     }
                     UiButtonAction::SelectMercury => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|item| item.7.is_none())
+                            .filter(|item| {
+                                item.7.is_none() && !item.6.body_type.is_star_or_remnant()
+                            })
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -634,7 +1059,6 @@ pub fn handle_ui_button_interactions(
                                 .partial_cmp(&b.3 .0.length())
                                 .unwrap_or(std::cmp::Ordering::Equal)
                         });
-                        // Prefer body named Mercury or closest inner body
                         let target = sorted
                             .iter()
                             .find(|item| {
@@ -657,7 +1081,9 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectEarth => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|item| item.7.is_none())
+                            .filter(|item| {
+                                item.7.is_none() && !item.6.body_type.is_star_or_remnant()
+                            })
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -665,10 +1091,12 @@ pub fn handle_ui_button_interactions(
                                 .partial_cmp(&b.3 .0.length())
                                 .unwrap_or(std::cmp::Ordering::Equal)
                         });
-                        // Prefer body named Earth, or closest planet near ~1.0-2.0 AU
                         let target = sorted
                             .iter()
-                            .find(|item| item.6.name.to_lowercase().contains("earth"))
+                            .find(|item| {
+                                item.6.name.to_lowercase().contains("earth")
+                                    || item.6.name.to_lowercase().contains("1e")
+                            })
                             .or_else(|| {
                                 sorted.iter().min_by(|a, b| {
                                     (a.3 .0.length() - 1.5)
@@ -693,7 +1121,9 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectJupiter => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|item| item.7.is_none())
+                            .filter(|item| {
+                                item.7.is_none() && !item.6.body_type.is_star_or_remnant()
+                            })
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -701,19 +1131,13 @@ pub fn handle_ui_button_interactions(
                                 .partial_cmp(&b.3 .0.length())
                                 .unwrap_or(std::cmp::Ordering::Equal)
                         });
-                        // Prefer body named Jupiter or massive outer planet near ~5.0-10.0 AU
                         let target = sorted
                             .iter()
-                            .find(|item| item.6.name.to_lowercase().contains("jupiter"))
-                            .or_else(|| {
-                                sorted.iter().min_by(|a, b| {
-                                    (a.3 .0.length() - 8.5)
-                                        .abs()
-                                        .partial_cmp(&(b.3 .0.length() - 8.5).abs())
-                                        .unwrap_or(std::cmp::Ordering::Equal)
-                                })
+                            .find(|item| {
+                                item.6.name.to_lowercase().contains("jupiter")
+                                    || item.6.body_type == BodyType::GasGiant
                             })
-                            .or_else(|| sorted.first());
+                            .or_else(|| sorted.last());
 
                         if let Some(item) = target {
                             let ent = item.0;
@@ -729,7 +1153,9 @@ pub fn handle_ui_button_interactions(
                     UiButtonAction::SelectKuiper => {
                         let mut sorted: Vec<_> = selected_query
                             .iter()
-                            .filter(|item| item.7.is_none())
+                            .filter(|item| {
+                                item.7.is_none() && !item.6.body_type.is_star_or_remnant()
+                            })
                             .collect();
                         sorted.sort_by(|a, b| {
                             a.3 .0
@@ -737,7 +1163,6 @@ pub fn handle_ui_button_interactions(
                                 .partial_cmp(&b.3 .0.length())
                                 .unwrap_or(std::cmp::Ordering::Equal)
                         });
-                        // Outermost planet or Kuiper embryo
                         if let Some(last) = sorted.last() {
                             let ent = last.0;
                             let body_name = last.6.name.clone();
@@ -750,28 +1175,30 @@ pub fn handle_ui_button_interactions(
                         }
                     }
                     UiButtonAction::CycleTarget => {
-                        let mut star_entity: Option<Entity> = None;
-                        let mut planets: Vec<(Entity, f64, String, f64)> = Vec::new();
+                        let mut stars: Vec<(Entity, f64)> = Vec::new();
+                        let mut planets: Vec<(Entity, f64)> = Vec::new();
 
-                        for (e, m, _, pos, _, _, body, ..) in selected_query.iter() {
-                            if body.body_type.is_star_or_remnant() {
-                                star_entity = Some(e);
+                        for (e, _, _, pos, _, _, body, is_star, ..) in selected_query.iter() {
+                            if is_star.is_some() || body.body_type.is_star_or_remnant() {
+                                stars.push((e, pos.0.length()));
                             } else {
-                                planets.push((e, pos.0.length(), body.name.clone(), m.0));
+                                planets.push((e, pos.0.length()));
                             }
                         }
 
-                        // Sort planets strictly from innermost to outermost
+                        stars.sort_by(|a, b| {
+                            a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                        });
                         planets.sort_by(|a, b| {
                             a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
                         });
 
                         let mut all_entities: Vec<Entity> = Vec::new();
-                        if let Some(star) = star_entity {
-                            all_entities.push(star);
+                        for (s_ent, ..) in stars {
+                            all_entities.push(s_ent);
                         }
-                        for (p_ent, ..) in &planets {
-                            all_entities.push(*p_ent);
+                        for (p_ent, ..) in planets {
+                            all_entities.push(p_ent);
                         }
 
                         if !all_entities.is_empty() {
@@ -793,36 +1220,171 @@ pub fn handle_ui_button_interactions(
                                 cam.target_entity = Some(next);
                             }
 
-                            if next_idx == 0 && star_entity.is_some() {
-                                toast.message = format!(
-                                    ">> TARGET [0/{}]: THE SUN (Central Star) | 0.00 AU",
-                                    len - 1
-                                );
-                            } else {
-                                let p_idx = if star_entity.is_some() {
-                                    next_idx - 1
+                            if let Ok(item) = selected_query.get(next) {
+                                let name = &item.6.name;
+                                let dist = item.3 .0.length();
+                                let mass = item.1 .0;
+                                let m_str = if mass >= 0.01 {
+                                    format!("{:.2} M☉", mass)
                                 } else {
-                                    next_idx
+                                    format!("{:.2} M⊕", mass / EARTH_MASS_SOLAR)
                                 };
-                                if p_idx < planets.len() {
-                                    let (_, dist, ref name, mass) = planets[p_idx];
-                                    let m_str = if mass >= 0.01 {
-                                        format!("{:.2} M_sun", mass)
+                                let icon =
+                                    if item.7.is_some() || item.6.body_type.is_star_or_remnant() {
+                                        "☀️"
+                                    } else if item.6.name.to_lowercase().contains("earth")
+                                        || item.6.name.to_lowercase().contains("habitable")
+                                        || item.6.name.to_lowercase().contains("1e")
+                                        || item.6.name.to_lowercase().contains("1f")
+                                        || item.6.name.to_lowercase().contains("1g")
+                                    {
+                                        "🌍"
+                                    } else if item.6.body_type == BodyType::GasGiant
+                                        || item.6.name.to_lowercase().contains("jupiter")
+                                        || item.6.name.to_lowercase().contains("saturn")
+                                    {
+                                        "🪐"
+                                    } else if item.6.name.to_lowercase().contains("rogue")
+                                        || item.6.name.to_lowercase().contains("nemesis")
+                                    {
+                                        "☄️"
                                     } else {
-                                        format!("{:.2} M_earth", mass / EARTH_MASS_SOLAR)
+                                        "🪨"
                                     };
-                                    toast.message = format!(
-                                        ">> TARGET [{}/{}]: {} ({:.2} AU) | Mass: {}",
-                                        next_idx,
-                                        len - 1,
-                                        name,
-                                        dist,
-                                        m_str
-                                    );
-                                }
+                                toast.message = format!(
+                                    ">> TARGET [{}/{}]: {} {} ({:.3} AU) | Mass: {}",
+                                    next_idx + 1,
+                                    len,
+                                    icon,
+                                    name,
+                                    dist,
+                                    m_str
+                                );
                             }
                             toast.timer = 4.0;
                         }
+                    }
+                    UiButtonAction::ToggleMinimizeQuickBar => {
+                        quick_bar_state.is_minimized = !quick_bar_state.is_minimized;
+                        toast.message = if quick_bar_state.is_minimized {
+                            "🗕 Body Bar Minimized (Press [H] or click to Expand)".to_string()
+                        } else {
+                            "🗖 Body Bar Expanded".to_string()
+                        };
+                        toast.timer = 3.0;
+                    }
+                    UiButtonAction::ToggleMinorBodies => {
+                        quick_bar_state.show_minor_bodies = !quick_bar_state.show_minor_bodies;
+                        toast.message = if quick_bar_state.show_minor_bodies {
+                            "🪐 Showing All Asteroids & Planetesimals".to_string()
+                        } else {
+                            "🪐 Showing Major Worlds Only".to_string()
+                        };
+                        toast.timer = 3.0;
+                    }
+
+                    // Planet Builder Actions
+                    UiButtonAction::TogglePlanetBuilder => {
+                        builder_state.is_open = !builder_state.is_open;
+                        toast.message = if builder_state.is_open {
+                            "🛠️ Planet Builder & Spawner Opened".to_string()
+                        } else {
+                            "🛠️ Planet Builder Closed".to_string()
+                        };
+                        toast.timer = 2.5;
+                    }
+                    UiButtonAction::BuilderSelectPreset(preset) => {
+                        builder_state.apply_preset(*preset);
+                        toast.message = format!("📋 Loaded Preset: {}", preset.display_name());
+                        toast.timer = 2.5;
+                    }
+                    UiButtonAction::BuilderMassStep(step) => match *step {
+                        -2 => {
+                            builder_state.mass_solar =
+                                (builder_state.mass_solar * 0.1).max(EARTH_MASS_SOLAR * 0.001)
+                        }
+                        -1 => {
+                            builder_state.mass_solar =
+                                (builder_state.mass_solar * 0.5).max(EARTH_MASS_SOLAR * 0.001)
+                        }
+                        1 => builder_state.mass_solar = (builder_state.mass_solar * 2.0).min(5.0),
+                        2 => builder_state.mass_solar = (builder_state.mass_solar * 10.0).min(5.0),
+                        _ => {}
+                    },
+                    UiButtonAction::BuilderDistanceStep(step) => match *step {
+                        -2 => {
+                            builder_state.semi_major_axis_au =
+                                (builder_state.semi_major_axis_au - 1.0).max(0.1)
+                        }
+                        -1 => {
+                            builder_state.semi_major_axis_au =
+                                (builder_state.semi_major_axis_au - 0.2).max(0.1)
+                        }
+                        1 => {
+                            builder_state.semi_major_axis_au =
+                                (builder_state.semi_major_axis_au + 0.2).min(80.0)
+                        }
+                        2 => {
+                            builder_state.semi_major_axis_au =
+                                (builder_state.semi_major_axis_au + 1.0).min(80.0)
+                        }
+                        _ => {}
+                    },
+                    UiButtonAction::BuilderCycleEccentricity => {
+                        builder_state.eccentricity = if builder_state.eccentricity < 0.05 {
+                            0.15
+                        } else if builder_state.eccentricity < 0.35 {
+                            0.60
+                        } else if builder_state.eccentricity < 0.90 {
+                            1.25 // Hyperbolic rogue
+                        } else {
+                            0.0
+                        };
+                    }
+                    UiButtonAction::BuilderCycleComposition => {
+                        // Cycle between Rocky -> Water/Ocean -> Metal Core -> Gas Giant
+                        if builder_state.gas_frac > 0.4 {
+                            builder_state.rock_frac = 0.70;
+                            builder_state.ice_frac = 0.05;
+                            builder_state.metal_frac = 0.25;
+                            builder_state.gas_frac = 0.0;
+                        } else if builder_state.ice_frac > 0.4 {
+                            builder_state.rock_frac = 0.10;
+                            builder_state.ice_frac = 0.05;
+                            builder_state.metal_frac = 0.85;
+                            builder_state.gas_frac = 0.0;
+                        } else if builder_state.metal_frac > 0.5 {
+                            builder_state.rock_frac = 0.02;
+                            builder_state.ice_frac = 0.02;
+                            builder_state.metal_frac = 0.01;
+                            builder_state.gas_frac = 0.95;
+                        } else {
+                            builder_state.rock_frac = 0.30;
+                            builder_state.ice_frac = 0.60;
+                            builder_state.metal_frac = 0.10;
+                            builder_state.gas_frac = 0.0;
+                        }
+                    }
+                    UiButtonAction::BuilderToggleClickSpawn => {
+                        builder_state.click_to_spawn_mode = !builder_state.click_to_spawn_mode;
+                        toast.message = if builder_state.click_to_spawn_mode {
+                            "🎯 Click-in-3D Mode ON: Click anywhere in 3D disk to place world!"
+                                .to_string()
+                        } else {
+                            "🚀 Click-in-3D Mode OFF: Using orbit button.".to_string()
+                        };
+                        toast.timer = 3.5;
+                    }
+                    UiButtonAction::BuilderExecuteSpawn => {
+                        spawn_custom_builder_world(
+                            &mut commands,
+                            &builder_state,
+                            star_mass,
+                            None,
+                            &mut player_state,
+                            &mut camera_query,
+                            &mut toast,
+                        );
                     }
 
                     // Scientific Instruments & Overlays
@@ -1573,6 +2135,85 @@ pub fn handle_ui_button_interactions(
                                 .to_string();
                         toast.timer = 5.0;
                     }
+                    UiButtonAction::LoadScenarioLittleRedDot => {
+                        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+                            crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
+                        ));
+                        toast.message =
+                            "🔴 Loaded Scenario: JWST Little Red Dot (100,000 M☉ Black Hole Star)"
+                                .to_string();
+                        toast.timer = 5.0;
+                    }
+                    UiButtonAction::ToggleSuperEddington => {
+                        let mut toggled = false;
+                        for (mut state, body) in quasi_star_query.iter_mut() {
+                            state.toggle_super_eddington();
+                            let mode = if state.super_eddington_active {
+                                "4.5x Eddington (Hyper-Accretion Active)"
+                            } else {
+                                "0.9x Eddington (Sub-Eddington Normal)"
+                            };
+                            toast.message = format!("⚡ Inflow Rate: {} on {}", mode, body.name);
+                            toast.timer = 4.5;
+                            toggled = true;
+                        }
+                        if !toggled {
+                            toast.message =
+                                "ℹ️ No Quasi-Star present in active simulation.".to_string();
+                            toast.timer = 3.0;
+                        }
+                    }
+                    UiButtonAction::TriggerBlowoutCocoon => {
+                        let mut triggered = false;
+                        for (mut state, _body) in quasi_star_query.iter_mut() {
+                            state.trigger_blowout();
+                            toast.message = "💥 COCOON BLOWOUT: Radiation pressure stripping hydrogen envelope to unveil Supermassive Quasar!".to_string();
+                            toast.timer = 6.0;
+                            triggered = true;
+                        }
+                        if !triggered {
+                            toast.message =
+                                "ℹ️ No Quasi-Star present in active simulation.".to_string();
+                            toast.timer = 3.0;
+                        }
+                    }
+                    UiButtonAction::SpawnInfallPop3Star => {
+                        let r_au = 120.0;
+                        let total_m = 150_000.0;
+                        let v_circ = (crate::utils::constants::G_ASTRO * total_m / r_au).sqrt();
+                        let v_mag = v_circ * 0.38;
+                        let pos = DVec3::new(r_au, 0.0, 15.0);
+                        let vel = DVec3::new(-v_mag * 0.75, 0.0, -v_mag * 0.65);
+
+                        let new_star = commands
+                            .spawn((
+                                CelestialBody {
+                                    name: "Infalling Pop-III Hypergiant (TDE Target)".to_string(),
+                                    body_type: BodyType::BlueSupergiant,
+                                },
+                                Mass(120.0),
+                                SimPosition(pos),
+                                SimVelocity(vel),
+                                SimAcceleration(DVec3::ZERO),
+                                Radius(0.012),
+                                Temperature(45_000.0),
+                                Composition::solar_gas(),
+                                VolatileInventory::default(),
+                                SpinState {
+                                    spin_vector: DVec3::new(0.0, 1e-10, 0.0),
+                                    rotation_period_hours: 24.0,
+                                    axial_tilt_degrees: 15.0,
+                                },
+                            ))
+                            .id();
+
+                        player_state.selected_entity = Some(new_star);
+                        if let Ok(mut cam) = camera_query.single_mut() {
+                            cam.target_entity = Some(new_star);
+                        }
+                        toast.message = "🌟 Spawned 120 M☉ Pop-III Hypergiant plunging toward the 100,000 M☉ Black Hole Seed!".to_string();
+                        toast.timer = 5.5;
+                    }
                 }
             }
         }
@@ -1607,6 +2248,7 @@ pub fn update_hud(
         Option<&BiosphereState>,
         Option<&StellarEvolutionState>,
     )>,
+    quasi_hud_query: Query<&BlackHoleStarState>,
     mut header_query: Query<
         &mut Text,
         (
@@ -1692,8 +2334,10 @@ pub fn update_hud(
                     BodyType::Pulsar => "RELATIVISTIC PULSAR",
                     BodyType::Magnetar => "MAGNETAR REMNANT",
                     BodyType::BlackHole => "STELLAR-MASS BLACK HOLE",
+                    BodyType::QuasiStar => "QUASI-STAR / BLACK HOLE STAR (JWST LITTLE RED DOT)",
                     BodyType::GasGiant => "GAS GIANT",
                     BodyType::IceGiant => "ICE GIANT",
+                    BodyType::SuperEarth => "SUPER-EARTH",
                     BodyType::TerrestrialPlanet => "TERRESTRIAL PLANET",
                     BodyType::Protoplanet => "PROTOPLANETARY EMBRYO",
                     BodyType::Planetesimal => "PLANETESIMAL",
@@ -1825,10 +2469,11 @@ pub fn update_hud(
         };
 
         text.0 = format!(
-            "SPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
+            "SPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/.]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
             speed_str,
             tool_str,
             player_state.overlay_mode.display_name(),
+            config.size_exaggeration,
             config.accretion_rate_multiplier,
             drift_pct,
             sim_time.step_count,
@@ -1901,7 +2546,9 @@ pub fn update_hud(
                 };
                 let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
-                let mass_str = if mass.0 >= 0.01 {
+                let mass_str = if mass.0 >= 10_000.0 {
+                    format!("{:.0} M☉ (Supermassive Seed)", mass.0)
+                } else if mass.0 >= 0.01 {
                     format!(
                         "{:.3} M_sun ({:.1} M_J)",
                         mass.0,
@@ -2140,8 +2787,10 @@ pub fn update_hud(
                     BodyType::Pulsar => "Relativistic Pulsar Remnant",
                     BodyType::Magnetar => "Magnetar Remnant",
                     BodyType::BlackHole => "Stellar-Mass Black Hole",
+                    BodyType::QuasiStar => "Quasi-Star / Black Hole Star (JWST Little Red Dot)",
                     BodyType::GasGiant => "Gas Giant Planet",
                     BodyType::IceGiant => "Ice Giant Planet",
+                    BodyType::SuperEarth => "Super-Earth Planet",
                     BodyType::TerrestrialPlanet => "Terrestrial Planet",
                     BodyType::Protoplanet => "Protoplanetary Embryo",
                     BodyType::Planetesimal => "Planetesimal",
@@ -2182,11 +2831,608 @@ pub fn update_hud(
                     bio_str,
                     star_extra_str,
                 );
+
+                if let Ok(qs) = quasi_hud_query.get(selected_entity) {
+                    let acc_mode = if qs.super_eddington_active {
+                        "SUPER-EDDINGTON (4.5x)"
+                    } else {
+                        "SUB-EDDINGTON (0.9x)"
+                    };
+                    let status = if qs.is_blown_out {
+                        format!(
+                            "QUASAR TRANSITION (Progress: {:.0}%)",
+                            qs.blowout_progress * 100.0
+                        )
+                    } else {
+                        format!("HYDROGEN COCOON INTACT ({:.0} AU)", qs.cocoon_radius_au)
+                    };
+                    text.0.push_str(&format!(
+                        "\n--------------------------------------------------\n  >> JWST LITTLE RED DOT / QUASI-STAR <<\n--------------------------------------------------\n  • BH Seed Mass:     {:>10.0} M☉\n  • Cocoon Mass:      {:>10.0} M☉\n  • Inflow Rate:      {:>10.1}x ({})\n  • Cocoon Status:    {}\n  • Redshift Epoch:   z ≈ 8.5 (Cosmic Dawn, 660 Myr)\n  • Controls:         [X] Accrete | [B] Blowout | [T] Pop-III TDE\n--------------------------------------------------",
+                        qs.black_hole_mass_solar,
+                        qs.cocoon_mass_solar,
+                        qs.eddington_ratio,
+                        acc_mode,
+                        status,
+                    ));
+                }
             } else {
                 text.0 = "Selected body was absorbed in an accretion merger.".to_string();
             }
         } else {
             text.0 = "No celestial body selected.\nClick on the Star or Planets above (or in 3D) to inspect & live-edit.\n[Tab] Next Body | [F] Focus Target | [WASD] Free-Fly View".to_string();
         }
+    }
+}
+
+/// Helper function to generate concise display labels and curated color themes
+/// for any celestial body in the active solar system or scenario preset.
+fn body_to_button_label_and_colors(
+    name: &str,
+    body_type: BodyType,
+    is_star: bool,
+) -> (String, Color, Color) {
+    let lower = name.to_lowercase();
+    let label = if lower.contains("little red dot") || body_type == BodyType::QuasiStar {
+        "🔴 Little Red Dot".to_string()
+    } else if lower.contains("trappist-1") {
+        if is_star || body_type.is_star_or_remnant() {
+            "TRAPPIST-1".to_string()
+        } else if lower.contains("trappist-1e") {
+            "1e (HZ)".to_string()
+        } else if lower.contains("trappist-1f") {
+            "1f (HZ)".to_string()
+        } else if lower.contains("trappist-1g") {
+            "1g (HZ)".to_string()
+        } else if lower.contains("trappist-1b") {
+            "1b".to_string()
+        } else if lower.contains("trappist-1c") {
+            "1c".to_string()
+        } else if lower.contains("trappist-1d") {
+            "1d".to_string()
+        } else if lower.contains("trappist-1h") {
+            "1h".to_string()
+        } else if let Some(suffix) = lower.strip_prefix("trappist-1") {
+            format!("1{}", suffix.trim())
+        } else {
+            name.to_string()
+        }
+    } else if lower.contains("kepler-16") {
+        if lower.contains("kepler-16a") {
+            "Kepler-16A".to_string()
+        } else if lower.contains("kepler-16b (secondary")
+            || lower.contains("kepler-16b (secondary m-dwarf)")
+            || (is_star && lower.contains("16b"))
+        {
+            "Kepler-16B".to_string()
+        } else if lower.contains("kepler-16b") {
+            "Kepler-16b".to_string()
+        } else {
+            name.to_string()
+        }
+    } else if lower.contains("nemesis") || lower.contains("rogue") {
+        "Nemesis-X".to_string()
+    } else if lower.contains("hot jupiter") || lower.contains("hd 209458") {
+        "Hot Jupiter".to_string()
+    } else if lower.contains("proto-earth") || (lower.contains("earth") && lower.contains("inner"))
+    {
+        "Proto-Earth".to_string()
+    } else if lower.contains("proto-jupiter") {
+        "Proto-Jupiter".to_string()
+    } else if lower.contains("proto-mercury") {
+        "Mercury".to_string()
+    } else if lower.contains("proto-venus") {
+        "Venus".to_string()
+    } else if lower.contains("proto-mars") {
+        "Mars".to_string()
+    } else if lower.contains("theia") {
+        "Theia".to_string()
+    } else if lower.contains("proto-saturn") {
+        "Saturn".to_string()
+    } else if lower.contains("proto-uranus") {
+        "Uranus".to_string()
+    } else if lower.contains("proto-neptune") {
+        "Neptune".to_string()
+    } else if lower.contains("kuiper") {
+        "Kuiper".to_string()
+    } else if lower.contains("ceres") {
+        "Ceres".to_string()
+    } else if lower.contains("protostar") || (is_star && lower.contains("sun")) {
+        "Sun".to_string()
+    } else if lower.contains("host star") {
+        "Host Star".to_string()
+    } else if lower.starts_with("asteroid-") {
+        if let Some(suffix) = name.strip_prefix("Asteroid-") {
+            format!("Ast-{}", suffix)
+        } else {
+            name.to_string()
+        }
+    } else if lower.starts_with("dust-") {
+        if let Some(suffix) = name.strip_prefix("Dust-") {
+            format!("Dust-{}", suffix)
+        } else {
+            name.to_string()
+        }
+    } else {
+        if name.len() > 14 {
+            format!("{}…", &name[..12])
+        } else {
+            name.to_string()
+        }
+    };
+
+    let (bg, border) = if is_star || body_type.is_star_or_remnant() {
+        if lower.contains("little red dot") || body_type == BodyType::QuasiStar {
+            (
+                Color::srgba(0.28, 0.04, 0.08, 0.95),
+                Color::srgb(1.0, 0.35, 0.45),
+            )
+        } else if lower.contains("red") || lower.contains("trappist") || lower.contains("16b") {
+            (
+                Color::srgba(0.28, 0.08, 0.04, 0.9),
+                Color::srgb(1.0, 0.45, 0.3),
+            )
+        } else {
+            (
+                Color::srgba(0.28, 0.20, 0.04, 0.9),
+                Color::srgb(1.0, 0.8, 0.2),
+            )
+        }
+    } else if lower.contains("hz")
+        || lower.contains("earth")
+        || lower.contains("habitable")
+        || lower.contains("1e")
+        || lower.contains("1f")
+        || lower.contains("1g")
+    {
+        (
+            Color::srgba(0.04, 0.22, 0.16, 0.9),
+            Color::srgb(0.3, 0.9, 0.6),
+        )
+    } else if lower.contains("rogue") || lower.contains("nemesis") {
+        (
+            Color::srgba(0.28, 0.05, 0.12, 0.95),
+            Color::srgb(1.0, 0.3, 0.5),
+        )
+    } else if lower.contains("hot jupiter")
+        || body_type == BodyType::GasGiant
+        || lower.contains("jupiter")
+        || lower.contains("saturn")
+    {
+        (
+            Color::srgba(0.20, 0.12, 0.06, 0.9),
+            Color::srgb(0.95, 0.65, 0.3),
+        )
+    } else if body_type == BodyType::IceGiant
+        || lower.contains("neptune")
+        || lower.contains("uranus")
+        || lower.contains("kuiper")
+    {
+        (
+            Color::srgba(0.06, 0.14, 0.26, 0.9),
+            Color::srgb(0.4, 0.7, 1.0),
+        )
+    } else {
+        (
+            Color::srgba(0.08, 0.12, 0.18, 0.9),
+            Color::srgb(0.5, 0.7, 0.85),
+        )
+    };
+
+    (label, bg, border)
+}
+
+/// Determines if a celestial body is a major world (Star, Planet, Major Embryo, Named Moon)
+/// or a generic procedural minor planetesimal / asteroid.
+fn is_major_body(name: &str, body_type: BodyType, is_star: bool, mass_solar: f64) -> bool {
+    if is_star || body_type.is_star_or_remnant() {
+        return true;
+    }
+    let lower = name.to_lowercase();
+    if lower.starts_with("asteroid-") || lower.starts_with("dust-") || lower.starts_with("debris-")
+    {
+        return false;
+    }
+    if body_type == BodyType::GasGiant
+        || body_type == BodyType::IceGiant
+        || body_type == BodyType::SuperEarth
+        || body_type == BodyType::TerrestrialPlanet
+        || body_type == BodyType::Protoplanet
+        || body_type == BodyType::Moon
+    {
+        return true;
+    }
+    // Any body with mass >= 0.0001 Earth mass (e.g. Ceres / Vesta / Moon or named)
+    mass_solar >= (EARTH_MASS_SOLAR * 0.0001)
+}
+
+/// System that dynamically refreshes the top quick-switcher buttons
+/// to accurately match the celestial bodies present in the active solar system or scenario preset.
+pub fn update_quick_body_selector_bar(
+    mut commands: Commands,
+    bar_query: Query<(Entity, Option<&Children>), With<QuickBodySelectorBar>>,
+    bodies_query: Query<
+        (
+            Entity,
+            &CelestialBody,
+            &SimPosition,
+            &Mass,
+            Option<&CentralStar>,
+        ),
+        With<CelestialBody>,
+    >,
+    mut quick_bar_state: ResMut<QuickBarState>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut last_state: Local<(Vec<Entity>, bool, bool)>,
+) {
+    let Ok((bar_ent, opt_children)) = bar_query.single() else {
+        return;
+    };
+
+    // Hotkey [H]: Toggle minimize top body shortcut bar
+    if keyboard.just_pressed(KeyCode::KeyH) {
+        quick_bar_state.is_minimized = !quick_bar_state.is_minimized;
+    }
+
+    // Collect all bodies sorted by (is_star, distance_from_center)
+    let mut all_bodies: Vec<(Entity, String, BodyType, bool, f64, f64)> = bodies_query
+        .iter()
+        .map(|(ent, body, pos, mass, is_star)| {
+            let is_star_bool = is_star.is_some() || body.body_type.is_star_or_remnant();
+            let dist = pos.0.length();
+            (
+                ent,
+                body.name.clone(),
+                body.body_type,
+                is_star_bool,
+                dist,
+                mass.0,
+            )
+        })
+        .collect();
+
+    // Sort: Stars first, then by orbital distance
+    all_bodies.sort_by(|a, b| match (a.3, b.3) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal),
+    });
+
+    let current_entities: Vec<Entity> = all_bodies.iter().map(|b| b.0).collect();
+    let current_state = (
+        current_entities,
+        quick_bar_state.is_minimized,
+        quick_bar_state.show_minor_bodies,
+    );
+
+    // Only rebuild when the list of entities or bar state changes
+    if *last_state == current_state && !all_bodies.is_empty() {
+        return;
+    }
+
+    *last_state = current_state;
+
+    // Separate major worlds from minor debris/asteroids
+    let mut major_bodies: Vec<(Entity, String, BodyType, bool, f64)> = Vec::new();
+    let mut minor_bodies: Vec<(Entity, String, BodyType, bool, f64)> = Vec::new();
+
+    for (ent, name, body_type, is_star, dist, mass) in all_bodies.into_iter() {
+        if is_major_body(&name, body_type, is_star, mass) {
+            major_bodies.push((ent, name, body_type, is_star, dist));
+        } else {
+            minor_bodies.push((ent, name, body_type, is_star, dist));
+        }
+    }
+
+    // Despawn old button children
+    if let Some(children) = opt_children {
+        for child in children.iter() {
+            commands.entity(child).despawn();
+        }
+    }
+
+    // Repopulate with dynamic buttons
+    commands.entity(bar_ent).with_children(|btn_row| {
+        if quick_bar_state.is_minimized {
+            // Minimized mode: Single compact expand pill
+            let label = format!("🪐 System Worlds ({}) ▼ Expand [H]", major_bodies.len());
+            create_button(
+                btn_row,
+                UiButtonAction::ToggleMinimizeQuickBar,
+                &label,
+                Color::srgba(0.08, 0.14, 0.24, 0.90),
+                Color::srgb(0.4, 0.8, 1.0),
+            );
+            create_button(
+                btn_row,
+                UiButtonAction::CycleTarget,
+                "Cycle [Tab]",
+                Color::srgba(0.12, 0.16, 0.26, 0.85),
+                Color::srgb(0.5, 0.7, 1.0),
+            );
+        } else {
+            // Expanded mode:
+            // 1. Minimize toggle button
+            create_button(
+                btn_row,
+                UiButtonAction::ToggleMinimizeQuickBar,
+                "🗕 [H]",
+                Color::srgba(0.16, 0.08, 0.12, 0.85),
+                Color::srgb(0.9, 0.4, 0.6),
+            );
+
+            // 2. Render all major worlds
+            for (ent, name, body_type, is_star, _dist) in major_bodies.iter() {
+                let (label, bg, border) =
+                    body_to_button_label_and_colors(name, *body_type, *is_star);
+                create_button(
+                    btn_row,
+                    UiButtonAction::SelectEntity(*ent),
+                    &label,
+                    bg,
+                    border,
+                );
+            }
+
+            // 3. Optional Minor Bodies toggle (Asteroids / Planetesimals)
+            if !minor_bodies.is_empty() {
+                if quick_bar_state.show_minor_bodies {
+                    // Show up to 16 minor bodies to avoid overwhelming the screen
+                    for (ent, name, body_type, is_star, _dist) in minor_bodies.iter().take(16) {
+                        let (label, bg, border) =
+                            body_to_button_label_and_colors(name, *body_type, *is_star);
+                        create_button(
+                            btn_row,
+                            UiButtonAction::SelectEntity(*ent),
+                            &label,
+                            bg,
+                            border,
+                        );
+                    }
+                    create_button(
+                        btn_row,
+                        UiButtonAction::ToggleMinorBodies,
+                        &format!("🪨 Asteroids ({}) ▲ Hide", minor_bodies.len()),
+                        Color::srgba(0.18, 0.12, 0.08, 0.85),
+                        Color::srgb(0.85, 0.6, 0.3),
+                    );
+                } else {
+                    create_button(
+                        btn_row,
+                        UiButtonAction::ToggleMinorBodies,
+                        &format!("🪨 +{} Asteroids ▼", minor_bodies.len()),
+                        Color::srgba(0.12, 0.14, 0.18, 0.85),
+                        Color::srgb(0.6, 0.7, 0.8),
+                    );
+                }
+            }
+
+            // 4. Always add Cycle [Tab] button at the end
+            create_button(
+                btn_row,
+                UiButtonAction::CycleTarget,
+                "Cycle [Tab]",
+                Color::srgba(0.12, 0.16, 0.26, 0.85),
+                Color::srgb(0.5, 0.7, 1.0),
+            );
+        }
+    });
+}
+
+/// Spawns a custom celestial world configured in the Planet Builder into the active simulation.
+pub fn spawn_custom_builder_world(
+    commands: &mut Commands,
+    builder_state: &PlanetBuilderState,
+    star_mass: f64,
+    spawn_coords: Option<DVec3>,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+    toast: &mut NotificationToast,
+) -> Entity {
+    let mut rng = rand::rng();
+    let (pos, vel) = if let Some(custom_pos) = spawn_coords {
+        let r = custom_pos.length().max(0.1);
+        let v_circ = (G_ASTRO * star_mass / r).sqrt();
+        let phi = custom_pos.z.atan2(custom_pos.x);
+        let vel = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
+        (custom_pos, vel)
+    } else {
+        let a = builder_state.semi_major_axis_au.max(0.1);
+        let angle = rng.random_range(0.0..(2.0 * PI));
+        let pos = DVec3::new(a * angle.cos(), 0.0, a * angle.sin());
+        let v_circ = (G_ASTRO * star_mass / a).sqrt();
+        let vel = DVec3::new(-v_circ * angle.sin(), 0.0, v_circ * angle.cos());
+        (pos, vel)
+    };
+
+    let comp = Composition {
+        silicate_frac: builder_state.rock_frac as f64,
+        ice_frac: builder_state.ice_frac as f64,
+        metal_frac: builder_state.metal_frac as f64,
+        organics_frac: 0.0,
+        gas_frac: builder_state.gas_frac as f64,
+    };
+    let avg_density = comp.average_density();
+    let radius_au = ((3.0 * builder_state.mass_solar / avg_density) / (4.0 * PI))
+        .cbrt()
+        .max(EARTH_RADIUS_AU * 0.2);
+
+    let body_type = crate::simulation::components::classify_body_by_mass_and_comp(
+        builder_state.mass_solar,
+        &comp,
+        false,
+    );
+    let temp_k = match body_type {
+        BodyType::RedDwarf => 3000.0,
+        BodyType::BrownDwarf => 1400.0,
+        BodyType::GasGiant => 160.0,
+        BodyType::IceGiant => 80.0,
+        BodyType::SuperEarth => 295.0,
+        _ => 288.0,
+    };
+
+    let new_ent = commands
+        .spawn((
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(builder_state.mass_solar),
+            Radius(radius_au),
+            Temperature(temp_k),
+            comp,
+            CelestialBody {
+                name: builder_state.custom_name.clone(),
+                body_type,
+            },
+            InternalDifferentiation {
+                is_differentiated: true,
+                differentiation_fraction: 0.9,
+                core_radius_au: radius_au * 0.45,
+                mantle_radius_au: radius_au * 0.90,
+                crust_thickness_au: radius_au * 0.08,
+                ocean_ice_thickness_au: if builder_state.ice_frac > 0.1 {
+                    radius_au * 0.05
+                } else {
+                    0.0
+                },
+                core_temp_k: temp_k * 4.0,
+                magnetic_field_gauss: if builder_state.metal_frac > 0.15 {
+                    0.5
+                } else {
+                    0.05
+                },
+            },
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1e-12, 0.0),
+                rotation_period_hours: 24.0,
+                axial_tilt_degrees: 15.0,
+            },
+            VolatileInventory {
+                delivered_water_m_earth: if builder_state.ice_frac > 0.1 {
+                    1.0
+                } else {
+                    0.0
+                },
+                ocean_coverage_frac: if builder_state.ice_frac > 0.1 {
+                    0.70
+                } else {
+                    0.0
+                },
+                atmospheric_pressure_bar: if builder_state.gas_frac > 0.1 {
+                    50.0
+                } else {
+                    1.0
+                },
+                cometary_impact_count: if builder_state.ice_frac > 0.1 { 10 } else { 0 },
+            },
+            PlanetaryClimate {
+                surface_temperature_k: (temp_k + 33.0) as f32,
+                equilibrium_temperature_k: temp_k as f32,
+                greenhouse_delta_k: 33.0,
+                albedo: 0.30,
+                ice_coverage_frac: 0.1,
+                cloud_coverage_frac: 0.5,
+                climate_regime: if builder_state.gas_frac > 0.4 {
+                    ClimateRegime::GasGiantEnvelope
+                } else if temp_k < 260.0 {
+                    ClimateRegime::SnowballIceAge
+                } else {
+                    ClimateRegime::TemperateHabitable
+                },
+            },
+            BiosphereState::default(),
+            ElectromagneticFieldState {
+                magnetic_field_gauss: if builder_state.metal_frac > 0.15 {
+                    0.5
+                } else {
+                    0.05
+                },
+                rotation_period_sec: 24.0 * 3600.0,
+                magnetic_inclination_rad: 0.15,
+                jet_length_au: 0.0,
+                synchrotron_intensity: 0.0,
+            },
+        ))
+        .id();
+
+    player_state.selected_entity = Some(new_ent);
+    if let Ok(mut cam) = camera_query.single_mut() {
+        cam.target_entity = Some(new_ent);
+    }
+    toast.message = format!(
+        "🚀 Spawned & Focused: \"{}\" ({:.2} AU)!",
+        builder_state.custom_name,
+        pos.length()
+    );
+    toast.timer = 4.5;
+
+    new_ent
+}
+
+/// System that synchronizes the Planet Builder UI visibility and live status text.
+pub fn update_planet_builder_ui(
+    builder_state: Res<PlanetBuilderState>,
+    disk_params: Res<DiskParameters>,
+    mut panel_query: Query<&mut Node, With<PlanetBuilderPanel>>,
+    mut text_query: Query<&mut Text, With<PlanetBuilderInfoText>>,
+) {
+    if let Ok(mut node) = panel_query.single_mut() {
+        node.display = if builder_state.is_open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    if let Ok(mut text) = text_query.single_mut() {
+        let star_mass = disk_params.central_star_mass;
+        let v_circ_kms = (G_ASTRO * star_mass / builder_state.semi_major_axis_au.max(0.05)).sqrt()
+            * (AU_TO_METERS / 1000.0)
+            / (365.25 * 86400.0);
+        let mass_earth = builder_state.mass_solar / EARTH_MASS_SOLAR;
+        let mass_jup = builder_state.mass_solar / JUPITER_MASS_SOLAR;
+
+        let mass_str = if builder_state.mass_solar >= 0.05 {
+            format!("{:.3} M_sun", builder_state.mass_solar)
+        } else if mass_jup >= 0.5 {
+            format!("{:.2} M_Jup ({:.0} M_earth)", mass_jup, mass_earth)
+        } else {
+            format!("{:.2} M_earth", mass_earth)
+        };
+
+        let ecc_str = if builder_state.eccentricity < 0.05 {
+            "Circular (0.00)".to_string()
+        } else if builder_state.eccentricity < 0.35 {
+            format!("Moderate ({:.2})", builder_state.eccentricity)
+        } else if builder_state.eccentricity < 1.0 {
+            format!("High ({:.2})", builder_state.eccentricity)
+        } else {
+            format!("Hyperbolic ({:.2})", builder_state.eccentricity)
+        };
+
+        text.0 = format!(
+            "🛠️ PLANET BUILDER & SPAWNER\n\
+            ───────────────────────────────\n\
+            Target: {} [{}]\n\
+            Mass:   {}\n\
+            Orbit:  {:.2} AU | v_circ: {:.1} km/s\n\
+            Ecc:    {}\n\
+            Mix:    Rock {:.0}% | Ice {:.0}% | Fe {:.0}% | Gas {:.0}%\n\
+            Mode:   {}",
+            builder_state.custom_name,
+            builder_state.active_preset.display_name(),
+            mass_str,
+            builder_state.semi_major_axis_au,
+            v_circ_kms,
+            ecc_str,
+            builder_state.rock_frac * 100.0,
+            builder_state.ice_frac * 100.0,
+            builder_state.metal_frac * 100.0,
+            builder_state.gas_frac * 100.0,
+            if builder_state.click_to_spawn_mode {
+                "🎯 Click 3D Plane to Place"
+            } else {
+                "🚀 Instant Orbit Insertion"
+            }
+        );
     }
 }

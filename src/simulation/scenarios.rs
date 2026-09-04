@@ -24,6 +24,7 @@ pub enum ScenarioPreset {
     Kepler16Circumbinary,
     HotJupiterMigration,
     RoguePlanetFlyby,
+    LittleRedDot,
 }
 
 impl ScenarioPreset {
@@ -34,6 +35,7 @@ impl ScenarioPreset {
             ScenarioPreset::Kepler16Circumbinary => "Kepler-16 (Circumbinary Binary)",
             ScenarioPreset::HotJupiterMigration => "Hot Jupiter Migration",
             ScenarioPreset::RoguePlanetFlyby => "Rogue Planet Flyby",
+            ScenarioPreset::LittleRedDot => "JWST Little Red Dot (Black Hole Star)",
         }
     }
 
@@ -53,6 +55,9 @@ impl ScenarioPreset {
             }
             ScenarioPreset::RoguePlanetFlyby => {
                 "A 3.5 M_Jup interstellar rogue planet screaming through the solar system at 38 km/s, scattering orbits."
+            }
+            ScenarioPreset::LittleRedDot => {
+                "Cosmic Dawn (z ~ 8.5): A 100,000 M☉ supermassive black hole seed encased in a dense, dust-free primordial hydrogen gas cocoon spanning 60 AU."
             }
         }
     }
@@ -136,6 +141,9 @@ pub fn handle_load_scenario_events(
                 scenario_state.rogue_planet_entity = Some(rogue);
                 star
             }
+            ScenarioPreset::LittleRedDot => {
+                spawn_little_red_dot_scenario(&mut commands, &mut disk_params)
+            }
         };
 
         player_state.selected_entity = Some(central_star_ent);
@@ -151,6 +159,7 @@ pub fn handle_load_scenario_events(
                 ScenarioPreset::SolarNebulaMmsn => (16.0, 0.785, 0.62),
                 ScenarioPreset::HotJupiterMigration => (10.0, 0.785, 0.62),
                 ScenarioPreset::RoguePlanetFlyby => (35.0, 0.785, 0.62),
+                ScenarioPreset::LittleRedDot => (160.0, 0.785, 0.62),
             };
             cam.radius = target_r;
             cam.target_radius = target_r;
@@ -199,7 +208,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
     // 10 MMSN Protoplanetary Seeds
     let major_seeds: [(f64, f64, f64, &str, Composition, BodyType, f64); 10] = [
         (
-            0.50,
+            0.40,
             0.06 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.40,
             "Proto-Mercury",
@@ -208,34 +217,34 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             0.05,
         ),
         (
-            0.95,
-            0.55 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.85,
+            0.72,
+            0.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.80,
             "Proto-Venus",
             Composition::rocky(),
             BodyType::Protoplanet,
             0.01,
         ),
         (
-            1.50,
-            0.65 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.90,
+            1.00,
+            0.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.82,
             "Proto-Earth",
             Composition::rocky(),
             BodyType::Protoplanet,
-            0.02,
+            0.016,
         ),
         (
-            1.90,
-            0.12 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.50,
+            1.25,
+            0.10 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.48,
             "Theia Embryo",
             Composition::rocky(),
             BodyType::Protoplanet,
             0.04,
         ),
         (
-            2.60,
+            1.52,
             0.11 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.53,
             "Proto-Mars",
@@ -244,7 +253,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             0.07,
         ),
         (
-            8.50,
+            5.20,
             3.50 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.50,
             "Proto-Jupiter",
@@ -253,7 +262,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             0.03,
         ),
         (
-            11.50,
+            7.50,
             0.05 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.38,
             "Callisto Embryo",
@@ -262,7 +271,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             0.02,
         ),
         (
-            15.50,
+            9.50,
             2.20 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.25,
             "Proto-Saturn",
@@ -271,7 +280,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             0.04,
         ),
         (
-            20.50,
+            14.00,
             0.05 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.38,
             "Titan Embryo",
@@ -280,7 +289,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             0.03,
         ),
         (
-            28.00,
+            19.20,
             1.20 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 1.05,
             "Proto-Uranus",
@@ -294,6 +303,21 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
         let v_circ = (G_ASTRO * 1.0 / r_au).sqrt();
         let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
         let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
+
+        let mut diff = InternalDifferentiation::default();
+        diff.recalculate(mass_s, rad_au, &comp);
+
+        let mut spin = SpinState::default();
+        let initial_spin =
+            (mass_s * rad_au * rad_au * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
+        spin.update_from_spin(initial_spin, mass_s, rad_au);
+
+        let vol = VolatileInventory {
+            delivered_water_m_earth: 0.0,
+            ocean_coverage_frac: 0.0,
+            atmospheric_pressure_bar: if r_au < 2.7 { 0.5 } else { 0.0 },
+            cometary_impact_count: 0,
+        };
 
         commands.spawn((
             CelestialBody {
@@ -309,6 +333,9 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             Luminosity(0.0),
             AngularMomentum(pos.cross(vel) * mass_s),
             comp,
+            diff,
+            spin,
+            vol,
         ));
     }
 
@@ -1020,4 +1047,169 @@ pub fn update_active_scenarios(
             }
         }
     }
+}
+
+/// Spawns the JWST "Little Red Dot" (Black Hole Star / Quasi-Star) scenario.
+///
+/// Features:
+/// - Central 100,000 M_sun supermassive black hole seed encased in a dense 50,000 M_sun
+///   pure-hydrogen cocoon extending out to 60 AU.
+/// - Surface effective temperature ~3,800 K (crimson/infrared Rayleigh fog).
+/// - Surrounding primordial Pop-III star seeds, gas cloudlets, and pristine hydrogen infall.
+pub fn spawn_little_red_dot_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> Entity {
+    let bh_core_mass = 400_000.0;
+    let cocoon_mass = 50_000.0;
+    let total_mass = bh_core_mass + cocoon_mass;
+    let cocoon_radius_au = 60.0;
+    let temp_k = 3800.0;
+
+    disk_params.central_star_mass = total_mass;
+    disk_params.inner_radius_au = 0.5;
+    disk_params.outer_radius_au = 250.0;
+    disk_params.reference_temp_1au = temp_k;
+    disk_params.gas_disk_lifetime_yr = 20_000_000.0;
+
+    // 1. Central Quasi-Star (Little Red Dot)
+    let quasi_star_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "JWST Little Red Dot (Black Hole Star)".to_string(),
+                body_type: BodyType::QuasiStar,
+            },
+            CentralStar,
+            Mass(total_mass),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration(DVec3::ZERO),
+            Radius(cocoon_radius_au),
+            Temperature(temp_k),
+            Luminosity(2.5e10), // 25 Billion L_sun super-Eddington Quasi-Star luminosity
+            Composition::pure_hydrogen(),
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1e-6, 0.0),
+                rotation_period_hours: 120.0,
+                axial_tilt_degrees: 0.0,
+            },
+            VolatileInventory::default(),
+            IgnitionState {
+                core_temperature: 5.0e7,
+                fusion_fraction: 0.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState::default(),
+            BlackHoleStarState {
+                black_hole_mass_solar: bh_core_mass,
+                cocoon_mass_solar: cocoon_mass,
+                cocoon_radius_au,
+                eddington_ratio: 3.5,
+                blowout_progress: 0.0,
+                super_eddington_active: true,
+                is_blown_out: false,
+                accreted_envelope_mass: 0.0,
+                jet_travel_distance_au: 0.0,
+            },
+        ))
+        .insert(ElectromagneticFieldState {
+            magnetic_field_gauss: 2.5e6, // 2.5 MegaGauss Blandford-Znajek magnetosphere
+            rotation_period_sec: 120.0 * 3600.0,
+            magnetic_inclination_rad: 0.22,
+            jet_length_au: 0.0,
+            synchrotron_intensity: 1.0,
+        })
+        .id();
+
+    // 2. Primordial infalling structures & Pop-III stellar seeds orbiting the Little Red Dot
+    // All structures are placed within the active circum-nuclear gaseous disk (85 - 235 AU)
+    let primordial_satellites: [(f64, f64, f64, &str, Composition, BodyType, f64, f64); 5] = [
+        // Dense primordial hydrogen cloudlet at 85 AU (in particle ring)
+        (
+            85.0,
+            250.0, // 250 M_sun gas clump
+            10.0,  // 10 AU cloud radius
+            "Dense Hydrogen Cloudlet α",
+            Composition::pure_hydrogen(),
+            BodyType::Protoplanet,
+            0.15,
+            0.04,
+        ),
+        // Population III Blue Giant star (80 M_sun) at 120 AU
+        (
+            120.0,
+            80.0,  // 80 M_sun Pop-III star
+            0.008, // ~1.2 million km radius
+            "Pop-III Blue Giant Seed",
+            Composition::solar_gas(),
+            BodyType::BlueGiant,
+            1.20,
+            0.05,
+        ),
+        // Pristine gas clump β at 155 AU
+        (
+            155.0,
+            350.0, // 350 M_sun gas clump
+            14.0,  // 14 AU cloud radius
+            "Dense Hydrogen Cloudlet β",
+            Composition::pure_hydrogen(),
+            BodyType::Protoplanet,
+            2.45,
+            0.04,
+        ),
+        // Secondary Pop-III binary companion at 195 AU
+        (
+            195.0,
+            100.0, // 100 M_sun companion star
+            0.010,
+            "Pop-III Companion Star",
+            Composition::solar_gas(),
+            BodyType::BlueGiant,
+            4.10,
+            0.05,
+        ),
+        // Outer circum-nuclear cluster core at 235 AU (safely within the 250 AU disk edge)
+        (
+            235.0,
+            500.0, // 500 M_sun cluster core
+            20.0,  // 20 AU radius
+            "Circum-Nuclear Cluster Core",
+            Composition::solar_gas(),
+            BodyType::Protoplanet,
+            5.30,
+            0.03,
+        ),
+    ];
+
+    for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off, ecc) in &primordial_satellites {
+        let v_circ = (G_ASTRO * total_mass / r_au).sqrt();
+        let v_mag = v_circ * (1.0 - ecc * 0.4);
+        let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
+        let vel = DVec3::new(-v_mag * phi_off.sin(), 0.0, v_mag * phi_off.cos());
+
+        let temp = (temp_k * (r_au / 60.0).powf(-0.5)).max(50.0);
+
+        commands.spawn((
+            CelestialBody {
+                name: name.to_string(),
+                body_type: b_type,
+            },
+            Mass(mass_s),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Radius(rad_au),
+            Temperature(temp),
+            comp,
+            VolatileInventory::default(),
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1e-10, 0.0),
+                rotation_period_hours: 48.0,
+                axial_tilt_degrees: 5.0,
+            },
+        ));
+    }
+
+    quasi_star_ent
 }

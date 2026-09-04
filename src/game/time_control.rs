@@ -63,6 +63,7 @@ pub fn handle_time_control_input(
                     BodyType::Protostar
                         | BodyType::MainSequenceStar
                         | BodyType::TerrestrialPlanet
+                        | BodyType::SuperEarth
                         | BodyType::GasGiant
                         | BodyType::IceGiant
                         | BodyType::Protoplanet

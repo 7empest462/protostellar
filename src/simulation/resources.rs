@@ -31,8 +31,13 @@ pub struct SimulationConfig {
     pub active_particles: u32,
     /// Global render size multiplier for microscopic dust particles (0.1x - 0.3x for fine dusty haze).
     pub particle_render_scale: f32,
-    /// Global render size multiplier for celestial bodies.
-    pub body_render_scale: f32,
+    /// Uniform size exaggeration factor applied to ALL celestial bodies (stars, planets, moons).
+    /// Acts like Universe Sandbox's "Size Scale" slider.
+    /// At 1.0× with power-law compression, the Sun renders at ~0.025 AU visual radius.
+    /// Adjustable at runtime with `,` (decrease) and `.` (increase) keys.
+    pub size_exaggeration: f32,
+    /// Minimum visual radius floor (AU) to prevent tiny bodies (dust, planetesimals) from vanishing.
+    pub min_body_visual_radius: f32,
 }
 
 impl Default for SimulationConfig {
@@ -41,7 +46,7 @@ impl Default for SimulationConfig {
             softening_au: 0.008, // ~1.2 million km
             barnes_hut_theta: 0.5,
             base_dt_yr: 0.0005,         // ~4.38 hours per physics step
-            max_substeps_per_frame: 24, // Optimized for 120 FPS high-speed time warp
+            max_substeps_per_frame: 48, // Enhanced substep resolution for stable high-speed time warp
             enable_gas_drag: true,
             enable_accretion: true,
             enable_thermodynamics: true,
@@ -50,15 +55,69 @@ impl Default for SimulationConfig {
             gas_density_scale: 1.0,
             active_particles: 50000,
             particle_render_scale: 0.3,
-            body_render_scale: 0.08, // Compact planets relative to orbital distances and star size
+            size_exaggeration: 1.0,
+            min_body_visual_radius: 0.0006,
         }
     }
 }
 
 impl SimulationConfig {
-    /// Computes the visual render radius of a celestial body using a smooth cube-root mass relationship.
-    /// Keeps pure dust very small and scales embryos and mature planets clearly relative to the star.
-    pub fn calc_render_radius(
+    /// Reference radius: 1 Solar Radius in AU (~0.00465 AU)
+    const VISUAL_REF_RADIUS: f32 = 0.00465;
+    /// Base visual size for a body with radius equal to the Sun at 1× exaggeration.
+    const VISUAL_BASE_SIZE: f32 = 0.025;
+    /// Power-law compression exponent. 1.0 = true linear scale, 0.0 = all same size.
+    /// 0.45 compresses the enormous range (planetesimal → supergiant) into a manageable
+    /// visual range while preserving correct ordering and approximate proportionality.
+    const VISUAL_COMPRESSION: f32 = 0.45;
+
+    /// Computes the unified visual render radius from a body's physical radius in AU.
+    ///
+    /// Uses power-law compression: `base × (R_phys / R_ref)^power × exaggeration`
+    /// This ensures ALL bodies (stars, planets, moons) share the same scaling law,
+    /// so their visual size ratios are always physically correct.
+    ///
+    /// Example outputs at 1× exaggeration:
+    /// - Sun      (R=0.00465 AU) → 0.025 AU visual radius
+    /// - Jupiter  (R=0.000477 AU) → 0.0087 AU
+    /// - Earth    (R=0.0000426 AU) → 0.0029 AU
+    /// - TRAPPIST-1 star (R=0.00056 AU) → 0.0100 AU
+    /// - TRAPPIST-1e (R=0.0000392 AU) → 0.0028 AU
+    pub fn calc_visual_radius(&self, physical_radius_au: f64) -> f32 {
+        let r = (physical_radius_au as f32).max(1e-9);
+        let ratio = r / Self::VISUAL_REF_RADIUS;
+        let compressed = ratio.powf(Self::VISUAL_COMPRESSION);
+        (Self::VISUAL_BASE_SIZE * compressed * self.size_exaggeration)
+            .max(self.min_body_visual_radius)
+    }
+
+    /// Computes the visual render radius taking into account the celestial body classification.
+    /// Asteroids, comets, and minor planetesimals are scaled down (0.35x) so they appear
+    /// distinctly miniature compared to major planets and protoplanetary embryos.
+    pub fn calc_visual_radius_for_type(
+        &self,
+        physical_radius_au: f64,
+        body_type: crate::simulation::components::BodyType,
+    ) -> f32 {
+        let base_rad = self.calc_visual_radius(physical_radius_au);
+        if matches!(
+            body_type,
+            crate::simulation::components::BodyType::Asteroid
+                | crate::simulation::components::BodyType::Comet
+                | crate::simulation::components::BodyType::Planetesimal
+                | crate::simulation::components::BodyType::DustGrain
+        ) {
+            (base_rad * 0.35).max(0.0003)
+        } else if body_type == crate::simulation::components::BodyType::BlackHole {
+            (base_rad * 2.8).clamp(0.35, 3.50)
+        } else {
+            base_rad
+        }
+    }
+
+    /// Legacy mass-based render radius used only for accretion collision cross-sections.
+    /// NOT used for visual rendering (use `calc_visual_radius` instead).
+    pub fn calc_collision_radius(
         mass_solar: f64,
         body_type: crate::simulation::components::BodyType,
     ) -> f32 {
@@ -83,6 +142,7 @@ impl SimulationConfig {
             BodyType::WhiteDwarf => 0.012,
             BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => 0.006,
             BodyType::BlackHole => 0.010,
+            BodyType::QuasiStar => 2.50,
             BodyType::GasGiant => {
                 let m_ratio = (mass_solar / JUPITER_MASS_SOLAR).cbrt() as f32;
                 (0.045 * m_ratio).clamp(0.030, 0.065)
@@ -90,6 +150,10 @@ impl SimulationConfig {
             BodyType::IceGiant => {
                 let m_ratio = (mass_solar / (15.0 * EARTH_MASS_SOLAR)).cbrt() as f32;
                 (0.032 * m_ratio).clamp(0.022, 0.045)
+            }
+            BodyType::SuperEarth => {
+                let m_ratio = (mass_solar / (3.5 * EARTH_MASS_SOLAR)).cbrt() as f32;
+                (0.026 * m_ratio).clamp(0.018, 0.036)
             }
             BodyType::TerrestrialPlanet => {
                 let m_ratio = (mass_solar / EARTH_MASS_SOLAR).cbrt() as f32;
@@ -242,7 +306,7 @@ impl Default for DiskParameters {
             density_power_law: 1.5,
             reference_temp_1au: 280.0,
             snow_line_au: 2.70, // Authentic Ice/Snow Line (Asteroid Belt transition)
-            gas_disk_lifetime_yr: 15_000.0, // 15,000 years before complete photo-evaporative clearance
+            gas_disk_lifetime_yr: 60_000.0, // 60,000 years before complete photo-evaporative clearance
         }
     }
 }

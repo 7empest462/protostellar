@@ -44,7 +44,7 @@ pub fn setup_gas_cloud_disk(
     mut materials: ResMut<Assets<GasCloudMaterial>>,
     disk_params: Res<DiskParameters>,
 ) {
-    let plane_size = (disk_params.outer_radius_au * 2.4) as f32;
+    let plane_size = 1200.0f32;
     let plane_mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(plane_size)));
 
     let gas_material = materials.add(ExtendedMaterial {
@@ -59,8 +59,8 @@ pub fn setup_gas_cloud_disk(
             uniforms: GasUniforms {
                 time_data: Vec4::new(
                     0.0,
-                    disk_params.inner_radius_au as f32,
-                    disk_params.outer_radius_au as f32,
+                    0.5,
+                    (disk_params.outer_radius_au as f32).max(45.0),
                     1.0,
                 ),
                 star_params: Vec4::new(0.013, 3600.0, 1.8, 0.0),
@@ -68,8 +68,14 @@ pub fn setup_gas_cloud_disk(
         },
     });
 
-    // Dual-layer double-sided geometry for translucent depth without over-saturating opacity
-    for y_offset in [0.0f32, 0.04f32] {
+    // Multi-layered stratified 3D geometry spanning vertical flared scale-height
+    // This gives a thick, volumetric, glowing cloud with smooth Gaussian decay at every height.
+    let layer_offsets = [
+        -1.60f32, -1.20, -0.85, -0.55, -0.30, -0.12, -0.04, 0.0, 0.04, 0.12, 0.30, 0.55, 0.85,
+        1.20, 1.60,
+    ];
+
+    for y_offset in layer_offsets {
         commands.spawn((
             Mesh3d(plane_mesh.clone()),
             MeshMaterial3d(gas_material.clone()),
@@ -85,22 +91,51 @@ pub fn setup_gas_cloud_disk(
 pub fn update_gas_cloud_material(
     sim_time: Res<SimTime>,
     config: Res<SimulationConfig>,
+    disk_params: Res<DiskParameters>,
     mut materials: ResMut<Assets<GasCloudMaterial>>,
     gas_query: Query<&MeshMaterial3d<GasCloudMaterial>, With<GasCloudDisk>>,
-    star_query: Query<(&Radius, &Temperature, &Luminosity, &IgnitionState), With<CentralStar>>,
+    star_query: Query<
+        (
+            &Radius,
+            &Temperature,
+            &Luminosity,
+            &IgnitionState,
+            Option<&BlackHoleStarState>,
+            &CelestialBody,
+        ),
+        With<CentralStar>,
+    >,
 ) {
     for handle in gas_query.iter() {
         if let Some(mut mat) = materials.get_mut(handle) {
             mat.extension.uniforms.time_data.x = (sim_time.elapsed_years * 12.0) as f32;
             mat.extension.uniforms.time_data.w = config.gas_density_scale;
+            mat.extension.uniforms.time_data.z = (disk_params.outer_radius_au as f32).max(45.0);
 
-            if let Ok((rad, temp, lum, ignition)) = star_query.single() {
+            if let Ok((rad, temp, lum, ignition, opt_bhs, star_body)) = star_query.single() {
+                let is_blown_out = opt_bhs.map(|s| s.is_blown_out).unwrap_or(false);
+                let is_black_hole = star_body.body_type == BodyType::BlackHole;
+
+                if is_blown_out || is_black_hole {
+                    // Blow out ONLY the center yellow part (inner cavity expanding out to 25 AU).
+                    // The rest of the outer disk (cyan and lavender nebula) stays fully visible!
+                    let blowout_p = opt_bhs.map(|s| s.blowout_progress).unwrap_or(1.0);
+                    let target_inner = 0.5 + blowout_p * 24.5;
+                    mat.extension.uniforms.time_data.y = target_inner;
+                } else {
+                    // Before blowout: Cloud spans with the warm golden yellow on the inside!
+                    // This lets the 2.5 MegaGauss electromagnetic waves propagate through the glowing cloud.
+                    mat.extension.uniforms.time_data.y = 0.5;
+                }
+
                 mat.extension.uniforms.star_params = Vec4::new(
                     rad.0 as f32,
                     temp.0 as f32,
                     lum.0 as f32,
                     ignition.shockwave_radius as f32,
                 );
+            } else {
+                mat.extension.uniforms.time_data.y = 0.5;
             }
         }
     }

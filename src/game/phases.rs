@@ -247,7 +247,10 @@ pub fn monitor_phase_transitions(
 
     for (mass, body, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
         match body.body_type {
-            BodyType::TerrestrialPlanet | BodyType::GasGiant | BodyType::IceGiant => planets += 1,
+            BodyType::TerrestrialPlanet
+            | BodyType::SuperEarth
+            | BodyType::GasGiant
+            | BodyType::IceGiant => planets += 1,
             BodyType::Protoplanet => protoplanets += 1,
             BodyType::Planetesimal | BodyType::DustGrain => planetesimals += 1,
             _ => {}

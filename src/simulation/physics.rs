@@ -12,6 +12,7 @@ use crate::utils::constants::*;
 /// Advances the N-body gravitational physics simulation using a Symplectic Kick-Drift-Kick Leapfrog integrator.
 pub fn step_physics_simulation(
     config: Res<SimulationConfig>,
+    disk_params: Res<DiskParameters>,
     time_warp: Res<TimeWarp>,
     mut sim_time: ResMut<SimTime>,
     mut energy_monitor: ResMut<EnergyMonitor>,
@@ -39,6 +40,7 @@ pub fn step_physics_simulation(
     let sub_dt = target_dt / (n_substeps as f64);
 
     let softening_sq = config.softening_au * config.softening_au;
+    let max_domain_r = (disk_params.outer_radius_au * 2.5).max(75.0);
 
     // Collect all bodies into a contiguous vector for parallel force evaluation
     let mut body_data: Vec<(
@@ -95,6 +97,7 @@ pub fn step_physics_simulation(
                     t,
                     BodyType::Protoplanet
                         | BodyType::TerrestrialPlanet
+                        | BodyType::SuperEarth
                         | BodyType::GasGiant
                         | BodyType::IceGiant
                 )
@@ -217,7 +220,7 @@ pub fn step_physics_simulation(
             .collect();
 
         let compute_acc =
-            |i: usize, pos: &DVec3, vel: &DVec3, _rad: f64, b_type: BodyType| -> DVec3 {
+            |i: usize, pos: &DVec3, vel: &DVec3, b_mass: f64, _rad: f64, b_type: BodyType| -> DVec3 {
                 let mut acc = DVec3::ZERO;
 
                 // Non-Keplerian perturbations (Gas Aerodynamic Drag & Eccentricity Damping)
@@ -234,13 +237,20 @@ pub fn step_physics_simulation(
                         let rel_speed = rel_v.length();
                         let gas_density =
                             1e-4 * (r_cyl / 1.0).powf(-2.25) * (config.gas_density_scale as f64);
-                        let drag_coeff = 0.025 * gas_density;
+
+                        // Physical Aerodynamic Drag Scaling: a_drag = F_drag / m ~ (rho * R^2 * v^2) / m
+                        // Small planetesimals & dust grains feel circularizing and settling drag,
+                        // while massive protoplanets, giant worlds, and stars have massive inertia and feel negligible drag.
+                        let m_earth = b_mass / EARTH_MASS_SOLAR;
+                        let inertia_suppression = (1.0 / (1.0 + m_earth * 150.0)).clamp(0.0, 1.0);
+
+                        let drag_coeff = 0.025 * gas_density * inertia_suppression;
                         acc -= drag_coeff * rel_speed * rel_v;
 
                         // Eccentricity damping (damps non-circular radial velocity v_r and vertical velocity v_y)
                         let r_unit = DVec3::new(pos.x / r_cyl, 0.0, pos.z / r_cyl);
                         let v_radial = vel.dot(r_unit);
-                        let damp_rate = 0.08 * gas_density;
+                        let damp_rate = 0.08 * gas_density * inertia_suppression;
                         acc -= r_unit * (v_radial * damp_rate);
                         acc.y -= vel.y * damp_rate * 2.0;
                     }
@@ -283,8 +293,8 @@ pub fn step_physics_simulation(
         let new_accelerations: Vec<DVec3> = body_data
             .iter()
             .enumerate()
-            .map(|(i, (_, _, pos, vel, _, rad, b_type, _, _))| {
-                compute_acc(i, pos, vel, *rad, *b_type)
+            .map(|(i, (_, mass, pos, vel, _, rad, b_type, _, _))| {
+                compute_acc(i, pos, vel, *mass, *rad, *b_type)
             })
             .collect();
 
@@ -389,7 +399,7 @@ pub fn step_physics_simulation(
                 // planets into unphysical hyperbolic escape trajectories (e.g. 210,000 km/s)
                 let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z)
                     .sqrt()
-                    .clamp(0.1, 75.0);
+                    .clamp(0.1, max_domain_r);
                 let v_esc = (2.0 * G_ASTRO * star_mass / r_cyl).sqrt();
                 let max_v = 1.6 * v_esc; // Up to 1.6x escape velocity for eccentric comets
                 let speed = body.3.length();
@@ -397,10 +407,10 @@ pub fn step_physics_simulation(
                     body.3 *= max_v / speed;
                 }
 
-                // Solar System Boundary Clamping: Keep all active bodies within the physical domain (r <= 75 AU)
+                // Domain Boundary Clamping: Keep all active bodies within the physical domain (r <= max_domain_r)
                 let r_mag = body.2.length();
-                if r_mag > 75.0 {
-                    body.2 *= 75.0 / r_mag;
+                if r_mag > max_domain_r {
+                    body.2 *= max_domain_r / r_mag;
                 }
             } else {
                 body.2 = DVec3::ZERO;
