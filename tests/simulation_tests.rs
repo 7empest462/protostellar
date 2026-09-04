@@ -1558,6 +1558,14 @@ fn test_skybox_spherical_isotropy_and_flaring_elimination() {
         shader_src.contains("m31_dir"),
         "skybox.wgsl must contain Andromeda Galaxy (M31)"
     );
+    assert!(
+        !shader_src.contains("dust_offset >"),
+        "skybox.wgsl must not contain hard rectangular dust bounding box"
+    );
+    assert!(
+        shader_src.contains("m31_bulge") && shader_src.contains("m31_disk") && shader_src.contains("dust_transmission"),
+        "skybox.wgsl must contain smooth chromatic Andromeda model with continuous dust absorption"
+    );
 
     // 2. Mathematical Rotational Invariance Proof for Spherical Metric:
     // th2 = dot(d - s, d - s)

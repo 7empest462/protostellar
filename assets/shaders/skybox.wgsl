@@ -370,34 +370,71 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
         let m31_r = normalize(cross(m31_up, m31_dir));
         let m31_u = cross(m31_dir, m31_r);
 
-        // Project onto inclined galactic plane (77.5 deg inclination angle: cos(77.5) ~ 0.22)
+        // Tangent coordinates: x_maj along major axis, y_proj along minor axis
         let x_maj = dot(delta_m31, m31_r);
-        let y_min = dot(delta_m31, m31_u) / 0.26; // Elongated along major axis
-        let r_ellip = x_maj * x_maj + y_min * y_min;
+        let y_proj = dot(delta_m31, m31_u);
 
-        // 1. Luminous Golden Galactic Nucleus (Supermassive BH + dense ancient bulge)
-        let nucleus = exp(-r_ellip * 16000.0) * 1.85;
-        let inner_bulge = exp(-r_ellip * 3500.0) * 0.95;
-        let bulge_color = vec3<f32>(1.35, 1.10, 0.72) * (nucleus + inner_bulge);
+        // Inclination deprojection (i ~ 77.5 deg, cos(i) ~ 0.22)
+        let y_disk = y_proj / 0.23;
+        let r_disk = sqrt(max(x_maj * x_maj + y_disk * y_disk, 1e-9));
+        let phi = atan2(y_disk, x_maj);
 
-        // 2. Extended Spiral Disk (young blue star-forming populations in outer arms)
-        let spiral_disk = exp(-r_ellip * 650.0) * 0.55;
-        let outer_halo = exp(-r_ellip * 180.0) * 0.18;
-        let disk_color = vec3<f32>(0.55, 0.78, 1.35) * spiral_disk + vec3<f32>(0.85, 0.92, 1.10) * outer_halo;
+        // 1. Luminous Golden Galactic Nucleus & Central Bulge (Ancient Pop II Stars)
+        // Calibrated HDR peak to prevent flat-white clamping and preserve rich amber-gold hue
+        let m31_nucleus = exp(-r_disk * 280.0) * 0.42;
+        let m31_inner_bulge = exp(-r_disk * 110.0) * 0.28;
+        let r_bulge_sky = sqrt(x_maj * x_maj + (y_proj / 0.45) * (y_proj / 0.45));
+        let m31_outer_bulge = exp(-r_bulge_sky * 65.0) * 0.16;
+        let m31_bulge = vec3<f32>(1.25, 0.96, 0.58) * (m31_nucleus + m31_inner_bulge)
+                      + vec3<f32>(1.10, 0.85, 0.62) * m31_outer_bulge;
 
-        // 3. Silhouette Dust Lane (dark absorption lane on near side)
-        let dust_offset = dot(delta_m31, m31_u);
-        var dust_absorption = 1.0;
-        if (dust_offset > 0.001 && dust_offset < 0.012 && abs(x_maj) < 0.035) {
-            dust_absorption = 0.45; // Dark silhouette lane
-        }
+        // 2. Extended Spiral Disk (Young blue star-forming population in spiral arms)
+        let arm_phase = 2.0 * phi - log(r_disk * 35.0 + 0.12) * 3.4;
+        let arm_wave = 0.5 + 0.5 * cos(arm_phase);
+        let arm_density = 0.65 + 0.55 * pow(arm_wave, 2.2);
+        let disk_envelope = exp(-r_disk * 38.0) * smoothstep(0.003, 0.012, r_disk);
+        let m31_disk = vec3<f32>(0.32, 0.54, 0.95) * (disk_envelope * 0.34 * arm_density);
 
-        // 4. Satellite Dwarf Galaxy: M32 (compact elliptical dwarf at angular offset)
-        let m32_offset = delta_m31 - (m31_r * 0.008 + m31_u * 0.012);
-        let m32_core = exp(-dot(m32_offset, m32_offset) * 25000.0) * 0.75;
-        let m32_color = vec3<f32>(1.20, 1.05, 0.80) * m32_core;
+        // 3. H-II Emission Star-Forming Regions (Subtle magenta knots along spiral arms)
+        let hii_ring = exp(-pow((r_disk - 0.024) / 0.0055, 2.0));
+        let m31_hii = vec3<f32>(0.95, 0.24, 0.48) * (hii_ring * pow(arm_wave, 3.5) * 0.10);
 
-        star_light += (bulge_color + disk_color) * dust_absorption + m32_color;
+        // 4. Smooth Curved Dust Absorption Lanes & Reddening (Near-side silhouette, no rectangles)
+        let near_side = smoothstep(-0.002, 0.006, y_proj);
+        let dust_r = sqrt(x_maj * x_maj + (y_proj / 0.21) * (y_proj / 0.21));
+        let dust_lane_inner = exp(-pow((dust_r - 0.011) / 0.0022, 2.0));
+        let dust_lane_main  = exp(-pow((dust_r - 0.019) / 0.0032, 2.0));
+        let dust_lane_outer = exp(-pow((dust_r - 0.028) / 0.0042, 2.0));
+        let dust_spiral = 0.5 + 0.5 * cos(arm_phase + 0.7);
+        let dust_total = (dust_lane_inner * 0.50 + dust_lane_main * 0.45 + dust_lane_outer * 0.30)
+                       * (0.65 + 0.35 * dust_spiral)
+                       * near_side
+                       * smoothstep(0.045, 0.025, abs(x_maj));
+        let tau = clamp(dust_total, 0.0, 0.70);
+        let dust_transmission = vec3<f32>(1.0 - tau * 0.55, 1.0 - tau * 0.80, 1.0 - tau * 0.98);
+
+        // 5. Diffuse Spheroidal Stellar Halo
+        let r_halo = sqrt(x_maj * x_maj + (y_proj / 0.6) * (y_proj / 0.6));
+        let m31_halo = vec3<f32>(0.50, 0.58, 0.78) * (exp(-r_halo * 18.0) * 0.07);
+
+        // 6. Satellite Dwarf Companions: M32 (compact elliptical) and M110 (dwarf spheroidal)
+        let m32_offset = delta_m31 - (m31_r * 0.008 + m31_u * 0.010);
+        let d2_m32 = dot(m32_offset, m32_offset);
+        let m32_prof = 0.16 / (1.0 + d2_m32 * 80000.0) + 0.05 * exp(-d2_m32 * 14000.0);
+        let m32_glow = vec3<f32>(1.10, 0.92, 0.65) * m32_prof;
+
+        let m110_offset = delta_m31 - (-m31_r * 0.016 - m31_u * 0.018);
+        let m110_maj = dot(m110_offset, m31_r);
+        let m110_min = dot(m110_offset, m31_u) / 0.58;
+        let m110_r2 = m110_maj * m110_maj + m110_min * m110_min;
+        let m110_prof = exp(-m110_r2 * 10000.0) * 0.12;
+        let m110_glow = vec3<f32>(0.62, 0.68, 0.82) * m110_prof;
+
+        // 7. Smooth Boundary Falloff (Zero hard edges or discontinuities)
+        let m31_boundary = smoothstep(0.025, 0.016, th2_m31);
+        let m31_total = (m31_bulge + m31_disk + m31_hii) * dust_transmission
+                      + m31_halo + m32_glow + m110_glow;
+        star_light += m31_total * m31_boundary;
     }
 
     // Ambient interstellar darkness (faint cosmic infrared bath)
