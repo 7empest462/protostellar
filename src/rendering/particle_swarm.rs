@@ -109,8 +109,9 @@ pub fn setup_particle_swarm(
         let (r, comp) = sample_disk_radius(&mut rng, &disk_params);
         let phi = rng.random_range(0.0..2.0 * PI);
 
-        let h_scale = 0.030 * r * (r / 1.0).powf(0.25);
-        let normal_dist = Normal::new(0.0, h_scale).unwrap();
+        let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
+        let normal_dist =
+            Normal::new(0.0, h_scale).unwrap_or_else(|_| Normal::new(0.0, 1e-3).unwrap());
         let z_height: f64 = rng.sample(normal_dist);
 
         let pos = [
@@ -788,8 +789,9 @@ pub fn update_particle_swarm(
         }
     }
 
-    // 3. Promotion to ECS Massive Body (For runaway clumps that reach 8x initial particle mass)
-    let promo_threshold = 8.0 * b_mass;
+    // 3. Promotion to ECS Massive Body (For runaway clumps that reach protoplanetary embryo mass)
+    let current_ecs_count = massive_bodies.len();
+    let promo_threshold = (16.0 * b_mass).max(EARTH_MASS_SOLAR as f32 * 0.005);
     let mut promotions: Vec<(DVec3, DVec3, f64, f64, Composition)> = Vec::new();
     let mut active_count = 0u32;
     for i in 0..n {
@@ -797,7 +799,7 @@ pub fn update_particle_swarm(
         if m > 0.0 {
             active_count += 1;
         }
-        if m >= promo_threshold && promotions.is_empty() {
+        if m >= promo_threshold && promotions.is_empty() && current_ecs_count < 24 {
             let pos = positions[i];
             let r_sq = pos[0] * pos[0] + pos[2] * pos[2];
             let r = r_sq.sqrt();

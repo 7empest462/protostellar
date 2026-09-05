@@ -161,8 +161,9 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) 
             crate::simulation::disk::sample_disk_radius(&mut rng, &default_params);
         let phi = rng.random_range(0.0..2.0 * PI);
 
-        let h_scale = 0.030 * r * (r / 1.0).powf(0.25);
-        let normal_dist = Normal::new(0.0, h_scale).unwrap();
+        let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
+        let normal_dist =
+            Normal::new(0.0, h_scale).unwrap_or_else(|_| Normal::new(0.0, 1e-3).unwrap());
         let z_height: f64 = rng.sample(normal_dist);
 
         let pos = [
@@ -349,12 +350,10 @@ pub fn step_gpu_simulation_render_world(
         return;
     }
 
-    if gpu_engine.is_none() {
+    let Some(mut engine) = gpu_engine else {
         setup_gpu_simulation(&mut commands, &render_device);
         return;
-    }
-
-    let mut engine = gpu_engine.unwrap();
+    };
     let queue = &render_queue;
     let device = render_device.wgpu_device();
 
@@ -381,8 +380,9 @@ pub fn step_gpu_simulation_render_world(
             let (r, comp_struct) =
                 crate::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
             let phi = rng.random_range(0.0..2.0 * PI);
-            let h_scale = 0.030 * r * (r / 1.0).powf(0.25);
-            let normal_dist = Normal::new(0.0, h_scale).unwrap();
+            let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
+            let normal_dist =
+                Normal::new(0.0, h_scale).unwrap_or_else(|_| Normal::new(0.0, 1e-3).unwrap());
             let z_height: f64 = rng.sample(normal_dist);
             let pos = [
                 (r * phi.cos()) as f32,

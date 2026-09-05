@@ -7,17 +7,20 @@ use bevy::prelude::*;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
 
 /// Advances the N-body gravitational physics simulation using a Symplectic Kick-Drift-Kick Leapfrog integrator.
 pub fn step_physics_simulation(
     config: Res<SimulationConfig>,
-    disk_params: Res<DiskParameters>,
+    _disk_params: Res<DiskParameters>,
     time_warp: Res<TimeWarp>,
     mut sim_time: ResMut<SimTime>,
     mut energy_monitor: ResMut<EnergyMonitor>,
     player_state: Res<PlayerInteractionState>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
+    mut commands: Commands,
     mut bodies_query: Query<(
         Entity,
         &mut Mass,
@@ -40,7 +43,6 @@ pub fn step_physics_simulation(
     let sub_dt = target_dt / (n_substeps as f64);
 
     let softening_sq = config.softening_au * config.softening_au;
-    let max_domain_r = (disk_params.outer_radius_au * 2.5).max(75.0);
 
     // Collect all bodies into a contiguous vector for parallel force evaluation
     let mut body_data: Vec<(
@@ -79,11 +81,23 @@ pub fn step_physics_simulation(
         .iter()
         .position(|(_, _, _, _, _, _, _, _, is_central)| *is_central);
 
-    let (star_mass, star_pos) = if let Some(idx) = star_index {
-        (body_data[idx].1, body_data[idx].2)
+    let (star_mass, star_pos, is_central_quasi) = if let Some(idx) = star_index {
+        (
+            body_data[idx].1,
+            body_data[idx].2,
+            body_data[idx].6 == BodyType::QuasiStar,
+        )
     } else {
-        (1.0, DVec3::ZERO)
+        (1.0, DVec3::ZERO, false)
     };
+
+    // Identify if the active simulation is the JWST Little Red Dot (Quasi-Star with 450,000 M_sun)
+    // where extreme supermassive gravity drives orbital velocities of several thousand km/s
+    let is_little_red_dot = scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::LittleRedDot)
+        || is_central_quasi
+        || star_mass > 10_000.0;
 
     // Filter massive bodies (embryos, planets, stars) for full mutual N-body interactions
     let massive_indices: Vec<usize> = body_data
@@ -144,28 +158,13 @@ pub fn step_physics_simulation(
             }
         }
 
-        // --- 2. Exact Keplerian Symplectic Drift step ---
-        // Pass A: Advance non-satellites (planets, embryos, asteroids) around the central star
+        // --- 2. Symplectic Leapfrog Drift step (r += v * dt) ---
+        // Pass A: Advance non-satellites (planets, embryos, asteroids, rogue interlopers)
         for body in body_data.iter_mut() {
             if body.7.is_none() {
                 if !body.8 {
-                    let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z).sqrt().max(0.05);
-                    let omega = (G_ASTRO * star_mass / (r_cyl * r_cyl * r_cyl)).sqrt();
-                    let delta_phi = omega * sub_dt;
-                    let cos_d = delta_phi.cos();
-                    let sin_d = delta_phi.sin();
-
-                    // Exact 2D Keplerian orbital rotation in the disk plane (zero energy/eccentricity drift)
-                    let x_new = body.2.x * cos_d - body.2.z * sin_d;
-                    let z_new = body.2.x * sin_d + body.2.z * cos_d;
-                    body.2.x = x_new;
-                    body.2.y += body.3.y * sub_dt;
-                    body.2.z = z_new;
-
-                    let vx_new = body.3.x * cos_d - body.3.z * sin_d;
-                    let vz_new = body.3.x * sin_d + body.3.z * cos_d;
-                    body.3.x = vx_new;
-                    body.3.z = vz_new;
+                    // True 3D kinematic motion: position advances along velocity vector
+                    body.2 += body.3 * sub_dt;
                 } else {
                     body.2 = DVec3::ZERO;
                     body.3 = DVec3::ZERO;
@@ -281,10 +280,12 @@ pub fn step_physics_simulation(
                 acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
             }
 
-            // Acceleration Limiting: Bound maximum acceleration to prevent high-warp numerical explosions
+            // Acceleration Limiting: Protect against unphysical singularities during ultra-close contact (r -> 0)
+            // For the Little Red Dot (Quasi-Star with 450,000 M_sun), orbital accelerations naturally reach
+            // millions of AU/yr^2; these limits must NOT apply to the Little Red Dot simulation.
             let acc_mag = acc.length();
-            if acc_mag > 80.0 {
-                acc *= 80.0 / acc_mag;
+            if !is_little_red_dot && acc_mag > 500_000.0 {
+                acc *= 500_000.0 / acc_mag;
             }
 
             if !acc.is_finite() {
@@ -393,29 +394,23 @@ pub fn step_physics_simulation(
 
                 // Sanitize non-finite vectors
                 if !body.2.is_finite() || !body.3.is_finite() {
-                    let safe_r = 1.0;
+                    let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };
                     let v_k = (G_ASTRO * star_mass / safe_r).sqrt();
                     body.2 = DVec3::new(safe_r, 0.0, 0.0);
                     body.3 = DVec3::new(0.0, 0.0, v_k);
                     body.4 = DVec3::ZERO;
                 }
 
-                // Velocity Capping: Prevent close-encounter numerical singularities from launching
-                // planets into unphysical hyperbolic escape trajectories (e.g. 210,000 km/s)
-                let r_cyl = (body.2.x * body.2.x + body.2.z * body.2.z)
-                    .sqrt()
-                    .clamp(0.1, max_domain_r);
-                let v_esc = (2.0 * G_ASTRO * star_mass / r_cyl).sqrt();
-                let max_v = 1.6 * v_esc; // Up to 1.6x escape velocity for eccentric comets
-                let speed = body.3.length();
-                if speed > max_v && speed > 1e-6 {
-                    body.3 *= max_v / speed;
-                }
-
-                // Domain Boundary Clamping: Keep all active bodies within the physical domain (r <= max_domain_r)
-                let r_mag = body.2.length();
-                if r_mag > max_domain_r {
-                    body.2 *= max_domain_r / r_mag;
+                // Velocity Limiting: Prevent numerical overflow / close-encounter singularities
+                // In standard planetary systems, bound orbits have v < 200 AU/yr (~950 km/s).
+                // In the Little Red Dot simulation, the 450,000 M_sun gravity drives orbital velocities of
+                // several thousand km/s (hundreds to thousands of AU/yr); these limits must NOT apply to Little Red Dot.
+                if !is_little_red_dot {
+                    let speed = body.3.length();
+                    let max_speed = 200.0;
+                    if speed > max_speed {
+                        body.3 *= max_speed / speed;
+                    }
                 }
             } else {
                 body.2 = DVec3::ZERO;
@@ -436,7 +431,9 @@ pub fn step_physics_simulation(
     }
 
     // Write back updated positions, velocities, accelerations, and satellite states to ECS
-    for (e, mut m, mut pos, mut vel, mut acc, _, _body, opt_sat, opt_central) in
+    let mut escaped_minor_debris: Vec<Entity> = Vec::new();
+
+    for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat, opt_central) in
         bodies_query.iter_mut()
     {
         if opt_central.is_some() {
@@ -444,6 +441,23 @@ pub fn step_physics_simulation(
             vel.0 = DVec3::ZERO;
             acc.0 = DVec3::ZERO;
         } else if let Some(idx) = body_data.iter().position(|b| b.0 == e) {
+            let r_mag = body_data[idx].2.length();
+            // Minor debris that has escaped to deep interstellar space is retired.
+            // In Little Red Dot, orbital speeds are ~500 AU/yr, so debris at 2000 AU is still gravitationally bound.
+            let debris_escape_radius = if is_little_red_dot { 100_000.0 } else { 2000.0 };
+            if r_mag > debris_escape_radius
+                && matches!(
+                    body.body_type,
+                    BodyType::Planetesimal
+                        | BodyType::Asteroid
+                        | BodyType::Comet
+                        | BodyType::DustGrain
+                )
+            {
+                escaped_minor_debris.push(e);
+                continue;
+            }
+
             m.0 = body_data[idx].1;
             pos.0 = body_data[idx].2;
             vel.0 = body_data[idx].3;
@@ -451,6 +465,13 @@ pub fn step_physics_simulation(
             if let (Some(mut s_comp), Some(s_data)) = (opt_sat, body_data[idx].7) {
                 *s_comp = s_data;
             }
+        }
+    }
+
+    // Despawn escaped minor debris
+    for e in escaped_minor_debris {
+        if let Ok(mut cmd) = commands.get_entity(e) {
+            cmd.despawn();
         }
     }
 

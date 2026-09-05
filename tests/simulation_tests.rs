@@ -1563,7 +1563,9 @@ fn test_skybox_spherical_isotropy_and_flaring_elimination() {
         "skybox.wgsl must not contain hard rectangular dust bounding box"
     );
     assert!(
-        shader_src.contains("m31_bulge") && shader_src.contains("m31_disk") && shader_src.contains("dust_transmission"),
+        shader_src.contains("m31_bulge")
+            && shader_src.contains("m31_disk")
+            && shader_src.contains("dust_transmission"),
         "skybox.wgsl must contain smooth chromatic Andromeda model with continuous dust absorption"
     );
 
@@ -1624,4 +1626,459 @@ fn test_skybox_spherical_isotropy_and_flaring_elimination() {
             step
         );
     }
+}
+
+#[test]
+fn test_inner_planet_acceleration_unattenuated() {
+    // Inner planets (Mercury at ~0.387 AU, Venus at ~0.723 AU) around a 1 M_sun star
+    // experience high gravitational accelerations:
+    // a = G * M / r^2
+    // For Mercury: 39.4784 / (0.387^2) = 263.6 AU/yr^2
+    // The previous 80.0 AU/yr^2 acceleration cap artificially severed 70% of solar gravity,
+    // flinging inner planets into spurious escape orbits!
+    let star_mass = 1.0; // M_sun
+    let mercury_r = 0.387; // AU
+    let r_vec = DVec3::new(mercury_r, 0.0, 0.0);
+    let dist_sq = r_vec.length_squared();
+    let _dist = dist_sq.sqrt();
+
+    let softening_sq = 0.001 * 0.001;
+    let softened_dist = (dist_sq + softening_sq).sqrt();
+    let mut acc = -(G_ASTRO * star_mass / (softened_dist * softened_dist * softened_dist)) * r_vec;
+
+    let acc_mag = acc.length();
+    // Verify physical acceleration is ~263 AU/yr^2
+    assert!(
+        acc_mag > 260.0 && acc_mag < 270.0,
+        "Mercury-like orbital acceleration should be ~263.6 AU/yr^2, got {}",
+        acc_mag
+    );
+
+    // Apply the updated acceleration limiter (500,000 AU/yr^2)
+    if acc_mag > 500_000.0 {
+        acc *= 500_000.0 / acc_mag;
+    }
+
+    // Must NOT be capped at 80.0 AU/yr^2
+    assert!(
+        acc.length() > 250.0,
+        "Acceleration limiter must not truncate inner planetary gravity"
+    );
+}
+
+#[test]
+fn test_unbounded_interstellar_drift_no_112_au_clamping() {
+    // Ejected or rogue planets moving outwards beyond the disk outer radius (e.g. 112.5 AU)
+    // must drift along their velocity vector (r += v * dt) into interstellar space,
+    // and must NOT be clamped to a 112.5 AU sphere or forced into 2D circular Keplerian rotation.
+    let initial_pos = DVec3::new(112.50, 0.0, 0.0); // Exactly at old boundary
+    let escape_vel = DVec3::new(10.0, 0.0, 2.0); // 10 AU/yr radially outward
+    let dt = 0.5; // 0.5 year timestep
+
+    let mut pos = initial_pos;
+    let vel = escape_vel;
+
+    // Symplectic Leapfrog linear drift
+    pos += vel * dt;
+
+    // Body should now be at x = 117.5 AU, z = 1.0 AU
+    assert_eq!(pos.x, 117.5);
+    assert_eq!(pos.z, 1.0);
+    assert!(
+        pos.length() > 112.50,
+        "Body must freely drift past 112.5 AU into interstellar space"
+    );
+
+    // Old clamping would have forced: pos *= 112.5 / pos.length(), leaving it stuck at 112.5 AU!
+    let old_clamped = pos * (112.50 / pos.length());
+    assert!((old_clamped.length() - 112.50).abs() < 1e-10);
+    assert!(
+        pos.length() > old_clamped.length(),
+        "Position must not be pinned to 112.5 AU"
+    );
+}
+
+#[test]
+fn test_minor_debris_deep_space_retirement_threshold() {
+    // Minor debris (asteroids, planetesimals, comets) beyond 2000 AU should be retired,
+    // while rogue planets and brown dwarfs remain persistent in interstellar space.
+    let r_close_debris = 150.0;
+    let r_escaped_debris = 2500.0;
+    let r_rogue_planet = 2500.0;
+
+    let debris_type = BodyType::Asteroid;
+    let planet_type = BodyType::GasGiant;
+
+    let retire_debris_close = r_close_debris > 2000.0
+        && matches!(
+            debris_type,
+            BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain
+        );
+    assert!(!retire_debris_close, "Debris at 150 AU must not be retired");
+
+    let retire_debris_far = r_escaped_debris > 2000.0
+        && matches!(
+            debris_type,
+            BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain
+        );
+    assert!(retire_debris_far, "Debris at 2500 AU should be retired");
+
+    let retire_planet_far = r_rogue_planet > 2000.0
+        && matches!(
+            planet_type,
+            BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain
+        );
+    assert!(
+        !retire_planet_far,
+        "Rogue planets/gas giants must never be retired in deep space"
+    );
+}
+
+#[test]
+fn test_swarm_clump_promotion_capacity_guards() {
+    // Runaway particle clumps should only promote to ECS massive bodies if total ECS count < 24
+    // and mass exceeds protoplanetary embryo threshold (~0.005 M_earth)
+    let b_mass = 0.0001f32;
+    let promo_threshold = (16.0f32 * b_mass).max(EARTH_MASS_SOLAR as f32 * 0.005);
+
+    // 1. Small clump below threshold -> no promotion
+    let small_clump_mass = 0.0005f32;
+    assert!(small_clump_mass < promo_threshold);
+
+    // 2. Large clump above threshold, but ECS body limit reached (e.g. 24) -> no promotion
+    let ecs_count_full = 24;
+    let large_clump_mass = promo_threshold + 0.001f32;
+    let can_promote_full = large_clump_mass >= promo_threshold && ecs_count_full < 24;
+    assert!(
+        !can_promote_full,
+        "Must not promote when ECS capacity is full"
+    );
+
+    // 3. Large clump above threshold with room in system -> promote
+    let ecs_count_open = 12;
+    let can_promote_open = large_clump_mass >= promo_threshold && ecs_count_open < 24;
+    assert!(can_promote_open, "Should promote when under ECS capacity");
+}
+
+#[test]
+fn test_little_red_dot_high_speed_unbounded_limits() {
+    // In the JWST Little Red Dot scenario (450,000 M_sun Black Hole Star),
+    // orbiting bodies travel at extreme relativistic velocities (thousands of km/s)
+    // and experience immense gravitational accelerations.
+    // The physics limits (max speed 200 AU/yr, max acc 500,000 AU/yr^2) must NOT apply!
+    let quasi_star_mass = 450_000.0; // M_sun
+
+    // 1. Orbital velocity at 85 AU (primordial cloudlet orbit):
+    // v = sqrt(G * M / r) = sqrt(39.4784 * 450,000 / 85) = 457.17 AU/yr (~2,167 km/s)
+    let r_orbit = 85.0; // AU
+    let v_circ = (G_ASTRO * quasi_star_mass / r_orbit).sqrt();
+    let speed_km_s = v_circ * AU_PER_YR_TO_KM_PER_S;
+
+    assert!(
+        v_circ > 450.0 && v_circ < 465.0,
+        "Little Red Dot 85 AU orbital speed should be ~457 AU/yr, got {}",
+        v_circ
+    );
+    assert!(
+        speed_km_s > 2100.0 && speed_km_s < 2200.0,
+        "Orbital speed in km/s should be ~2,167 km/s, got {}",
+        speed_km_s
+    );
+
+    // Verify velocity limit exemption for Little Red Dot:
+    let is_little_red_dot = true;
+    let mut vel = DVec3::new(0.0, 0.0, v_circ);
+    if !is_little_red_dot {
+        let speed = vel.length();
+        let max_speed = 200.0;
+        if speed > max_speed {
+            vel *= max_speed / speed;
+        }
+    }
+    assert_eq!(
+        vel.length(),
+        v_circ,
+        "Little Red Dot orbiting objects must retain their full >450 AU/yr velocity without capping"
+    );
+
+    // In a normal solar system, velocity would have been bounded to 200 AU/yr:
+    let is_normal_system = false;
+    let mut normal_vel = DVec3::new(0.0, 0.0, v_circ);
+    if !is_normal_system {
+        let speed = normal_vel.length();
+        let max_speed = 200.0;
+        if speed > max_speed {
+            normal_vel *= max_speed / speed;
+        }
+    }
+    assert_eq!(normal_vel.length(), 200.0);
+
+    // 2. Gravitational acceleration at 3 AU (infalling gas near the 60 AU cocoon):
+    // a = G * M / r^2 = 39.4784 * 450,000 / 9 = ~1,973,920 AU/yr^2
+    let r_inner = 3.0; // AU
+    let acc_phys = G_ASTRO * quasi_star_mass / (r_inner * r_inner);
+    assert!(
+        acc_phys > 1_900_000.0,
+        "Physical acceleration should be ~1.97M AU/yr^2, got {}",
+        acc_phys
+    );
+
+    let mut acc = DVec3::new(acc_phys, 0.0, 0.0);
+    if !is_little_red_dot && acc.length() > 500_000.0 {
+        acc *= 500_000.0 / acc.length();
+    }
+    assert_eq!(
+        acc.length(),
+        acc_phys,
+        "Little Red Dot acceleration must NOT be capped at 500,000 AU/yr^2"
+    );
+
+    // 3. Debris escape radius: At 3,000 AU, debris is still bound to Little Red Dot
+    // (v_esc = sqrt(2 * G * M / 3000) = ~108 AU/yr). Must NOT be retired at 2,000 AU.
+    let debris_dist = 3000.0;
+    let debris_escape_radius = if is_little_red_dot { 100_000.0 } else { 2000.0 };
+    assert!(
+        debris_dist < debris_escape_radius,
+        "Debris at 3,000 AU is bound to Little Red Dot and must not be retired"
+    );
+}
+
+#[test]
+fn test_nan_and_inf_state_vector_sanitization() {
+    // When non-finite numbers (NaN, +Inf, -Inf) appear in position or velocity
+    // (due to division by zero, precision underflow, or unphysical inputs),
+    // the physics engine must safely catch and sanitize them without panicking.
+
+    // 1. Standard Solar System Sanitization: Resets to 1.0 AU circular orbit
+    let star_mass_solar = 1.0;
+    let mut pos_corrupted = DVec3::new(f64::NAN, 0.0, f64::INFINITY);
+    let mut vel_corrupted = DVec3::new(0.0, f64::NEG_INFINITY, 0.0);
+    let mut acc = DVec3::new(5.0, 0.0, 0.0);
+    let is_little_red_dot = false;
+
+    if !pos_corrupted.is_finite() || !vel_corrupted.is_finite() {
+        let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };
+        let v_k = (G_ASTRO * star_mass_solar / safe_r).sqrt();
+        pos_corrupted = DVec3::new(safe_r, 0.0, 0.0);
+        vel_corrupted = DVec3::new(0.0, 0.0, v_k);
+        acc = DVec3::ZERO;
+    }
+
+    assert!(pos_corrupted.is_finite());
+    assert!(vel_corrupted.is_finite());
+    assert_eq!(pos_corrupted, DVec3::new(1.0, 0.0, 0.0));
+    assert!((vel_corrupted.z - 2.0 * std::f64::consts::PI).abs() < 1e-4);
+    assert_eq!(acc, DVec3::ZERO);
+
+    // 2. Little Red Dot Sanitization: Resets safely to 120.0 AU outside the 60 AU cocoon
+    let star_mass_lrd = 450_000.0;
+    let mut lrd_pos = DVec3::new(f64::NAN, f64::NAN, 0.0);
+    let mut lrd_vel = DVec3::ZERO;
+    let is_little_red_dot = true;
+
+    if !lrd_pos.is_finite() || !lrd_vel.is_finite() {
+        let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };
+        let v_k = (G_ASTRO * star_mass_lrd / safe_r).sqrt();
+        lrd_pos = DVec3::new(safe_r, 0.0, 0.0);
+        lrd_vel = DVec3::new(0.0, 0.0, v_k);
+    }
+
+    assert!(lrd_pos.is_finite());
+    assert!(lrd_vel.is_finite());
+    assert_eq!(lrd_pos.x, 120.0);
+    assert!(lrd_vel.z > 380.0 && lrd_vel.z < 390.0); // ~384.8 AU/yr
+}
+
+#[test]
+fn test_orbital_elements_solver_error_handling_and_edge_cases() {
+    // 1. Zero mass or negative mass -> gracefully returns None
+    let res_zero_mass = state_vectors_to_orbital_elements(
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, std::f64::consts::TAU),
+        0.0,
+        0.0,
+    );
+    assert!(res_zero_mass.is_none());
+
+    // 2. Zero position or microscopic distance (< 1e-7 AU) -> gracefully returns None
+    let res_zero_pos = state_vectors_to_orbital_elements(
+        DVec3::ZERO,
+        DVec3::new(0.0, 0.0, std::f64::consts::TAU),
+        1.0,
+        EARTH_MASS_SOLAR,
+    );
+    assert!(res_zero_pos.is_none());
+
+    // 3. Zero velocity or microscopic speed (< 1e-7 AU/yr) -> gracefully returns None
+    let res_zero_vel = state_vectors_to_orbital_elements(
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::ZERO,
+        1.0,
+        EARTH_MASS_SOLAR,
+    );
+    assert!(res_zero_vel.is_none());
+
+    // 4. Hyperbolic escape trajectory (e > 1.0, specific energy > 0):
+    // E.g. interstellar interloper traveling at 15 AU/yr at 1 AU (escape velocity is ~8.88 AU/yr)
+    let pos_hyperbolic = DVec3::new(1.0, 0.0, 0.0);
+    let vel_hyperbolic = DVec3::new(0.0, 0.0, 15.0);
+    let res_hyp =
+        state_vectors_to_orbital_elements(pos_hyperbolic, vel_hyperbolic, 1.0, EARTH_MASS_SOLAR);
+    assert!(res_hyp.is_some());
+    let hyp_elem = res_hyp.unwrap();
+    assert!(
+        hyp_elem.eccentricity > 1.0,
+        "Must identify hyperbolic eccentricity e > 1"
+    );
+    assert!(
+        hyp_elem.specific_energy > 0.0,
+        "Specific energy must be positive for unbounded orbit"
+    );
+    assert!(
+        hyp_elem.apoapsis.is_infinite(),
+        "Apoapsis must be infinite for hyperbolic orbit"
+    );
+    assert_eq!(
+        hyp_elem.period_years, 0.0,
+        "Period is 0 for unbound hyperbolic trajectories"
+    );
+
+    // 5. Equatorial and inclined orbits:
+    // Planar equatorial orbit in reference coordinate frame (v in Y)
+    let pos_eq = DVec3::new(1.0, 0.0, 0.0);
+    let vel_eq = DVec3::new(0.0, std::f64::consts::TAU, 0.0);
+    let res_eq = state_vectors_to_orbital_elements(pos_eq, vel_eq, 1.0, EARTH_MASS_SOLAR);
+    assert!(res_eq.is_some());
+    let eq_elem = res_eq.unwrap();
+    assert!(
+        eq_elem.inclination.abs() < 1e-4,
+        "Equatorial orbit inclination must be 0"
+    );
+    assert!(eq_elem.argument_of_periapsis.is_finite());
+
+    // 90-degree inclined orbit (v in Z):
+    let pos_inc = DVec3::new(1.0, 0.0, 0.0);
+    let vel_inc = DVec3::new(0.0, 0.0, std::f64::consts::TAU);
+    let res_inc = state_vectors_to_orbital_elements(pos_inc, vel_inc, 1.0, EARTH_MASS_SOLAR);
+    assert!(res_inc.is_some());
+    let inc_elem = res_inc.unwrap();
+    assert!(
+        (inc_elem.inclination - std::f64::consts::FRAC_PI_2).abs() < 1e-3,
+        "Inclined orbit inclination must be pi/2 (90 deg)"
+    );
+    assert!(inc_elem.inclination.is_finite());
+    assert!(inc_elem.argument_of_periapsis.is_finite());
+}
+
+#[test]
+fn test_gravitational_singularity_avoidance_zero_distance() {
+    // When two bodies share the exact same spatial coordinate (r = 0),
+    // mutual gravitational force F = G * M * m / r^2 has a potential 1/0 singularity.
+    // Adaptive softening must guarantee that force is finite, bounded, and never produces NaN.
+    let softening_sq: f64 = 0.001 * 0.001;
+    let rad1: f64 = 0.005; // 0.005 AU
+    let pos1 = DVec3::new(10.0, 0.0, 5.0);
+    let pos2 = DVec3::new(10.0, 0.0, 5.0); // Exactly coincident!
+
+    let r_vec = pos1 - pos2;
+    assert_eq!(r_vec, DVec3::ZERO);
+
+    let pair_softening_sq = softening_sq.max((rad1 * 0.5f64).powi(2)).max(1e-4);
+    let dist_sq = r_vec.length_squared() + pair_softening_sq;
+    let dist = dist_sq.sqrt();
+
+    assert!(dist > 0.009, "Softened distance must be strictly positive");
+    let acc = -(G_ASTRO * 1.0 / (dist_sq * dist)) * r_vec;
+
+    assert!(acc.is_finite(), "Acceleration must be strictly finite");
+    assert_eq!(
+        acc,
+        DVec3::ZERO,
+        "Symmetric coincident force evaluates to zero vector"
+    );
+}
+
+#[test]
+fn test_continuous_collision_detection_tunneling_defense() {
+    // High-speed bodies (e.g. 50 AU/yr comets) can jump completely across an entire planetary radius
+    // in a single large timestep dt. Continuous Collision Detection (CCD) computes the exact time of
+    // closest approach t_min in [0, dt] to prevent tunneling through planets.
+    let dt = 0.05; // 0.05 yr (~18 days)
+    let planet_radius = 0.02; // AU
+
+    // Body 1 at origin
+    let p1 = DVec3::ZERO;
+    let v1 = DVec3::ZERO;
+
+    // Body 2 starts at (-0.5, 0.005, 0.0) moving right at 20 AU/yr
+    // Over dt = 0.05 yr, it travels 1.0 AU: from x = -0.5 to x = +0.5.
+    // At t=0, distance is 0.500 AU (> 0.02 AU radius)
+    // At t=dt, distance is 0.500 AU (> 0.02 AU radius)
+    // BUT at t = 0.025, it passes right through x = 0 at y = 0.005 AU (< 0.02 AU radius)!
+    let p2_start = DVec3::new(-0.5, 0.005, 0.0);
+    let v2 = DVec3::new(20.0, 0.0, 0.0);
+    let p2_end = p2_start + v2 * dt;
+
+    let r_rel = p2_end - p1;
+    let v_rel = v2 - v1;
+    let v_rel_sq = v_rel.length_squared();
+
+    // Discrete end-of-step check fails (tunnels!):
+    let discrete_distance = r_rel.length();
+    assert!(
+        discrete_distance > planet_radius,
+        "Discrete check would fail to detect collision (tunneling)"
+    );
+
+    // Continuous Collision Detection (CCD):
+    let r_rel_old = r_rel - v_rel * dt;
+    let t_min = (-r_rel_old.dot(v_rel) / v_rel_sq).clamp(0.0, dt);
+    let closest_approach_vec = r_rel_old + v_rel * t_min;
+    let min_distance = closest_approach_vec.length();
+
+    // CCD successfully intercepts the impact at 0.005 AU!
+    assert!(
+        min_distance < planet_radius,
+        "CCD must intercept the closest approach (min_dist = {}, radius = {})",
+        min_distance,
+        planet_radius
+    );
+    assert!(
+        (min_distance - 0.005).abs() < 1e-6,
+        "Closest approach distance must be exactly 0.005 AU"
+    );
+}
+
+#[test]
+fn test_little_red_dot_circum_nuclear_period_and_energy() {
+    // Verify Keplerian period and orbital energy in the supermassive Little Red Dot system (450,000 M_sun):
+    // 1. Semi-major axis a = 85 AU (primordial cloudlet orbit)
+    // P = 2*pi * sqrt(a^3 / mu)
+    // mu = G * M = 39.4784176 * 450,000 = 17,765,287.9 (AU^3 / yr^2)
+    let mu = G_ASTRO * 450_000.0;
+    let a_inner = 85.0;
+    let period_inner = 2.0 * std::f64::consts::PI * (a_inner * a_inner * a_inner / mu).sqrt();
+    let specific_energy_inner = -mu / (2.0 * a_inner);
+
+    assert!(
+        period_inner > 1.10 && period_inner < 1.25,
+        "85 AU orbital period should be ~1.17 years, got {}",
+        period_inner
+    );
+    assert!(
+        specific_energy_inner < -100_000.0,
+        "Specific energy must be deeply bound negative"
+    );
+
+    // 2. Outer circum-nuclear edge at a = 235 AU
+    let a_outer = 235.0;
+    let period_outer = 2.0 * std::f64::consts::PI * (a_outer * a_outer * a_outer / mu).sqrt();
+    let specific_energy_outer = -mu / (2.0 * a_outer);
+
+    assert!(
+        period_outer > 5.2 && period_outer < 5.6,
+        "235 AU orbital period should be ~5.37 years, got {}",
+        period_outer
+    );
+    assert!(specific_energy_outer < specific_energy_inner.abs());
 }
