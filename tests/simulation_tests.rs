@@ -2132,3 +2132,36 @@ fn test_little_red_dot_circum_nuclear_period_and_energy() {
     );
     assert!(specific_energy_outer < specific_energy_inner.abs());
 }
+
+#[test]
+fn test_hud_visibility_and_collapsible_panel_states() {
+    use protostellar::game::ui::HudVisibilityState;
+
+    let mut hud_state = HudVisibilityState::default();
+
+    // Default state: master HUD visible, all panels expanded
+    assert!(!hud_state.is_full_screen_clean);
+    assert!(!hud_state.top_left_minimized);
+    assert!(!hud_state.top_right_minimized);
+    assert!(!hud_state.inspector_minimized);
+    assert!(!hud_state.scenarios_minimized);
+
+    // Toggle clean fullscreen
+    hud_state.is_full_screen_clean = true;
+    assert!(hud_state.is_full_screen_clean);
+
+    // Minimize individual panels
+    hud_state.top_left_minimized = true;
+    hud_state.top_right_minimized = true;
+    hud_state.inspector_minimized = true;
+    hud_state.scenarios_minimized = true;
+
+    assert!(hud_state.top_left_minimized);
+    assert!(hud_state.top_right_minimized);
+    assert!(hud_state.inspector_minimized);
+    assert!(hud_state.scenarios_minimized);
+
+    // Restore HUD
+    hud_state.is_full_screen_clean = false;
+    assert!(!hud_state.is_full_screen_clean);
+}

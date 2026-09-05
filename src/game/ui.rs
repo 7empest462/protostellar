@@ -47,6 +47,69 @@ pub struct QuickBarState {
     pub show_minor_bodies: bool,
 }
 
+/// Global visibility and panel collapse states for the HUD overlay.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct HudVisibilityState {
+    /// When true, all HUD panels are hidden for an immersive, unobstructed full-screen view.
+    pub is_full_screen_clean: bool,
+    /// Whether the top-left simulation phase & stats panel is collapsed.
+    pub top_left_minimized: bool,
+    /// Whether the top-right telemetry & speed panel is collapsed.
+    pub top_right_minimized: bool,
+    /// Whether the bottom-left selected body inspector panel is collapsed.
+    pub inspector_minimized: bool,
+    /// Whether the scenario presets bar is collapsed.
+    pub scenarios_minimized: bool,
+}
+
+/// Marker for the full HUD root container node (for global master full-screen toggle).
+#[derive(Component)]
+pub struct HudRootContainer;
+
+/// Marker for the top-left statistics panel container.
+#[derive(Component)]
+pub struct TopLeftStatsPanel;
+
+/// Marker for the minimized top-left stats pill button.
+#[derive(Component)]
+pub struct TopLeftCollapsedPill;
+
+/// Marker for the top-right diagnostics and speed controls panel container.
+#[derive(Component)]
+pub struct TopRightControlsPanel;
+
+/// Marker for the minimized top-right speed controls pill button.
+#[derive(Component)]
+pub struct TopRightCollapsedPill;
+
+/// Marker for the bottom-left inspector panel container.
+#[derive(Component)]
+pub struct BottomLeftInspectorPanel;
+
+/// Marker for the minimized bottom-left inspector chip button.
+#[derive(Component)]
+pub struct BottomLeftCollapsedChip;
+
+/// Marker for the text inside the minimized bottom-left inspector chip.
+#[derive(Component)]
+pub struct BottomLeftCollapsedChipText;
+
+/// Marker for the scenario presets container.
+#[derive(Component)]
+pub struct ScenarioPresetsContainer;
+
+/// Marker for the bottom-center live telemetry and toast container.
+#[derive(Component)]
+pub struct HudToastContainer;
+
+/// Marker for the floating master full-screen toggle button.
+#[derive(Component)]
+pub struct FullScreenFloatingBadge;
+
+/// Marker for the text inside the floating master full-screen toggle button.
+#[derive(Component)]
+pub struct FullScreenFloatingBadgeText;
+
 /// Planetary archetype templates for the Interactive Planet Builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuilderPreset {
@@ -318,6 +381,12 @@ pub enum UiButtonAction {
     ToggleSuperEddington,
     TriggerBlowoutCocoon,
     SpawnInfallPop3Star,
+    // Fullscreen and Panel Collapsibility
+    ToggleFullScreenHud,
+    ToggleTopLeftPanel,
+    ToggleTopRightPanel,
+    ToggleInspectorPanel,
+    ToggleScenariosPanel,
 }
 
 impl UiButtonAction {
@@ -375,6 +444,11 @@ impl UiButtonAction {
             UiButtonAction::ToggleSuperEddington => "[X]: Toggle Super-Eddington hyper-accretion onto the central black hole seed.",
             UiButtonAction::TriggerBlowoutCocoon => "[B]: Trigger radiation envelope blowout to unveil the naked Supermassive Quasar.",
             UiButtonAction::SpawnInfallPop3Star => "[T]: Spawn an infalling Population III hypergiant star to observe a Tidal Disruption Event (TDE).",
+            UiButtonAction::ToggleFullScreenHud => "[F11]: Toggle clean full-screen view (hide/show all HUD overlays).",
+            UiButtonAction::ToggleTopLeftPanel => "Minimize or expand top-left system statistics panel.",
+            UiButtonAction::ToggleTopRightPanel => "Minimize or expand top-right diagnostics and time controls.",
+            UiButtonAction::ToggleInspectorPanel => "Minimize or expand celestial body inspector & action toolbar.",
+            UiButtonAction::ToggleScenariosPanel => "Minimize or expand sandbox scenario presets bar.",
         }
     }
 }
@@ -414,22 +488,94 @@ fn create_button(
         });
 }
 
+/// Helper function to create compact glassmorphic button style for dense toolbars
+fn create_compact_button(
+    parent: &mut ChildSpawnerCommands,
+    action: UiButtonAction,
+    label: &str,
+    bg_color: Color,
+    border_color: Color,
+) {
+    parent
+        .spawn((
+            Button,
+            action,
+            Node {
+                padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+                margin: UiRect::all(Val::Px(1.5)),
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BorderColor::all(border_color),
+            BackgroundColor(bg_color),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(10.5),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.92, 0.96, 1.0)),
+            ));
+        });
+}
+
 /// Sets up the complete HUD overlay interface with interactive on-screen toolbars.
 pub fn setup_hud(mut commands: Commands) {
     commands.init_resource::<NotificationToast>();
+    commands.init_resource::<HudVisibilityState>();
+
+    // -------------------------------------------------------------
+    // FLOATING MASTER FULLSCREEN TOGGLE (Always visible in top-right)
+    // -------------------------------------------------------------
+    commands
+        .spawn((
+            Button,
+            UiButtonAction::ToggleFullScreenHud,
+            FullScreenFloatingBadge,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(12.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(4.5)),
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.05, 0.12, 0.88)),
+            BorderColor::all(Color::srgba(0.3, 0.7, 1.0, 0.65)),
+        ))
+        .with_children(|badge| {
+            badge.spawn((
+                Text::new("⛶ Fullscreen [F11]"),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.5, 0.85, 1.0)),
+                FullScreenFloatingBadgeText,
+            ));
+        });
 
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            top: Val::Px(0.0),
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            justify_content: JustifyContent::SpaceBetween,
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(Val::Px(12.0)),
-            ..default()
-        })
+        .spawn((
+            HudRootContainer,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::SpaceBetween,
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(12.0)),
+                ..default()
+            },
+        ))
         .with_children(|root| {
             // ==========================================
             // TOP BAR: Telemetry (Left) | System Quick Selector (Center) | Time Controls (Right)
@@ -442,28 +588,90 @@ pub fn setup_hud(mut commands: Commands) {
                 ..default()
             })
             .with_children(|top_row| {
-                // Top Left Stats Panel
+                // Top Left Stats Panel (Collapsible)
                 top_row
                     .spawn((
+                        TopLeftStatsPanel,
                         Node {
                             flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(10.0)),
-                            max_width: Val::Px(340.0),
+                            padding: UiRect::all(Val::Px(8.0)),
+                            max_width: Val::Px(320.0),
+                            border: UiRect::all(Val::Px(1.0)),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.82)),
+                        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.84)),
                         BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
                     ))
                     .with_children(|panel| {
+                        // Header with title and minimize button
+                        panel
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                margin: UiRect::bottom(Val::Px(4.0)),
+                                ..default()
+                            })
+                            .with_children(|hdr| {
+                                hdr.spawn((
+                                    Text::new("SYSTEM TELEMETRY"),
+                                    TextFont {
+                                        font_size: FontSize::Px(10.5),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.4, 0.75, 1.0)),
+                                ));
+                                create_compact_button(
+                                    hdr,
+                                    UiButtonAction::ToggleTopLeftPanel,
+                                    "🗕",
+                                    Color::srgba(0.14, 0.08, 0.16, 0.85),
+                                    Color::srgb(0.9, 0.4, 0.6),
+                                );
+                            });
+
                         panel.spawn((
-                            Text::new("PROTOSTELLAR // Astrophysics Simulator\nInitializing Nebula..."),
-                            TextFont { font_size: FontSize::Px(13.0), ..default() },
+                            Text::new(
+                                "PROTOSTELLAR // Astrophysics Simulator\nInitializing Nebula...",
+                            ),
+                            TextFont {
+                                font_size: FontSize::Px(12.0),
+                                ..default()
+                            },
                             TextColor(Color::srgb(0.9, 0.95, 1.0)),
                             HudHeaderStatsText,
                         ));
                     });
 
-                // Top Center: Quick System Body Selector Bar & Notification Toast
+                // Top Left Minimized Pill
+                top_row
+                    .spawn((
+                        Button,
+                        UiButtonAction::ToggleTopLeftPanel,
+                        TopLeftCollapsedPill,
+                        Node {
+                            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                            display: Display::None,
+                            border: UiRect::all(Val::Px(1.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                        BorderColor::all(Color::srgba(0.25, 0.5, 0.8, 0.6)),
+                    ))
+                    .with_children(|pill| {
+                        pill.spawn((
+                            Text::new("📊 System Stats ▼"),
+                            TextFont {
+                                font_size: FontSize::Px(11.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.5, 0.85, 1.0)),
+                        ));
+                    });
+
+                // Top Center: Quick System Body Selector Bar & Scenarios (Clean, zero horizontal blowout)
                 top_row
                     .spawn(Node {
                         flex_direction: FlexDirection::Column,
@@ -473,28 +681,29 @@ pub fn setup_hud(mut commands: Commands) {
                     .with_children(|center_col| {
                         // Interactive Dynamic Body Selector Buttons Container
                         center_col.spawn((
+                            QuickBodySelectorBar,
                             Node {
                                 flex_direction: FlexDirection::Row,
-                                padding: UiRect::all(Val::Px(4.0)),
+                                padding: UiRect::all(Val::Px(3.0)),
                                 align_items: AlignItems::Center,
-                                margin: UiRect::bottom(Val::Px(6.0)),
+                                margin: UiRect::bottom(Val::Px(4.0)),
                                 flex_wrap: FlexWrap::Wrap,
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
                             BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
                             BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
-                            QuickBodySelectorBar,
                         ));
 
                         // Interactive Sandbox Scenario Presets Bar
                         center_col
                             .spawn((
+                                ScenarioPresetsContainer,
                                 Node {
                                     flex_direction: FlexDirection::Row,
-                                    padding: UiRect::all(Val::Px(3.0)),
+                                    padding: UiRect::all(Val::Px(2.5)),
                                     align_items: AlignItems::Center,
-                                    margin: UiRect::bottom(Val::Px(5.0)),
+                                    margin: UiRect::bottom(Val::Px(4.0)),
                                     ..default()
                                 },
                                 BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.90)),
@@ -508,45 +717,57 @@ pub fn setup_hud(mut commands: Commands) {
                                 create_button(scenario_row, UiButtonAction::LoadScenarioRoguePlanet, "Rogue Planet [F5]", Color::srgba(0.06, 0.16, 0.22, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                 create_button(scenario_row, UiButtonAction::LoadScenarioLittleRedDot, "Little Red Dot [F6]", Color::srgba(0.24, 0.04, 0.06, 0.9), Color::srgb(1.0, 0.35, 0.4));
                             });
-
-                        // Notification Toast Box
-                        center_col
-                            .spawn((
-                                Node {
-                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(4.0)),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(0.01, 0.06, 0.12, 0.9)),
-                                BorderColor::all(Color::srgba(0.2, 0.7, 1.0, 0.7)),
-                            ))
-                            .with_children(|toast_box| {
-                                toast_box.spawn((
-                                    Text::new(">> PROTOSTELLAR LIVE"),
-                                    TextFont { font_size: FontSize::Px(13.5), ..default() },
-                                    TextColor(Color::srgb(0.4, 0.9, 1.0)),
-                                    HudToastText,
-                                ));
-                            });
                     });
 
-                // Top Right: Diagnostics & Time Scale Indicator
+                // Top Right: Diagnostics & Time Scale Indicator (Collapsible)
                 top_row
                     .spawn((
+                        TopRightControlsPanel,
                         Node {
                             flex_direction: FlexDirection::Column,
                             padding: UiRect::all(Val::Px(8.0)),
                             align_items: AlignItems::FlexEnd,
+                            border: UiRect::all(Val::Px(1.0)),
+                            margin: UiRect::right(Val::Px(110.0)), // Room for floating fullscreen badge
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.82)),
                         BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
                     ))
                     .with_children(|panel| {
+                        panel
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                width: Val::Percent(100.0),
+                                margin: UiRect::bottom(Val::Px(3.0)),
+                                ..default()
+                            })
+                            .with_children(|hdr| {
+                                create_compact_button(
+                                    hdr,
+                                    UiButtonAction::ToggleTopRightPanel,
+                                    "🗕",
+                                    Color::srgba(0.14, 0.08, 0.16, 0.85),
+                                    Color::srgb(0.9, 0.4, 0.6),
+                                );
+                                hdr.spawn((
+                                    Text::new("SIMULATION METRICS"),
+                                    TextFont {
+                                        font_size: FontSize::Px(10.5),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.4, 0.75, 1.0)),
+                                ));
+                            });
+
                         panel.spawn((
                             Text::new("SPEED: 1.0x\nSteps: 0"),
-                            TextFont { font_size: FontSize::Px(13.0), ..default() },
+                            TextFont {
+                                font_size: FontSize::Px(12.0),
+                                ..default()
+                            },
                             TextColor(Color::srgb(0.4, 0.9, 1.0)),
                             HudTimeWarpText,
                         ));
@@ -565,10 +786,39 @@ pub fn setup_hud(mut commands: Commands) {
                                 create_button(btn_row, UiButtonAction::TimeSpeed1M, "1M/s", Color::srgba(0.12, 0.08, 0.22, 0.85), Color::srgb(0.7, 0.4, 0.95));
                             });
                     });
+
+                // Top Right Minimized Pill
+                top_row
+                    .spawn((
+                        Button,
+                        UiButtonAction::ToggleTopRightPanel,
+                        TopRightCollapsedPill,
+                        Node {
+                            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                            display: Display::None,
+                            border: UiRect::all(Val::Px(1.0)),
+                            margin: UiRect::right(Val::Px(110.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                        BorderColor::all(Color::srgba(0.25, 0.5, 0.8, 0.6)),
+                    ))
+                    .with_children(|pill| {
+                        pill.spawn((
+                            Text::new("⏱️ Speed Controls ▼"),
+                            TextFont {
+                                font_size: FontSize::Px(11.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.5, 0.85, 1.0)),
+                        ));
+                    });
             });
 
             // ==========================================
-            // BOTTOM BAR: Inspector & Live Editor (Left) | Navigation Legend (Right)
+            // BOTTOM BAR: Inspector (Left) | Telemetry & Time Dock (Center) | Legend (Right)
             // ==========================================
             root.spawn(Node {
                 width: Val::Percent(100.0),
@@ -578,14 +828,15 @@ pub fn setup_hud(mut commands: Commands) {
                 ..default()
             })
             .with_children(|bottom_row| {
-                // Bottom Left: Floating Context Action Card & Telemetry Inspector
+                // Bottom Left: Floating Context Action Card & Telemetry Inspector (Collapsible & Compact)
                 bottom_row
                     .spawn((
+                        BottomLeftInspectorPanel,
                         Node {
                             flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(12.0)),
-                            min_width: Val::Px(490.0),
-                            max_width: Val::Px(560.0),
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
+                            min_width: Val::Px(460.0),
+                            max_width: Val::Px(520.0),
                             border: UiRect::all(Val::Px(1.5)),
                             ..default()
                         },
@@ -593,9 +844,36 @@ pub fn setup_hud(mut commands: Commands) {
                         BorderColor::all(Color::srgba(0.25, 0.55, 0.95, 0.75)),
                     ))
                     .with_children(|panel| {
+                        // Header with Title and Minimize Button
+                        panel
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                margin: UiRect::bottom(Val::Px(3.0)),
+                                ..default()
+                            })
+                            .with_children(|hdr| {
+                                hdr.spawn((
+                                    Text::new("🔍 CELESTIAL INSPECTOR & ACTION TOOLBAR"),
+                                    TextFont {
+                                        font_size: FontSize::Px(11.0),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.4, 0.8, 1.0)),
+                                ));
+                                create_compact_button(
+                                    hdr,
+                                    UiButtonAction::ToggleInspectorPanel,
+                                    "🗕 Collapse",
+                                    Color::srgba(0.16, 0.08, 0.12, 0.85),
+                                    Color::srgb(0.9, 0.4, 0.6),
+                                );
+                            });
+
                         panel.spawn((
                             Text::new("No celestial body selected. Click on the Star or Planets to inspect & edit."),
-                            TextFont { font_size: FontSize::Px(13.0), ..default() },
+                            TextFont { font_size: FontSize::Px(11.5), ..default() },
                             TextColor(Color::srgb(0.90, 0.94, 1.0)),
                             HudInspectorText,
                         ));
@@ -604,7 +882,7 @@ pub fn setup_hud(mut commands: Commands) {
                         panel
                             .spawn(Node {
                                 flex_direction: FlexDirection::Column,
-                                margin: UiRect::top(Val::Px(8.0)),
+                                margin: UiRect::top(Val::Px(5.0)),
                                 ..default()
                             })
                             .with_children(|actions| {
@@ -612,74 +890,74 @@ pub fn setup_hud(mut commands: Commands) {
                                 actions
                                     .spawn(Node {
                                         flex_direction: FlexDirection::Row,
-                                        margin: UiRect::bottom(Val::Px(3.0)),
+                                        margin: UiRect::bottom(Val::Px(2.0)),
                                         flex_wrap: FlexWrap::Wrap,
                                         ..default()
                                     })
                                     .with_children(|row1| {
-                                        create_button(row1, UiButtonAction::IgniteStar, "Ignite Star / Blast [I]", Color::srgba(0.24, 0.16, 0.04, 0.9), Color::srgb(1.0, 0.85, 0.3));
-                                        create_button(row1, UiButtonAction::FocusLock, "Track Cam [F]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
-                                        create_button(row1, UiButtonAction::IncreaseMass, "Accrete Mass (+25%) [U]", Color::srgba(0.06, 0.18, 0.12, 0.9), Color::srgb(0.3, 0.9, 0.55));
-                                        create_button(row1, UiButtonAction::DecreaseMass, "Strip Mass (-20%) [J]", Color::srgba(0.18, 0.08, 0.08, 0.9), Color::srgb(0.95, 0.4, 0.4));
-                                        create_button(row1, UiButtonAction::DeselectBody, "Deselect [Esc]", Color::srgba(0.15, 0.15, 0.18, 0.9), Color::srgb(0.7, 0.7, 0.8));
+                                        create_compact_button(row1, UiButtonAction::FocusLock, "Track Cam [F]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
+                                        create_compact_button(row1, UiButtonAction::IncreaseMass, "Accrete (+25%) [U]", Color::srgba(0.06, 0.18, 0.12, 0.9), Color::srgb(0.3, 0.9, 0.55));
+                                        create_compact_button(row1, UiButtonAction::DecreaseMass, "Strip (-20%) [J]", Color::srgba(0.18, 0.08, 0.08, 0.9), Color::srgb(0.95, 0.4, 0.4));
+                                        create_compact_button(row1, UiButtonAction::IgniteStar, "Ignite Star [I]", Color::srgba(0.24, 0.16, 0.04, 0.9), Color::srgb(1.0, 0.85, 0.3));
+                                        create_compact_button(row1, UiButtonAction::DeselectBody, "Deselect [Esc]", Color::srgba(0.15, 0.15, 0.18, 0.9), Color::srgb(0.7, 0.7, 0.8));
                                     });
 
                                 // Row 2: Orbital Maneuvers (Radius & Delta-V)
                                 actions
                                     .spawn(Node {
                                         flex_direction: FlexDirection::Row,
-                                        margin: UiRect::bottom(Val::Px(3.0)),
+                                        margin: UiRect::bottom(Val::Px(2.0)),
                                         flex_wrap: FlexWrap::Wrap,
                                         ..default()
                                     })
                                     .with_children(|row2| {
-                                        create_button(row2, UiButtonAction::FixOrbit, "Fix Orbit [Z]", Color::srgba(0.06, 0.22, 0.22, 0.9), Color::srgb(0.3, 0.95, 0.85));
-                                        create_button(row2, UiButtonAction::ExpandOrbit, "+10% Orbit [O]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
-                                        create_button(row2, UiButtonAction::ContractOrbit, "-10% Orbit [L]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
-                                        create_button(row2, UiButtonAction::BoostDeltaV, "Boost +dv [B]", Color::srgba(0.18, 0.15, 0.06, 0.9), Color::srgb(0.95, 0.85, 0.3));
-                                        create_button(row2, UiButtonAction::BrakeDeltaV, "Brake -dv [K]", Color::srgba(0.18, 0.12, 0.06, 0.9), Color::srgb(0.95, 0.65, 0.25));
+                                        create_compact_button(row2, UiButtonAction::FixOrbit, "Fix Orbit [Z]", Color::srgba(0.06, 0.22, 0.22, 0.9), Color::srgb(0.3, 0.95, 0.85));
+                                        create_compact_button(row2, UiButtonAction::ExpandOrbit, "+10% Orbit [O]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
+                                        create_compact_button(row2, UiButtonAction::ContractOrbit, "-10% Orbit [L]", Color::srgba(0.06, 0.15, 0.24, 0.9), Color::srgb(0.3, 0.75, 0.95));
+                                        create_compact_button(row2, UiButtonAction::BoostDeltaV, "Boost +dv [B]", Color::srgba(0.18, 0.15, 0.06, 0.9), Color::srgb(0.95, 0.85, 0.3));
+                                        create_compact_button(row2, UiButtonAction::BrakeDeltaV, "Brake -dv [K]", Color::srgba(0.18, 0.12, 0.06, 0.9), Color::srgb(0.95, 0.65, 0.25));
                                     });
 
-                                // Row 3: Material, Protoplanet Spawning, Tractor & Destruction
+                                // Row 3: Material, Spawning, Science & Lifecycle
                                 actions
                                     .spawn(Node {
                                         flex_direction: FlexDirection::Row,
-                                        margin: UiRect::bottom(Val::Px(4.0)),
+                                        margin: UiRect::bottom(Val::Px(2.0)),
                                         flex_wrap: FlexWrap::Wrap,
                                         ..default()
                                     })
                                     .with_children(|row3| {
-                                        create_button(row3, UiButtonAction::TogglePlanetBuilder, "🪐 Planet Builder [P]", Color::srgba(0.10, 0.22, 0.36, 0.95), Color::srgb(0.4, 0.85, 1.0));
-                                        create_button(row3, UiButtonAction::CycleComposition, "Change Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
-                                        create_button(row3, UiButtonAction::InjectEmbryo, "Spawn Moon/Embryo [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
-                                        create_button(row3, UiButtonAction::TriggerLhb, "Trigger LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
-                                        create_button(row3, UiButtonAction::ShatterIntoRings, "Rings [X]", Color::srgba(0.18, 0.14, 0.06, 0.9), Color::srgb(1.0, 0.85, 0.35));
-                                        create_button(row3, UiButtonAction::SeedLife, "Seed Life [E]", Color::srgba(0.04, 0.20, 0.08, 0.9), Color::srgb(0.35, 1.0, 0.45));
-                                        create_button(row3, UiButtonAction::AgeStar, "Age Star [N]", Color::srgba(0.24, 0.08, 0.16, 0.9), Color::srgb(1.0, 0.45, 0.75));
-                                        create_button(row3, UiButtonAction::ToggleTractor, "Tractor Beam [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
-                                        create_button(row3, UiButtonAction::VaporizeBody, "Shatter to Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
+                                        create_compact_button(row3, UiButtonAction::TogglePlanetBuilder, "🪐 Builder [P]", Color::srgba(0.10, 0.22, 0.36, 0.95), Color::srgb(0.4, 0.85, 1.0));
+                                        create_compact_button(row3, UiButtonAction::CycleComposition, "Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
+                                        create_compact_button(row3, UiButtonAction::InjectEmbryo, "Moon [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
+                                        create_compact_button(row3, UiButtonAction::TriggerLhb, "LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
+                                        create_compact_button(row3, UiButtonAction::ShatterIntoRings, "Rings [X]", Color::srgba(0.18, 0.14, 0.06, 0.9), Color::srgb(1.0, 0.85, 0.35));
+                                        create_compact_button(row3, UiButtonAction::SeedLife, "Life [E]", Color::srgba(0.04, 0.20, 0.08, 0.9), Color::srgb(0.35, 1.0, 0.45));
+                                        create_compact_button(row3, UiButtonAction::AgeStar, "Age [N]", Color::srgba(0.24, 0.08, 0.16, 0.9), Color::srgb(1.0, 0.45, 0.75));
+                                        create_compact_button(row3, UiButtonAction::ToggleTractor, "Tractor [T]", Color::srgba(0.22, 0.08, 0.22, 0.9), Color::srgb(0.95, 0.45, 0.95));
+                                        create_compact_button(row3, UiButtonAction::VaporizeBody, "Dust [Del]", Color::srgba(0.28, 0.05, 0.05, 0.9), Color::srgb(1.0, 0.3, 0.3));
                                     });
 
                                 // Row 4: JWST Little Red Dot / Black Hole Star Experiments
                                 actions
                                     .spawn(Node {
                                         flex_direction: FlexDirection::Row,
-                                        margin: UiRect::bottom(Val::Px(4.0)),
+                                        margin: UiRect::bottom(Val::Px(2.0)),
                                         flex_wrap: FlexWrap::Wrap,
                                         ..default()
                                     })
                                     .with_children(|row4| {
-                                        create_button(row4, UiButtonAction::ToggleSuperEddington, "Hyper-Accretion [X]", Color::srgba(0.24, 0.06, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.5));
-                                        create_button(row4, UiButtonAction::TriggerBlowoutCocoon, "Blowout Cocoon (Quasar) [B]", Color::srgba(0.26, 0.08, 0.22, 0.9), Color::srgb(1.0, 0.45, 0.95));
-                                        create_button(row4, UiButtonAction::SpawnInfallPop3Star, "Spawn Pop-III TDE [T]", Color::srgba(0.08, 0.16, 0.28, 0.9), Color::srgb(0.4, 0.85, 1.0));
+                                        create_compact_button(row4, UiButtonAction::ToggleSuperEddington, "Hyper-Accretion [X]", Color::srgba(0.24, 0.06, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.5));
+                                        create_compact_button(row4, UiButtonAction::TriggerBlowoutCocoon, "Blowout (Quasar) [B]", Color::srgba(0.26, 0.08, 0.22, 0.9), Color::srgb(1.0, 0.45, 0.95));
+                                        create_compact_button(row4, UiButtonAction::SpawnInfallPop3Star, "Pop-III TDE [T]", Color::srgba(0.08, 0.16, 0.28, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                     });
 
                                 // Dynamic Tooltip & Explanation Bar
                                 actions
                                     .spawn((
                                         Node {
-                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
-                                            margin: UiRect::top(Val::Px(3.0)),
+                                            padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                                            margin: UiRect::top(Val::Px(2.0)),
                                             border: UiRect::all(Val::Px(1.0)),
                                             width: Val::Percent(100.0),
                                             ..default()
@@ -689,8 +967,8 @@ pub fn setup_hud(mut commands: Commands) {
                                     ))
                                     .with_children(|tip_box| {
                                         tip_box.spawn((
-                                            Text::new("Click any planet or button to interact. Hover over buttons for descriptions."),
-                                            TextFont { font_size: FontSize::Px(10.5), ..default() },
+                                            Text::new("Hover over buttons for descriptions."),
+                                            TextFont { font_size: FontSize::Px(10.0), ..default() },
                                             TextColor(Color::srgb(0.75, 0.90, 1.0)),
                                             HudActionTooltipText,
                                         ));
@@ -698,44 +976,112 @@ pub fn setup_hud(mut commands: Commands) {
                             });
                     });
 
-                // Bottom Center: Digital Elapsed Time & Speed Control Dock
+                // Bottom Left Minimized Chip Button
                 bottom_row
                     .spawn((
+                        Button,
+                        UiButtonAction::ToggleInspectorPanel,
+                        BottomLeftCollapsedChip,
                         Node {
-                            flex_direction: FlexDirection::Column,
-                            padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
-                            margin: UiRect::axes(Val::Px(8.0), Val::Px(0.0)),
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                            display: Display::None,
                             border: UiRect::all(Val::Px(1.5)),
-                            min_width: Val::Px(350.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.92)),
-                        BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.7)),
+                        BackgroundColor(Color::srgba(0.02, 0.04, 0.09, 0.92)),
+                        BorderColor::all(Color::srgba(0.25, 0.55, 0.95, 0.75)),
                     ))
-                    .with_children(|time_box| {
-                        // Digital Clock & Time Warp Multiplier Telemetry
-                        time_box.spawn((
-                            Text::new("T+ 0.00 yr | PAUSED"),
-                            TextFont { font_size: FontSize::Px(14.0), ..default() },
-                            TextColor(Color::srgb(1.0, 0.92, 0.4)),
-                            HudBottomTimerText,
-                        ));
-
-                        // Speed Multiplier Action Bar
-                        time_box
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                margin: UiRect::top(Val::Px(6.0)),
+                    .with_children(|chip| {
+                        chip.spawn((
+                            Text::new("🔍 Inspector ▲ Expand"),
+                            TextFont {
+                                font_size: FontSize::Px(11.5),
                                 ..default()
-                            })
-                            .with_children(|speed_row| {
-                                create_button(speed_row, UiButtonAction::TimePause, "Pause [Space]", Color::srgba(0.24, 0.08, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.4));
-                                create_button(speed_row, UiButtonAction::TimeSpeed1, "1x [1]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
-                                create_button(speed_row, UiButtonAction::TimeSpeed100, "100x [2]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
-                                create_button(speed_row, UiButtonAction::TimeSpeed10k, "10k [3]", Color::srgba(0.12, 0.18, 0.28, 0.9), Color::srgb(0.5, 0.85, 1.0));
-                                create_button(speed_row, UiButtonAction::TimeSpeed1M, "1M [4]", Color::srgba(0.18, 0.14, 0.32, 0.9), Color::srgb(0.7, 0.6, 1.0));
+                            },
+                            TextColor(Color::srgb(0.4, 0.85, 1.0)),
+                            BottomLeftCollapsedChipText,
+                        ));
+                    });
+
+                // Bottom Center: Live Telemetry Banner (Relocated from top) + Digital Clock & Speed Dock
+                bottom_row
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        margin: UiRect::horizontal(Val::Px(8.0)),
+                        ..default()
+                    })
+                    .with_children(|center_dock| {
+                        // 1. Relocated Selected Body Telemetry & Notification Banner
+                        center_dock
+                            .spawn((
+                                HudToastContainer,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
+                                    margin: UiRect::bottom(Val::Px(4.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    max_width: Val::Px(750.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.01, 0.04, 0.09, 0.90)),
+                                BorderColor::all(Color::srgba(0.25, 0.60, 0.95, 0.65)),
+                            ))
+                            .with_children(|toast_box| {
+                                toast_box.spawn((
+                                    Text::new(">> PROTOSTELLAR LIVE"),
+                                    TextFont {
+                                        font_size: FontSize::Px(11.5),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.4, 0.9, 1.0)),
+                                    HudToastText,
+                                ));
+                            });
+
+                        // 2. Digital Elapsed Time & Speed Control Dock
+                        center_dock
+                            .spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    min_width: Val::Px(340.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.92)),
+                                BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.7)),
+                            ))
+                            .with_children(|time_box| {
+                                time_box.spawn((
+                                    Text::new("T+ 0.00 yr | PAUSED"),
+                                    TextFont {
+                                        font_size: FontSize::Px(13.0),
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(1.0, 0.92, 0.4)),
+                                    HudBottomTimerText,
+                                ));
+
+                                time_box
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Row,
+                                        margin: UiRect::top(Val::Px(4.0)),
+                                        ..default()
+                                    })
+                                    .with_children(|speed_row| {
+                                        create_compact_button(speed_row, UiButtonAction::TimePause, "Pause [Space]", Color::srgba(0.24, 0.08, 0.08, 0.9), Color::srgb(1.0, 0.4, 0.4));
+                                        create_compact_button(speed_row, UiButtonAction::TimeSpeed1, "1x [1]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
+                                        create_compact_button(speed_row, UiButtonAction::TimeSpeed100, "100x [2]", Color::srgba(0.08, 0.16, 0.24, 0.9), Color::srgb(0.4, 0.8, 1.0));
+                                        create_compact_button(speed_row, UiButtonAction::TimeSpeed10k, "10k [3]", Color::srgba(0.12, 0.18, 0.28, 0.9), Color::srgb(0.5, 0.85, 1.0));
+                                        create_compact_button(speed_row, UiButtonAction::TimeSpeed1M, "1M [4]", Color::srgba(0.18, 0.14, 0.32, 0.9), Color::srgb(0.7, 0.6, 1.0));
+                                    });
                             });
                     });
 
@@ -744,7 +1090,7 @@ pub fn setup_hud(mut commands: Commands) {
                     .spawn((
                         Node {
                             flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(10.0)),
+                            padding: UiRect::all(Val::Px(8.0)),
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
@@ -752,8 +1098,8 @@ pub fn setup_hud(mut commands: Commands) {
                     ))
                     .with_children(|panel| {
                         panel.spawn((
-                            Text::new("360 NAVIGATION & CONTROLS:\n[Right-Drag] 360 Orbit View  |  [WASD / QE] Free-Fly Pan  |  [Scroll] Smooth Zoom\n[Left-Click / Tab] Select Celestial Body  |  [F] Focus-Lock  |  [Esc / R] Deselect / Overview\n[Click Any Button Above] Instant Mouse Action  |  [Space] Pause / Resume"),
-                            TextFont { font_size: FontSize::Px(10.5), ..default() },
+                            Text::new("360 NAVIGATION & CONTROLS:\n[Right-Drag] 360 Orbit View  |  [WASD / QE] Free-Fly Pan  |  [Scroll] Smooth Zoom\n[Left-Click / Tab] Select Celestial Body  |  [F] Focus-Lock  |  [Esc / R] Deselect\n[F11] Master Fullscreen  |  [Click Any Button] Instant Mouse Action"),
+                            TextFont { font_size: FontSize::Px(9.5), ..default() },
                             TextColor(Color::srgb(0.75, 0.82, 0.95)),
                         ));
                     });
@@ -952,6 +1298,7 @@ pub fn handle_ui_button_interactions(
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     mut quick_bar_state: ResMut<QuickBarState>,
     mut builder_state: ResMut<PlanetBuilderState>,
+    mut hud_visibility: ResMut<HudVisibilityState>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
     mut quasi_star_query: Query<(&mut BlackHoleStarState, &CelestialBody)>,
@@ -2332,6 +2679,27 @@ pub fn handle_ui_button_interactions(
                         toast.message = "🌟 Spawned 120 M☉ Pop-III Hypergiant plunging toward the 100,000 M☉ Black Hole Seed!".to_string();
                         toast.timer = 5.5;
                     }
+                    UiButtonAction::ToggleFullScreenHud => {
+                        hud_visibility.is_full_screen_clean = !hud_visibility.is_full_screen_clean;
+                        toast.message = if hud_visibility.is_full_screen_clean {
+                            "⛶ Clean Fullscreen Mode (Press [F11] or click top-right badge to restore HUD)".to_string()
+                        } else {
+                            "👁️ Standard HUD View Restored".to_string()
+                        };
+                        toast.timer = 2.5;
+                    }
+                    UiButtonAction::ToggleTopLeftPanel => {
+                        hud_visibility.top_left_minimized = !hud_visibility.top_left_minimized;
+                    }
+                    UiButtonAction::ToggleTopRightPanel => {
+                        hud_visibility.top_right_minimized = !hud_visibility.top_right_minimized;
+                    }
+                    UiButtonAction::ToggleInspectorPanel => {
+                        hud_visibility.inspector_minimized = !hud_visibility.inspector_minimized;
+                    }
+                    UiButtonAction::ToggleScenariosPanel => {
+                        hud_visibility.scenarios_minimized = !hud_visibility.scenarios_minimized;
+                    }
                 }
             }
         }
@@ -2967,7 +3335,7 @@ pub fn update_hud(
                 let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
 
                 text.0 = format!(
-                    "==================================================\n  >> SELECTED: {}\n  >> CLASSIFICATION: {}\n==================================================\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}{}{}{}",
+                    ">> {} [{}]\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}{}{}{}{}{}{}",
                     body.name.to_uppercase(),
                     type_str.to_uppercase(),
                     mass_str,
@@ -3594,5 +3962,182 @@ pub fn update_planet_builder_ui(
                 "🚀 Instant Orbit Insertion"
             }
         );
+    }
+}
+
+/// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
+pub fn update_hud_visibility(
+    mut hud_visibility: ResMut<HudVisibilityState>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut root_query: Query<
+        &mut Node,
+        (
+            With<HudRootContainer>,
+            Without<TopLeftStatsPanel>,
+            Without<TopLeftCollapsedPill>,
+            Without<TopRightControlsPanel>,
+            Without<TopRightCollapsedPill>,
+            Without<BottomLeftInspectorPanel>,
+            Without<BottomLeftCollapsedChip>,
+            Without<ScenarioPresetsContainer>,
+        ),
+    >,
+    mut top_left_panel_query: Query<
+        &mut Node,
+        (
+            With<TopLeftStatsPanel>,
+            Without<HudRootContainer>,
+            Without<TopLeftCollapsedPill>,
+        ),
+    >,
+    mut top_left_pill_query: Query<
+        &mut Node,
+        (
+            With<TopLeftCollapsedPill>,
+            Without<HudRootContainer>,
+            Without<TopLeftStatsPanel>,
+        ),
+    >,
+    mut top_right_panel_query: Query<
+        &mut Node,
+        (
+            With<TopRightControlsPanel>,
+            Without<HudRootContainer>,
+            Without<TopRightCollapsedPill>,
+        ),
+    >,
+    mut top_right_pill_query: Query<
+        &mut Node,
+        (
+            With<TopRightCollapsedPill>,
+            Without<HudRootContainer>,
+            Without<TopRightControlsPanel>,
+        ),
+    >,
+    mut inspector_panel_query: Query<
+        &mut Node,
+        (
+            With<BottomLeftInspectorPanel>,
+            Without<HudRootContainer>,
+            Without<BottomLeftCollapsedChip>,
+        ),
+    >,
+    mut inspector_chip_query: Query<
+        &mut Node,
+        (
+            With<BottomLeftCollapsedChip>,
+            Without<HudRootContainer>,
+            Without<BottomLeftInspectorPanel>,
+        ),
+    >,
+    mut scenarios_query: Query<
+        &mut Node,
+        (With<ScenarioPresetsContainer>, Without<HudRootContainer>),
+    >,
+    mut chip_text_query: Query<
+        &mut Text,
+        (
+            With<BottomLeftCollapsedChipText>,
+            Without<FullScreenFloatingBadgeText>,
+        ),
+    >,
+    mut badge_text_query: Query<
+        &mut Text,
+        (
+            With<FullScreenFloatingBadgeText>,
+            Without<BottomLeftCollapsedChipText>,
+        ),
+    >,
+    player_state: Res<PlayerInteractionState>,
+    names_query: Query<&CelestialBody>,
+) {
+    if keyboard.just_pressed(KeyCode::F11) {
+        hud_visibility.is_full_screen_clean = !hud_visibility.is_full_screen_clean;
+    }
+
+    if let Ok(mut root_node) = root_query.single_mut() {
+        root_node.display = if hud_visibility.is_full_screen_clean {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+
+    if let Ok(mut badge_text) = badge_text_query.single_mut() {
+        badge_text.0 = if hud_visibility.is_full_screen_clean {
+            "👁️ Show HUD [F11]".to_string()
+        } else {
+            "⛶ Fullscreen [F11]".to_string()
+        };
+    }
+
+    // Top-Left panel visibility
+    if let Ok(mut node) = top_left_panel_query.single_mut() {
+        node.display = if hud_visibility.top_left_minimized {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if let Ok(mut node) = top_left_pill_query.single_mut() {
+        node.display = if hud_visibility.top_left_minimized {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    // Top-Right panel visibility
+    if let Ok(mut node) = top_right_panel_query.single_mut() {
+        node.display = if hud_visibility.top_right_minimized {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if let Ok(mut node) = top_right_pill_query.single_mut() {
+        node.display = if hud_visibility.top_right_minimized {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    // Bottom-Left Inspector visibility
+    if let Ok(mut node) = inspector_panel_query.single_mut() {
+        node.display = if hud_visibility.inspector_minimized {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if let Ok(mut node) = inspector_chip_query.single_mut() {
+        node.display = if hud_visibility.inspector_minimized {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    // Scenario Presets visibility
+    if let Ok(mut node) = scenarios_query.single_mut() {
+        node.display = if hud_visibility.scenarios_minimized {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+
+    // Update collapsed chip text with selected target name
+    if let Ok(mut chip_text) = chip_text_query.single_mut() {
+        if let Some(target) = player_state.selected_entity {
+            if let Ok(body) = names_query.get(target) {
+                chip_text.0 = format!("🔍 Inspector: {} ▲ Expand", body.name);
+            } else {
+                chip_text.0 = "🔍 Inspector ▲ Expand".to_string();
+            }
+        } else {
+            chip_text.0 = "🔍 Inspector (No Selection) ▲ Expand".to_string();
+        }
     }
 }

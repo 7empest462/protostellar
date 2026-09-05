@@ -21,6 +21,7 @@ impl Plugin for GamePlugin {
             .init_resource::<LateHeavyBombardmentState>()
             .init_resource::<QuickBarState>()
             .init_resource::<PlanetBuilderState>()
+            .init_resource::<HudVisibilityState>()
             .add_systems(Startup, setup_hud)
             .add_systems(
                 Update,
@@ -33,6 +34,7 @@ impl Plugin for GamePlugin {
                     update_quick_body_selector_bar,
                     update_planet_builder_ui,
                     handle_roche_disruption_toasts,
+                    update_hud_visibility,
                     update_hud,
                 ),
             );

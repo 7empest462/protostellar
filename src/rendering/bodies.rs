@@ -304,11 +304,11 @@ pub fn spawn_missing_visuals(
                         PointLight {
                             color: base_color,
                             intensity: if body.body_type == BodyType::BlackHole {
-                                10_000_000.0
+                                1_500_000.0
                             } else if body.body_type == BodyType::QuasiStar {
-                                150_000_000.0
+                                15_000_000.0
                             } else {
-                                60_000_000.0
+                                2_500_000.0
                             },
                             range: 500.0,
                             shadow_maps_enabled: false,
@@ -469,9 +469,9 @@ pub fn sync_celestial_transforms(
             for child in children.iter() {
                 if let Ok(mut light) = light_query.get_mut(child) {
                     if body.body_type == BodyType::BlackHole {
-                        light.intensity = 25_000_000.0;
+                        light.intensity = 1_500_000.0;
                     } else if body.body_type == BodyType::QuasiStar {
-                        light.intensity = 150_000_000.0;
+                        light.intensity = 15_000_000.0;
                     }
                 }
             }

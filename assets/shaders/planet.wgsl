@@ -524,9 +524,28 @@ fn fragment(
     } else {
         let lit = apply_pbr_lighting(pbr_input);
         
+        let base_col = pbr_input.material.base_color.rgb;
+        let base_lum = max(dot(base_col, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.001);
+        let lit_lum = dot(lit.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        
+        // Measure starlight illuminance factor relative to surface albedo
+        let starlight_factor = lit_lum / base_lum;
+        
+        // Tone-map diffuse lighting with an energy-conserving soft-knee curve:
+        // Prevents daylight starlight from blowing out craters, continents, and atmospheres
+        // into solid blinding white, while preserving 100% of the procedural terrain detail.
+        let diffuse_intensity = clamp(starlight_factor / (starlight_factor + 0.95) * 1.05, 0.0, 1.0);
+        let diffuse_lit = base_col * diffuse_intensity;
+        
+        // Extract ocean / ice specular highlight and tone-map smoothly
+        let specular_raw = max(lit.rgb - base_col * starlight_factor, vec3<f32>(0.0));
+        let specular_glint = specular_raw / (specular_raw + vec3<f32>(1.2)) * 0.65;
+        
+        let balanced_lit = diffuse_lit + specular_glint;
+        
         let NdotV = max(dot(pbr_input.N, pbr_input.V), 0.0);
         let fresnel = pow(1.0 - NdotV, 2.8);
-        let ambient_boost = pbr_input.material.base_color.rgb * 0.35;
+        let ambient_boost = base_col * 0.08;
         
         // Rayleigh & Mie atmospheric scattering with golden/crimson sunset terminators (planets only)
         var atmospheric_haze = vec3<f32>(0.0);
@@ -560,7 +579,7 @@ fn fragment(
             }
         }
         
-        out.color = vec4<f32>(lit.rgb + ambient_boost + atmospheric_haze + aurora_glow, 1.0);
+        out.color = vec4<f32>(balanced_lit + ambient_boost + atmospheric_haze + aurora_glow, 1.0);
     }
     
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
