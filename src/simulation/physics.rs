@@ -39,8 +39,6 @@ pub fn step_physics_simulation(
 
     let dt = config.base_dt_yr;
     let target_dt = dt * time_warp.multiplier.max(0.01);
-    let n_substeps = ((target_dt / dt).ceil() as usize).clamp(1, config.max_substeps_per_frame);
-    let sub_dt = target_dt / (n_substeps as f64);
 
     let softening_sq = config.softening_au * config.softening_au;
 
@@ -98,6 +96,16 @@ pub fn step_physics_simulation(
         .is_some_and(|s| s.current_preset == ScenarioPreset::LittleRedDot)
         || is_central_quasi
         || star_mass > 10_000.0;
+
+    // Adaptive substepping: For extreme mass systems (Little Red Dot), scale substep resolution
+    // so high time warp multipliers never cause numerical leapfrog tangent blowout.
+    let max_substeps = if is_little_red_dot {
+        config.max_substeps_per_frame.max(128)
+    } else {
+        config.max_substeps_per_frame
+    };
+    let n_substeps = ((target_dt / dt).ceil() as usize).clamp(1, max_substeps);
+    let sub_dt = target_dt / (n_substeps as f64);
 
     // Filter massive bodies (embryos, planets, stars) for full mutual N-body interactions
     let massive_indices: Vec<usize> = body_data
@@ -260,14 +268,15 @@ pub fn step_physics_simulation(
                 }
             }
 
-            // Mutual N-body interactions with Adaptive Softening
-            for &(m_pos, m_mass, m_rad, m_idx) in &massive_data {
+            // Mutual N-body interactions with Adaptive Softening (Newton's Shell Theorem)
+            for &(m_pos, m_mass, _m_rad, m_idx) in &massive_data {
                 if m_idx == i {
                     continue;
                 }
                 let r_vec = *pos - m_pos;
-                let pair_softening_sq = softening_sq.max((m_rad * 0.5).powi(2)).max(1e-4);
-                let dist_sq = r_vec.length_squared() + pair_softening_sq;
+                // Physical gravitational softening: outside bodies, gravity is exact 1/r^2.
+                // Standard softening scale prevents division-by-zero singularities during physical mergers.
+                let dist_sq = r_vec.length_squared() + softening_sq;
                 let dist = dist_sq.sqrt();
                 acc -= (G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
             }
@@ -281,11 +290,15 @@ pub fn step_physics_simulation(
             }
 
             // Acceleration Limiting: Protect against unphysical singularities during ultra-close contact (r -> 0)
-            // For the Little Red Dot (Quasi-Star with 450,000 M_sun), orbital accelerations naturally reach
-            // millions of AU/yr^2; these limits must NOT apply to the Little Red Dot simulation.
+            // For the Little Red Dot (Quasi-Star with 450,000 M_sun), orbital accelerations at 60 AU reach ~4,934 AU/yr^2.
             let acc_mag = acc.length();
-            if !is_little_red_dot && acc_mag > 500_000.0 {
-                acc *= 500_000.0 / acc_mag;
+            let max_acc = if is_little_red_dot {
+                25_000_000.0
+            } else {
+                500_000.0
+            };
+            if acc_mag > max_acc {
+                acc *= max_acc / acc_mag;
             }
 
             if !acc.is_finite() {
@@ -401,15 +414,25 @@ pub fn step_physics_simulation(
                     body.4 = DVec3::ZERO;
                 }
 
-                // Velocity Limiting: Prevent numerical overflow / close-encounter singularities
-                // In standard planetary systems, bound orbits have v < 200 AU/yr (~950 km/s).
-                // In the Little Red Dot simulation, the 450,000 M_sun gravity drives orbital velocities of
-                // several thousand km/s (hundreds to thousands of AU/yr); these limits must NOT apply to Little Red Dot.
-                if !is_little_red_dot {
-                    let speed = body.3.length();
-                    let max_speed = 200.0;
-                    if speed > max_speed {
-                        body.3 *= max_speed / speed;
+                // Universal Cosmic Speed Limit: The Speed of Light in vacuum (c = 299,792.458 km/s ~ 63,241 AU/yr)
+                // As a fundamental rule of the universe, NO massive body or planet can ever exceed c.
+                let speed = body.3.length();
+                let universal_c_limit = SPEED_OF_LIGHT_AU_YR * 0.999; // ~63,177.8 AU/yr (299,492 km/s)
+                if speed > universal_c_limit {
+                    body.3 *= universal_c_limit / speed;
+                } else if !is_little_red_dot {
+                    // Standard planetary stellar systems (M < 100 M_sun): Bound planetary orbits have v < 250 AU/yr (~1,185 km/s)
+                    let max_planetary_speed = 250.0;
+                    if speed > max_planetary_speed {
+                        body.3 *= max_planetary_speed / speed;
+                    }
+                } else {
+                    // Little Red Dot / Supermassive Systems (M >= 100,000 M_sun):
+                    // At 60 AU, Keplerian orbital speed is sqrt(G * 450,000 / 60) ~ 544 AU/yr (~2,580 km/s).
+                    // Sub-relativistic bound limit prevents close-encounter numerical ejections while allowing full orbital speeds.
+                    let max_smbh_bound_speed = 10_000.0; // ~47,404 km/s (~0.16 c)
+                    if speed > max_smbh_bound_speed {
+                        body.3 *= max_smbh_bound_speed / speed;
                     }
                 }
             } else {
@@ -442,9 +465,8 @@ pub fn step_physics_simulation(
             acc.0 = DVec3::ZERO;
         } else if let Some(idx) = body_data.iter().position(|b| b.0 == e) {
             let r_mag = body_data[idx].2.length();
-            // Minor debris that has escaped to deep interstellar space is retired.
-            // In Little Red Dot, orbital speeds are ~500 AU/yr, so debris at 2000 AU is still gravitationally bound.
-            let debris_escape_radius = if is_little_red_dot { 100_000.0 } else { 2000.0 };
+            // Minor debris or rogue bodies that have escaped to deep interstellar space are retired.
+            let debris_escape_radius = if is_little_red_dot { 15_000.0 } else { 2000.0 };
             if r_mag > debris_escape_radius
                 && matches!(
                     body.body_type,

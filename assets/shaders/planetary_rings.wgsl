@@ -42,6 +42,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let local_uv = in.uv * 2.0 - 1.0;
     let dist = length(local_uv);
 
+    // Strictly discard all pixels outside the unit circle to completely eliminate square quad edges
+    if (dist > 1.0 || dist < 0.28) {
+        discard;
+    }
+
     // Normalized radial ring coordinate from inner (0.0) to outer (1.0)
     let u = (dist - 0.28) / (1.0 - 0.28);
     if (u < 0.0 || u > 1.0) {

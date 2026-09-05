@@ -1125,69 +1125,72 @@ pub fn spawn_little_red_dot_scenario(
 
     // 2. Primordial infalling structures & Pop-III stellar seeds orbiting the Little Red Dot
     // All structures are placed within the active circum-nuclear gaseous disk (85 - 235 AU)
-    let primordial_satellites: [(f64, f64, f64, &str, Composition, BodyType, f64, f64); 5] = [
-        // Dense primordial hydrogen cloudlet at 85 AU (in particle ring)
+    // 2. Realistic S-Cluster Stars and Primordial Planetary Worlds orbiting the Little Red Dot
+    // Placed at stable orbital distances within the circum-nuclear disk (95 - 255 AU)
+    // with exact circular Keplerian velocities: v_circ = sqrt(G * M_total / r)
+    let primordial_satellites: [(f64, f64, f64, &str, Composition, BodyType, f64); 5] = [
+        // 1. Pop-III Blue Supergiant (S-Cluster Star α) at 95 AU
         (
-            85.0,
-            250.0, // 250 M_sun gas clump
-            10.0,  // 10 AU cloud radius
-            "Dense Hydrogen Cloudlet α",
-            Composition::pure_hydrogen(),
-            BodyType::Protoplanet,
-            0.15,
-            0.04,
+            95.0,
+            60.0,  // 60 M_sun Pop-III star
+            0.050, // ~10.7 R_sun physical radius
+            "Pop-III Blue Supergiant (S-Cluster Star α)",
+            Composition::solar_gas(),
+            BodyType::BlueSupergiant,
+            0.25,
         ),
-        // Population III Blue Giant star (80 M_sun) at 120 AU
+        // 2. Extreme Super-Jupiter Exoplanet (Prime-b) at 135 AU
         (
-            120.0,
-            80.0,  // 80 M_sun Pop-III star
-            0.008, // ~1.2 million km radius
-            "Pop-III Blue Giant Seed",
+            135.0,
+            0.005,  // 5.24 M_Jup gas giant
+            0.0006, // ~1.25 R_Jup radius
+            "Extreme Super-Jupiter (Prime-b)",
+            Composition::solar_gas(),
+            BodyType::GasGiant,
+            1.45,
+        ),
+        // 3. Pop-III Blue Giant (S-Cluster Star β) at 175 AU
+        (
+            175.0,
+            40.0,  // 40 M_sun Pop-III star
+            0.035, // ~7.5 R_sun radius
+            "Pop-III Blue Giant (S-Cluster Star β)",
             Composition::solar_gas(),
             BodyType::BlueGiant,
-            1.20,
-            0.05,
+            2.80,
         ),
-        // Pristine gas clump β at 155 AU
+        // 4. Primordial Volatile Ice World (Prime-c) at 215 AU
         (
-            155.0,
-            350.0, // 350 M_sun gas clump
-            14.0,  // 14 AU cloud radius
-            "Dense Hydrogen Cloudlet β",
-            Composition::pure_hydrogen(),
-            BodyType::Protoplanet,
-            2.45,
-            0.04,
+            215.0,
+            0.0001, // 33 M_earth Sub-Neptune / Mega-Earth
+            0.0003, // ~7 R_earth radius
+            "Primordial Volatile Ice World (Prime-c)",
+            Composition {
+                silicate_frac: 0.35,
+                metal_frac: 0.10,
+                ice_frac: 0.45,
+                organics_frac: 0.05,
+                gas_frac: 0.05,
+            },
+            BodyType::IceGiant,
+            4.15,
         ),
-        // Secondary Pop-III binary companion at 195 AU
+        // 5. Pop-III Intermediate Star (S-Cluster Star γ) at 255 AU
         (
-            195.0,
-            100.0, // 100 M_sun companion star
-            0.010,
-            "Pop-III Companion Star",
+            255.0,
+            25.0,  // 25 M_sun Pop-III star
+            0.025, // ~5.4 R_sun radius
+            "Pop-III Intermediate Star (S-Cluster Star γ)",
             Composition::solar_gas(),
             BodyType::BlueGiant,
-            4.10,
-            0.05,
-        ),
-        // Outer circum-nuclear cluster core at 235 AU (safely within the 250 AU disk edge)
-        (
-            235.0,
-            500.0, // 500 M_sun cluster core
-            20.0,  // 20 AU radius
-            "Circum-Nuclear Cluster Core",
-            Composition::solar_gas(),
-            BodyType::Protoplanet,
-            5.30,
-            0.03,
+            5.40,
         ),
     ];
 
-    for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off, ecc) in &primordial_satellites {
+    for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off) in &primordial_satellites {
         let v_circ = (G_ASTRO * total_mass / r_au).sqrt();
-        let v_mag = v_circ * (1.0 - ecc * 0.4);
         let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
-        let vel = DVec3::new(-v_mag * phi_off.sin(), 0.0, v_mag * phi_off.cos());
+        let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
 
         let temp = (temp_k * (r_au / 60.0).powf(-0.5)).max(50.0);
 

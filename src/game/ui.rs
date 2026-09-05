@@ -62,53 +62,29 @@ pub struct HudVisibilityState {
     pub scenarios_minimized: bool,
 }
 
-/// Marker for the full HUD root container node (for global master full-screen toggle).
-#[derive(Component)]
-pub struct HudRootContainer;
+/// Discriminant component for HUD panel containers whose visibility is toggled dynamically.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HudPanelElement {
+    RootContainer,
+    TopLeftPanel,
+    TopLeftPill,
+    TopRightPanel,
+    TopRightPill,
+    InspectorPanel,
+    InspectorChip,
+    ScenarioPresets,
+}
 
-/// Marker for the top-left statistics panel container.
-#[derive(Component)]
-pub struct TopLeftStatsPanel;
-
-/// Marker for the minimized top-left stats pill button.
-#[derive(Component)]
-pub struct TopLeftCollapsedPill;
-
-/// Marker for the top-right diagnostics and speed controls panel container.
-#[derive(Component)]
-pub struct TopRightControlsPanel;
-
-/// Marker for the minimized top-right speed controls pill button.
-#[derive(Component)]
-pub struct TopRightCollapsedPill;
-
-/// Marker for the bottom-left inspector panel container.
-#[derive(Component)]
-pub struct BottomLeftInspectorPanel;
-
-/// Marker for the minimized bottom-left inspector chip button.
-#[derive(Component)]
-pub struct BottomLeftCollapsedChip;
-
-/// Marker for the text inside the minimized bottom-left inspector chip.
-#[derive(Component)]
-pub struct BottomLeftCollapsedChipText;
-
-/// Marker for the scenario presets container.
-#[derive(Component)]
-pub struct ScenarioPresetsContainer;
+/// Discriminant component for dynamic text elements within the HUD overlay.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HudDynamicText {
+    InspectorChip,
+    FullScreenBadge,
+}
 
 /// Marker for the bottom-center live telemetry and toast container.
 #[derive(Component)]
 pub struct HudToastContainer;
-
-/// Marker for the floating master full-screen toggle button.
-#[derive(Component)]
-pub struct FullScreenFloatingBadge;
-
-/// Marker for the text inside the floating master full-screen toggle button.
-#[derive(Component)]
-pub struct FullScreenFloatingBadgeText;
 
 /// Planetary archetype templates for the Interactive Planet Builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -535,7 +511,6 @@ pub fn setup_hud(mut commands: Commands) {
         .spawn((
             Button,
             UiButtonAction::ToggleFullScreenHud,
-            FullScreenFloatingBadge,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(10.0),
@@ -557,13 +532,13 @@ pub fn setup_hud(mut commands: Commands) {
                     ..default()
                 },
                 TextColor(Color::srgb(0.5, 0.85, 1.0)),
-                FullScreenFloatingBadgeText,
+                HudDynamicText::FullScreenBadge,
             ));
         });
 
     commands
         .spawn((
-            HudRootContainer,
+            HudPanelElement::RootContainer,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
@@ -591,7 +566,7 @@ pub fn setup_hud(mut commands: Commands) {
                 // Top Left Stats Panel (Collapsible)
                 top_row
                     .spawn((
-                        TopLeftStatsPanel,
+                        HudPanelElement::TopLeftPanel,
                         Node {
                             flex_direction: FlexDirection::Column,
                             padding: UiRect::all(Val::Px(8.0)),
@@ -648,7 +623,7 @@ pub fn setup_hud(mut commands: Commands) {
                     .spawn((
                         Button,
                         UiButtonAction::ToggleTopLeftPanel,
-                        TopLeftCollapsedPill,
+                        HudPanelElement::TopLeftPill,
                         Node {
                             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                             display: Display::None,
@@ -698,7 +673,7 @@ pub fn setup_hud(mut commands: Commands) {
                         // Interactive Sandbox Scenario Presets Bar
                         center_col
                             .spawn((
-                                ScenarioPresetsContainer,
+                                HudPanelElement::ScenarioPresets,
                                 Node {
                                     flex_direction: FlexDirection::Row,
                                     padding: UiRect::all(Val::Px(2.5)),
@@ -722,7 +697,7 @@ pub fn setup_hud(mut commands: Commands) {
                 // Top Right: Diagnostics & Time Scale Indicator (Collapsible)
                 top_row
                     .spawn((
-                        TopRightControlsPanel,
+                        HudPanelElement::TopRightPanel,
                         Node {
                             flex_direction: FlexDirection::Column,
                             padding: UiRect::all(Val::Px(8.0)),
@@ -792,7 +767,7 @@ pub fn setup_hud(mut commands: Commands) {
                     .spawn((
                         Button,
                         UiButtonAction::ToggleTopRightPanel,
-                        TopRightCollapsedPill,
+                        HudPanelElement::TopRightPill,
                         Node {
                             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                             display: Display::None,
@@ -831,7 +806,7 @@ pub fn setup_hud(mut commands: Commands) {
                 // Bottom Left: Floating Context Action Card & Telemetry Inspector (Collapsible & Compact)
                 bottom_row
                     .spawn((
-                        BottomLeftInspectorPanel,
+                        HudPanelElement::InspectorPanel,
                         Node {
                             flex_direction: FlexDirection::Column,
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(7.0)),
@@ -981,7 +956,7 @@ pub fn setup_hud(mut commands: Commands) {
                     .spawn((
                         Button,
                         UiButtonAction::ToggleInspectorPanel,
-                        BottomLeftCollapsedChip,
+                        HudPanelElement::InspectorChip,
                         Node {
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
                             display: Display::None,
@@ -1001,7 +976,7 @@ pub fn setup_hud(mut commands: Commands) {
                                 ..default()
                             },
                             TextColor(Color::srgb(0.4, 0.85, 1.0)),
-                            BottomLeftCollapsedChipText,
+                            HudDynamicText::InspectorChip,
                         ));
                     });
 
@@ -3969,85 +3944,8 @@ pub fn update_planet_builder_ui(
 pub fn update_hud_visibility(
     mut hud_visibility: ResMut<HudVisibilityState>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut root_query: Query<
-        &mut Node,
-        (
-            With<HudRootContainer>,
-            Without<TopLeftStatsPanel>,
-            Without<TopLeftCollapsedPill>,
-            Without<TopRightControlsPanel>,
-            Without<TopRightCollapsedPill>,
-            Without<BottomLeftInspectorPanel>,
-            Without<BottomLeftCollapsedChip>,
-            Without<ScenarioPresetsContainer>,
-        ),
-    >,
-    mut top_left_panel_query: Query<
-        &mut Node,
-        (
-            With<TopLeftStatsPanel>,
-            Without<HudRootContainer>,
-            Without<TopLeftCollapsedPill>,
-        ),
-    >,
-    mut top_left_pill_query: Query<
-        &mut Node,
-        (
-            With<TopLeftCollapsedPill>,
-            Without<HudRootContainer>,
-            Without<TopLeftStatsPanel>,
-        ),
-    >,
-    mut top_right_panel_query: Query<
-        &mut Node,
-        (
-            With<TopRightControlsPanel>,
-            Without<HudRootContainer>,
-            Without<TopRightCollapsedPill>,
-        ),
-    >,
-    mut top_right_pill_query: Query<
-        &mut Node,
-        (
-            With<TopRightCollapsedPill>,
-            Without<HudRootContainer>,
-            Without<TopRightControlsPanel>,
-        ),
-    >,
-    mut inspector_panel_query: Query<
-        &mut Node,
-        (
-            With<BottomLeftInspectorPanel>,
-            Without<HudRootContainer>,
-            Without<BottomLeftCollapsedChip>,
-        ),
-    >,
-    mut inspector_chip_query: Query<
-        &mut Node,
-        (
-            With<BottomLeftCollapsedChip>,
-            Without<HudRootContainer>,
-            Without<BottomLeftInspectorPanel>,
-        ),
-    >,
-    mut scenarios_query: Query<
-        &mut Node,
-        (With<ScenarioPresetsContainer>, Without<HudRootContainer>),
-    >,
-    mut chip_text_query: Query<
-        &mut Text,
-        (
-            With<BottomLeftCollapsedChipText>,
-            Without<FullScreenFloatingBadgeText>,
-        ),
-    >,
-    mut badge_text_query: Query<
-        &mut Text,
-        (
-            With<FullScreenFloatingBadgeText>,
-            Without<BottomLeftCollapsedChipText>,
-        ),
-    >,
+    mut panel_query: Query<(&mut Node, &HudPanelElement)>,
+    mut text_query: Query<(&mut Text, &HudDynamicText)>,
     player_state: Res<PlayerInteractionState>,
     names_query: Query<&CelestialBody>,
 ) {
@@ -4055,89 +3953,87 @@ pub fn update_hud_visibility(
         hud_visibility.is_full_screen_clean = !hud_visibility.is_full_screen_clean;
     }
 
-    if let Ok(mut root_node) = root_query.single_mut() {
-        root_node.display = if hud_visibility.is_full_screen_clean {
-            Display::None
-        } else {
-            Display::Flex
-        };
-    }
-
-    if let Ok(mut badge_text) = badge_text_query.single_mut() {
-        badge_text.0 = if hud_visibility.is_full_screen_clean {
-            "👁️ Show HUD [F11]".to_string()
-        } else {
-            "⛶ Fullscreen [F11]".to_string()
-        };
-    }
-
-    // Top-Left panel visibility
-    if let Ok(mut node) = top_left_panel_query.single_mut() {
-        node.display = if hud_visibility.top_left_minimized {
-            Display::None
-        } else {
-            Display::Flex
-        };
-    }
-    if let Ok(mut node) = top_left_pill_query.single_mut() {
-        node.display = if hud_visibility.top_left_minimized {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
-    // Top-Right panel visibility
-    if let Ok(mut node) = top_right_panel_query.single_mut() {
-        node.display = if hud_visibility.top_right_minimized {
-            Display::None
-        } else {
-            Display::Flex
-        };
-    }
-    if let Ok(mut node) = top_right_pill_query.single_mut() {
-        node.display = if hud_visibility.top_right_minimized {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
-    // Bottom-Left Inspector visibility
-    if let Ok(mut node) = inspector_panel_query.single_mut() {
-        node.display = if hud_visibility.inspector_minimized {
-            Display::None
-        } else {
-            Display::Flex
-        };
-    }
-    if let Ok(mut node) = inspector_chip_query.single_mut() {
-        node.display = if hud_visibility.inspector_minimized {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
-    // Scenario Presets visibility
-    if let Ok(mut node) = scenarios_query.single_mut() {
-        node.display = if hud_visibility.scenarios_minimized {
-            Display::None
-        } else {
-            Display::Flex
-        };
-    }
-
-    // Update collapsed chip text with selected target name
-    if let Ok(mut chip_text) = chip_text_query.single_mut() {
-        if let Some(target) = player_state.selected_entity {
-            if let Ok(body) = names_query.get(target) {
-                chip_text.0 = format!("🔍 Inspector: {} ▲ Expand", body.name);
-            } else {
-                chip_text.0 = "🔍 Inspector ▲ Expand".to_string();
+    for (mut node, element) in panel_query.iter_mut() {
+        match element {
+            HudPanelElement::RootContainer => {
+                node.display = if hud_visibility.is_full_screen_clean {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
             }
-        } else {
-            chip_text.0 = "🔍 Inspector (No Selection) ▲ Expand".to_string();
+            HudPanelElement::TopLeftPanel => {
+                node.display = if hud_visibility.top_left_minimized {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+            HudPanelElement::TopLeftPill => {
+                node.display = if hud_visibility.top_left_minimized {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+            }
+            HudPanelElement::TopRightPanel => {
+                node.display = if hud_visibility.top_right_minimized {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+            HudPanelElement::TopRightPill => {
+                node.display = if hud_visibility.top_right_minimized {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+            }
+            HudPanelElement::InspectorPanel => {
+                node.display = if hud_visibility.inspector_minimized {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+            HudPanelElement::InspectorChip => {
+                node.display = if hud_visibility.inspector_minimized {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+            }
+            HudPanelElement::ScenarioPresets => {
+                node.display = if hud_visibility.scenarios_minimized {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+        }
+    }
+
+    for (mut text, dynamic_text) in text_query.iter_mut() {
+        match dynamic_text {
+            HudDynamicText::FullScreenBadge => {
+                text.0 = if hud_visibility.is_full_screen_clean {
+                    "👁️ Show HUD [F11]".to_string()
+                } else {
+                    "⛶ Fullscreen [F11]".to_string()
+                };
+            }
+            HudDynamicText::InspectorChip => {
+                if let Some(target) = player_state.selected_entity {
+                    if let Ok(body) = names_query.get(target) {
+                        text.0 = format!("🔍 Inspector: {} ▲ Expand", body.name);
+                    } else {
+                        text.0 = "🔍 Inspector ▲ Expand".to_string();
+                    }
+                } else {
+                    text.0 = "🔍 Inspector (No Selection) ▲ Expand".to_string();
+                }
+            }
         }
     }
 }

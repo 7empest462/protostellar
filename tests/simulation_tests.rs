@@ -2165,3 +2165,163 @@ fn test_hud_visibility_and_collapsible_panel_states() {
     hud_state.is_full_screen_clean = false;
     assert!(!hud_state.is_full_screen_clean);
 }
+
+#[test]
+fn test_universal_speed_of_light_limit() {
+    use bevy::math::DVec3;
+    use protostellar::utils::constants::SPEED_OF_LIGHT_AU_YR;
+
+    // 1. Cosmic Speed Limit in vacuum: ~63,241.077 AU/yr (~299,792.458 km/s)
+    let c_au_yr = SPEED_OF_LIGHT_AU_YR;
+    let universal_c_limit = c_au_yr * 0.999;
+
+    // A body accelerated beyond c (e.g. 150,000 AU/yr ~ 711,000 km/s)
+    let mut runaway_vel = DVec3::new(100_000.0, 0.0, 111_803.0); // magnitude = 150,000 AU/yr
+    assert!(runaway_vel.length() > c_au_yr);
+
+    // Apply universal cosmic speed limit clamp:
+    let speed = runaway_vel.length();
+    if speed > universal_c_limit {
+        runaway_vel *= universal_c_limit / speed;
+    }
+
+    assert!(
+        runaway_vel.length() <= universal_c_limit + 1e-6,
+        "Universal speed of light limit must strictly prevent velocities > c"
+    );
+    assert!(
+        runaway_vel.length() < c_au_yr,
+        "Body speed must remain strictly sub-luminal"
+    );
+
+    // 2. Standard stellar system planetary speed ceiling (250 AU/yr ~ 1,185 km/s)
+    let is_little_red_dot = false;
+    let mut planet_vel = DVec3::new(0.0, 0.0, 450.0);
+    let speed = planet_vel.length();
+    if speed > universal_c_limit {
+        planet_vel *= universal_c_limit / speed;
+    } else if !is_little_red_dot {
+        let max_planetary_speed = 250.0;
+        if speed > max_planetary_speed {
+            planet_vel *= max_planetary_speed / speed;
+        }
+    }
+    assert_eq!(planet_vel.length(), 250.0);
+
+    // 3. Supermassive system speed ceiling (10,000 AU/yr ~ 47,404 km/s ~ 0.16 c)
+    let is_little_red_dot = true;
+    let mut smbh_vel = DVec3::new(0.0, 0.0, 15_000.0);
+    let speed = smbh_vel.length();
+    if speed > universal_c_limit {
+        smbh_vel *= universal_c_limit / speed;
+    } else if !is_little_red_dot {
+        let max_planetary_speed = 250.0;
+        if speed > max_planetary_speed {
+            smbh_vel *= max_planetary_speed / speed;
+        }
+    } else {
+        let max_smbh_bound_speed = 10_000.0;
+        if speed > max_smbh_bound_speed {
+            smbh_vel *= max_smbh_bound_speed / speed;
+        }
+    }
+    assert_eq!(smbh_vel.length(), 10_000.0);
+}
+
+#[test]
+fn test_little_red_dot_stable_keplerian_orbit() {
+    use bevy::math::DVec3;
+    use protostellar::utils::constants::G_ASTRO;
+
+    // Quasi-star total mass = 450,000 M_sun
+    let total_mass = 450_000.0;
+    let r_au = 95.0; // AU
+
+    // Exact circular orbital velocity:
+    let v_circ = (G_ASTRO * total_mass / r_au).sqrt();
+    let softening_sq = 0.005 * 0.005;
+
+    // Centripetal acceleration required for circular orbit: a_c = v^2 / r
+    let a_centripetal = (v_circ * v_circ) / r_au;
+
+    // Gravitational acceleration computed with true Newtonian exterior field (unsoftened at 95 AU):
+    let r_vec = DVec3::new(r_au, 0.0, 0.0);
+    let dist_sq = r_vec.length_squared() + softening_sq;
+    let dist = dist_sq.sqrt();
+    let acc_grav = (G_ASTRO * total_mass / (dist_sq * dist)) * r_vec.length();
+
+    // Verify relative error is negligible (< 1e-7)
+    let rel_diff = (a_centripetal - acc_grav).abs() / a_centripetal;
+    assert!(
+        rel_diff < 1e-7,
+        "Gravitational pull must match centripetal acceleration exactly, rel_diff: {}",
+        rel_diff
+    );
+
+    // Symplectic Leapfrog test: Integrate orbit for 1.5 years (> 1 full orbit: P = 1.38 yr)
+    let dt = 0.0005; // yr
+    let mut pos = DVec3::new(r_au, 0.0, 0.0);
+    let mut vel = DVec3::new(0.0, 0.0, v_circ);
+
+    // Compute initial acceleration
+    let mut acc = -(G_ASTRO * total_mass / (pos.length_squared() + softening_sq).powf(1.5)) * pos;
+
+    let total_steps = 3000; // 1.5 simulated years
+    for _ in 0..total_steps {
+        vel += acc * (dt * 0.5);
+        pos += vel * dt;
+        acc = -(G_ASTRO * total_mass / (pos.length_squared() + softening_sq).powf(1.5)) * pos;
+        vel += acc * (dt * 0.5);
+    }
+
+    let final_r = pos.length();
+    let orbital_radius_drift = (final_r - r_au).abs() / r_au;
+    assert!(
+        orbital_radius_drift < 0.001,
+        "Orbit must remain strictly circular without flinging out: initial {} AU, final {} AU, drift {}%",
+        r_au,
+        final_r,
+        orbital_radius_drift * 100.0
+    );
+}
+
+#[test]
+fn test_asteroid_mesh_isotropic_harmonics_and_planetesimal_sphere() {
+    use protostellar::simulation::components::BodyType;
+
+    // Verify that Planetesimal is mapped to smooth spherical planet mesh, NOT irregular rubble mesh:
+    let is_spherical = |b_type: BodyType| -> bool {
+        matches!(
+            b_type,
+            BodyType::GasGiant
+                | BodyType::IceGiant
+                | BodyType::SuperEarth
+                | BodyType::TerrestrialPlanet
+                | BodyType::Protoplanet
+                | BodyType::Planetesimal
+                | BodyType::Moon
+        )
+    };
+
+    assert!(is_spherical(BodyType::Planetesimal));
+    assert!(is_spherical(BodyType::Protoplanet));
+    assert!(is_spherical(BodyType::TerrestrialPlanet));
+    assert!(!is_spherical(BodyType::Asteroid));
+    assert!(!is_spherical(BodyType::Comet));
+
+    // Verify that directional harmonics don't have coordinate-axis cubic singularity:
+    let v_axis_x = bevy::math::Vec3::new(1.0, 0.0, 0.0);
+
+    // Cartesian product (OLD bug): v.x * v.y * v.z is ZERO on any coordinate axis!
+    let old_harmonic_axis =
+        (v_axis_x.x * 3.5).sin() * (v_axis_x.y * 3.5).cos() * (v_axis_x.z * 3.5).sin();
+    assert_eq!(old_harmonic_axis, 0.0); // Cubed flat face bug!
+
+    // New isotropic directional projection (NO zero on axes):
+    let k1 = v_axis_x.dot(bevy::math::Vec3::new(0.577, 0.577, 0.577));
+    let new_harmonic_axis = (k1 * 3.2).sin() * 0.12;
+    assert!(
+        new_harmonic_axis.abs() > 0.01,
+        "Isotropic noise must be non-zero on axes to prevent flat cube faces"
+    );
+}

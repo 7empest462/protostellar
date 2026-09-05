@@ -97,12 +97,17 @@ fn generate_irregular_asteroid_mesh(
             v * elongation
         };
 
-        // 2. Harmonic 3D surface roughness
-        let d1 =
-            (v.x * 3.5 + seed).sin() * (v.y * 3.5 + seed * 1.3).cos() * (v.z * 3.5).sin() * 0.20;
-        let d2 = (v.x * 7.0 + seed * 2.1).sin() * (v.z * 7.0 + seed * 0.7).cos() * 0.09;
-        let d3 = (v.y * 13.0 + seed * 3.5).cos() * (v.x * 13.0).sin() * 0.04;
-        let mut disp = 1.0 + (d1 + d2 + d3) * noise_strength;
+        // 2. Isotropic spherical surface harmonics (avoids Cartesian coordinate-axis cubic alignment)
+        let k1 = v.dot(Vec3::new(0.577, 0.577, 0.577));
+        let k2 = v.dot(Vec3::new(-0.707, 0.0, 0.707));
+        let k3 = v.dot(Vec3::new(0.267, -0.802, 0.534));
+        let k4 = v.dot(Vec3::new(-0.408, 0.816, -0.408));
+
+        let d1 = (k1 * 3.2 + seed).sin() * 0.12;
+        let d2 = (k2 * 5.4 + seed * 1.6).sin() * 0.06;
+        let d3 = (k3 * 8.1 + seed * 2.4).sin() * 0.03;
+        let d4 = (k4 * 12.3 + seed * 3.5).cos() * 0.015;
+        let mut disp = 1.0 + (d1 + d2 + d3 + d4) * noise_strength;
 
         // 3. Impact Crater Depressions with Elevated Rims
         for &(c_center, c_rad, c_depth) in &craters {
@@ -131,13 +136,13 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let particle_mesh = meshes.add(Sphere::new(1.0).mesh().ico(4).unwrap());
     let ring_mesh = meshes.add(Plane3d::default().mesh().size(2.0, 2.0).build());
 
-    // Misshapen irregular asteroid & comet archetype meshes
+    // Misshapen irregular asteroid & comet archetype meshes (natural triaxial ellipsoids without cubic box artifacts)
     let asteroid_potato =
-        generate_irregular_asteroid_mesh(Vec3::new(1.42, 0.88, 0.65), 0.75, false, 1.25);
+        generate_irregular_asteroid_mesh(Vec3::new(1.18, 1.05, 0.92), 0.45, false, 1.25);
     let asteroid_rubble =
-        generate_irregular_asteroid_mesh(Vec3::new(1.15, 0.95, 1.15), 0.60, false, 4.80);
+        generate_irregular_asteroid_mesh(Vec3::new(1.08, 0.96, 1.04), 0.35, false, 4.80);
     let comet_bilobate =
-        generate_irregular_asteroid_mesh(Vec3::new(1.50, 0.80, 0.75), 0.85, true, 8.40);
+        generate_irregular_asteroid_mesh(Vec3::new(1.22, 0.90, 0.82), 0.45, true, 8.40);
 
     let asteroid_potato_mesh = meshes.add(asteroid_potato);
     let asteroid_rubble_mesh = meshes.add(asteroid_rubble);
@@ -392,6 +397,7 @@ pub fn spawn_missing_visuals(
                 | BodyType::SuperEarth
                 | BodyType::TerrestrialPlanet
                 | BodyType::Protoplanet
+                | BodyType::Planetesimal
                 | BodyType::Moon => visual_assets.planet_mesh.clone(),
                 BodyType::Comet => visual_assets.comet_bilobate_mesh.clone(),
                 BodyType::Asteroid => {
@@ -402,10 +408,8 @@ pub fn spawn_missing_visuals(
                         visual_assets.asteroid_rubble_mesh.clone()
                     }
                 }
-                BodyType::Planetesimal | BodyType::DustGrain => {
-                    visual_assets.asteroid_rubble_mesh.clone()
-                }
-                _ => visual_assets.particle_mesh.clone(),
+                BodyType::DustGrain => visual_assets.particle_mesh.clone(),
+                _ => visual_assets.planet_mesh.clone(),
             };
 
             entity_cmd.try_insert((
@@ -491,6 +495,7 @@ pub fn sync_celestial_transforms(
                 | BodyType::SuperEarth
                 | BodyType::TerrestrialPlanet
                 | BodyType::Protoplanet
+                | BodyType::Planetesimal
                 | BodyType::Moon => visual_assets.planet_mesh.clone(),
                 BodyType::Comet => visual_assets.comet_bilobate_mesh.clone(),
                 BodyType::Asteroid => {
@@ -501,10 +506,8 @@ pub fn sync_celestial_transforms(
                         visual_assets.asteroid_rubble_mesh.clone()
                     }
                 }
-                BodyType::Planetesimal | BodyType::DustGrain => {
-                    visual_assets.asteroid_rubble_mesh.clone()
-                }
-                _ => visual_assets.particle_mesh.clone(),
+                BodyType::DustGrain => visual_assets.particle_mesh.clone(),
+                _ => visual_assets.planet_mesh.clone(),
             }
         };
         if mesh.0 != target_mesh {
