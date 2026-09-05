@@ -306,7 +306,7 @@ impl Default for DiskParameters {
     fn default() -> Self {
         Self {
             central_star_mass: 1.0,
-            disk_mass: 0.0006,     // ~200 Earth masses of solid dust/planetesimals
+            disk_mass: 0.00010, // ~33 Earth masses of solid dust (authentic Hayashi MMSN)
             inner_radius_au: 0.06, // Protostellar accretion boundary layer (~0.06 AU)
             outer_radius_au: 45.0, // Authentic Kuiper Belt boundary (~40-45 AU)
             density_power_law: 1.5,

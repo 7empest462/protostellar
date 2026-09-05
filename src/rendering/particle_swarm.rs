@@ -577,11 +577,17 @@ pub fn update_particle_swarm(
                     }
                 } else if !is_massive_disk {
                     // Outer giant planet in normal planetary system:
-                    // Cannot exceed gas gap-opening limit (e.g. 2.5 M_Jup = 0.00238 M_sun)
+                    // Two-stage core-accretion model (Pollack et al.):
+                    // Below critical core mass (~10 M_earth), planetesimal accretion proceeds steadily.
+                    // Runaway gas envelope collapse only activates once core exceeds ~10 M_earth.
                     let max_giant_mass = 2.5 * JUPITER_MASS_SOLAR;
                     if mass.0 < max_giant_mass {
-                        let m_earth_ratio = (mass.0 / EARTH_MASS_SOLAR).clamp(0.1, 350.0);
-                        let runaway_mult = 1.0 + 0.30 * m_earth_ratio.powf(0.35);
+                        let m_earth = mass.0 / EARTH_MASS_SOLAR;
+                        let runaway_mult = if m_earth < 10.0 {
+                            1.0 + 0.05 * m_earth
+                        } else {
+                            1.5 + 0.15 * m_earth.clamp(10.0, 350.0).powf(0.30)
+                        };
                         mass.0 = (mass.0 + gain * runaway_mult).min(max_giant_mass);
                     }
                 } else {

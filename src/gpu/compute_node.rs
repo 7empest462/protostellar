@@ -149,11 +149,11 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) 
     let device = render_dev.wgpu_device();
 
     let n_particles = 100_000u32;
-    let individual_mass = (0.02 / (n_particles as f64)) as f32;
+    let default_params = DiskParameters::default();
+    let individual_mass = (default_params.disk_mass / (n_particles as f64)) as f32;
 
     // 1. Generate 100,000 multi-zone astrophysical particles for GPU VRAM
     let mut rng = rand::rng();
-    let default_params = DiskParameters::default();
     let mut initial_particles = Vec::with_capacity(n_particles as usize);
 
     for _ in 0..n_particles {
@@ -367,15 +367,20 @@ pub fn step_gpu_simulation_render_world(
     {
         let mut rng = rand::rng();
         let mut reseed_particles = Vec::with_capacity(engine.num_particles as usize);
+        let disk_mass = if params.star_mass > 10.0 {
+            500.0 // Circum-nuclear disk for Little Red Dot
+        } else {
+            0.00010 // Authentic Hayashi MMSN solid dust (~33 Earth masses)
+        };
         let disk_params = DiskParameters {
             central_star_mass: params.star_mass as f64,
-            disk_mass: 0.02,
+            disk_mass,
             inner_radius_au: params.inner_radius as f64,
             outer_radius_au: params.outer_radius as f64,
             reference_temp_1au: params.ref_temp_1au as f64,
             ..default()
         };
-        let individual_mass = (0.02 / (engine.num_particles as f64)) as f32;
+        let individual_mass = (disk_mass / (engine.num_particles as f64)) as f32;
         for _ in 0..engine.num_particles {
             let (r, comp_struct) =
                 crate::simulation::disk::sample_disk_radius(&mut rng, &disk_params);

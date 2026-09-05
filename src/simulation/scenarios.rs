@@ -176,7 +176,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
     disk_params.central_star_mass = 1.0;
     disk_params.inner_radius_au = 0.20;
     disk_params.outer_radius_au = 45.0;
-    disk_params.disk_mass = 0.0006;
+    disk_params.disk_mass = 0.00010;
 
     // Central Protostar
     let star = commands
@@ -557,7 +557,7 @@ fn spawn_kepler_16_system(commands: &mut Commands, disk_params: &mut DiskParamet
     disk_params.central_star_mass = m_total;
     disk_params.inner_radius_au = 0.10;
     disk_params.outer_radius_au = 3.50;
-    disk_params.disk_mass = 0.0002;
+    disk_params.disk_mass = 0.00010;
 
     // Primary Star Kepler-16A (anchored near barycenter)
     let star_a = commands
@@ -757,7 +757,7 @@ fn spawn_hot_jupiter_scenario(commands: &mut Commands, disk_params: &mut DiskPar
     disk_params.central_star_mass = 1.0;
     disk_params.inner_radius_au = 0.03;
     disk_params.outer_radius_au = 15.0;
-    disk_params.disk_mass = 0.001;
+    disk_params.disk_mass = 0.00015;
 
     // Central Sun-like Star
     let star = commands
@@ -1071,6 +1071,7 @@ pub fn spawn_little_red_dot_scenario(
     disk_params.outer_radius_au = 250.0;
     disk_params.reference_temp_1au = temp_k;
     disk_params.gas_disk_lifetime_yr = 20_000_000.0;
+    disk_params.disk_mass = 500.0;
 
     // 1. Central Quasi-Star (Little Red Dot)
     let quasi_star_ent = commands

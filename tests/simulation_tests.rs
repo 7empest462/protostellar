@@ -1508,17 +1508,67 @@ fn test_outer_giant_planet_mass_ceiling() {
     let mut mass = 3.50 * EARTH_MASS_SOLAR;
     let max_giant_mass = 2.5 * JUPITER_MASS_SOLAR;
 
-    // Simulate massive runaway accretion attempts (e.g. 100,000 particle sweeps)
+    // Simulate massive runaway accretion attempts (e.g. 10,000 particle sweeps)
     for _ in 0..10_000 {
-        let gain = 100.0 * (0.0006 * EARTH_MASS_SOLAR / 100_000.0); // 100 particles
-        let m_earth_ratio = (mass / EARTH_MASS_SOLAR).clamp(0.1, 350.0);
-        let runaway_mult = 1.0 + 0.30 * m_earth_ratio.powf(0.35);
+        let gain = 100.0 * (0.00010 * EARTH_MASS_SOLAR / 100_000.0); // 100 particles
+        let m_earth = mass / EARTH_MASS_SOLAR;
+        let runaway_mult = if m_earth < 10.0 {
+            1.0 + 0.05 * m_earth
+        } else {
+            1.5 + 0.15 * m_earth.clamp(10.0, 350.0).powf(0.30)
+        };
         mass = (mass + gain * runaway_mult).min(max_giant_mass);
     }
 
     // Mass must be capped at 2.5 M_Jup and NEVER reach stellar/black hole mass (> 1000 M_earth)
     assert!(mass <= max_giant_mass);
     assert!(mass < 0.01); // Well below stellar threshold (0.08 M_sun)
+}
+
+#[test]
+fn test_lighter_particles_moderate_50_year_growth() {
+    // Verifies that with authentic lighter dust particle masses (~0.00010 M_sun disk,
+    // ~0.00033 M_earth per particle), planets grow at a realistic, measured pace
+    // and do NOT balloon to 350 M_earth within the first 50 years.
+    let n_particles = 100_000.0;
+    let disk_mass = 0.00010; // M_sun (~33 Earth masses across the entire solar nebula)
+    let particle_mass = disk_mass / n_particles; // ~1.0e-9 M_sun ~ 0.00033 M_earth
+    let particle_mass_earth = particle_mass / EARTH_MASS_SOLAR;
+
+    assert!(
+        particle_mass_earth < 0.0005,
+        "Individual particle must be lightweight (~0.00033 M_earth)"
+    );
+
+    // Initial protoplanetary core (e.g. 3.0 M_earth)
+    let mut core_mass_earth: f64 = 3.0;
+
+    // Simulate 50 years of orbital sweeps (e.g. accreting ~20 particles per year)
+    let years = 50;
+    let particles_per_year = 20.0;
+
+    for _ in 0..years {
+        let annual_gain_earth = particles_per_year * particle_mass_earth;
+        let runaway_mult = if core_mass_earth < 10.0 {
+            1.0 + 0.05 * core_mass_earth
+        } else {
+            1.5 + 0.15 * core_mass_earth.clamp(10.0, 350.0).powf(0.30)
+        };
+        core_mass_earth += annual_gain_earth * runaway_mult;
+    }
+
+    // After 50 years:
+    // Core should have grown by a modest, realistic amount (~0.3 to 0.5 M_earth),
+    // and must be strictly well below 10 M_earth (nowhere near 350 M_earth!)
+    assert!(
+        core_mass_earth > 3.2 && core_mass_earth < 5.0,
+        "50-year growth should be gentle and realistic (expected ~3.3-4.0 M_earth, got {})",
+        core_mass_earth
+    );
+    assert!(
+        core_mass_earth < 10.0,
+        "Planets must not prematurely trigger runaway gas accretion in the first 50 years"
+    );
 }
 
 #[test]
