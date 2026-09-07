@@ -4843,3 +4843,203 @@ fn test_quick_body_selector_click_selection_and_clean_recursive_despawn() {
         );
     }
 }
+
+#[test]
+fn test_hyperbolic_orbit_points_generation() {
+    use protostellar::utils::math::{
+        apsides_positions, generate_hyperbolic_orbit_points, position_at_true_anomaly,
+        OrbitalElements,
+    };
+
+    // Unbound interstellar flyby trajectory: e = 1.5, a = -3.0 AU (q = |a|(e - 1) = 1.5 AU)
+    let elements = OrbitalElements {
+        semi_major_axis: -3.0,
+        eccentricity: 1.5,
+        inclination: 0.15,
+        longitude_ascending_node: 0.4,
+        argument_of_periapsis: 0.2,
+        true_anomaly: 0.0,
+        period_years: f64::INFINITY,
+        periapsis: 1.5,
+        apoapsis: f64::INFINITY,
+        specific_energy: 10.0,
+    };
+
+    let points = generate_hyperbolic_orbit_points(&elements, 64);
+    assert!(
+        points.len() >= 30,
+        "Hyperbolic trajectory must generate a continuous series of points"
+    );
+
+    // All points must be finite
+    for pt in &points {
+        assert!(pt.is_finite(), "Trajectory point must be finite: {:?}", pt);
+        assert!(
+            pt.length() <= 2000.0,
+            "Trajectory point must not exceed sanity bounds: {:?}",
+            pt
+        );
+    }
+
+    // Periapsis position test
+    let (opt_peri, opt_apo) = apsides_positions(&elements);
+    assert!(opt_peri.is_some(), "Periapsis must exist for hyperbola");
+    assert!(opt_apo.is_none(), "Apoapsis must be None for hyperbola");
+
+    let peri = opt_peri.unwrap();
+    let peri_dist = peri.length();
+    assert!(
+        (peri_dist - 1.5).abs() < 0.01,
+        "Periapsis distance should be 1.5 AU, got {:.4}",
+        peri_dist
+    );
+
+    // Test position_at_true_anomaly at nu = 0
+    let pos_at_0 = position_at_true_anomaly(&elements, 0.0).expect("Position at nu=0 must exist");
+    assert!(
+        (pos_at_0 - peri).length() < 1e-4,
+        "Position at nu=0 must equal periapsis"
+    );
+}
+
+#[test]
+fn test_trailing_ribbon_points_elliptical_and_hyperbolic() {
+    use protostellar::utils::math::{
+        generate_trailing_ribbon_points, position_at_true_anomaly, OrbitalElements,
+    };
+    use std::f64::consts::PI;
+
+    // Earth-like orbit: a = 1.0 AU, e = 0.0167
+    let earth_elements = OrbitalElements {
+        semi_major_axis: 1.0,
+        eccentricity: 0.0167,
+        inclination: 0.0,
+        longitude_ascending_node: 0.0,
+        argument_of_periapsis: 0.0,
+        true_anomaly: PI / 3.0, // 60 degrees
+        period_years: 1.0,
+        periapsis: 0.9833,
+        apoapsis: 1.0167,
+        specific_energy: -20.0,
+    };
+
+    let ribbon = generate_trailing_ribbon_points(&earth_elements, 32, 1.2 * PI);
+    assert_eq!(ribbon.len(), 33, "Ribbon should contain 33 points (32 samples + 1)");
+
+    // First point must be at current true anomaly with alpha = 1.0
+    let (p0, a0) = ribbon[0];
+    assert!((a0 - 1.0).abs() < 1e-5, "Leading edge alpha must be 1.0");
+    let expected_p0 = position_at_true_anomaly(&earth_elements, PI / 3.0).unwrap();
+    assert!(
+        (p0 - expected_p0).length() < 1e-4,
+        "Leading edge point must match current true anomaly position"
+    );
+
+    // Last point must have alpha = 0.0
+    let (_plast, alast) = *ribbon.last().unwrap();
+    assert!((alast - 0.0).abs() < 1e-5, "Trailing edge alpha must be 0.0");
+
+    // Monotonically decreasing alpha
+    for window in ribbon.windows(2) {
+        assert!(
+            window[0].1 >= window[1].1,
+            "Alpha must monotonically decrease along the trailing ribbon"
+        );
+    }
+}
+
+#[test]
+fn test_orbit_visualization_mode_cycling_and_state() {
+    use protostellar::simulation::resources::OrbitVisualizationMode;
+
+    let mode = OrbitVisualizationMode::All;
+    assert_eq!(mode.display_label(), "All");
+
+    let mode = mode.cycle();
+    assert_eq!(mode, OrbitVisualizationMode::SelectedOnly);
+    assert_eq!(mode.display_label(), "Selected");
+
+    let mode = mode.cycle();
+    assert_eq!(mode, OrbitVisualizationMode::Off);
+    assert_eq!(mode.display_label(), "Hidden");
+
+    let mode = mode.cycle();
+    assert_eq!(mode, OrbitVisualizationMode::All);
+}
+
+#[test]
+fn test_satellite_moon_orbit_anchoring_math() {
+    use bevy::math::DVec3;
+    use protostellar::utils::constants::G_ASTRO;
+    use protostellar::utils::math::state_vectors_to_orbital_elements;
+
+    // Parent planet (Jupiter-mass) at 5.2 AU moving at circular Keplerian velocity
+    let jupiter_pos = DVec3::new(5.2, 0.0, 0.0);
+    let jupiter_mass = 0.000954; // Solar masses (~1 M_Jup)
+    let star_mass = 1.0;
+    let v_jup = (G_ASTRO * star_mass / 5.2).sqrt();
+    let jupiter_vel = DVec3::new(0.0, 0.0, v_jup);
+
+    // Moon orbiting Jupiter at 0.0028 AU (~421,700 km, like Io)
+    let r_moon_rel = 0.0028;
+    let v_moon_rel = (G_ASTRO * jupiter_mass / r_moon_rel).sqrt();
+    let moon_rel_pos = DVec3::new(r_moon_rel, 0.0, 0.0);
+    let moon_rel_vel = DVec3::new(0.0, 0.0, v_moon_rel);
+
+    let moon_abs_pos = jupiter_pos + moon_rel_pos;
+    let moon_abs_vel = jupiter_vel + moon_rel_vel;
+    let moon_mass = 0.00000005; // tiny
+
+    // Relative to parent planet:
+    let rel_pos = moon_abs_pos - jupiter_pos;
+    let rel_vel = moon_abs_vel - jupiter_vel;
+
+    let elements = state_vectors_to_orbital_elements(rel_pos, rel_vel, jupiter_mass, moon_mass)
+        .expect("Should resolve valid Keplerian elements relative to parent");
+
+    assert!(
+        (elements.semi_major_axis - r_moon_rel).abs() < 1e-4,
+        "Semi-major axis relative to planet must match 0.0028 AU, got {}",
+        elements.semi_major_axis
+    );
+    assert!(
+        elements.eccentricity < 0.05,
+        "Eccentricity relative to parent planet must be near circular, got {}",
+        elements.eccentricity
+    );
+}
+
+#[test]
+fn test_planet_builder_preview_orbit_generation() {
+    use protostellar::game::ui::PlanetBuilderState;
+    use protostellar::utils::math::{apsides_positions, generate_orbit_points, OrbitalElements};
+
+    let builder = PlanetBuilderState::default();
+    assert_eq!(builder.semi_major_axis_au, 1.0);
+    assert_eq!(builder.eccentricity, 0.016);
+
+    let preview_elements = OrbitalElements {
+        semi_major_axis: builder.semi_major_axis_au,
+        eccentricity: builder.eccentricity,
+        periapsis: builder.semi_major_axis_au * (1.0 - builder.eccentricity),
+        apoapsis: builder.semi_major_axis_au * (1.0 + builder.eccentricity),
+        ..Default::default()
+    };
+
+    let points = generate_orbit_points(&preview_elements, 96);
+    assert_eq!(points.len(), 97, "Preview orbit must generate 97 vertices");
+
+    let (opt_peri, opt_apo) = apsides_positions(&preview_elements);
+    let peri = opt_peri.expect("Periapsis must exist for bound preview");
+    let apo = opt_apo.expect("Apoapsis must exist for bound preview");
+
+    assert!(
+        (peri.length() - (1.0 - 0.016) as f32).abs() < 1e-3,
+        "Periapsis must match 0.984 AU"
+    );
+    assert!(
+        (apo.length() - (1.0 + 0.016) as f32).abs() < 1e-3,
+        "Apoapsis must match 1.016 AU"
+    );
+}
+

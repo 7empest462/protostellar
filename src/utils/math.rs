@@ -151,7 +151,13 @@ pub fn state_vectors_to_orbital_elements(
         0.0
     };
 
-    let periapsis = if a > 0.0 { a * (1.0 - e) } else { r };
+    let periapsis = if a > 0.0 {
+        a * (1.0 - e)
+    } else if a < 0.0 {
+        a.abs() * (e - 1.0)
+    } else {
+        r
+    };
     let apoapsis = if a > 0.0 && e < 1.0 {
         a * (1.0 + e)
     } else {
@@ -172,7 +178,57 @@ pub fn state_vectors_to_orbital_elements(
     })
 }
 
-/// Generates a series of 3D orbital curve points in AU for visualization.
+/// Computes the 3D position in AU in Bevy coordinates for a given true anomaly.
+/// Returns None if the true anomaly is beyond asymptotes or results in infinite radius.
+pub fn position_at_true_anomaly(elements: &OrbitalElements, nu: f64) -> Option<Vec3> {
+    let e = elements.eccentricity;
+    let denom = 1.0 + e * nu.cos();
+    if denom <= 1e-5 {
+        return None;
+    }
+
+    let p = if (e - 1.0).abs() < 1e-6 {
+        2.0 * elements.periapsis
+    } else if e > 1.0 {
+        elements.semi_major_axis.abs() * (e * e - 1.0)
+    } else {
+        if elements.semi_major_axis <= 0.0 {
+            return None;
+        }
+        elements.semi_major_axis * (1.0 - e * e)
+    };
+
+    let r = p / denom;
+    if r > 2000.0 || r <= 0.0 {
+        return None;
+    }
+
+    let inc = elements.inclination;
+    let lan = elements.longitude_ascending_node;
+    let arg_p = elements.argument_of_periapsis;
+
+    let sin_inc = inc.sin();
+    let cos_inc = inc.cos();
+    let sin_lan = lan.sin();
+    let cos_lan = lan.cos();
+    let sin_arg = arg_p.sin();
+    let cos_arg = arg_p.cos();
+
+    let x_orb = r * nu.cos();
+    let y_orb = r * nu.sin();
+
+    let x_node = x_orb * cos_arg - y_orb * sin_arg;
+    let y_node = x_orb * sin_arg + y_orb * cos_arg;
+
+    let x_ecl = x_node * cos_lan - y_node * cos_inc * sin_lan;
+    let y_ecl = x_node * sin_lan + y_node * cos_inc * cos_lan;
+    let z_ecl = y_node * sin_inc;
+
+    // Bevy 3D coordinate system: X = right, Y = up (Z in astro), Z = towards viewer
+    Some(Vec3::new(x_ecl as f32, z_ecl as f32, y_ecl as f32))
+}
+
+/// Generates a series of 3D orbital curve points in AU for visualization of bound orbits ($e < 1.0$).
 pub fn generate_orbit_points(elements: &OrbitalElements, num_samples: usize) -> Vec<Vec3> {
     if elements.semi_major_axis <= 0.0 || elements.eccentricity >= 1.0 || num_samples < 4 {
         return Vec::new();
@@ -215,3 +271,98 @@ pub fn generate_orbit_points(elements: &OrbitalElements, num_samples: usize) -> 
 
     points
 }
+
+/// Generates an open hyperbolic flyby trajectory in AU for unbound bodies ($e \ge 1.0$).
+pub fn generate_hyperbolic_orbit_points(
+    elements: &OrbitalElements,
+    num_samples: usize,
+) -> Vec<Vec3> {
+    if elements.eccentricity < 1.0 || num_samples < 4 {
+        return Vec::new();
+    }
+
+    let e = elements.eccentricity;
+    // Asymptote angle: theta_inf = acos(-1/e). Bound sampling safely within asymptotes.
+    let nu_max = ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2);
+
+    let mut points = Vec::with_capacity(num_samples + 1);
+
+    for i in 0..=num_samples {
+        let frac = i as f64 / num_samples as f64;
+        let nu = -nu_max + frac * 2.0 * nu_max;
+        if let Some(pt) = position_at_true_anomaly(elements, nu) {
+            points.push(pt);
+        }
+    }
+
+    points
+}
+
+/// Generates an ordered series of 3D points and normalized alpha values ($1.0 \to 0.0$)
+/// trailing backwards from the body's current true anomaly position along its orbit.
+pub fn generate_trailing_ribbon_points(
+    elements: &OrbitalElements,
+    num_samples: usize,
+    arc_radians: f64,
+) -> Vec<(Vec3, f32)> {
+    if num_samples < 2 {
+        return Vec::new();
+    }
+
+    let e = elements.eccentricity;
+    let nu_0 = elements.true_anomaly;
+    let mut ribbon = Vec::with_capacity(num_samples + 1);
+
+    if e < 1.0 {
+        // Bound elliptical orbit: trace backwards along true anomaly
+        for i in 0..=num_samples {
+            let t = i as f64 / num_samples as f64;
+            let nu = nu_0 - t * arc_radians;
+            if let Some(pt) = position_at_true_anomaly(elements, nu) {
+                let alpha = (1.0 - t as f32).max(0.0);
+                ribbon.push((pt, alpha));
+            }
+        }
+    } else {
+        // Hyperbolic orbit: trace backwards from current position within valid bounds
+        let nu_max = ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2);
+        let min_nu = -nu_max;
+        let start_nu = nu_0.clamp(-nu_max, nu_max);
+        let end_nu = (start_nu - arc_radians).max(min_nu);
+
+        for i in 0..=num_samples {
+            let t = i as f64 / num_samples as f64;
+            let nu = start_nu + t * (end_nu - start_nu);
+            if let Some(pt) = position_at_true_anomaly(elements, nu) {
+                let alpha = (1.0 - t as f32).max(0.0);
+                ribbon.push((pt, alpha));
+            }
+        }
+    }
+
+    ribbon
+}
+
+/// Returns the periapsis and (optional) apoapsis positions in AU in Bevy coordinates.
+pub fn apsides_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3>) {
+    let peri = position_at_true_anomaly(elements, 0.0);
+    let apo = if elements.eccentricity < 1.0 {
+        position_at_true_anomaly(elements, PI)
+    } else {
+        None
+    };
+    (peri, apo)
+}
+
+/// Returns the ascending node and descending node positions in AU in Bevy coordinates.
+pub fn nodal_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3>) {
+    let omega = elements.argument_of_periapsis;
+    let asc = position_at_true_anomaly(elements, -omega);
+    let desc = if elements.eccentricity < 1.0 {
+        position_at_true_anomaly(elements, PI - omega)
+    } else {
+        None
+    };
+    (asc, desc)
+}
+

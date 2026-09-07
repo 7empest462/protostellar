@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::simulation::accretion::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::utils::constants::{EARTH_MASS_SOLAR, G_ASTRO};
 use crate::utils::math::*;
 
 /// Collects collision merger and engulfment events and spawns expanding physical shockwaves.
@@ -180,7 +181,10 @@ pub fn draw_orbital_effects_and_gizmos(
         Option<&SpinState>,
         Option<&Radius>,
         Option<&AtmosphericEscapeTail>,
+        Option<&SatelliteOf>,
     )>,
+    parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
+    opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
 ) {
     let Ok((star_pos, star_mass, star_radius, ignition, star_body, opt_evo, _opt_em, opt_quasi)) =
         star_query.single()
@@ -1105,7 +1109,7 @@ pub fn draw_orbital_effects_and_gizmos(
     }
 
     // 3. Draw Orbit Trails & Diagnostic Overlays for Bodies
-    for (entity, pos, vel, mass, comp, body, opt_diff, opt_spin, opt_rad, opt_tail) in
+    for (entity, pos, vel, mass, comp, body, opt_diff, opt_spin, opt_rad, opt_tail, opt_satellite) in
         bodies_query.iter()
     {
         let is_selected = player_state.selected_entity == Some(entity);
@@ -1282,32 +1286,257 @@ pub fn draw_orbital_effects_and_gizmos(
             }
         }
 
-        // A. Orbit Trails
-        if is_selected || is_planet {
-            let rel_pos = pos.0 - star_pos.0;
-            let rel_vel = vel.0;
+        // A. Orbit Trails & Conic Trajectory Overlays
+        let should_draw_orbit = match player_state.orbit_mode {
+            OrbitVisualizationMode::Off => false,
+            OrbitVisualizationMode::SelectedOnly => is_selected,
+            OrbitVisualizationMode::All => {
+                is_selected
+                    || is_planet
+                    || opt_satellite.is_some()
+                    || (mass.0 / EARTH_MASS_SOLAR) >= 0.05
+                    || body.body_type == BodyType::Comet
+            }
+        };
+
+        if should_draw_orbit {
+            // Determine coordinate anchor (Central Star vs Parent Planet for Satellites)
+            let (rel_pos, rel_vel, primary_mass, anchor_vec, is_satellite) =
+                if let Some(sat) = opt_satellite {
+                    if let Ok((p_pos, p_vel, p_mass)) = parent_query.get(sat.parent) {
+                        (
+                            pos.0 - p_pos.0,
+                            vel.0 - p_vel.0,
+                            p_mass.0,
+                            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                            true,
+                        )
+                    } else {
+                        (pos.0 - star_pos.0, vel.0, star_mass.0, star_vec, false)
+                    }
+                } else {
+                    (pos.0 - star_pos.0, vel.0, star_mass.0, star_vec, false)
+                };
 
             if let Some(elements) =
-                state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, mass.0)
+                state_vectors_to_orbital_elements(rel_pos, rel_vel, primary_mass, mass.0)
             {
-                if elements.semi_major_axis > 0.0 && elements.eccentricity < 1.0 {
+                // Determine base color palette
+                let base_color = if is_selected {
+                    Color::srgba(0.20, 0.95, 1.0, 0.95) // Electric Cyan for Selected
+                } else if is_satellite {
+                    Color::srgba(0.75, 0.80, 0.95, 0.65) // Silver / Lavender for Moons
+                } else if elements.eccentricity >= 1.0 {
+                    Color::srgba(1.0, 0.20, 0.40, 0.85) // Rogue Crimson for Hyperbolic Flybys
+                } else {
+                    match body.body_type {
+                        BodyType::TerrestrialPlanet => Color::srgba(0.25, 0.95, 0.45, 0.60), // Emerald
+                        BodyType::SuperEarth => Color::srgba(0.20, 0.85, 0.80, 0.60),        // Teal
+                        BodyType::GasGiant => Color::srgba(1.0, 0.70, 0.25, 0.65),           // Warm Amber
+                        BodyType::IceGiant => Color::srgba(0.35, 0.75, 1.0, 0.60),           // Azure
+                        BodyType::Protoplanet => Color::srgba(0.95, 0.50, 0.25, 0.50),       // Molten Coral
+                        BodyType::Planetesimal | BodyType::Asteroid => {
+                            Color::srgba(0.65, 0.70, 0.75, 0.35) // Slate Silver
+                        }
+                        BodyType::Comet => Color::srgba(0.40, 0.95, 0.90, 0.55),             // Mint Cyan
+                        _ => Color::srgba(0.70, 0.70, 0.80, 0.40),
+                    }
+                };
+
+                let base_rgba = base_color.to_srgba();
+
+                if elements.eccentricity < 1.0 && elements.semi_major_axis > 0.0 {
+                    // 1. Faint Ambient Base Ellipse (Complete Orbit Track)
+                    let ambient_alpha = if is_selected { 0.25 } else { 0.10 };
+                    let ambient_color = Color::srgba(
+                        base_rgba.red,
+                        base_rgba.green,
+                        base_rgba.blue,
+                        ambient_alpha,
+                    );
                     let orbit_points = generate_orbit_points(&elements, 96);
                     if orbit_points.len() > 1 {
-                        let orbit_color = if is_selected {
-                            Color::srgba(0.2, 0.9, 1.0, 0.8)
-                        } else {
-                            match body.body_type {
-                                BodyType::GasGiant => Color::srgba(0.9, 0.6, 0.2, 0.5),
-                                BodyType::IceGiant => Color::srgba(0.3, 0.8, 0.9, 0.5),
-                                BodyType::SuperEarth => Color::srgba(0.25, 0.85, 0.75, 0.5),
-                                BodyType::TerrestrialPlanet => Color::srgba(0.4, 0.9, 0.4, 0.5),
-                                _ => Color::srgba(0.6, 0.6, 0.6, 0.3),
-                            }
-                        };
-
                         for window in orbit_points.windows(2) {
-                            gizmos.line(window[0] + star_vec, window[1] + star_vec, orbit_color);
+                            gizmos.line(
+                                window[0] + anchor_vec,
+                                window[1] + anchor_vec,
+                                ambient_color,
+                            );
                         }
+                    }
+
+                    // 2. Continuous Motion-Fading Keplerian Ribbon (Trailing behind current position)
+                    let arc_rad = if is_selected {
+                        1.8 * std::f64::consts::PI
+                    } else {
+                        1.2 * std::f64::consts::PI
+                    };
+                    let ribbon = generate_trailing_ribbon_points(&elements, 48, arc_rad);
+                    if ribbon.len() > 1 {
+                        for window in ribbon.windows(2) {
+                            let (p1, a1) = window[0];
+                            let (p2, a2) = window[1];
+                            let avg_a = (a1 + a2) * 0.5;
+                            let seg_alpha = avg_a * base_rgba.alpha;
+                            let seg_color = Color::srgba(
+                                base_rgba.red,
+                                base_rgba.green,
+                                base_rgba.blue,
+                                seg_alpha,
+                            );
+                            gizmos.line(p1 + anchor_vec, p2 + anchor_vec, seg_color);
+                        }
+                    }
+
+                    // 3. Osculating Conic Apsides & Nodes (For selected bodies or eccentric orbits e >= 0.03)
+                    if is_selected || elements.eccentricity >= 0.03 {
+                        let (opt_peri, opt_apo) = apsides_positions(&elements);
+                        let marker_size =
+                            (0.025 + elements.semi_major_axis as f32 * 0.012).clamp(0.04, 0.35);
+
+                        // Periapsis Diamond Marker (q) - Bright Emerald
+                        if let Some(peri) = opt_peri {
+                            let q_pt = peri + anchor_vec;
+                            let q_col = Color::srgba(0.20, 1.0, 0.50, 0.90);
+                            gizmos.sphere(
+                                Isometry3d::from_translation(q_pt),
+                                marker_size * 0.28,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt - Vec3::X * marker_size,
+                                q_pt + Vec3::Y * marker_size,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt + Vec3::Y * marker_size,
+                                q_pt + Vec3::X * marker_size,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt + Vec3::X * marker_size,
+                                q_pt - Vec3::Y * marker_size,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt - Vec3::Y * marker_size,
+                                q_pt - Vec3::X * marker_size,
+                                q_col,
+                            );
+                        }
+
+                        // Apoapsis Diamond Marker (Q) - Luminous Amber/Crimson
+                        if let Some(apo) = opt_apo {
+                            let q_pt = apo + anchor_vec;
+                            let q_col = Color::srgba(1.0, 0.50, 0.15, 0.85);
+                            gizmos.sphere(
+                                Isometry3d::from_translation(q_pt),
+                                marker_size * 0.28,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt - Vec3::X * marker_size,
+                                q_pt + Vec3::Y * marker_size,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt + Vec3::Y * marker_size,
+                                q_pt + Vec3::X * marker_size,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt + Vec3::X * marker_size,
+                                q_pt - Vec3::Y * marker_size,
+                                q_col,
+                            );
+                            gizmos.line(
+                                q_pt - Vec3::Y * marker_size,
+                                q_pt - Vec3::X * marker_size,
+                                q_col,
+                            );
+
+                            // Dashed Line of Apsides (Connecting periapsis to apoapsis through the primary focus)
+                            if let Some(peri) = opt_peri {
+                                let p_pt = peri + anchor_vec;
+                                let steps = 16;
+                                let line_col = Color::srgba(0.7, 0.8, 1.0, 0.25);
+                                for s in (0..steps).step_by(2) {
+                                    let t1 = s as f32 / steps as f32;
+                                    let t2 = (s + 1) as f32 / steps as f32;
+                                    let seg1 = p_pt.lerp(q_pt, t1);
+                                    let seg2 = p_pt.lerp(q_pt, t2);
+                                    gizmos.line(seg1, seg2, line_col);
+                                }
+                            }
+                        }
+
+                        // Nodal markers (Ascending Ω and Descending ☋ nodes)
+                        if elements.inclination.abs() > 0.02 {
+                            let (opt_asc, opt_desc) = nodal_positions(&elements);
+                            let node_col = Color::srgba(0.4, 0.8, 1.0, 0.65);
+                            if let Some(asc) = opt_asc {
+                                let pt = asc + anchor_vec;
+                                gizmos.circle(
+                                    Isometry3d::new(
+                                        pt,
+                                        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                                    ),
+                                    marker_size * 0.5,
+                                    node_col,
+                                );
+                            }
+                            if let Some(desc) = opt_desc {
+                                let pt = desc + anchor_vec;
+                                gizmos.circle(
+                                    Isometry3d::new(
+                                        pt,
+                                        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                                    ),
+                                    marker_size * 0.5,
+                                    node_col,
+                                );
+                            }
+                        }
+                    }
+                } else if elements.eccentricity >= 1.0 {
+                    // Hyperbolic Flyby Trajectory (Open conic branch)
+                    let hyp_points = generate_hyperbolic_orbit_points(&elements, 64);
+                    if hyp_points.len() > 1 {
+                        // Ambient open hyperbolic path
+                        let hyp_amb =
+                            Color::srgba(base_rgba.red, base_rgba.green, base_rgba.blue, 0.35);
+                        for window in hyp_points.windows(2) {
+                            gizmos.line(window[0] + anchor_vec, window[1] + anchor_vec, hyp_amb);
+                        }
+                        // Motion-fading flyby ribbon
+                        let ribbon = generate_trailing_ribbon_points(
+                            &elements,
+                            32,
+                            1.0 * std::f64::consts::PI,
+                        );
+                        if ribbon.len() > 1 {
+                            for window in ribbon.windows(2) {
+                                let (p1, a1) = window[0];
+                                let (p2, a2) = window[1];
+                                let seg_alpha = ((a1 + a2) * 0.5) * base_rgba.alpha;
+                                let col = Color::srgba(
+                                    base_rgba.red,
+                                    base_rgba.green,
+                                    base_rgba.blue,
+                                    seg_alpha,
+                                );
+                                gizmos.line(p1 + anchor_vec, p2 + anchor_vec, col);
+                            }
+                        }
+                    }
+
+                    // Periapsis marker for flyby
+                    let (opt_peri, _) = apsides_positions(&elements);
+                    if let Some(peri) = opt_peri {
+                        let q_pt = peri + anchor_vec;
+                        let q_col = Color::srgba(1.0, 0.30, 0.50, 0.95);
+                        let m_size = (0.05 + elements.periapsis as f32 * 0.02).clamp(0.06, 0.45);
+                        gizmos.sphere(Isometry3d::from_translation(q_pt), m_size * 0.35, q_col);
                     }
                 }
             }
@@ -1452,4 +1681,80 @@ pub fn draw_orbital_effects_and_gizmos(
             );
         }
     }
+
+    // 5. Dynamic Planet Builder Live Conic Preview
+    if let Some(builder) = opt_builder {
+        if builder.is_open {
+            let a = builder.semi_major_axis_au;
+            let e = builder.eccentricity;
+            let pulse = 0.65 + 0.35 * (elapsed * 3.5).sin().abs();
+
+            let preview_elements = OrbitalElements {
+                semi_major_axis: a,
+                eccentricity: e,
+                inclination: 0.0,
+                longitude_ascending_node: 0.0,
+                argument_of_periapsis: 0.0,
+                true_anomaly: ((elapsed * 0.8) as f64) % (2.0 * std::f64::consts::PI),
+                periapsis: if a > 0.0 { a * (1.0 - e) } else { 1.0 },
+                apoapsis: if a > 0.0 && e < 1.0 {
+                    a * (1.0 + e)
+                } else {
+                    f64::INFINITY
+                },
+                period_years: if a > 0.0 {
+                    (a.powi(3) / star_mass.0.max(0.1)).sqrt()
+                } else {
+                    1.0
+                },
+                specific_energy: -G_ASTRO * star_mass.0 / (2.0 * a.max(0.01)),
+            };
+
+            let preview_points = generate_orbit_points(&preview_elements, 96);
+            if preview_points.len() > 1 {
+                let prev_col = Color::srgba(0.20, 0.95, 1.0, 0.85 * pulse); // Pulsating neon cyan
+                for window in preview_points.windows(2) {
+                    gizmos.line(window[0] + star_vec, window[1] + star_vec, prev_col);
+                }
+            }
+
+            // Ghost Planet Location Indicator (orbiting preview body)
+            if let Some(ghost_pt) =
+                position_at_true_anomaly(&preview_elements, preview_elements.true_anomaly)
+            {
+                let ghost_world = ghost_pt + star_vec;
+                gizmos.sphere(
+                    Isometry3d::from_translation(ghost_world),
+                    0.06 * pulse,
+                    Color::srgba(1.0, 0.85, 0.25, 0.95), // Radiant Gold Ghost Planet
+                );
+                gizmos.circle(
+                    Isometry3d::new(
+                        ghost_world,
+                        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    ),
+                    0.12 * pulse,
+                    Color::srgba(0.3, 0.95, 1.0, 0.70),
+                );
+            }
+
+            // Periapsis and Apoapsis preview markers
+            let (opt_peri, opt_apo) = apsides_positions(&preview_elements);
+            if let Some(peri) = opt_peri {
+                gizmos.sphere(
+                    Isometry3d::from_translation(peri + star_vec),
+                    0.035,
+                    Color::srgba(0.2, 1.0, 0.5, 0.9),
+                );
+            }
+            if let Some(apo) = opt_apo {
+                gizmos.sphere(
+                    Isometry3d::from_translation(apo + star_vec),
+                    0.035,
+                    Color::srgba(1.0, 0.5, 0.2, 0.9),
+                );
+            }
+        }
+    }
 }
+

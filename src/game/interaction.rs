@@ -149,6 +149,21 @@ pub fn handle_player_tools(
         player_state.overlay_mode = player_state.overlay_mode.cycle();
     }
 
+    // 0C. Key Y: Cycle Orbit Trail & Conic Visualization Modes (All -> Selected Only -> Off)
+    if keyboard.just_pressed(KeyCode::KeyY) {
+        player_state.orbit_mode = player_state.orbit_mode.cycle();
+        toast.message = match player_state.orbit_mode {
+            OrbitVisualizationMode::All => "궤 Orbit Visualization: All Worlds [Y]".to_string(),
+            OrbitVisualizationMode::SelectedOnly => {
+                "궤 Orbit Visualization: Selected Target Only [Y]".to_string()
+            }
+            OrbitVisualizationMode::Off => {
+                "궤 Orbit Visualization: Hidden (Cinematic) [Y]".to_string()
+            }
+        };
+        toast.timer = 2.5;
+    }
+
     // 1. Toggle Gravitational Tractor Tool (Key T)
     if keyboard.just_pressed(KeyCode::KeyT) {
         if player_state.active_tool == PlayerTool::GravitationalTractor {

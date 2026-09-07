@@ -74,6 +74,7 @@ pub enum HudPanelElement {
     InspectorPanel,
     InspectorChip,
     ScenarioPresets,
+    OrbitModeBadge,
 }
 
 /// Discriminant component for dynamic text elements within the HUD overlay.
@@ -81,6 +82,7 @@ pub enum HudPanelElement {
 pub enum HudDynamicText {
     InspectorChip,
     FullScreenBadge,
+    OrbitModeBadge,
 }
 
 /// Marker for the bottom-center live telemetry and toast container.
@@ -327,6 +329,7 @@ pub enum UiButtonAction {
     BuilderExecuteSpawn,
     SpawnSubRocheMoon,
     // Scientific Instruments & Overlays
+    ToggleOrbitMode,
     CycleOverlayMode,
     ToggleTractor,
     // Live Celestial Body Editor
@@ -396,6 +399,7 @@ impl UiButtonAction {
             UiButtonAction::BuilderToggleClickSpawn => "Toggle 3D plane click-to-place mode (click disk to place world).",
             UiButtonAction::BuilderExecuteSpawn => "Spawn the configured celestial world into orbit immediately!",
             UiButtonAction::SpawnSubRocheMoon => "Spawn a volatile-rich moon directly inside the selected planet's fluid Roche limit to trigger tidal shredding and ring creation!",
+            UiButtonAction::ToggleOrbitMode => "[Y]: Cycle orbit trails (All -> Selected Target Only -> Hidden).",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
@@ -542,6 +546,40 @@ pub fn setup_hud(mut commands: Commands) {
                 },
                 TextColor(Color::srgb(0.5, 0.85, 1.0)),
                 HudDynamicText::FullScreenBadge,
+                Pickable::IGNORE,
+            ));
+        });
+
+    // -------------------------------------------------------------
+    // FLOATING ORBIT VISUALIZATION TOGGLE (Visible in top-right)
+    // -------------------------------------------------------------
+    commands
+        .spawn((
+            Button,
+            UiButtonAction::ToggleOrbitMode,
+            HudPanelElement::OrbitModeBadge,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(148.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(4.5)),
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.05, 0.12, 0.88)),
+            BorderColor::all(Color::srgba(0.3, 0.7, 1.0, 0.65)),
+        ))
+        .with_children(|badge| {
+            badge.spawn((
+                Text::new("궤 Orbits: All [Y]"),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.45, 0.90, 1.0)),
+                HudDynamicText::OrbitModeBadge,
                 Pickable::IGNORE,
             ));
         });
@@ -919,6 +957,7 @@ pub fn setup_hud(mut commands: Commands) {
                                     })
                                     .with_children(|row3| {
                                         create_compact_button(row3, UiButtonAction::TogglePlanetBuilder, "🪐 Builder [P]", Color::srgba(0.10, 0.22, 0.36, 0.95), Color::srgb(0.4, 0.85, 1.0));
+                                        create_compact_button(row3, UiButtonAction::ToggleOrbitMode, "궤 Orbits [Y]", Color::srgba(0.08, 0.20, 0.32, 0.95), Color::srgb(0.4, 0.85, 1.0));
                                         create_compact_button(row3, UiButtonAction::CycleComposition, "Material [C]", Color::srgba(0.14, 0.10, 0.24, 0.9), Color::srgb(0.75, 0.55, 1.0));
                                         create_compact_button(row3, UiButtonAction::InjectEmbryo, "Moon [M]", Color::srgba(0.08, 0.18, 0.24, 0.9), Color::srgb(0.4, 0.85, 1.0));
                                         create_compact_button(row3, UiButtonAction::TriggerLhb, "LHB [G]", Color::srgba(0.24, 0.12, 0.04, 0.9), Color::srgb(1.0, 0.65, 0.2));
@@ -1917,6 +1956,21 @@ pub fn handle_ui_button_interactions(
                     }
 
                     // Scientific Instruments & Overlays
+                    UiButtonAction::ToggleOrbitMode => {
+                        player_state.orbit_mode = player_state.orbit_mode.cycle();
+                        toast.message = match player_state.orbit_mode {
+                            OrbitVisualizationMode::All => {
+                                "궤 Orbit Visualization: All Worlds [Y]".to_string()
+                            }
+                            OrbitVisualizationMode::SelectedOnly => {
+                                "궤 Orbit Visualization: Selected Target Only [Y]".to_string()
+                            }
+                            OrbitVisualizationMode::Off => {
+                                "궤 Orbit Visualization: Hidden (Cinematic) [Y]".to_string()
+                            }
+                        };
+                        toast.timer = 2.5;
+                    }
                     UiButtonAction::CycleOverlayMode => {
                         player_state.overlay_mode = player_state.overlay_mode.cycle();
                         toast.message = format!(
@@ -4423,6 +4477,13 @@ pub fn update_hud_visibility(
                     Display::Flex
                 };
             }
+            HudPanelElement::OrbitModeBadge => {
+                node.display = if hud_visibility.is_full_screen_clean {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
         }
     }
 
@@ -4434,6 +4495,9 @@ pub fn update_hud_visibility(
                 } else {
                     "⛶ Fullscreen [F11]".to_string()
                 };
+            }
+            HudDynamicText::OrbitModeBadge => {
+                text.0 = format!("궤 Orbits: {} [Y]", player_state.orbit_mode.display_label());
             }
             HudDynamicText::InspectorChip => {
                 if let Some(target) = player_state.selected_entity {

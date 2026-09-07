@@ -412,6 +412,36 @@ pub enum PlayerTool {
     DensityWave,
 }
 
+/// Controls which orbital trails and conic overlays are drawn in the viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OrbitVisualizationMode {
+    /// Render orbital ribbons and conics for all planets, companions, and embryos.
+    #[default]
+    All,
+    /// Render orbital ribbons and conics strictly for the currently selected body.
+    SelectedOnly,
+    /// Completely hide all orbital trails for a clean cinematic view.
+    Off,
+}
+
+impl OrbitVisualizationMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::All => Self::SelectedOnly,
+            Self::SelectedOnly => Self::Off,
+            Self::Off => Self::All,
+        }
+    }
+
+    pub fn display_label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::SelectedOnly => "Selected",
+            Self::Off => "Hidden",
+        }
+    }
+}
+
 /// Global state tracking player interaction and tool selection.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct PlayerInteractionState {
@@ -419,8 +449,10 @@ pub struct PlayerInteractionState {
     pub hovered_entity: Option<Entity>,
     pub active_tool: PlayerTool,
     pub overlay_mode: DiagnosticOverlayMode,
+    pub orbit_mode: OrbitVisualizationMode,
     pub tractor_position: Option<DVec3>,
     pub tractor_mass: f64,
     pub impulse_delta_v: Option<DVec3>,
     pub impulse_target_entity: Option<Entity>,
 }
+

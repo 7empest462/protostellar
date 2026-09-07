@@ -72,6 +72,16 @@
 - **Super-Earths & Gas Giant Variety Engine**: Procedural biomes (cratons, alpine ranges, abyssal trenches, rain forests) and mass-tiered Jovian palettes (amber, teal, sapphire, royal purple, maroon brown dwarfs) with anticyclonic storm vortices.
 - **Procedural 3D Irregular Asteroids**: Real-time non-spherical mesh generation for potato chondrites, contact binary dumbbells, and spinning-top rubble piles.
 
+### 9. 궤 Continuous Motion-Fading Orbit Ribbons & Conic Trajectory Overlays
+- **Continuous Motion-Fading Keplerian Ribbons**: Bodies trace smooth, streaming orbital ribbons trailing backwards along their true anomaly arc with progressive alpha falloff ($1.0 \to 0.0$).
+- **Faint Ambient Base Ellipses**: Clean, faint baseline orbital tracks indicate the full geometric orbit paths in space.
+- **Osculating Conic Apsides & Nodes**: High-eccentricity and selected orbits render diamond markers at periapsis ($q$, emerald) and apoapsis ($Q$, amber), connected by a dashed line of apsides, plus ascending/descending node ticks ($\Omega, \mho$).
+- **Open Hyperbolic Flyby Trajectories**: Unbound interstellar interlopers ($e \ge 1.0$, e.g. Rogue Planet `[F5]`) render electric crimson open hyperbolic curves with periapsis guidance.
+- **Satellite / Moon Orbit Anchoring**: Natural moons (`SatelliteOf`) dynamically anchor their orbital ellipses and ribbons relative to their host planet rather than the central star.
+- **Live Planet Builder Preview Conic**: Opening the Planet Builder (`[P]`) renders a pulsating neon preview conic matching active semi-major axis and eccentricity sliders, with an orbiting ghost planet indicator.
+- **Interactive Visualization Cycling (`[Y]`)**: Cycle between `All Worlds` $\to$ `Selected Target Only` $\to$ `Hidden (Cinematic)` via hotkey `[Y]` or the top HUD button.
+
+
 ---
 
 ## 🚀 Sandbox Scenarios & Presets
@@ -118,6 +128,7 @@ Open the floating Planet Builder sidebar anytime by pressing **`[P]`** or clicki
 | **Cycle Focus** | `Tab` / `Shift+Tab` | Distance-ordered cycling across all system worlds |
 | **Reset View** | `R` / `Escape` | Reset camera focus to the central star |
 | **Toggle Quick Bar** | `H` | Collapse / expand the top celestial body switcher bar |
+| **Toggle Orbit Trails** | `Y` | Cycle orbit visualization (`All Worlds` $\to$ `Selected Only` $\to$ `Hidden`) |
 | **Adjust Size Scale** | `.` / `,` | Exaggerate or normalize celestial body visual radii |
 | **Toggle Fullscreen** | `F11` | Toggle borderless fullscreen display |
 
@@ -168,7 +179,7 @@ protostellar/
 │   ├── game/                     # UI overlays, Planet Builder HUD, time control, interaction
 │   └── utils/                    # Astronomical constants, math solvers, orbital mechanics
 └── tests/
-    └── simulation_tests.rs       # 91 rigorous automated astrophysics, climate, and stability tests
+    └── simulation_tests.rs       # 96 rigorous automated astrophysics, climate, and stability tests
 ```
 
 ---
@@ -191,7 +202,7 @@ cargo run --release
 > **Note:** Always compile with `--release`! Protostellar's numerical integrators, GPU compute pipeline, and 100,000-particle swarms are heavily optimized for release builds, running locked at 120+ FPS on Apple Silicon M-series chips and modern GPUs.
 
 ### Running Automated Astrophysics Tests
-To run all 91 unit and integration tests:
+To run all 96 unit and integration tests:
 
 ```bash
 cargo test --test simulation_tests
