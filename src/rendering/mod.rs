@@ -39,16 +39,20 @@ impl Plugin for RenderingPlugin {
             .add_systems(
                 Update,
                 (
-                    update_pan_orbit_camera,
-                    sync_skybox_to_camera,
-                    update_skybox_uniforms,
+                    sync_celestial_transforms
+                        .after(crate::simulation::physics::step_physics_simulation),
+                    update_pan_orbit_camera.after(sync_celestial_transforms),
+                    (sync_skybox_to_camera, update_skybox_uniforms).after(update_pan_orbit_camera),
+                    draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
                     spawn_missing_visuals,
-                    sync_celestial_transforms,
-                    sync_planetary_rings,
-                    sync_quasar_beams,
-                    update_impact_shockwaves,
-                    update_roche_debris_streams,
-                    draw_orbital_effects_and_gizmos,
+                    sync_planetary_rings.after(sync_celestial_transforms),
+                    sync_quasar_beams.after(sync_celestial_transforms),
+                    sync_pulsar_beams.after(sync_celestial_transforms),
+                    sync_magnetar_structures.after(sync_celestial_transforms),
+                    update_impact_shockwaves
+                        .after(crate::simulation::physics::step_physics_simulation),
+                    update_roche_debris_streams
+                        .after(crate::simulation::physics::step_physics_simulation),
                 ),
             );
     }

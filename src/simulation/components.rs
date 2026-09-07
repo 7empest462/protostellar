@@ -175,8 +175,11 @@ pub fn classify_body_by_mass_and_comp(
             BodyType::BlueGiant
         } else if mass_solar < 25.0 {
             BodyType::BlueSupergiant
-        } else {
+        } else if mass_solar < 500.0 {
             BodyType::Hypergiant
+        } else {
+            // Direct collapse beyond 500 M_sun into Intermediate-Mass Black Hole
+            BodyType::BlackHole
         }
     } else {
         // Planetary / Minor body classification

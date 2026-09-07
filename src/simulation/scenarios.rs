@@ -25,6 +25,8 @@ pub enum ScenarioPreset {
     HotJupiterMigration,
     RoguePlanetFlyby,
     LittleRedDot,
+    PulsarSystem,
+    MagnetarOutburst,
 }
 
 impl ScenarioPreset {
@@ -36,6 +38,8 @@ impl ScenarioPreset {
             ScenarioPreset::HotJupiterMigration => "Hot Jupiter Migration",
             ScenarioPreset::RoguePlanetFlyby => "Rogue Planet Flyby",
             ScenarioPreset::LittleRedDot => "JWST Little Red Dot (Black Hole Star)",
+            ScenarioPreset::PulsarSystem => "PSR B1257+12 (Pulsar & Zombie Planets)",
+            ScenarioPreset::MagnetarOutburst => "SGR 1806-20 (Magnetar Giant Flare)",
         }
     }
 
@@ -58,6 +62,12 @@ impl ScenarioPreset {
             }
             ScenarioPreset::LittleRedDot => {
                 "Cosmic Dawn (z ~ 8.5): A 100,000 M☉ supermassive black hole seed encased in a dense, dust-free primordial hydrogen gas cocoon spanning 60 AU."
+            }
+            ScenarioPreset::PulsarSystem => {
+                "Millisecond pulsar (1.40 M☉, 6.22 ms relativistic spin) with 3 confirmed zombie exoplanets (Draugr, Poltergeist, Phobetor) and an irradiated post-supernova fallback disk."
+            }
+            ScenarioPreset::MagnetarOutburst => {
+                "Ultra-magnetized 10¹⁵ Gauss magnetar (SGR 1806-20) with starquake crustal fractures, glowing magnetic arches, an LBV hypergiant companion, and relativistic ejecta."
             }
         }
     }
@@ -90,6 +100,12 @@ pub fn handle_load_scenario_events(
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     bodies_query: Query<Entity, With<CelestialBody>>,
     mut camera_query: Query<&mut crate::rendering::camera::PanOrbitCamera>,
+    mut swarm: Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
+    mut config: ResMut<SimulationConfig>,
+    mut swarm_mesh_query: Query<
+        &mut Visibility,
+        With<crate::rendering::particle_swarm::ParticleSwarmMesh>,
+    >,
 ) {
     for event in events.read() {
         let preset = event.0;
@@ -144,15 +160,49 @@ pub fn handle_load_scenario_events(
             ScenarioPreset::LittleRedDot => {
                 spawn_little_red_dot_scenario(&mut commands, &mut disk_params)
             }
+            ScenarioPreset::PulsarSystem => {
+                spawn_pulsar_system_scenario(&mut commands, &mut disk_params)
+            }
+            ScenarioPreset::MagnetarOutburst => {
+                spawn_magnetar_outburst_scenario(&mut commands, &mut disk_params)
+            }
         };
 
         player_state.selected_entity = Some(central_star_ent);
+
+        let is_empty_swarm = matches!(
+            preset,
+            ScenarioPreset::PulsarSystem | ScenarioPreset::MagnetarOutburst
+        ) || disk_params.disk_mass <= 0.0;
+
+        config.active_particles = if is_empty_swarm {
+            0
+        } else {
+            config.target_particle_count as u32
+        };
+
+        for mut vis in swarm_mesh_query.iter_mut() {
+            *vis = if is_empty_swarm {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
+        }
+
+        // 4. Instantaneously reseed the particle swarm to match the new scenario's disk parameters & star mass
+        if let Some(ref mut swarm_data) = swarm {
+            crate::rendering::particle_swarm::reseed_particle_swarm(
+                swarm_data,
+                &disk_params,
+                &config,
+            );
+        }
 
         // 4. Set optimal camera framing for each scenario
         if let Some(mut cam) = camera_query.iter_mut().next() {
             cam.focus = Vec3::ZERO;
             cam.target_focus = Vec3::ZERO;
-            cam.target_entity = None;
+            cam.target_entity = Some(central_star_ent);
             let (target_r, target_yaw, target_pitch) = match preset {
                 ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
                 ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
@@ -160,6 +210,8 @@ pub fn handle_load_scenario_events(
                 ScenarioPreset::HotJupiterMigration => (10.0, 0.785, 0.62),
                 ScenarioPreset::RoguePlanetFlyby => (35.0, 0.785, 0.62),
                 ScenarioPreset::LittleRedDot => (160.0, 0.785, 0.62),
+                ScenarioPreset::PulsarSystem => (1.2, 0.785, 0.65),
+                ScenarioPreset::MagnetarOutburst => (6.5, 0.785, 0.62),
             };
             cam.radius = target_r;
             cam.target_radius = target_r;
@@ -172,7 +224,10 @@ pub fn handle_load_scenario_events(
 }
 
 /// Helper to spawn the Hayashi Solar Nebula MMSN scenario.
-fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParameters) -> Entity {
+pub fn spawn_solar_nebula_mmsn(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> Entity {
     disk_params.central_star_mass = 1.0;
     disk_params.inner_radius_au = 0.20;
     disk_params.outer_radius_au = 45.0;
@@ -205,8 +260,8 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
         ))
         .id();
 
-    // 10 MMSN Protoplanetary Seeds
-    let major_seeds: [(f64, f64, f64, &str, Composition, BodyType, f64); 10] = [
+    // 27 MMSN Protoplanetary, Major World, Asteroid Belt, and Cometary Seeds
+    let major_seeds: [(f64, f64, f64, &str, Composition, BodyType, f64); 27] = [
         (
             0.40,
             0.06 * EARTH_MASS_SOLAR,
@@ -227,11 +282,11 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
         ),
         (
             1.00,
-            0.50 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.82,
-            "Proto-Earth",
+            1.00 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.00,
+            "Earth",
             Composition::rocky(),
-            BodyType::Protoplanet,
+            BodyType::TerrestrialPlanet,
             0.016,
         ),
         (
@@ -297,6 +352,163 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
             BodyType::IceGiant,
             0.05,
         ),
+        (
+            30.00,
+            1.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.05,
+            "Proto-Neptune",
+            Composition::icy(),
+            BodyType::IceGiant,
+            0.02,
+        ),
+        // Canonical Dwarf Planet Pluto (Trans-Neptunian Kuiper Belt Monarch)
+        (
+            39.48,
+            0.00218 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.186,
+            "Pluto (Dwarf Planet)",
+            Composition::icy(),
+            BodyType::TerrestrialPlanet,
+            1.85,
+        ),
+        // Canonical Deep Outer Planet Nine (Hypothetical Super-Earth / Ice Giant Shepherding the Oort Cloud)
+        (
+            380.00,
+            5.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 2.30,
+            "Planet Nine (Super-Earth / Ice Giant)",
+            Composition::icy(),
+            BodyType::IceGiant,
+            4.10,
+        ),
+        // Canonical Asteroid Belt Minor Planets (Silicate, Carbonaceous, Metal)
+        (
+            2.77,
+            0.00015 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.18,
+            "Ceres (Dwarf Planet)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.08,
+        ),
+        (
+            2.36,
+            0.00008 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.14,
+            "Vesta (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.09,
+        ),
+        (
+            2.77,
+            0.00007 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.14,
+            "Pallas (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.23,
+        ),
+        (
+            3.15,
+            0.00004 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.12,
+            "Hygiea (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.11,
+        ),
+        (
+            2.92,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.10,
+            "Psyche (Metal Asteroid)",
+            Composition::metal_rich(),
+            BodyType::Asteroid,
+            0.13,
+        ),
+        (
+            2.21,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.06,
+            "Gaspra (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.17,
+        ),
+        (
+            2.86,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.07,
+            "Ida (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.04,
+        ),
+        (
+            2.65,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.06,
+            "Mathilde (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.26,
+        ),
+        // Canonical Kuiper Belt & Trans-Neptunian Cometary Reservoir (Volatile Ices)
+        (
+            17.80,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.08,
+            "1P/Halley (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.65,
+        ),
+        (
+            3.30,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "2P/Encke (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.85,
+        ),
+        (
+            18.50,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "67P/C-G (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.64,
+        ),
+        (
+            28.40,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.09,
+            "Hale-Bopp (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.99,
+        ),
+        (
+            25.20,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.07,
+            "Swift-Tuttle (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.96,
+        ),
+        (
+            13.70,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.09,
+            "Chiron (Centaur Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.38,
+        ),
     ];
 
     for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off) in &major_seeds {
@@ -315,7 +527,7 @@ fn spawn_solar_nebula_mmsn(commands: &mut Commands, disk_params: &mut DiskParame
         let vol = VolatileInventory {
             delivered_water_m_earth: 0.0,
             ocean_coverage_frac: 0.0,
-            atmospheric_pressure_bar: if r_au < 2.7 { 0.5 } else { 0.0 },
+            atmospheric_pressure_bar: if r_au < 2.7 { 0.10 } else { 0.0 },
             cometary_impact_count: 0,
         };
 
@@ -1067,8 +1279,8 @@ pub fn spawn_little_red_dot_scenario(
     let temp_k = 3800.0;
 
     disk_params.central_star_mass = total_mass;
-    disk_params.inner_radius_au = 0.5;
-    disk_params.outer_radius_au = 250.0;
+    disk_params.inner_radius_au = 2.0;
+    disk_params.outer_radius_au = 260.0;
     disk_params.reference_temp_1au = temp_k;
     disk_params.gas_disk_lifetime_yr = 20_000_000.0;
     disk_params.disk_mass = 500.0;
@@ -1125,45 +1337,56 @@ pub fn spawn_little_red_dot_scenario(
 
     // 2. Primordial infalling structures & Pop-III stellar seeds orbiting the Little Red Dot
     // All structures are placed within the active circum-nuclear gaseous disk (85 - 235 AU)
-    // 2. Realistic S-Cluster Stars and Primordial Planetary Worlds orbiting the Little Red Dot
-    // Placed at stable orbital distances within the circum-nuclear disk (95 - 255 AU)
+    // 2. Realistic S-Cluster Stars, Orbiting Stellar Black Hole, and Primordial Planetary Worlds orbiting the Little Red Dot
+    // Placed at stable orbital distances within the circum-nuclear disk (88 - 260 AU)
     // with exact circular Keplerian velocities: v_circ = sqrt(G * M_total / r)
-    let primordial_satellites: [(f64, f64, f64, &str, Composition, BodyType, f64); 5] = [
-        // 1. Pop-III Blue Supergiant (S-Cluster Star α) at 95 AU
+    // Sizes and masses naturally vary based on local ring density and radial position!
+    let primordial_satellites: [(f64, f64, f64, &str, Composition, BodyType, f64); 6] = [
+        // 1. Orbiting Stellar-Mass Black Hole (Micro-Quasar α) at 88 AU in dense inner stream
         (
-            95.0,
-            60.0,  // 60 M_sun Pop-III star
-            0.050, // ~10.7 R_sun physical radius
+            88.0,
+            30.0,   // 30 M_sun stellar black hole
+            0.0006, // Schwarzschild event horizon scale
+            "Orbiting Stellar Black Hole (Micro-Quasar α)",
+            Composition::solar_gas(),
+            BodyType::BlackHole,
+            0.35,
+        ),
+        // 2. Pop-III Blue Supergiant (S-Cluster Star α) at 120 AU
+        (
+            120.0,
+            55.0,  // 55 M_sun Pop-III star
+            0.048, // ~10.3 R_sun physical radius
             "Pop-III Blue Supergiant (S-Cluster Star α)",
             Composition::solar_gas(),
             BodyType::BlueSupergiant,
-            0.25,
+            1.40,
         ),
-        // 2. Extreme Super-Jupiter Exoplanet (Prime-b) at 135 AU
+        // 3. Extreme Super-Jupiter Exoplanet (Prime-b) at 155 AU
         (
-            135.0,
-            0.005,  // 5.24 M_Jup gas giant
+            155.0,
+            0.0055, // 5.75 M_Jup gas giant
             0.0006, // ~1.25 R_Jup radius
             "Extreme Super-Jupiter (Prime-b)",
             Composition::solar_gas(),
             BodyType::GasGiant,
-            1.45,
+            2.55,
         ),
-        // 3. Pop-III Blue Giant (S-Cluster Star β) at 175 AU
+        // 4. Pop-III Blue Giant (S-Cluster Star β) at 190 AU
         (
-            175.0,
-            40.0,  // 40 M_sun Pop-III star
-            0.035, // ~7.5 R_sun radius
+            190.0,
+            32.0,  // 32 M_sun Pop-III star
+            0.032, // ~6.9 R_sun radius
             "Pop-III Blue Giant (S-Cluster Star β)",
             Composition::solar_gas(),
             BodyType::BlueGiant,
-            2.80,
+            3.80,
         ),
-        // 4. Primordial Volatile Ice World (Prime-c) at 215 AU
+        // 5. Primordial Volatile Ice World (Prime-c) at 225 AU
         (
-            215.0,
-            0.0001, // 33 M_earth Sub-Neptune / Mega-Earth
-            0.0003, // ~7 R_earth radius
+            225.0,
+            0.00012, // ~40 M_earth Mega-Earth / Ice Giant
+            0.00032, // ~7.5 R_earth radius
             "Primordial Volatile Ice World (Prime-c)",
             Composition {
                 silicate_frac: 0.35,
@@ -1173,17 +1396,17 @@ pub fn spawn_little_red_dot_scenario(
                 gas_frac: 0.05,
             },
             BodyType::IceGiant,
-            4.15,
+            4.95,
         ),
-        // 5. Pop-III Intermediate Star (S-Cluster Star γ) at 255 AU
+        // 6. Pop-III Yellow Dwarf Seed (S-Cluster Star γ) at 260 AU
         (
-            255.0,
-            25.0,  // 25 M_sun Pop-III star
-            0.025, // ~5.4 R_sun radius
-            "Pop-III Intermediate Star (S-Cluster Star γ)",
+            260.0,
+            1.5,   // 1.5 M_sun low-mass Pop-III star
+            0.006, // ~1.3 R_sun radius
+            "Pop-III Yellow Dwarf (S-Cluster Star γ)",
             Composition::solar_gas(),
-            BodyType::BlueGiant,
-            5.40,
+            BodyType::YellowDwarf,
+            5.85,
         ),
     ];
 
@@ -1216,4 +1439,303 @@ pub fn spawn_little_red_dot_scenario(
     }
 
     quasi_star_ent
+}
+
+/// Spawns the PSR B1257+12 (Lich) Millisecond Pulsar System with 3 confirmed zombie exoplanets.
+pub fn spawn_pulsar_system_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> Entity {
+    let pulsar_mass = 1.40; // 1.40 M_sun
+    disk_params.central_star_mass = pulsar_mass;
+    disk_params.inner_radius_au = 0.10;
+    disk_params.outer_radius_au = 2.20;
+    disk_params.reference_temp_1au = 280.0;
+    disk_params.gas_disk_lifetime_yr = 10_000_000.0;
+    disk_params.disk_mass = 0.0; // Older developed system: no particulate debris swarm
+
+    // 1. Central Millisecond Pulsar: PSR B1257+12 (Lich)
+    let pulsar_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "PSR B1257+12 (Lich)".to_string(),
+                body_type: BodyType::Pulsar,
+            },
+            CentralStar,
+            Mass(pulsar_mass),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration(DVec3::ZERO),
+            Radius(0.00008),        // ~12 km physical neutron star radius
+            Temperature(200_000.0), // 200,000 K surface thermal X-ray glow
+            Luminosity(5.2),        // Relativistic pulsar wind equivalent luminosity
+            Composition::pure_hydrogen(),
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1.01e3, 0.0), // Relativistic 161 Hz rotation
+                rotation_period_hours: 0.00622 / 3600.0,   // 6.22 milliseconds
+                axial_tilt_degrees: 20.0,
+            },
+            VolatileInventory::default(),
+            IgnitionState {
+                core_temperature: 1.0e8,
+                fusion_fraction: 0.0, // Degenerate neutron matter
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::NeutronStarPulsar,
+                hydrogen_core_fraction: 0.0,
+                helium_core_fraction: 0.0,
+                envelope_mass_loss_rate: 1e-12,
+                phase_timer_years: 1e9,
+                nebula_expansion_radius_au: 2.5,
+                nebula_opacity: 0.45,
+            },
+        ))
+        .insert(ElectromagneticFieldState {
+            magnetic_field_gauss: 1.0e9,    // 1 Billion Gauss surface field
+            rotation_period_sec: 0.00622,   // 6.22 ms
+            magnetic_inclination_rad: 0.35, // 20 degree magnetic tilt
+            jet_length_au: 2.5,
+            synchrotron_intensity: 2.5,
+        })
+        .id();
+
+    // 2. The 3 Historical Zombie Exoplanets + Outer Fallback Embryo
+    // Exact Keplerian circular velocities: v = sqrt(G * M / r)
+    let zombie_planets: [(f64, f64, f64, &str, Composition, BodyType, f64, f64); 4] = [
+        // Draugr (PSR B1257+12 b): 0.02 M_earth, innermost moon-mass cinder at 0.19 AU (P ~ 25.3 d)
+        (
+            0.19,
+            0.020 * EARTH_MASS_SOLAR,
+            0.35 * EARTH_RADIUS_AU,
+            "Draugr (PSR B1257+12 b)",
+            Composition::metal_rich(),
+            BodyType::TerrestrialPlanet,
+            0.45,
+            0.0, // Airless irradiated cinder
+        ),
+        // Poltergeist (PSR B1257+12 c): 4.3 M_earth Super-Earth at 0.36 AU (P ~ 66.5 d)
+        (
+            0.36,
+            4.30 * EARTH_MASS_SOLAR,
+            1.52 * EARTH_RADIUS_AU,
+            "Poltergeist (PSR B1257+12 c)",
+            Composition::rocky(),
+            BodyType::SuperEarth,
+            1.85,
+            12.0, // Dense irradiated atmosphere ionized by pulsar wind
+        ),
+        // Phobetor (PSR B1257+12 d): 3.9 M_earth Super-Earth at 0.46 AU (P ~ 98.2 d)
+        (
+            0.46,
+            3.90 * EARTH_MASS_SOLAR,
+            1.48 * EARTH_RADIUS_AU,
+            "Phobetor (PSR B1257+12 d)",
+            Composition {
+                silicate_frac: 0.50,
+                organics_frac: 0.10,
+                ice_frac: 0.15,
+                metal_frac: 0.25,
+                gas_frac: 0.0,
+            },
+            BodyType::SuperEarth,
+            3.40,
+            8.5,
+        ),
+        // Dagon: Outer post-supernova fallback volatile embryo at 1.10 AU
+        (
+            1.10,
+            0.080 * EARTH_MASS_SOLAR,
+            0.48 * EARTH_RADIUS_AU,
+            "Dagon (Outer Fallback Embryo)",
+            Composition::icy(),
+            BodyType::Protoplanet,
+            5.10,
+            0.05,
+        ),
+    ];
+
+    for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off, atm_bar) in &zombie_planets {
+        let v_circ = (G_ASTRO * pulsar_mass / r_au).sqrt();
+        let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
+        let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
+        let temp = (280.0 * (1.0 / r_au.sqrt())).max(40.0);
+
+        let mut spin = SpinState::default();
+        let spin_rot = (mass_s * rad_au * rad_au * 0.33)
+            * DVec3::new(0.0, 2.0 * std::f64::consts::PI / (28.0 / 8766.0), 0.0);
+        spin.update_from_spin(spin_rot, mass_s, rad_au);
+
+        commands.spawn((
+            CelestialBody {
+                name: name.to_string(),
+                body_type: b_type,
+            },
+            Mass(mass_s),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Radius(rad_au),
+            Temperature(temp),
+            Luminosity(0.0),
+            AngularMomentum(pos.cross(vel) * mass_s),
+            comp,
+            VolatileInventory {
+                delivered_water_m_earth: 0.0,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: atm_bar as f32,
+                cometary_impact_count: 0,
+            },
+            spin,
+        ));
+    }
+
+    pulsar_ent
+}
+
+/// Spawns the SGR 1806-20 Ultra-Magnetized Magnetar Scenario with hypergiant companion and relativistic ejecta.
+pub fn spawn_magnetar_outburst_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> Entity {
+    let magnetar_mass = 1.95; // 1.95 M_sun
+    disk_params.central_star_mass = magnetar_mass;
+    disk_params.inner_radius_au = 0.20;
+    disk_params.outer_radius_au = 22.0;
+    disk_params.reference_temp_1au = 1200.0;
+    disk_params.gas_disk_lifetime_yr = 5_000_000.0;
+    disk_params.disk_mass = 0.0; // Older developed system: no particulate debris swarm
+
+    // 1. Central Magnetar: SGR 1806-20 (10^15 Gauss)
+    let magnetar_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "SGR 1806-20 (Magnetar)".to_string(),
+                body_type: BodyType::Magnetar,
+            },
+            CentralStar,
+            Mass(magnetar_mass),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration(DVec3::ZERO),
+            Radius(0.000075),         // ~11 km physical radius
+            Temperature(5_500_000.0), // 5.5 Million K blistering thermal X-ray surface
+            Luminosity(10_000.0),     // Intermittent magnetar giant flare luminosity
+            Composition::pure_hydrogen(),
+            SpinState {
+                spin_vector: DVec3::new(0.0, 0.83, 0.0),
+                rotation_period_hours: 7.56 / 3600.0, // 7.56 seconds
+                axial_tilt_degrees: 26.0,
+            },
+            VolatileInventory::default(),
+            IgnitionState {
+                core_temperature: 2.5e8,
+                fusion_fraction: 0.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::MagnetarRemnant,
+                hydrogen_core_fraction: 0.0,
+                helium_core_fraction: 0.0,
+                envelope_mass_loss_rate: 1e-10,
+                phase_timer_years: 1e5,
+                nebula_expansion_radius_au: 5.5,
+                nebula_opacity: 0.65,
+            },
+        ))
+        .insert(ElectromagneticFieldState {
+            magnetic_field_gauss: 1.0e15, // 10^15 Gauss (Strongest in known Universe!)
+            rotation_period_sec: 7.56,
+            magnetic_inclination_rad: 0.45,
+            jet_length_au: 4.5,
+            synchrotron_intensity: 5.0,
+        })
+        .id();
+
+    // 2. Surrounding Cluster Companions, Magnetically Trapped Worlds & Relativistic Ejecta
+    let cluster_bodies: [(f64, f64, f64, &str, Composition, BodyType, f64, f64); 4] = [
+        // Valkyrie: Magnetically heated shattered iron core world at 0.48 AU
+        (
+            0.48,
+            0.85 * EARTH_MASS_SOLAR,
+            0.88 * EARTH_RADIUS_AU,
+            "Valkyrie (Shattered Iron Core)",
+            Composition::metal_rich(),
+            BodyType::TerrestrialPlanet,
+            0.85,
+            1800.0,
+        ),
+        // Pyre: Chthonian Magma Super-Earth with induction-melted lava oceans at 0.85 AU
+        (
+            0.85,
+            2.40 * EARTH_MASS_SOLAR,
+            1.25 * EARTH_RADIUS_AU,
+            "Pyre (Chthonian Magma World)",
+            Composition::rocky(),
+            BodyType::SuperEarth,
+            2.45,
+            1350.0,
+        ),
+        // SGR Shock Ejecta Ring Planetesimal at 1.65 AU
+        (
+            1.65,
+            0.05 * EARTH_MASS_SOLAR,
+            0.40 * EARTH_RADIUS_AU,
+            "SGR Ejecta Clump α",
+            Composition::metal_rich(),
+            BodyType::Protoplanet,
+            3.90,
+            780.0,
+        ),
+        // LBV 1806-20: Massive Luminous Blue Variable Cluster Companion Star at 18.0 AU
+        // (Separated safely beyond the magnetar's inner planetary zone in the Cl* 1806-20 cluster)
+        (
+            18.0,
+            45.0, // 45 M_sun Pop-I hypergiant star
+            0.22, // ~47 R_sun physical radius
+            "LBV 1806-20 (Hypergiant Companion)",
+            Composition::solar_gas(),
+            BodyType::BlueSupergiant,
+            5.20,
+            28_000.0,
+        ),
+    ];
+
+    for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off, temp) in &cluster_bodies {
+        // Circular Keplerian velocity around the central pinned magnetar
+        let v_circ = (G_ASTRO * magnetar_mass / r_au).sqrt();
+        let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
+        let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
+
+        let mut spin = SpinState::default();
+        let spin_rot = (mass_s * rad_au * rad_au * 0.33)
+            * DVec3::new(0.0, 2.0 * std::f64::consts::PI / (36.0 / 8766.0), 0.0);
+        spin.update_from_spin(spin_rot, mass_s, rad_au);
+
+        commands.spawn((
+            CelestialBody {
+                name: name.to_string(),
+                body_type: b_type,
+            },
+            Mass(mass_s),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Radius(rad_au),
+            Temperature(temp),
+            Luminosity(if b_type.is_star_or_remnant() {
+                1_500_000.0
+            } else {
+                0.0
+            }),
+            AngularMomentum(pos.cross(vel) * mass_s),
+            comp,
+            VolatileInventory::default(),
+            spin,
+        ));
+    }
+
+    magnetar_ent
 }

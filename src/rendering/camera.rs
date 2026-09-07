@@ -66,11 +66,15 @@ pub fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            near: 0.01,
+            near: 0.0001,
             far: 2_000_000.0,
             ..default()
         }),
-        Transform::from_translation(translation).looking_at(pan_orbit.focus, Vec3::Y),
+        Transform {
+            translation,
+            rotation: rot,
+            ..default()
+        },
         pan_orbit,
         IsDefaultUiCamera,
     ));
@@ -96,6 +100,7 @@ pub fn update_pan_orbit_camera(
         ),
         With<PanOrbitCamera>,
     >,
+    ui_interaction_query: Query<&Interaction>,
 ) {
     let Ok((camera_comp, mut camera, mut transform, global_transform)) = camera_query.single_mut()
     else {
@@ -106,25 +111,76 @@ pub fn update_pan_orbit_camera(
         return;
     };
 
-    // Update dynamic minimum zoom radius when locked on a body
-    if let Some(target_ent) = camera.target_entity {
-        if let Ok((_, pos, radius, _body, _mass)) = targets_query.get(target_ent) {
+    // Dynamic minimum zoom radius: prevents passing through the star or planets,
+    // stopping smoothly at a stunning close-up view without surface or near-plane clipping.
+    // EXCEPTION: For the JWST Little Red Dot (Quasi-Star / Black Hole Star), allow zooming through
+    // the massive 60 AU primordial hydrogen cocoon and all the way down to the central black hole
+    // singularity (min_radius = 0.001 AU) so the user can experience the general relativity effects up close.
+    let is_little_red_dot = |body: &CelestialBody| -> bool {
+        body.body_type == BodyType::QuasiStar || body.name.to_lowercase().contains("little red dot")
+    };
+
+    let focused_info = if let Some(target_ent) = camera.target_entity {
+        if let Ok((_, pos, radius, body, _mass)) = targets_query.get(target_ent) {
             let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             camera.target_focus = target_vec;
-
-            // Frame the planet in full view right in front of the camera without clipping
-            let visual_radius = config.calc_visual_radius(radius.0);
-            camera.min_radius = (visual_radius * 3.6).max(0.08);
+            let is_lrd = is_little_red_dot(body);
+            Some((
+                config.calc_visual_radius_for_type(radius.0, body.body_type),
+                is_lrd,
+            ))
         } else {
             camera.target_entity = None;
-            camera.min_radius = 0.08;
+            None
         }
     } else {
-        camera.min_radius = 0.08;
+        None
+    };
+
+    let effective_info = if let Some(info) = focused_info {
+        Some(info)
+    } else {
+        // When not locked to a specific entity (e.g. at startup or after panning),
+        // check if camera target_focus is centered on or near any celestial body (such as the central star at the origin)
+        targets_query
+            .iter()
+            .map(|(_, pos, radius, body, _)| {
+                let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+                let dist = camera.target_focus.distance(center);
+                let vis_rad = config.calc_visual_radius_for_type(radius.0, body.body_type);
+                let is_lrd = is_little_red_dot(body);
+                (dist, vis_rad, is_lrd)
+            })
+            .filter(|(dist, vis_rad, _)| *dist <= (*vis_rad * 2.5).max(0.35))
+            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(_, vis_rad, is_lrd)| (vis_rad, is_lrd))
+    };
+
+    if let Some((vis_rad, is_lrd)) = effective_info {
+        if is_lrd {
+            // Little Red Dot exception: allow zooming all the way into the central black hole
+            // to observe the general relativity effects, photon ring, and event horizon up close.
+            camera.min_radius = 0.001;
+        } else {
+            camera.min_radius = config.calc_camera_min_zoom_radius(vis_rad);
+        }
+    } else {
+        camera.min_radius = 0.001;
     }
 
+    // Clamp current target and radius to ensure camera never gets trapped inside an expanded body
+    camera.target_radius = camera
+        .target_radius
+        .clamp(camera.min_radius, camera.max_radius);
+    camera.radius = camera.radius.clamp(camera.min_radius, camera.max_radius);
+
     // 1. Pixel-Accurate Screen-Space & 3D Ray Selection of Celestial Bodies (Star & Planets)
-    if mouse_buttons.just_pressed(MouseButton::Left) {
+    // Guard: Only perform 3D ray selection if the cursor is in the viewport, NOT over UI buttons or panels!
+    let cursor_over_ui = ui_interaction_query
+        .iter()
+        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+
+    if !cursor_over_ui && mouse_buttons.just_pressed(MouseButton::Left) {
         if let Some(cursor_pos) = window.cursor_position() {
             let mut best_target: Option<Entity> = None;
             let mut best_score = f32::MAX;
@@ -172,6 +228,11 @@ pub fn update_pan_orbit_camera(
             if let Some(hit_entity) = best_target {
                 player_state.selected_entity = Some(hit_entity);
                 camera.target_entity = Some(hit_entity);
+                if let Ok((_, _, radius, body, _)) = targets_query.get(hit_entity) {
+                    let visual_radius =
+                        config.calc_visual_radius_for_type(radius.0, body.body_type);
+                    camera.target_radius = config.calc_camera_framing_radius(visual_radius);
+                }
             }
         }
     }
@@ -184,6 +245,10 @@ pub fn update_pan_orbit_camera(
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         if let Some(target) = player_state.selected_entity {
             camera.target_entity = Some(target);
+            if let Ok((_, _, radius, body, _)) = targets_query.get(target) {
+                let visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
+                camera.target_radius = config.calc_camera_framing_radius(visual_radius);
+            }
         } else {
             camera.target_focus = Vec3::ZERO;
             camera.target_entity = None;
@@ -194,34 +259,6 @@ pub fn update_pan_orbit_camera(
         camera.target_focus = Vec3::ZERO;
         camera.target_entity = None;
         player_state.selected_entity = None;
-    }
-
-    // Tab Key: Cycle selection through all orbiting celestial bodies
-    if keyboard_input.just_pressed(KeyCode::Tab) {
-        let mut targets_with_mass: Vec<(Entity, f64)> = targets_query
-            .iter()
-            .map(|(e, _, _, _, mass)| (e, mass.0))
-            .collect();
-
-        // Sort descending by mass to always cycle from Star -> Biggest Planet -> Smallest Moon
-        targets_with_mass
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let targets: Vec<Entity> = targets_with_mass.into_iter().map(|(e, _)| e).collect();
-
-        if !targets.is_empty() {
-            let next_target = if let Some(cur) = player_state.selected_entity {
-                if let Some(idx) = targets.iter().position(|&e| e == cur) {
-                    targets[(idx + 1) % targets.len()]
-                } else {
-                    targets[0]
-                }
-            } else {
-                targets[0]
-            };
-            player_state.selected_entity = Some(next_target);
-            camera.target_entity = Some(next_target);
-        }
     }
 
     // Free-fly keyboard navigation (WASD + QE)
@@ -310,11 +347,12 @@ pub fn update_pan_orbit_camera(
         camera.focus = camera.focus.lerp(camera.target_focus, 0.14);
     }
 
-    // Recompute camera transform
+    // Recompute camera transform analytically: setting rotation directly eliminates floating-point
+    // cancellation jitter when viewing distant outer solar system bodies (Pluto at 39.5 AU, Planet Nine at 380 AU)
     let rot =
         Quat::from_axis_angle(Vec3::Y, camera.yaw) * Quat::from_axis_angle(Vec3::X, -camera.pitch);
     let translation = camera.focus + rot * Vec3::new(0.0, 0.0, camera.radius);
 
     transform.translation = translation;
-    transform.look_at(camera.focus, Vec3::Y);
+    transform.rotation = rot;
 }

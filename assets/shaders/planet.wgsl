@@ -111,6 +111,418 @@ fn vortex_swirl(p: vec3<f32>, center: vec3<f32>, radius: f32, strength: f32) -> 
     return p;
 }
 
+// 3D vector hash for cellular noise
+fn hash3_vec(p: vec3<f32>) -> vec3<f32> {
+    let q = fract(p * vec3<f32>(0.1031, 0.1030, 0.0973));
+    let r = q + dot(q, q.yxz + 33.33);
+    return fract((r.xxy + r.yxx) * r.zyx);
+}
+
+// 3D Voronoi / Cellular noise with dynamic time-dependent cell boiling
+// Returns vec2<f32>:
+//   x: d1 = distance to nearest cell center (hot rising convective core)
+//   y: d2 = distance to second nearest cell center
+//   (d2 - d1): distance to cell boundary (cool sinking intergranular lane)
+fn voronoi3(p: vec3<f32>, anim_time: f32) -> vec2<f32> {
+    let i = floor(p);
+    let f = fract(p);
+    var d1 = 8.0;
+    var d2 = 8.0;
+    
+    for (var z = -1; z <= 1; z = z + 1) {
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
+                let h = hash3_vec(i + neighbor);
+                // Dynamic cell boiling motion: centers wander in 3D over time
+                let point = 0.5 + 0.38 * sin(h * 6.28318 + vec3<f32>(anim_time));
+                let diff = neighbor + point - f;
+                let dist = length(diff);
+                if (dist < d1) {
+                    d2 = d1;
+                    d1 = dist;
+                } else if (dist < d2) {
+                    d2 = dist;
+                }
+            }
+        }
+    }
+    return vec2<f32>(d1, d2);
+}
+
+// =========================================================================
+// BLACK HOLE STAR (QUASI-STAR / JWST LITTLE RED DOT): PSEUDO-PHOTOSPHERE
+// =========================================================================
+// Simulates the gargantuan 60 AU hydrogen cocoon powered by central black hole accretion:
+// - Multi-scale boiling convective supercells & fine granulation
+// - Deep saturated crimson-red & ruby downwelling lanes into burning scarlet rising cores
+// - Radiation flow eruption shock plumes & twisting magnetic plasma filament arcs
+// - Extended gas cocoon limb darkening & intense glowing coronal limb flare (ragged rim)
+// - Convective/radiation pressure equilibrium pulsation
+fn render_quasistar_photosphere(
+    p_surf: vec3<f32>,
+    norm: vec3<f32>,
+    view_dir: vec3<f32>,
+    t: f32,
+) -> vec3<f32> {
+    let NdotV = max(dot(norm, view_dir), 0.0);
+    
+    // 1. Organic domain warping for convective churning
+    let warp_dir1 = vec3<f32>(t * 0.08, -t * 0.04, t * 0.06);
+    let warp = vec3<f32>(
+        fbm(p_surf * 2.5 + warp_dir1),
+        fbm(p_surf * 2.5 + warp_dir1.yzx + 4.2),
+        fbm(p_surf * 2.5 + warp_dir1.zxy + 8.7)
+    ) * 0.35;
+    let p_turb = p_surf + warp;
+    
+    // 2. Multi-scale boiling granulation
+    // Primary colossal convective supercells
+    let v_super = voronoi3(p_turb * 4.5, t * 0.35);
+    let super_lane = smoothstep(0.04, 0.36, v_super.y - v_super.x);
+    
+    // Secondary fine turbulent granules
+    let v_fine = voronoi3(p_turb * 15.0, t * 0.65);
+    let fine_lane = smoothstep(0.03, 0.28, v_fine.y - v_fine.x);
+    
+    let cell_factor = super_lane * 0.65 + fine_lane * 0.35;
+    
+    // 3. Chromatic color mapping calibrated to deep saturated red sample image
+    let col_lane = vec3<f32>(0.26, 0.010, 0.003);   // Deep cool blood-crimson downwelling lanes
+    let col_cell = vec3<f32>(0.92, 0.055, 0.006);   // Rich vibrant scarlet-red cell bodies
+    let col_core = vec3<f32>(1.12, 0.14, 0.010);   // Saturated burning vermillion centers (keeps green low!)
+    
+    var color = mix(col_lane, col_cell, cell_factor);
+    let core_boost = smoothstep(0.75, 0.15, v_super.x);
+    color = mix(color, col_core, core_boost * 0.75);
+    
+    // 4. Outward Radiation Flow & Accretion Shock Flare Eruptions
+    let edd_mult = max(planet.dynamics_and_mag.y, 1.0); // Eddington accretion ratio
+    let flare_noise = pow(fbm(p_turb * 7.5 - vec3<f32>(0.0, t * 0.25, t * 0.15)), 2.8);
+    let flare_knot_col = vec3<f32>(1.25, 0.22, 0.015); // Fiery scarlet-orange flare knots (no yellow/white desaturation)
+    color = mix(color, flare_knot_col, clamp(flare_noise * 1.5 * (edd_mult * 0.35 + 0.65), 0.0, 1.0));
+    
+    // Twisting magnetic filament arcs & plasma prominence spicules
+    let filament = ridge_noise(p_turb * 13.0 + vec3<f32>(t * 0.12, t * 0.08, 0.0));
+    if (filament > 0.76) {
+        let fil_bright = (filament - 0.76) / 0.24;
+        color += vec3<f32>(1.20, 0.15, 0.010) * fil_bright * 1.6;
+    }
+    
+    // 5. Radiation Pressure Equilibrium Breathing (subtle global harmonic oscillation)
+    let breathing = 1.0 + 0.04 * sin(t * 0.80);
+    color = color * breathing;
+    
+    // 6. Extended Gas Envelope Limb Darkening
+    let limb_dark = pow(NdotV, 0.48);
+    color = color * (limb_dark * 0.82 + 0.18);
+    
+    // 7. Intense Coronal Limb Flare (flaming ragged rim matching reference infographic)
+    let rim_grazing = pow(1.0 - NdotV, 3.2);
+    let rim_wisps = fbm(p_surf * 28.0 + vec3<f32>(t * 0.55, t * 0.35, 0.0));
+    let rim_color = vec3<f32>(1.30, 0.08, 0.008) * (rim_grazing * (0.85 + 0.65 * rim_wisps) * 4.0);
+    
+    return color * 1.55 + rim_color;
+}
+
+// =========================================================================
+// UNIVERSAL PROCEDURAL STELLAR PHOTOSPHERE ENGINE (planet_type == 0u)
+// =========================================================================
+// Distinct astrophysical procedural shading for each stellar classification:
+// 0: Main Sequence Yellow Dwarf (Sun)
+// 1: Red Dwarf (TRAPPIST-1)
+// 2: Brown Dwarf
+// 3: Red Giant & Supergiant (Betelgeuse)
+// 4: Blue Hyper Giant & Supergiant (O-type / Pop-III)
+// 5: Neutron Star
+// 6: Pulsar
+// 7: Magnetar
+// 8: White Dwarf
+// 9: Protostar
+// 10: Wolf-Rayet Star
+fn render_stellar_photosphere(
+    p_surf: vec3<f32>,
+    norm: vec3<f32>,
+    view_dir: vec3<f32>,
+    t: f32,
+) -> vec3<f32> {
+    let subtype = u32(planet.composition.x + 0.5);
+    let cell_scale = max(planet.composition.y, 4.0);
+    let flare_int = planet.composition.z;
+    let pulse_freq = planet.composition.w;
+    let seed_col = planet.color_seed.rgb;
+    let NdotV = max(dot(norm, view_dir), 0.0);
+    
+    var final_col = seed_col;
+    
+    // =========================================================================
+    // 0. Main Sequence Yellow Dwarf (The Sun)
+    // =========================================================================
+    if (subtype == 0u) {
+        // Crisp solar granulation
+        let v = voronoi3(p_surf * cell_scale, t * 0.30);
+        let lane = smoothstep(0.04, 0.30, v.y - v.x);
+        let dark_lane = vec3<f32>(0.55, 0.38, 0.12);
+        let bright_granule = vec3<f32>(1.12, 0.96, 0.65);
+        var gran_col = mix(dark_lane, bright_granule, lane);
+        
+        // Sunspots: dark umbra + striated penumbra + bright faculae plages
+        let spot_noise = fbm(p_surf * 5.0);
+        if (spot_noise > 0.60) {
+            let umbra = smoothstep(0.68, 0.74, spot_noise);
+            let penumbra = smoothstep(0.60, 0.68, spot_noise);
+            let umbra_col = vec3<f32>(0.08, 0.05, 0.02);
+            let penumbra_col = vec3<f32>(0.42, 0.30, 0.12);
+            gran_col = mix(gran_col, penumbra_col, penumbra);
+            gran_col = mix(gran_col, umbra_col, umbra);
+        } else if (spot_noise > 0.52) {
+            // Bright magnetic faculae / plages
+            let faculae = (spot_noise - 0.52) / 0.08;
+            gran_col += vec3<f32>(0.35, 0.30, 0.15) * faculae;
+        }
+        
+        // Quadratic Eddington solar limb darkening
+        let limb_u = 0.60;
+        let limb_v = 0.20;
+        let limb_dark = 1.0 - limb_u * (1.0 - NdotV) - limb_v * (1.0 - sqrt(NdotV));
+        gran_col *= clamp(limb_dark, 0.15, 1.0);
+        
+        // Chromospheric golden fringe at grazing angles
+        let fringe = pow(1.0 - NdotV, 4.0) * vec3<f32>(1.2, 0.8, 0.2) * 1.5;
+        final_col = gran_col * 2.8 + fringe;
+    }
+    // =========================================================================
+    // 1. Red Dwarf (M-Star / TRAPPIST-1 / Proxima)
+    // =========================================================================
+    else if (subtype == 1u) {
+        // Fully-convective churning: large turbulent cells
+        let v = voronoi3(p_surf * cell_scale, t * 0.50);
+        let lane = smoothstep(0.04, 0.32, v.y - v.x);
+        let dark_lane = vec3<f32>(0.32, 0.05, 0.01);
+        let cell_body = vec3<f32>(0.96, 0.30, 0.06);
+        let cell_core = vec3<f32>(1.15, 0.55, 0.12);
+        var gran_col = mix(dark_lane, cell_body, lane);
+        gran_col = mix(gran_col, cell_core, smoothstep(0.65, 0.15, v.x) * 0.6);
+        
+        // Enormous starspot coverage (15-35%)
+        let spot_noise = fbm(p_surf * 3.8);
+        if (spot_noise > 0.52) {
+            let spot_mask = smoothstep(0.52, 0.64, spot_noise);
+            let starspot_col = vec3<f32>(0.14, 0.02, 0.01);
+            gran_col = mix(gran_col, starspot_col, spot_mask * 0.90);
+        }
+        
+        // Violent magnetic flare eruptions (explosive white-blue/gold flash knots)
+        let flare_wave = sin(t * 1.8 + p_surf.x * 6.0) * 0.5 + 0.5;
+        let flare_knot = pow(fbm(p_surf * 8.5 + vec3<f32>(0.0, t * 0.2, 0.0)), 3.5);
+        if (flare_knot > 0.45 && flare_wave > 0.65) {
+            let flare_amp = (flare_knot - 0.45) * 4.0;
+            gran_col += vec3<f32>(1.5, 1.3, 0.9) * flare_amp * flare_int;
+        }
+        
+        let limb_dark = pow(NdotV, 0.45);
+        gran_col *= (limb_dark * 0.75 + 0.25);
+        let rim = pow(1.0 - NdotV, 3.5) * vec3<f32>(1.1, 0.25, 0.04) * 2.0;
+        final_col = gran_col * 2.6 + rim;
+    }
+    // =========================================================================
+    // 2. Brown Dwarf (Sub-Stellar Transition World)
+    // =========================================================================
+    else if (subtype == 2u) {
+        // Plum-maroon base with differential latitudinal iron/silicate cloud bands
+        let lat = norm.y;
+        let jet = sin(lat * 12.0) * (t * 0.08);
+        let p_band = rotate_y(p_surf, jet);
+        let band_val = sin(lat * 10.0 + fbm(p_band * 5.0) * 2.0) * 0.5 + 0.5;
+        
+        let deep_plum = vec3<f32>(0.42, 0.10, 0.28);
+        let dark_maroon = vec3<f32>(0.58, 0.16, 0.36);
+        var base_dwarf = mix(deep_plum, dark_maroon, band_val);
+        
+        // Glowing thermal infrared convective rift fissures
+        let fissure = ridge_noise(p_surf * cell_scale + vec3<f32>(0.0, t * 0.03, 0.0));
+        if (fissure > 0.65) {
+            let fissure_amp = (fissure - 0.65) / 0.35;
+            let thermal_glow = vec3<f32>(1.15, 0.45, 0.08) * fissure_amp * 2.2;
+            base_dwarf += thermal_glow;
+        }
+        
+        let limb = pow(NdotV, 0.60);
+        final_col = base_dwarf * (limb * 0.8 + 0.2) * 2.2;
+    }
+    // =========================================================================
+    // 3. Red Giant & Red Supergiant (Betelgeuse)
+    // =========================================================================
+    else if (subtype == 3u) {
+        // Colossal, sluggish convective supergranules
+        let warp = vec3<f32>(fbm(p_surf * 2.0), fbm(p_surf * 2.0 + 3.1), fbm(p_surf * 2.0 + 6.2)) * 0.4;
+        let v = voronoi3((p_surf + warp) * cell_scale, t * 0.15);
+        let lane = smoothstep(0.05, 0.38, v.y - v.x);
+        
+        let deep_garnet = vec3<f32>(0.42, 0.05, 0.02);
+        let vermillion = vec3<f32>(0.96, 0.34, 0.08);
+        let hot_amber = vec3<f32>(1.25, 0.65, 0.14);
+        var giant_col = mix(deep_garnet, vermillion, lane);
+        giant_col = mix(giant_col, hot_amber, smoothstep(0.80, 0.20, v.x) * 0.65);
+        
+        // Irregular cool dust obscuration patches
+        let dust_obscuration = fbm(p_surf * 3.5 + vec3<f32>(t * 0.02, 0.0, 0.0));
+        if (dust_obscuration > 0.58) {
+            giant_col *= (1.0 - (dust_obscuration - 0.58) * 1.4);
+        }
+        
+        // Slow pulsation breathing
+        let pulsation = 1.0 + 0.06 * sin(t * 0.45);
+        giant_col *= pulsation;
+        
+        let limb_dark = pow(NdotV, 0.50);
+        let rim = pow(1.0 - NdotV, 3.0) * vec3<f32>(1.2, 0.30, 0.05) * 3.0;
+        final_col = giant_col * (limb_dark * 0.8 + 0.2) * 2.8 + rim;
+    }
+    // =========================================================================
+    // 4. Blue Hyper Giant & Supergiant (O-type / Pop-III)
+    // =========================================================================
+    else if (subtype == 4u) {
+        // High-energy radiation-driven supersonic plasma ripples
+        let ripple1 = sin(dot(p_surf, vec3<f32>(14.0, 10.0, 16.0)) + t * 3.5);
+        let ripple2 = cos(dot(p_surf, vec3<f32>(-12.0, 15.0, 9.0)) - t * 2.8);
+        let turbulence = fbm(p_surf * 18.0 + vec3<f32>(t * 0.4, 0.0, 0.0));
+        let wave = (ripple1 * 0.35 + ripple2 * 0.35 + turbulence * 0.30) * 0.5 + 0.5;
+        
+        let deep_cyan = vec3<f32>(0.65, 0.82, 1.35);
+        let diamond_white = vec3<f32>(1.15, 1.25, 1.65);
+        var blue_col = mix(deep_cyan, diamond_white, wave);
+        
+        // Equatorial gravity darkening from rapid rotation (poles hotter/brighter)
+        let gravity_dark = 0.80 + 0.40 * abs(norm.y);
+        blue_col *= gravity_dark;
+        
+        // Intense electric blue coronal limb halo
+        let rim = pow(1.0 - NdotV, 2.5) * vec3<f32>(0.5, 0.8, 1.6) * 4.0;
+        final_col = blue_col * 3.2 + rim;
+    }
+    // =========================================================================
+    // 5. Neutron Star
+    // =========================================================================
+    else if (subtype == 5u) {
+        // Ultra-dense degenerate star: extreme gravitational limb darkening
+        let limb = pow(NdotV, 0.28);
+        let base_ns = vec3<f32>(1.15, 1.35, 1.95);
+        
+        // Crystalline nuclear crust with glowing quantum magnetic stress fractures
+        let crust = ridge_noise(p_surf * cell_scale);
+        var crust_glow = vec3<f32>(0.0);
+        if (crust > 0.70) {
+            crust_glow = vec3<f32>(0.4, 0.8, 1.8) * ((crust - 0.70) / 0.30) * 2.0;
+        }
+        
+        let rim = pow(1.0 - NdotV, 1.8) * vec3<f32>(0.8, 1.2, 2.4) * 3.5;
+        final_col = (base_ns * limb + crust_glow) * 3.5 + rim;
+    }
+    // =========================================================================
+    // 6. Pulsar (Rapidly Spinning Magnetized Neutron Star)
+    // =========================================================================
+    else if (subtype == 6u) {
+        let base_core = vec3<f32>(1.10, 1.30, 1.85);
+        let pole_align = abs(norm.y);
+        
+        // Dual magnetic polar hot spots
+        let polar_cap = smoothstep(0.82, 0.98, pole_align);
+        let polar_hotspot = vec3<f32>(2.4, 2.6, 3.8) * polar_cap;
+        
+        // Periodic pulse modulation synchronized with rotation
+        let pulse = 0.75 + 0.50 * pow(sin(t * pulse_freq + p_surf.x * 3.14159), 6.0);
+        
+        // Relativistic synchrotron auroral rings circling magnetic poles
+        let ring_angle = abs(pole_align - 0.75);
+        var auroral_ring = vec3<f32>(0.0);
+        if (ring_angle < 0.08) {
+            auroral_ring = vec3<f32>(0.3, 0.9, 1.6) * (1.0 - ring_angle / 0.08) * 2.5;
+        }
+        
+        let rim = pow(1.0 - NdotV, 2.2) * vec3<f32>(0.7, 1.0, 2.2) * 3.0;
+        final_col = (base_core * pulse + polar_hotspot + auroral_ring) * 3.2 + rim;
+    }
+    // =========================================================================
+    // 7. Magnetar (Ultra-Magnetized Neutron Star: 10^14 - 10^15 G)
+    // =========================================================================
+    else if (subtype == 7u) {
+        let deep_violet = vec3<f32>(0.85, 0.55, 1.75);
+        
+        // Starquake crustal fracture web (glowing neon-cyan fissures)
+        let crack = ridge_noise(p_surf * cell_scale + vec3<f32>(0.0, sin(t * 0.8) * 0.1, 0.0));
+        var starquake = vec3<f32>(0.0);
+        if (crack > 0.62) {
+            let crack_amp = (crack - 0.62) / 0.38;
+            starquake = vec3<f32>(0.3, 1.4, 1.8) * crack_amp * 3.5;
+        }
+        
+        // Magnetic reconnection flare nodes along fracture lines
+        let flare_node = pow(fbm(p_surf * 12.0 + vec3<f32>(t * 0.5, 0.0, 0.0)), 4.0);
+        if (flare_node > 0.35) {
+            starquake += vec3<f32>(2.0, 2.2, 3.2) * (flare_node - 0.35) * 5.0;
+        }
+        
+        let rim = pow(1.0 - NdotV, 2.0) * vec3<f32>(1.2, 0.6, 2.4) * 4.0;
+        final_col = (deep_violet + starquake) * 3.4 + rim;
+    }
+    // =========================================================================
+    // 8. White Dwarf
+    // =========================================================================
+    else if (subtype == 8u) {
+        // Degenerate matter: brilliant diamond blue-white, micro-scale shallow ripples
+        let v = voronoi3(p_surf * cell_scale, t * 0.40);
+        let lane = smoothstep(0.02, 0.20, v.y - v.x);
+        let wd_dark = vec3<f32>(1.05, 1.15, 1.45);
+        let wd_bright = vec3<f32>(1.30, 1.40, 1.75);
+        let micro_gran = mix(wd_dark, wd_bright, lane);
+        
+        let limb = pow(NdotV, 0.38);
+        let rim = pow(1.0 - NdotV, 2.5) * vec3<f32>(0.7, 0.9, 1.6) * 2.5;
+        final_col = micro_gran * (limb * 0.85 + 0.15) * 3.2 + rim;
+    }
+    // =========================================================================
+    // 9. Protostar
+    // =========================================================================
+    else if (subtype == 9u) {
+        // Fiery amber base with dark circumstellar dust veins across the entire star
+        let v = voronoi3(p_surf * cell_scale, t * 0.40);
+        let lane = smoothstep(0.04, 0.30, v.y - v.x);
+        let amber_base = mix(vec3<f32>(0.45, 0.15, 0.04), vec3<f32>(1.05, 0.52, 0.14), lane);
+        
+        // Dark filamentary dust veins crisscrossing the surface
+        let dust_vein = ridge_noise(p_surf * 6.5 + vec3<f32>(0.0, t * 0.06, 0.0));
+        var proto_col = amber_base;
+        if (dust_vein > 0.70) {
+            proto_col *= (1.0 - (dust_vein - 0.70) * 2.2);
+        }
+        
+        let limb = pow(NdotV, 0.55);
+        final_col = proto_col * (limb * 0.8 + 0.2) * 2.5;
+    }
+    // =========================================================================
+    // 10. Wolf-Rayet Star
+    // =========================================================================
+    else if (subtype == 10u) {
+        // Neon magenta-cyan with expanding clumpy plasma wind knots
+        let wind_flow = fbm(p_surf * cell_scale + vec3<f32>(t * 0.8, t * 0.4, 0.0));
+        let wind_wave = sin(norm.y * 16.0 + wind_flow * 4.0) * 0.5 + 0.5;
+        let wr_cyan = vec3<f32>(0.45, 0.85, 1.35);
+        let wr_magenta = vec3<f32>(1.25, 0.40, 0.95);
+        let wr_col = mix(wr_magenta, wr_cyan, wind_wave);
+        
+        let rim = pow(1.0 - NdotV, 2.2) * vec3<f32>(1.1, 0.6, 1.5) * 4.0;
+        final_col = wr_col * 3.2 + rim;
+    }
+    // Fallback standard star
+    else {
+        let limb = pow(NdotV, 0.50);
+        final_col = seed_col * (limb * 0.8 + 0.2) * 3.0;
+    }
+    
+    return final_col;
+}
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -510,11 +922,13 @@ fn fragment(
     var out: FragmentOutput;
     
     if (planet.planet_type == 0u) {
-        // Star Planckian blackbody emission
-        out.color = vec4<f32>(planet.color_seed.rgb * 6.0, 1.0);
-        if (length(out.color.rgb) < 0.1) {
-            out.color = vec4<f32>(10.0, 9.0, 8.0, 1.0);
-        }
+        // Universal Procedural Stellar Photosphere Engine
+        let star_photosphere = render_stellar_photosphere(p_surf, norm, pbr_input.V, t);
+        out.color = vec4<f32>(star_photosphere, 1.0);
+    } else if (planet.planet_type == 7u) {
+        // Dedicated Black Hole Star (Quasi-Star / JWST Little Red Dot) Pseudo-Photosphere
+        let quasi_photosphere = render_quasistar_photosphere(p_surf, norm, pbr_input.V, t);
+        out.color = vec4<f32>(quasi_photosphere, 1.0);
     } else if (planet.planet_type == 5u) {
         // Gravitational singularity event horizon + photon ring
         let NdotV = max(dot(pbr_input.N, pbr_input.V), 0.0);

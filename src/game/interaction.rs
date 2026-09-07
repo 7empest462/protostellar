@@ -36,6 +36,7 @@ pub fn handle_player_tools(
             Option<&mut Transform>,
             Option<&mut IgnitionState>,
             Option<&mut BlackHoleStarState>,
+            Option<&CentralStar>,
         ),
         Without<PanOrbitCamera>,
     >,
@@ -54,38 +55,21 @@ pub fn handle_player_tools(
         toast.timer = 2.5;
     }
 
-    // 0. Tab Key: Deterministic Numerical Cycling Through All Celestial Bodies & The Star
-    // Sorted strictly from the Central Star (0) outward by orbital distance (1..N)
+    // 0. Tab Key: Smooth, Deterministic Cycling Through All Celestial Bodies & The Central Star
+    // Sorted from Central Star outward by orbital distance. Micro-debris is excluded so Tab never gets stuck.
     if keyboard.just_pressed(KeyCode::Tab) {
-        let mut stars: Vec<(Entity, f64)> = Vec::new();
-        let mut planets: Vec<(Entity, f64)> = Vec::new();
+        let worlds = crate::game::ui::collect_sorted_system_worlds(
+            selected_query
+                .iter()
+                .map(|item| (item.0, item.7, item.4, item.1, item.2, item.12)),
+        );
 
-        for (e, _, _, _, pos, _, _, body, ..) in selected_query.iter() {
-            if body.body_type.is_star_or_remnant() {
-                stars.push((e, pos.0.length()));
-            } else {
-                planets.push((e, pos.0.length()));
-            }
-        }
-
-        // Sort stars and planets from innermost to outermost
-        stars.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        planets.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut all_entities: Vec<Entity> = Vec::new();
-        for (s_ent, _) in stars {
-            all_entities.push(s_ent);
-        }
-        for (p_ent, _) in planets {
-            all_entities.push(p_ent);
-        }
-
-        if !all_entities.is_empty() {
+        if !worlds.is_empty() {
             let shift =
                 keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-            let len = all_entities.len();
+            let len = worlds.len();
             let next_idx = if let Some(curr) = player_state.selected_entity {
-                if let Some(curr_idx) = all_entities.iter().position(|&e| e == curr) {
+                if let Some(curr_idx) = worlds.iter().position(|w| w.entity == curr) {
                     if shift {
                         (curr_idx + len - 1) % len
                     } else {
@@ -102,11 +86,46 @@ pub fn handle_player_tools(
                 }
             };
 
-            let target = all_entities[next_idx];
-            player_state.selected_entity = Some(target);
+            let target = &worlds[next_idx];
+            player_state.selected_entity = Some(target.entity);
             if let Ok((_, mut cam)) = camera_query.single_mut() {
-                cam.target_entity = Some(target);
+                cam.target_entity = Some(target.entity);
+                let visual_r =
+                    config.calc_visual_radius_for_type(target.radius_au, target.body_type);
+                cam.target_radius = config.calc_camera_framing_radius(visual_r);
             }
+
+            let m_str = if target.mass_solar >= 0.01 {
+                format!("{:.2} M☉", target.mass_solar)
+            } else {
+                format!("{:.2} M⊕", target.mass_solar / EARTH_MASS_SOLAR)
+            };
+            let icon = if target.is_central_star || target.body_type.is_star_or_remnant() {
+                "☀️"
+            } else if target.name.to_lowercase().contains("earth")
+                || target.name.to_lowercase().contains("habitable")
+                || target.name.to_lowercase().contains("1e")
+                || target.name.to_lowercase().contains("1f")
+                || target.name.to_lowercase().contains("1g")
+            {
+                "🌍"
+            } else if target.body_type == BodyType::GasGiant
+                || target.name.to_lowercase().contains("jupiter")
+                || target.name.to_lowercase().contains("saturn")
+            {
+                "🪐"
+            } else if target.name.to_lowercase().contains("rogue")
+                || target.name.to_lowercase().contains("nemesis")
+            {
+                "☄️"
+            } else {
+                "🪨"
+            };
+            toast.message = format!(
+                ">> TARGET: {} {} ({:.3} AU) | Mass: {}",
+                icon, target.name, target.distance_au, m_str
+            );
+            toast.timer = 4.0;
         }
     }
 
@@ -166,6 +185,7 @@ pub fn handle_player_tools(
             mut trans_opt,
             mut ignition_opt,
             mut opt_quasi,
+            _opt_star,
         )) = selected_query.get_mut(selected_ent)
         {
             // A. Increase Mass (Key U or Key + / =)
@@ -440,6 +460,14 @@ pub fn handle_player_tools(
     } else if keyboard.just_pressed(KeyCode::F6) {
         scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
             crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
+        ));
+    } else if keyboard.just_pressed(KeyCode::F7) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::PulsarSystem,
+        ));
+    } else if keyboard.just_pressed(KeyCode::F9) {
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
+            crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst,
         ));
     }
 

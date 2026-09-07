@@ -737,20 +737,24 @@ pub fn process_accretion_and_collisions(
                     (e2, m2, pos2, type2, e1, m1, pos1, vel1, name1.clone())
                 };
 
-                let is_gas_rich = matches!(
+                let is_capturing_body = matches!(
                     p_type,
-                    BodyType::GasGiant | BodyType::IceGiant | BodyType::Protoplanet
+                    BodyType::GasGiant
+                        | BodyType::IceGiant
+                        | BodyType::Protoplanet
+                        | BodyType::SuperEarth
+                        | BodyType::TerrestrialPlanet
                 );
-                let valid_mass_ratio = p_m >= EARTH_MASS_SOLAR * 0.1
-                    && s_m <= p_m * 0.05
+                let valid_mass_ratio = p_m >= EARTH_MASS_SOLAR * 0.05
+                    && s_m <= p_m * 0.15
                     && s_m >= EARTH_MASS_SOLAR * 1e-8;
 
-                if is_gas_rich && valid_mass_ratio && !p_type.is_star_or_remnant() {
+                if is_capturing_body && valid_mass_ratio && !p_type.is_star_or_remnant() {
                     let orbit_radius = p_pos.length().max(1e-4);
                     let hill_radius = orbit_radius * (p_m / (3.0 * star_mass)).cbrt();
 
-                    // Must pass deep inside the Hill sphere (where circumplanetary gas is dense)
-                    if min_dist < hill_radius * 0.4 {
+                    // Must pass deep inside the Hill sphere (where circumplanetary gas / dust is dense)
+                    if min_dist < hill_radius * 0.65 {
                         let v_esc_local = (2.0 * G_ASTRO * p_m / min_dist.max(1e-6)).sqrt();
 
                         // Relax capture mechanics simulating gas drag and multi-body interactions
@@ -800,12 +804,36 @@ pub fn process_accretion_and_collisions(
     }
 }
 
-/// Directly accretes primordial Hydrogen/Helium gas from the surrounding protoplanetary
-/// nebula via hydrodynamic Bondi-Hoyle and Hill sphere gas capture into growing planetary envelopes.
+/// Calculates the astrophysical mass capacity for circum-nuclear bodies
+/// based on the local gas surface density of the ring at orbital radius `r_au`.
+///
+/// In dense inner accretion channels (65 - 105 AU), hyper-accretion onto seeds can grow
+/// intermediate-mass black holes (IMBHs) and supermassive star seeds past 500 M_sun (up to ~1,000 M_sun).
+/// In intermediate rings (105 - 190 AU), growth is naturally capped at ~50 - 250 M_sun.
+/// In outer transition rings (190 - 240 AU), growth is capped at ~5 - 30 M_sun.
+/// In outer tenuous rings (240 - 280 AU), density is thin and bodies are naturally
+/// limited to planetary/sub-stellar scales (gas giants, brown dwarfs, or small stars <= 1.5 M_sun).
+pub fn circum_nuclear_ring_mass_capacity(r_au: f64, r_in: f64, r_out: f64) -> f64 {
+    let span = (r_out - r_in).max(1.0);
+    let norm_dist = ((r_au - r_in) / span).clamp(0.0, 1.0);
+
+    // Steep density falloff matching circum-nuclear surface density profile:
+    // Sigma(r) falls off strongly with distance from the central seed
+    let density_fraction = (1.0 - norm_dist).powf(1.65);
+
+    // Inner stream capacity: up to 1,000 M_sun for intermediate-mass black holes / supermassive seeds
+    // Outer edge capacity: ~5 Jupiter masses (0.00477 M_sun)
+    const INNER_CAPACITY_SOLAR: f64 = 1000.0;
+    const OUTER_CAPACITY_SOLAR: f64 = 5.0 * JUPITER_MASS_SOLAR;
+
+    OUTER_CAPACITY_SOLAR + (INNER_CAPACITY_SOLAR - OUTER_CAPACITY_SOLAR) * density_fraction
+}
+
+/// Accretes gas envelope onto protoplanetary cores / stellar seeds from the ambient circumstellar or circum-nuclear gas disk.
 pub fn direct_nebular_gas_accretion(
-    sim_time: Res<SimTime>,
-    time_warp: Res<TimeWarp>,
     config: Res<SimulationConfig>,
+    time_warp: Res<TimeWarp>,
+    sim_time: Res<SimTime>,
     disk_params: Res<DiskParameters>,
     star_query: Query<&IgnitionState, With<CentralStar>>,
     mut bodies_query: Query<
@@ -866,39 +894,49 @@ pub fn direct_nebular_gas_accretion(
         let m = mass.0;
 
         // 1. Zone-specific maximum mass and gas envelope saturation limits:
-        let (max_gas_mass, max_gas_frac, runaway_threshold_m_earth) = if is_massive_disk {
-            // Massive circum-nuclear disk / Little Red Dot:
-            // Bodies can grow from protoplanets to giant planets, brown dwarfs, and massive Pop-III stars!
-            (500.0, 1.0, 0.1) // Up to 500 Solar Masses, pure primordial gas, early runaway
-        } else if r_au < 2.7 {
-            // Terrestrial Zone (Mercury, Venus, Earth, Mars):
-            // Thin secondary atmosphere (1-2.5% gas fraction), capped at ~0.025 M_Earth of gas
-            (0.025 * EARTH_MASS_SOLAR, 0.025, 100.0) // Runaway strictly disabled
-        } else if r_au < 5.0 {
-            // Asteroid Belt Zone (Ceres, Vesta):
-            // Trace volatile envelope (up to 3.5% gas fraction), capped at ~0.04 M_Earth of gas
-            (0.04 * EARTH_MASS_SOLAR, 0.035, 100.0)
-        } else if r_au < 12.0 {
-            // Jupiter Zone:
-            // Massive gas giant runaway accretion up to 1.5 M_Jupiter (~480 M_Earth)
-            (JUPITER_MASS_SOLAR * 1.5, 0.94, 0.5) // Runaway enabled once core >= 0.5 M_Earth
-        } else if r_au < 22.0 {
-            // Saturn Zone:
-            // Gas giant runaway accretion up to 0.45 M_Jupiter (~140 M_Earth)
-            (JUPITER_MASS_SOLAR * 0.45, 0.88, 0.4)
-        } else if r_au < 36.0 {
-            // Uranus Zone (Ice Giant):
-            // Capped at ~20 M_Earth (~15-22% gas envelope, dominated by ices/silicates)
-            (20.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
-        } else if r_au < 50.0 {
-            // Neptune Zone (Ice Giant):
-            // Capped at ~22 M_Earth (~15-22% gas envelope)
-            (22.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
-        } else {
-            // Kuiper Belt (Pluto / comets in Solar Nebula):
-            // Tenuous ice world atmosphere (< 2% gas)
-            (0.02 * EARTH_MASS_SOLAR, 0.02, 100.0)
-        };
+        let (max_gas_mass, max_gas_frac, runaway_threshold_m_earth): (f64, f64, f64) =
+            if is_massive_disk {
+                // Circum-nuclear disk / Little Red Dot:
+                // Mass ceiling is dynamically bounded by the local density of the ring at its orbital radius!
+                // Inner dense stream (~70-100 AU): up to ~80-95 M_sun.
+                // Mid rings (~110-180 AU): up to ~25-60 M_sun.
+                // Outer rings (~190-240 AU): up to ~3-15 M_sun.
+                // Outer margins (~240-280 AU): planetary/dwarf regime (< 1.5 M_sun).
+                let ring_limit = circum_nuclear_ring_mass_capacity(
+                    r_au,
+                    disk_params.inner_radius_au,
+                    disk_params.outer_radius_au,
+                );
+                (ring_limit, 1.0, 5.0)
+            } else if r_au < 2.7 {
+                // Terrestrial Zone (Mercury, Venus, Earth, Mars):
+                // Rocky core with thin primordial atmosphere (up to 3.5% gas fraction)
+                (3.0 * EARTH_MASS_SOLAR, 0.035, 100.0) // Runaway strictly disabled
+            } else if r_au < 5.0 {
+                // Asteroid Belt Zone (Ceres, Vesta):
+                // Trace volatile envelope (up to 4.5% gas fraction)
+                (0.5 * EARTH_MASS_SOLAR, 0.045, 100.0)
+            } else if r_au < 12.0 {
+                // Jupiter Zone:
+                // Massive gas giant runaway accretion up to 1.5 M_Jupiter (~480 M_Earth)
+                (JUPITER_MASS_SOLAR * 1.5, 0.94, 0.5) // Runaway enabled once core >= 0.5 M_Earth
+            } else if r_au < 22.0 {
+                // Saturn Zone:
+                // Gas giant runaway accretion up to 0.45 M_Jupiter (~140 M_Earth)
+                (JUPITER_MASS_SOLAR * 0.45, 0.88, 0.4)
+            } else if r_au < 36.0 {
+                // Uranus Zone (Ice Giant):
+                // Capped at ~20 M_Earth (~15-22% gas envelope, dominated by ices/silicates)
+                (20.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
+            } else if r_au < 50.0 {
+                // Neptune Zone (Ice Giant):
+                // Capped at ~22 M_Earth (~15-22% gas envelope)
+                (22.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
+            } else {
+                // Kuiper Belt (Pluto / comets in Solar Nebula):
+                // Tenuous ice world atmosphere (< 2% gas)
+                (0.05 * EARTH_MASS_SOLAR, 0.02, 100.0)
+            };
 
         if m >= max_gas_mass {
             continue;
@@ -910,7 +948,7 @@ pub fn direct_nebular_gas_accretion(
 
         // Local ambient gas disk density at orbital radius r
         let local_gas_density = if is_massive_disk {
-            // Dense primordial hydrogen cloudlet reservoir: 50,000 M_sun gas in a 250 AU cocoon
+            // Dense primordial hydrogen cloudlet reservoir: 500 M_sun gas in a 280 AU disk
             0.0025 * (disk_params.outer_radius_au / r_au).powf(0.5) * gas_scale
         } else if r_au < 2.7 {
             if is_ignited {
@@ -930,27 +968,69 @@ pub fn direct_nebular_gas_accretion(
         };
 
         // Gravitational capture radius:
-        // In massive circum-nuclear disks, Bondi-Hoyle accretion governs gas sweeping in addition to Hill shear
+        // In the extreme tidal field of a 450,000 M_sun black hole,
+        // the Hill radius governs the true physical sphere of influence.
+        // Gas outside the Hill sphere is sheared away by black hole tidal torque.
         let r_hill = r_au * (m / (3.0 * star_mass)).cbrt();
-        let r_bondi = if is_massive_disk {
-            (0.15 * (m / JUPITER_MASS_SOLAR).sqrt()).clamp(0.08, 15.0)
+        let r_capture = if is_massive_disk {
+            r_hill.clamp(0.002, 3.5)
         } else {
-            0.0
+            r_hill
         };
-        let r_capture = r_hill.max(r_bondi);
         let omega_k = (G_ASTRO * star_mass / (r_au * r_au * r_au)).sqrt();
 
         let m_earth = m / EARTH_MASS_SOLAR;
         let is_runaway = m_earth >= runaway_threshold_m_earth;
-        let runaway_boost = if is_runaway {
-            // Rapid exponential runaway gas capture for massive outer cores
+        let runaway_boost = if is_massive_disk {
+            if body.body_type == BodyType::BlackHole || m >= 0.08 {
+                // Stellar / Black hole regime: radiation pressure & tidal torque regulate accretion
+                let eddington_suppression = (1.0 - (m / max_gas_mass)).clamp(0.01, 1.0);
+                0.20 * eddington_suppression
+            } else {
+                // Planetary regime: moderate core-assisted gas feeding
+                (1.0 + 0.15 * m_earth.clamp(1.0, 2500.0).powf(0.20)).min(3.0)
+            }
+        } else if is_runaway {
+            // Rapid exponential runaway gas capture for massive outer cores in solar nebula
             (1.0 + (m_earth / 5.0).powf(1.4)).min(40.0)
+        } else if r_au < 2.7 {
+            // Steady non-runaway core-assisted envelope feeding for terrestrial planets
+            (0.15 + 0.10 * m_earth).clamp(0.08, 0.40)
         } else {
             0.05
         };
 
-        let gap_factor = (1.0 - (m / max_gas_mass)).clamp(0.02, 1.0);
-        let c_gas = 180.0 * (config.accretion_rate_multiplier as f64 / 120.0);
+        let gap_factor = (1.0 - (m / max_gas_mass)).clamp(0.01, 1.0);
+        let c_gas = if is_massive_disk {
+            15.0 * (config.accretion_rate_multiplier as f64 / 120.0)
+        } else {
+            180.0 * (config.accretion_rate_multiplier as f64 / 120.0)
+        };
+
+        // Maximum fractional mass growth per simulated year (prevents instantaneous explosions in < 1 year):
+        // In circum-nuclear disks: max 4% growth per simulated YEAR (a body takes decades to grow, not 2 days!)
+        // In standard solar disk: max 2% growth per simulated YEAR (0.5% max for terrestrial worlds)
+        let max_annual_growth_rate = if is_massive_disk {
+            if m >= 10.0 {
+                0.015
+            } else {
+                0.04
+            }
+        } else if r_au < 2.7 {
+            0.005
+        } else {
+            0.02
+        };
+        let max_step_growth = (m * max_annual_growth_rate * dt_yr).max(1e-12 * dt_yr);
+
+        let remaining_gas_capacity = if !is_massive_disk && r_au < 5.0 {
+            let max_g = m * max_gas_frac;
+            let current_g = m * comp.gas_frac;
+            (max_g - current_g).max(0.0)
+        } else {
+            (max_gas_mass - m).max(0.0)
+        };
+
         let d_mass_gas = (c_gas
             * r_capture
             * r_capture
@@ -959,8 +1039,8 @@ pub fn direct_nebular_gas_accretion(
             * dt_yr
             * gap_factor
             * runaway_boost)
-            .min(m * 0.05) // Max 5% mass growth per sub-step for numerical stability during active feeding
-            .min(max_gas_mass - m);
+            .min(max_step_growth)
+            .min(remaining_gas_capacity);
 
         if d_mass_gas > 1e-16 {
             let old_mass = m;
@@ -970,11 +1050,23 @@ pub fn direct_nebular_gas_accretion(
             // Merge pure primordial solar gas into the planet's bulk composition
             *comp = comp.mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas);
             if !is_massive_disk && r_au < 2.7 {
-                comp.gas_frac = comp.gas_frac.clamp(0.005, 0.025);
+                comp.gas_frac = comp.gas_frac.min(max_gas_frac);
             }
 
-            // Recalculate physical radius with the new gaseous envelope or stellar structure
-            let new_radius = if new_mass >= 0.08 {
+            // Dynamically upgrade body type based on updated mass and composition,
+            // preserving Black Holes so they don't turn back into hydrogen stars!
+            let updated_type = if body.body_type == BodyType::BlackHole {
+                BodyType::BlackHole
+            } else {
+                classify_body_by_mass_and_comp(new_mass, &comp, false)
+            };
+            body.body_type = updated_type;
+
+            // Recalculate physical radius with the new gaseous envelope, stellar structure, or event horizon
+            let new_radius = if updated_type == BodyType::BlackHole {
+                // Schwarzschild radius: R_s = 2GM / c^2 ≈ 1.97e-8 AU * (M / M_sun)
+                (1.97e-8 * new_mass).max(1e-6)
+            } else if new_mass >= 0.08 {
                 // Main-sequence / Giant star radius: R ~ R_sun * (M / M_sun)^0.8
                 (0.00465 * (new_mass / 1.0).powf(0.8)).clamp(0.003, 10.0)
             } else {
@@ -986,32 +1078,51 @@ pub fn direct_nebular_gas_accretion(
             };
             rad.0 = new_radius;
 
-            // Dynamically upgrade body type based on updated mass and composition
-            let updated_type = classify_body_by_mass_and_comp(new_mass, &comp, false);
-            body.body_type = updated_type;
+            // Dynamically update name to reflect current evolutionary stage,
+            // preserving canonical Solar System names (Earth, Venus, Mars, Mercury, etc.)
+            let is_canonical_solar = body.name == "Earth"
+                || body.name == "Venus"
+                || body.name == "Mars"
+                || body.name == "Mercury"
+                || body.name.starts_with("Proto-")
+                || body.name.starts_with("Theia")
+                || body.name == "Jupiter"
+                || body.name == "Saturn"
+                || body.name == "Uranus"
+                || body.name == "Neptune";
 
-            // Dynamically update name to reflect current evolutionary stage
-            body.name = match updated_type {
-                BodyType::Hypergiant => format!("Pop-III Hypergiant ({:.1} M☉)", new_mass),
-                BodyType::BlueSupergiant => format!("Pop-III Blue Supergiant ({:.1} M☉)", new_mass),
-                BodyType::BlueGiant => format!("Pop-III Blue Giant ({:.1} M☉)", new_mass),
-                BodyType::YellowDwarf => format!("Pop-III Yellow Star ({:.2} M☉)", new_mass),
-                BodyType::RedDwarf => format!("Red Dwarf ({:.2} M☉)", new_mass),
-                BodyType::BrownDwarf => {
-                    format!("Brown Dwarf ({:.1} M_J)", new_mass / JUPITER_MASS_SOLAR)
-                }
-                BodyType::GasGiant => {
-                    if new_mass >= JUPITER_MASS_SOLAR {
-                        format!("Super-Jupiter ({:.1} M_J)", new_mass / JUPITER_MASS_SOLAR)
-                    } else {
-                        format!("Planet-{:.0}AU (Gas Giant)", r_au)
+            if !is_canonical_solar {
+                body.name = match updated_type {
+                    BodyType::BlackHole => {
+                        if new_mass >= 100.0 {
+                            format!("Intermediate Black Hole ({:.1} M☉)", new_mass)
+                        } else {
+                            format!("Orbiting Stellar Black Hole ({:.1} M☉)", new_mass)
+                        }
                     }
-                }
-                BodyType::IceGiant => format!("Planet-{:.0}AU (Ice Giant)", r_au),
-                BodyType::SuperEarth => format!("Planet-{:.0}AU (Super-Earth)", r_au),
-                BodyType::TerrestrialPlanet => format!("Planet-{:.0}AU (Terrestrial)", r_au),
-                _ => body.name.clone(),
-            };
+                    BodyType::Hypergiant => format!("Pop-III Hypergiant ({:.1} M☉)", new_mass),
+                    BodyType::BlueSupergiant => {
+                        format!("Pop-III Blue Supergiant ({:.1} M☉)", new_mass)
+                    }
+                    BodyType::BlueGiant => format!("Pop-III Blue Giant ({:.1} M☉)", new_mass),
+                    BodyType::YellowDwarf => format!("Pop-III Yellow Star ({:.2} M☉)", new_mass),
+                    BodyType::RedDwarf => format!("Red Dwarf ({:.2} M☉)", new_mass),
+                    BodyType::BrownDwarf => {
+                        format!("Brown Dwarf ({:.1} M_J)", new_mass / JUPITER_MASS_SOLAR)
+                    }
+                    BodyType::GasGiant => {
+                        if new_mass >= JUPITER_MASS_SOLAR {
+                            format!("Super-Jupiter ({:.1} M_J)", new_mass / JUPITER_MASS_SOLAR)
+                        } else {
+                            format!("Planet-{:.0}AU (Gas Giant)", r_au)
+                        }
+                    }
+                    BodyType::IceGiant => format!("Planet-{:.0}AU (Ice Giant)", r_au),
+                    BodyType::SuperEarth => format!("Planet-{:.0}AU (Super-Earth)", r_au),
+                    BodyType::TerrestrialPlanet => format!("Planet-{:.0}AU (Terrestrial)", r_au),
+                    _ => body.name.clone(),
+                };
+            }
 
             // Stellar surface heating for newborn stars
             if let Some(mut temp) = opt_temp {
@@ -1039,8 +1150,9 @@ pub fn direct_nebular_gas_accretion(
             }
             if let Some(ref mut vol) = opt_vol {
                 let gas_growth = d_mass_gas / EARTH_MASS_SOLAR;
+                let pressure_scale = if r_au < 2.7 { 100.0 } else { 400.0 };
                 vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
-                    + (gas_growth * 400.0) as f32)
+                    + (gas_growth * pressure_scale) as f32)
                     .clamp(0.01, if r_au < 2.7 { 95.0 } else { 1000.0 });
             }
         }

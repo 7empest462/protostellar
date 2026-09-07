@@ -146,6 +146,26 @@ pub fn spawn_protoplanetary_disk(
             BodyType::IceGiant,
             0.02,
         ),
+        // Canonical Dwarf Planet Pluto (Trans-Neptunian Kuiper Belt Monarch)
+        (
+            39.48,
+            0.00218 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.186,
+            "Pluto (Dwarf Planet)",
+            Composition::icy(),
+            BodyType::TerrestrialPlanet,
+            0.02,
+        ),
+        // Canonical Deep Outer Planet Nine (Hypothetical Super-Earth / Ice Giant Shepherding the Oort Cloud)
+        (
+            380.00,
+            5.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 2.30,
+            "Planet Nine (Super-Earth / Ice Giant)",
+            Composition::icy(),
+            BodyType::IceGiant,
+            0.05,
+        ),
     ];
 
     // 3. Spawn Asteroid Belt Minor Planets (Silicate, Carbonaceous, Metallic)
@@ -326,15 +346,6 @@ pub fn spawn_protoplanetary_disk(
             0.74,
         ),
         (
-            39.5,
-            0.0022 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.24,
-            "Pluto (Kuiper Dwarf)",
-            Composition::icy(),
-            BodyType::Comet,
-            0.24,
-        ),
-        (
             67.8,
             0.0028 * EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU * 0.25,
@@ -421,6 +432,13 @@ pub fn spawn_protoplanetary_disk(
         let initial_spin = 0.33 * mass * radius * radius * DVec3::new(0.0, omega, 0.0);
         spin.update_from_spin(initial_spin, mass, radius);
 
+        let vol = VolatileInventory {
+            delivered_water_m_earth: 0.0,
+            ocean_coverage_frac: 0.0,
+            atmospheric_pressure_bar: if a_f64 < 2.7 { 0.10 } else { 0.0 },
+            cometary_impact_count: 0,
+        };
+
         commands.spawn((
             CelestialBody {
                 body_type,
@@ -437,6 +455,7 @@ pub fn spawn_protoplanetary_disk(
             comp,
             diff,
             spin,
+            vol,
         ));
     }
 
@@ -456,18 +475,61 @@ pub fn sample_disk_radius<R: rand::Rng + ?Sized>(
     let is_massive = disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
     if is_massive {
         // Little Red Dot / Massive Circum-Nuclear Disk:
-        // Spans outside the 60 AU Quasi-Star cocoon, from 65 AU out to the visible outer disk radius (250 AU).
-        let r_in = (disk_params.inner_radius_au).max(65.0);
-        let r_out = (disk_params.outer_radius_au).max(r_in + 20.0);
-        let u: f64 = rng.random_range(0.0..1.0);
-        // Flared surface density profile: dN/dr ~ r^-0.5
-        let r = (r_in * r_in + u * (r_out * r_out - r_in * r_in)).sqrt();
-        let comp = if u < 0.65 {
-            Composition::pure_hydrogen()
-        } else if u < 0.90 {
-            Composition::solar_gas()
+        // Spans right from the innermost accretion stream near the central star / black hole (~2.0 AU)
+        // throughout the circum-nuclear disk out to outer_radius_au.
+        // Stratified zones ensure dense, swirling particles right near the central black hole and quasi-star,
+        // extending outward to envelope the companion stars and orbiting worlds.
+        let r_in = disk_params.inner_radius_au.clamp(1.0, 10.0);
+        let r_out = disk_params.outer_radius_au.max(r_in + 20.0);
+        let roll: f64 = rng.random_range(0.0..1.0);
+        let (r, comp) = if roll < 0.45 {
+            // Zone 1: Inner Accretion Stream (r_in .. 30.0 AU) - 45% of particles directly swirling near the black hole/star!
+            let u = roll / 0.45;
+            let r = (r_in * r_in + u * (30.0 * 30.0 - r_in * r_in)).sqrt();
+            (r, Composition::pure_hydrogen())
+        } else if roll < 0.80 {
+            // Zone 2: Circum-Nuclear Intermediate Disk (30.0 .. 120.0 AU) - 35% of particles
+            let u = (roll - 0.45) / 0.35;
+            let r = (30.0 * 30.0 + u * (120.0 * 120.0 - 30.0 * 30.0)).sqrt();
+            (r, Composition::solar_gas())
         } else {
-            Composition::icy()
+            // Zone 3: Outer Primordial Infall Reservoir (120.0 .. r_out) - 20% of particles
+            let u = (roll - 0.80) / 0.20;
+            let r = (120.0 * 120.0 + u * (r_out * r_out - 120.0 * 120.0)).sqrt();
+            (r, Composition::icy())
+        };
+        (r, comp)
+    } else if disk_params.outer_radius_au < 2.0 {
+        // Compact planetary system (e.g. TRAPPIST-1 with 7 resonant terrestrial worlds spanning 0.011 - 0.062 AU):
+        // Disk strictly spans disk_params.inner_radius_au .. disk_params.outer_radius_au (e.g. 0.005 - 0.15 AU)
+        let r_in = disk_params.inner_radius_au.max(0.002);
+        let r_out = disk_params.outer_radius_au.max(r_in * 2.0);
+        let roll: f64 = rng.random_range(0.0..1.0);
+        let (r, comp) = if roll < 0.50 {
+            // Zone 1: Inner Terrestrial World Reservoir (r_in .. r_out * 0.45) - 50% particles
+            let u = roll / 0.50;
+            let r_sub_out = r_in + (r_out - r_in) * 0.45;
+            let r = (r_in * r_in + u * (r_sub_out * r_sub_out - r_in * r_in)).sqrt();
+            let comp = if r < r_in + (r_sub_out - r_in) * 0.35 {
+                Composition::metal_rich()
+            } else {
+                Composition::rocky()
+            };
+            (r, comp)
+        } else if roll < 0.80 {
+            // Zone 2: Habitable / Volatile Transition Zone (r_out * 0.45 .. r_out * 0.75) - 30% particles
+            let u = (roll - 0.50) / 0.30;
+            let r_sub_in = r_in + (r_out - r_in) * 0.45;
+            let r_sub_out = r_in + (r_out - r_in) * 0.75;
+            let r =
+                (r_sub_in * r_sub_in + u * (r_sub_out * r_sub_out - r_sub_in * r_sub_in)).sqrt();
+            (r, Composition::carbonaceous())
+        } else {
+            // Zone 3: Outer Volatile Ice Reservoir (r_out * 0.75 .. r_out) - 20% particles
+            let u = (roll - 0.80) / 0.20;
+            let r_sub_in = r_in + (r_out - r_in) * 0.75;
+            let r = (r_sub_in * r_sub_in + u * (r_out * r_out - r_sub_in * r_sub_in)).sqrt();
+            (r, Composition::icy())
         };
         (r, comp)
     } else {
@@ -535,7 +597,7 @@ impl Default for PlanetesimalSpawner {
         Self {
             last_spawn_yr: 0.0,
             total_spawned: 0,
-            max_ecs_bodies: 24, // Cap at 24 major bodies so every planet is distinct and easy to cycle
+            max_ecs_bodies: 1024, // High minor body capacity for rich Asteroid & Kuiper Belts
             name_counter: 0,
         }
     }
@@ -609,12 +671,12 @@ pub fn auto_spawn_planetesimals(
         disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 
     // Canonical zone seeding for the first 8 planetesimal births, guaranteed across any time warp speed
-    let (r, comp) = if (spawner.total_spawned as usize) < 8 {
+    let (r, comp, is_feeding_zone) = if (spawner.total_spawned as usize) < 8 {
         if is_massive_disk {
             // Little Red Dot / Massive Circum-Nuclear Disk:
             // The central Quasi-Star cocoon is 60 AU! Spawn all bodies safely OUTSIDE the 60 AU cocoon
             // in the rich gas cloud and particle ring (70 - 245 AU) so they orbit stably!
-            match spawner.total_spawned {
+            let (r, c) = match spawner.total_spawned {
                 0 => (rng.random_range(72.0..88.0), Composition::solar_gas()), // Inner circum-nuclear giant seed
                 1 => (rng.random_range(92.0..112.0), Composition::pure_hydrogen()), // Dense hydrogen cloudlet seed
                 2 => (rng.random_range(118.0..142.0), Composition::solar_gas()), // Circum-nuclear embryo
@@ -623,10 +685,11 @@ pub fn auto_spawn_planetesimals(
                 5 => (rng.random_range(220.0..245.0), Composition::pure_hydrogen()), // Outer cloudlet
                 6 => (rng.random_range(80.0..130.0), Composition::icy()), // Rocky/icy embryo in particle ring
                 _ => (rng.random_range(140.0..220.0), Composition::solar_gas()), // Secondary stellar companion seed
-            }
+            };
+            (r, c, true)
         } else {
             // Hayashi Solar Nebula: Canonical solar system niches (0.38 - 45 AU)
-            match spawner.total_spawned {
+            let (r, c) = match spawner.total_spawned {
                 0 => (rng.random_range(0.38..0.72), Composition::rocky()), // Inner Terrestrial (Mercury/Venus)
                 1 => (rng.random_range(0.95..1.52), Composition::rocky()), // Habitable Zone (Earth/Mars)
                 2 => (rng.random_range(2.4..3.6), Composition::carbonaceous()), // Asteroid Belt Chondrites
@@ -635,10 +698,46 @@ pub fn auto_spawn_planetesimals(
                 5 => (rng.random_range(18.0..22.0), Composition::icy()), // Ice Giant Core (Uranus)
                 6 => (rng.random_range(28.0..32.0), Composition::icy()), // Outer Ice Giant Core (Neptune)
                 _ => (rng.random_range(36.0..45.0), Composition::icy()), // Kuiper Belt Object
-            }
+            };
+            (r, c, true)
+        }
+    } else if !is_massive_disk {
+        // Authentic Solar System Belt & Feeding Zone Distribution:
+        // 15% Planetary Feeding Zones (Embryos to seed moons & fuel accretion: 0.7-1.8 AU, 4.5-6.5 AU, 8.5-11.5 AU, 18.0-32.0 AU)
+        // 45% Main Asteroid Belt (2.15 - 3.45 AU)
+        // 35% Kuiper Belt / Cometary Reservoir (16.0 - 42.0 AU)
+        // 5% General disk sampling
+        let roll: f64 = rng.random_range(0.0..1.0);
+        if roll < 0.15 {
+            let zone_roll: f64 = rng.random_range(0.0..1.0);
+            let (r_zone, comp_zone) = if zone_roll < 0.35 {
+                (rng.random_range(0.7..1.8), Composition::rocky())
+            } else if zone_roll < 0.65 {
+                (rng.random_range(4.5..6.5), Composition::icy())
+            } else if zone_roll < 0.85 {
+                (rng.random_range(8.5..11.5), Composition::icy())
+            } else {
+                (rng.random_range(18.0..32.0), Composition::icy())
+            };
+            (r_zone, comp_zone, true)
+        } else if roll < 0.60 {
+            let r_belt = rng.random_range(2.15..3.45);
+            let comp_belt = if rng.random_bool(0.7) {
+                Composition::carbonaceous()
+            } else {
+                Composition::rocky()
+            };
+            (r_belt, comp_belt, false)
+        } else if roll < 0.95 {
+            let r_kuiper = rng.random_range(16.0..42.0);
+            (r_kuiper, Composition::icy(), false)
+        } else {
+            let (r_samp, comp_samp) = sample_disk_radius(&mut rng, &disk_params);
+            (r_samp, comp_samp, false)
         }
     } else {
-        sample_disk_radius(&mut rng, &disk_params)
+        let (r_samp, comp_samp) = sample_disk_radius(&mut rng, &disk_params);
+        (r_samp, comp_samp, false)
     };
 
     // Random azimuthal angle for orbital placement
@@ -657,10 +756,10 @@ pub fn auto_spawn_planetesimals(
     let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
 
     // Bimodal mass distribution: canonical giant cores start with 0.06 - 0.25 M_earth, terrestrial embryos 0.02 - 0.10 M_earth
-    let is_protoplanet: bool = if (spawner.total_spawned as usize) < 8 {
+    let is_protoplanet: bool = if (spawner.total_spawned as usize) < 8 || is_feeding_zone {
         true
     } else {
-        rng.random_bool(0.45)
+        rng.random_bool(0.35)
     };
     let log_mass_earth: f64 = if is_protoplanet {
         if is_massive_disk {
@@ -686,28 +785,25 @@ pub fn auto_spawn_planetesimals(
     // Temperature from distance to star
     let temp = disk_params.reference_temp_1au * (r / 1.0).powf(-0.5);
 
-    // Determine body type from mass
-    let body_type = if mass >= EARTH_MASS_SOLAR * 0.005 {
+    // Determine body type from mass & region
+    let body_type = if mass >= EARTH_MASS_SOLAR * 0.005 || is_feeding_zone {
         BodyType::Protoplanet
+    } else if (2.0..=3.8).contains(&r) {
+        BodyType::Asteroid
+    } else if r >= 15.0 || comp.ice_frac > 0.35 {
+        BodyType::Comet
     } else {
         BodyType::Planetesimal
     };
 
     // Generate unique name based on disk zone
     spawner.name_counter += 1;
-    let zone_name = if r < disk_params.snow_line_au {
-        "Rocky"
-    } else if r < 40.0 {
-        "Icy"
-    } else {
-        "KBO"
+    let name = match body_type {
+        BodyType::Protoplanet => format!("Embryo #{}", spawner.name_counter),
+        BodyType::Asteroid => format!("Asteroid #{}", spawner.name_counter),
+        BodyType::Comet => format!("Comet #{}", spawner.name_counter),
+        _ => format!("Planetesimal #{}", spawner.name_counter),
     };
-    let type_label = if body_type == BodyType::Protoplanet {
-        "Embryo"
-    } else {
-        "Planetesimal"
-    };
-    let name = format!("{} {} #{}", zone_name, type_label, spawner.name_counter);
 
     // Internal differentiation and spin
     let mut diff = InternalDifferentiation::default();
@@ -861,4 +957,161 @@ pub fn auto_spawn_delayed_proto_earth(
         "🌍 Proto-Earth spawned at 1.00 AU at T + {:.1} yr into cleared circumstellar disk.",
         sim_time.elapsed_years
     );
+}
+
+/// Maintains a steady cascade of planet-crossing impactors (asteroids & comets) during the Late Heavy Bombardment epoch.
+/// This guarantees that inner terrestrial planets receive active cometary/asteroid bombardment,
+/// delivering volatile water to Earth and forming visible impact basins.
+pub fn update_late_heavy_bombardment_cascade(
+    mut commands: Commands,
+    time_warp: Res<TimeWarp>,
+    sim_time: Res<SimTime>,
+    disk_params: Res<DiskParameters>,
+    mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    query: Query<(Entity, &SimPosition, &SimVelocity, &CelestialBody, &Mass)>,
+    star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
+    mut cascade_timer: Local<f64>,
+    mut cascade_counter: Local<usize>,
+) {
+    if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+
+    if !lhb_state.is_active || lhb_state.migration_progress >= 0.95 {
+        return;
+    }
+
+    let Ok((star_pos, star_mass)) = star_query.single() else {
+        return;
+    };
+
+    let dt = sim_time.current_dt_yr;
+    *cascade_timer -= dt;
+
+    // Count currently active inner-crossing impactors (q <= 1.6 AU)
+    let star_m = star_mass.0.max(0.1);
+    let mut active_crossers = 0;
+    let mut total_bodies = 0;
+
+    for (_, pos, vel, body, _) in query.iter() {
+        total_bodies += 1;
+        if matches!(
+            body.body_type,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal
+        ) {
+            let r_vec = pos.0 - star_pos.0;
+            let r = (r_vec.x * r_vec.x + r_vec.z * r_vec.z).sqrt();
+            let v_sq = vel.0.length_squared();
+            // Estimate perihelion q = a * (1 - e)
+            let specific_e = 0.5 * v_sq - (G_ASTRO * star_m) / r.max(0.01);
+            if specific_e < 0.0 {
+                let a = -(G_ASTRO * star_m) / (2.0 * specific_e);
+                let h_vec = r_vec.cross(vel.0);
+                let h = h_vec.length();
+                let e_sq = (1.0 - (h * h) / (G_ASTRO * star_m * a)).max(0.0);
+                let e = e_sq.sqrt();
+                let q = a * (1.0 - e);
+                if q <= 1.6 && r <= 6.0 {
+                    active_crossers += 1;
+                }
+            } else if r <= 2.5 {
+                // Hyperbolic/parabolic inbound
+                active_crossers += 1;
+            }
+        }
+    }
+
+    // Safety cap: Never let total bodies in ECS exceed 64 to protect N-body performance
+    if total_bodies >= 64 {
+        return;
+    }
+
+    // Maintain a target of 10 to 14 active inner-crossing impactors
+    let target_crossers = 12;
+    if active_crossers < target_crossers && *cascade_timer <= 0.0 {
+        *cascade_counter += 1;
+        let c_idx = *cascade_counter;
+
+        // Reset timer: rapid replenishment if very few crossers, otherwise paced
+        *cascade_timer = if active_crossers < 5 { 0.4 } else { 2.5 };
+
+        // 60% Carbonaceous Asteroids (main belt origin, water-bearing), 40% Pristine Icy Comets (Kuiper belt origin)
+        let is_comet = (c_idx % 5) >= 3;
+
+        let (r_spawn, q_target, mass_solar, rad_au, comp, body_type, name) = if is_comet {
+            let r_s = 7.0 + ((c_idx * 17) % 100) as f64 * 0.08; // 7.0 to 15.0 AU
+            let q_t = 0.85 + ((c_idx * 31) % 100) as f64 * 0.003; // 0.85 to 1.15 AU
+            let m_s = (0.000015 + ((c_idx * 7) % 50) as f64 * 0.000001) * EARTH_MASS_SOLAR;
+            let r_au = EARTH_RADIUS_AU * 0.06;
+            (
+                r_s,
+                q_t,
+                m_s,
+                r_au,
+                Composition::icy(),
+                BodyType::Comet,
+                format!("LHB-Comet C/{}", 1900 + (c_idx % 1000)),
+            )
+        } else {
+            let r_s = 2.3 + ((c_idx * 23) % 100) as f64 * 0.012; // 2.3 to 3.5 AU
+            let q_t = 0.70 + ((c_idx * 43) % 100) as f64 * 0.005; // 0.70 to 1.20 AU
+            let m_s = (0.000020 + ((c_idx * 13) % 50) as f64 * 0.000001) * EARTH_MASS_SOLAR;
+            let r_au = EARTH_RADIUS_AU * 0.08;
+            (
+                r_s,
+                q_t,
+                m_s,
+                r_au,
+                Composition::carbonaceous(),
+                BodyType::Asteroid,
+                format!("LHB-Asteroid ({})", 10000 + (c_idx % 90000)),
+            )
+        };
+
+        // Construct Keplerian ellipse with apoapsis ~ r_spawn and periapsis ~ q_target
+        let v_tangential =
+            (G_ASTRO * star_m * (2.0 * q_target) / (r_spawn * (r_spawn + q_target))).sqrt();
+        // Inward radial velocity so it is actively approaching perihelion
+        let v_inward = -v_tangential * 0.15;
+
+        let angle = ((c_idx * 137) % 360) as f64 * std::f64::consts::PI / 180.0;
+        let inc_angle = (((c_idx * 29) % 20) as f64 - 10.0) * 0.005; // +/- 0.05 rad inclination
+
+        let pos = star_pos.0
+            + DVec3::new(
+                r_spawn * angle.cos(),
+                r_spawn * inc_angle,
+                r_spawn * angle.sin(),
+            );
+
+        let u_tan = DVec3::new(-angle.sin(), 0.0, angle.cos());
+        let u_rad = DVec3::new(angle.cos(), inc_angle, angle.sin()).normalize_or_zero();
+        let vel = u_tan * v_tangential + u_rad * v_inward;
+
+        let mut diff = InternalDifferentiation::default();
+        diff.recalculate(mass_solar, rad_au, &comp);
+
+        let temp_k = disk_params.reference_temp_1au * (r_spawn.max(0.1)).powf(-0.5);
+
+        commands.spawn((
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(mass_solar),
+            Radius(rad_au),
+            Temperature(temp_k),
+            comp,
+            diff,
+            CelestialBody { name, body_type },
+            VolatileInventory {
+                delivered_water_m_earth: 0.0,
+                cometary_impact_count: 0,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 0.0,
+            },
+            SpinState::default(),
+        ));
+
+        lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
+    }
 }

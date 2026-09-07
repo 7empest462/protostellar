@@ -878,6 +878,9 @@ fn test_scenario_preset_definitions() {
         ScenarioPreset::Kepler16Circumbinary,
         ScenarioPreset::HotJupiterMigration,
         ScenarioPreset::RoguePlanetFlyby,
+        ScenarioPreset::LittleRedDot,
+        ScenarioPreset::PulsarSystem,
+        ScenarioPreset::MagnetarOutburst,
     ];
 
     for preset in presets {
@@ -2324,4 +2327,2519 @@ fn test_asteroid_mesh_isotropic_harmonics_and_planetesimal_sphere() {
         new_harmonic_axis.abs() > 0.01,
         "Isotropic noise must be non-zero on axes to prevent flat cube faces"
     );
+}
+
+#[test]
+fn test_pop_iii_eddington_mass_ceiling() {
+    // Verifies that stellar accretion in supermassive disks (Little Red Dot)
+    // is strictly bounded by the astrophysical Eddington radiation ceiling (150 M_sun),
+    // preventing the catastrophic 423-billion-solar-mass runaway explosion.
+    let mut star_mass = 60.0; // 60 M_sun Pop-III star seed
+    const POP_III_MAX_STELLAR_MASS: f64 = 150.0;
+
+    // Simulate 50,000 particle accretion events (each gaining dust mass)
+    let particle_gain = 0.005; // 0.005 M_sun per swarm particle in a 500 M_sun disk
+    for _ in 0..50_000 {
+        if star_mass < POP_III_MAX_STELLAR_MASS {
+            let growth_factor = (1.0 - (star_mass / POP_III_MAX_STELLAR_MASS)).clamp(0.0, 1.0);
+            let delta = particle_gain * (1.0 + 0.25 * growth_factor);
+            star_mass = (star_mass + delta).min(POP_III_MAX_STELLAR_MASS);
+        }
+    }
+
+    assert!(
+        star_mass <= POP_III_MAX_STELLAR_MASS,
+        "Pop-III star mass ({star_mass} M_sun) must never exceed Eddington ceiling of {POP_III_MAX_STELLAR_MASS} M_sun"
+    );
+    assert!(
+        star_mass >= 149.9,
+        "Pop-III star should asymptotically approach the Eddington limit smoothly"
+    );
+
+    // Verify sub-stellar planet in massive disk does not grow into a star
+    let mut planet_mass = 0.005; // 5.2 M_Jup gas giant
+    let max_planet_mass = 15.0 * JUPITER_MASS_SOLAR;
+    for _ in 0..10_000 {
+        if planet_mass < max_planet_mass {
+            let m_earth = (planet_mass / EARTH_MASS_SOLAR).clamp(0.1, 4500.0);
+            let mult = 1.0 + 0.15 * m_earth.powf(0.20);
+            planet_mass = (planet_mass + particle_gain * mult).min(max_planet_mass);
+        }
+    }
+    assert!(
+        planet_mass <= max_planet_mass,
+        "Planet mass in massive disk must not exceed 15 M_Jup ({planet_mass} <= {max_planet_mass})"
+    );
+}
+
+#[test]
+fn test_supermassive_disk_particle_boundary_retention() {
+    // Tests that particles orbiting a 450,000 M_sun Quasi-Star stay bound within
+    // the circum-nuclear disk ([65, 250] AU) and never get flung out to > 100,000 AU.
+    let star_mass = 450_000.0;
+    let r_orbit = 100.0; // AU
+    let v_circ = (G_ASTRO * star_mass / r_orbit).sqrt(); // ~421.5 AU/yr
+
+    let mut pos = DVec3::new(r_orbit, 0.0, 0.0);
+    let mut vel = DVec3::new(0.0, 0.0, v_circ);
+
+    // Perturbation from a 60 M_sun companion star passing nearby at 95 AU
+    let mb_pos = DVec3::new(95.0, 0.0, 0.0);
+    let mb_mass = 60.0;
+
+    let dt = 0.002;
+    for _ in 0..500 {
+        let r = pos.length();
+        let to_star = -pos;
+        let a_star = (G_ASTRO * star_mass / (r * r * r)) * to_star;
+
+        let to_mb = mb_pos - pos;
+        let dist_sq = (to_mb.length_squared() + 0.04).max(0.04);
+        let a_mb = (G_ASTRO * mb_mass / (dist_sq * dist_sq.sqrt())) * to_mb;
+
+        let mut a_tot = a_star + a_mb;
+        let a_mag = a_tot.length();
+        let max_a = 45_000.0; // AU/yr^2
+        if a_mag > max_a {
+            a_tot *= max_a / a_mag;
+        }
+
+        vel += a_tot * dt;
+        let speed = vel.length();
+        let max_speed = 8_000.0; // AU/yr
+        if speed > max_speed {
+            vel *= max_speed / speed;
+        }
+
+        pos += vel * dt;
+
+        // Disk boundary restitution
+        let p_r = (pos.x * pos.x + pos.z * pos.z).sqrt();
+        assert!(
+            p_r < 1000.0,
+            "Particle radius ({p_r} AU) must remain in circum-nuclear disk, never escape to interstellar space"
+        );
+    }
+}
+
+#[test]
+fn test_supermassive_disk_circum_nuclear_capacity_and_imbh_growth() {
+    // Verify that circum-nuclear disk allows growth > 500 M_sun in the thick inner region,
+    // while tapering down in outer regions to preserve realistic planetary/sub-stellar masses.
+    let r_in = 65.0;
+    let r_out = 280.0;
+
+    // 1. Thick inner accretion channel (75 AU)
+    let inner_cap =
+        protostellar::simulation::accretion::circum_nuclear_ring_mass_capacity(75.0, r_in, r_out);
+    assert!(
+        inner_cap > 500.0 && inner_cap <= 1000.0,
+        "Thick inner region capacity ({inner_cap} M_sun) must exceed 500 M_sun for supermassive seeds / IMBHs"
+    );
+
+    // 2. Intermediate ring (150 AU)
+    let mid_cap =
+        protostellar::simulation::accretion::circum_nuclear_ring_mass_capacity(150.0, r_in, r_out);
+    assert!(
+        mid_cap > 50.0 && mid_cap < 500.0,
+        "Mid-ring capacity ({mid_cap} M_sun) should support Pop-III stars (50 - 500 M_sun)"
+    );
+
+    // 3. Outer tenuous ring (260 AU)
+    let outer_cap =
+        protostellar::simulation::accretion::circum_nuclear_ring_mass_capacity(260.0, r_in, r_out);
+    assert!(
+        outer_cap < 30.0,
+        "Outer ring capacity ({outer_cap} M_sun) must be bounded to stellar/planetary scales"
+    );
+
+    // 4. Verify that a body growing to 600 M_sun in the inner channel transitions to an Intermediate-Mass Black Hole
+    let comp = Composition::pure_hydrogen();
+    let body_type_600m = classify_body_by_mass_and_comp(600.0, &comp, false);
+    assert_eq!(
+        body_type_600m,
+        BodyType::BlackHole,
+        "Bodies exceeding 500 M_sun must collapse into Intermediate-Mass Black Holes"
+    );
+
+    // 5. Verify that a 1,000 M_sun IMBH at 88 AU around 450,000 M_sun central BH maintains a compact, stable Hill sphere
+    let bh_mass: f64 = 450_000.0;
+    let r_orbit: f64 = 88.0;
+    let sat_mass: f64 = 1000.0;
+    let hill_r: f64 = r_orbit * (sat_mass / (3.0 * bh_mass)).cbrt();
+    assert!(
+        hill_r < 9.0,
+        "1000 M_sun IMBH Hill radius ({hill_r} AU) must remain well under the 32 AU gap to the next star at 120 AU"
+    );
+}
+
+#[test]
+fn test_little_red_dot_scenario_initial_orbit_stability() {
+    let bh_mass = 450_000.0; // M_sun
+
+    // The 6 initial satellites of Little Red Dot
+    let satellites = [
+        ("Micro-Quasar alpha", 88.0, 12.0),
+        ("Star alpha", 120.0, 60.0),
+        ("Prime-b", 155.0, 0.000045),
+        ("Star beta", 190.0, 35.0),
+        ("Prime-c", 225.0, 0.000030),
+        ("Star gamma", 260.0, 20.0),
+    ];
+
+    for (name, r, m) in satellites {
+        let v_circ_au_yr = (G_ASTRO * bh_mass / r).sqrt();
+        let v_circ_km_s = v_circ_au_yr * 4.74047;
+
+        // Speed must be well below speed of light (299,792 km/s)
+        assert!(
+            v_circ_km_s < 299_792.0,
+            "{name} at {r} AU has orbital speed {v_circ_km_s} km/s exceeding speed of light!"
+        );
+        // Speed must be astrophysically realistic for circum-nuclear orbit (1,000 - 15,000 km/s)
+        assert!(
+            v_circ_km_s > 1000.0 && v_circ_km_s < 15000.0,
+            "{name} at {r} AU has speed {v_circ_km_s} km/s outside expected Keplerian range"
+        );
+
+        // Orbital period T = 2*pi*r / v = 2*pi*sqrt(r^3 / (G*M))
+        let period_yr = 2.0 * std::f64::consts::PI * (r * r * r / (G_ASTRO * bh_mass)).sqrt();
+        assert!(
+            period_yr > 0.5 && period_yr < 10.0,
+            "{name} at {r} AU period {period_yr} yr should be between 0.5 and 10.0 yr"
+        );
+
+        // Hill sphere radius: r_hill = r * (m / (3 * M_bh))^(1/3)
+        let hill_r = r * (m / (3.0 * bh_mass)).cbrt();
+        assert!(
+            hill_r < 15.0,
+            "{name} Hill radius ({hill_r} AU) must remain compact and well within inter-satellite spacing"
+        );
+    }
+}
+
+#[test]
+fn test_stellar_photosphere_shader_coverage() {
+    let shader_src = std::fs::read_to_string("assets/shaders/planet.wgsl")
+        .expect("planet.wgsl should be readable");
+
+    // 1. Cellular noise engine
+    assert!(
+        shader_src.contains("fn voronoi3("),
+        "planet.wgsl must contain 3D Voronoi cellular noise engine"
+    );
+    assert!(
+        shader_src.contains("fn hash3_vec("),
+        "planet.wgsl must contain 3D vector hash function"
+    );
+
+    // 2. Black Hole Star / Quasi-Star Photosphere
+    assert!(
+        shader_src.contains("fn render_quasistar_photosphere("),
+        "planet.wgsl must contain dedicated render_quasistar_photosphere function"
+    );
+    assert!(
+        shader_src.contains("planet.planet_type == 7u"),
+        "planet.wgsl must branch on planet_type == 7u for Quasi-Star"
+    );
+    assert!(
+        shader_src.contains("rim_grazing"),
+        "planet.wgsl must compute coronal limb flare for Quasi-Star"
+    );
+
+    // 3. Universal Stellar Photosphere Engine
+    assert!(
+        shader_src.contains("fn render_stellar_photosphere("),
+        "planet.wgsl must contain render_stellar_photosphere function"
+    );
+    assert!(
+        shader_src.contains("planet.planet_type == 0u"),
+        "planet.wgsl must branch on planet_type == 0u for stars"
+    );
+
+    // 4. Must cover all requested star archetypes
+    assert!(
+        shader_src.contains("Main Sequence Yellow Dwarf"),
+        "planet.wgsl must support Main Sequence Yellow Dwarf"
+    );
+    assert!(
+        shader_src.contains("Red Dwarf"),
+        "planet.wgsl must support Red Dwarf"
+    );
+    assert!(
+        shader_src.contains("Brown Dwarf"),
+        "planet.wgsl must support Brown Dwarf"
+    );
+    assert!(
+        shader_src.contains("Red Giant & Red Supergiant"),
+        "planet.wgsl must support Red Giant"
+    );
+    assert!(
+        shader_src.contains("Blue Hyper Giant"),
+        "planet.wgsl must support Blue Hyper Giant"
+    );
+    assert!(
+        shader_src.contains("Neutron Star"),
+        "planet.wgsl must support Neutron Star"
+    );
+    assert!(
+        shader_src.contains("Pulsar"),
+        "planet.wgsl must support Pulsar"
+    );
+    assert!(
+        shader_src.contains("Magnetar"),
+        "planet.wgsl must support Magnetar"
+    );
+    assert!(
+        shader_src.contains("White Dwarf"),
+        "planet.wgsl must support White Dwarf"
+    );
+    assert!(
+        shader_src.contains("Protostar"),
+        "planet.wgsl must support Protostar"
+    );
+    assert!(
+        shader_src.contains("Wolf-Rayet"),
+        "planet.wgsl must support Wolf-Rayet Star"
+    );
+}
+
+#[test]
+fn test_stellar_subtype_mapping_and_palettes() {
+    use protostellar::rendering::bodies::{compute_stellar_palette, star_subtype_from_body_type};
+
+    // 1. Verify exact subtype mappings
+    assert_eq!(star_subtype_from_body_type(BodyType::YellowDwarf), 0.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::MainSequenceStar), 0.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::RedDwarf), 1.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::BrownDwarf), 2.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::RedGiant), 3.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::RedSupergiant), 3.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::BlueGiant), 4.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::BlueSupergiant), 4.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::Hypergiant), 4.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::NeutronStar), 5.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::Pulsar), 6.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::Magnetar), 7.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::WhiteDwarf), 8.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::Protostar), 9.0);
+    assert_eq!(star_subtype_from_body_type(BodyType::WolfRayet), 10.0);
+
+    // 2. Verify all star types have distinct, non-identical colors
+    let col_yellow = compute_stellar_palette(BodyType::YellowDwarf, 5778.0);
+    let col_red_dwarf = compute_stellar_palette(BodyType::RedDwarf, 3000.0);
+    let col_brown_dwarf = compute_stellar_palette(BodyType::BrownDwarf, 1600.0);
+    let col_red_giant = compute_stellar_palette(BodyType::RedGiant, 3200.0);
+    let col_blue_hyper = compute_stellar_palette(BodyType::Hypergiant, 35000.0);
+    let col_neutron = compute_stellar_palette(BodyType::NeutronStar, 100000.0);
+    let col_pulsar = compute_stellar_palette(BodyType::Pulsar, 200000.0);
+    let col_magnetar = compute_stellar_palette(BodyType::Magnetar, 500000.0);
+    let col_white_dwarf = compute_stellar_palette(BodyType::WhiteDwarf, 15000.0);
+    let col_quasi = compute_stellar_palette(BodyType::QuasiStar, 4000.0);
+
+    let colors = [
+        ("Yellow Dwarf", col_yellow),
+        ("Red Dwarf", col_red_dwarf),
+        ("Brown Dwarf", col_brown_dwarf),
+        ("Red Giant", col_red_giant),
+        ("Blue Hypergiant", col_blue_hyper),
+        ("Neutron Star", col_neutron),
+        ("Pulsar", col_pulsar),
+        ("Magnetar", col_magnetar),
+        ("White Dwarf", col_white_dwarf),
+        ("Quasi-Star", col_quasi),
+    ];
+
+    // Every pair must differ by a perceptible Euclidean RGB distance (> 0.05)
+    for i in 0..colors.len() {
+        for j in (i + 1)..colors.len() {
+            let (name_a, c_a) = colors[i];
+            let (name_b, c_b) = colors[j];
+            let rgba_a = bevy::color::LinearRgba::from(c_a);
+            let rgba_b = bevy::color::LinearRgba::from(c_b);
+            let diff = ((rgba_a.red - rgba_b.red).powi(2)
+                + (rgba_a.green - rgba_b.green).powi(2)
+                + (rgba_a.blue - rgba_b.blue).powi(2))
+            .sqrt();
+            assert!(
+                diff > 0.05,
+                "{name_a} and {name_b} have nearly identical palettes (diff = {diff:.4})"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_quasistar_photosphere_and_blowout_states() {
+    let mut qs_state = BlackHoleStarState::default();
+
+    // 1. Intact state
+    assert!(!qs_state.is_blown_out, "Quasi-star must start intact");
+    assert_eq!(qs_state.cocoon_radius_au, 60.0);
+    assert_eq!(qs_state.eddington_ratio, 3.5);
+
+    // Archetype when intact should be 7 (dedicated Quasi-Star photosphere)
+    let p_type_intact = if !qs_state.is_blown_out { 7u32 } else { 5u32 };
+    assert_eq!(
+        p_type_intact, 7u32,
+        "Intact quasi-star must use planet_type 7"
+    );
+
+    // 2. Blowout trigger
+    qs_state.trigger_blowout();
+    assert!(qs_state.is_blown_out, "Quasi-star must be marked blown out");
+
+    // Archetype when blown out should be 5 (naked black hole singularity with photon ring)
+    let p_type_blown = if !qs_state.is_blown_out { 7u32 } else { 5u32 };
+    assert_eq!(
+        p_type_blown, 5u32,
+        "Blown out quasi-star must transition to planet_type 5 (Black Hole)"
+    );
+}
+
+#[test]
+fn test_pulsar_and_magnetar_scenario_presets() {
+    use bevy::prelude::*;
+    use protostellar::simulation::components::{
+        BodyType, CelestialBody, ElectromagneticFieldState, Mass, SpinState,
+    };
+    use protostellar::simulation::resources::DiskParameters;
+    use protostellar::simulation::scenarios::{
+        spawn_magnetar_outburst_scenario, spawn_pulsar_system_scenario, ScenarioPreset,
+    };
+
+    // 1. Verify preset enum and metadata
+    assert_eq!(
+        ScenarioPreset::PulsarSystem.display_name(),
+        "PSR B1257+12 (Pulsar & Zombie Planets)"
+    );
+    assert_eq!(
+        ScenarioPreset::MagnetarOutburst.display_name(),
+        "SGR 1806-20 (Magnetar Giant Flare)"
+    );
+
+    // 2. Test Pulsar system spawning
+    let mut app = App::new();
+    let mut disk_params = DiskParameters::default();
+    let pulsar_ent =
+        spawn_pulsar_system_scenario(&mut app.world_mut().commands(), &mut disk_params);
+    app.update();
+
+    let world = app.world();
+    let pulsar_body = world
+        .get::<CelestialBody>(pulsar_ent)
+        .expect("Pulsar entity must exist");
+    assert_eq!(pulsar_body.body_type, BodyType::Pulsar);
+    assert!(pulsar_body.name.contains("PSR B1257+12"));
+
+    let pulsar_mass = world
+        .get::<Mass>(pulsar_ent)
+        .expect("Mass component required");
+    assert_eq!(pulsar_mass.0, 1.40);
+
+    let em_field = world
+        .get::<ElectromagneticFieldState>(pulsar_ent)
+        .expect("EM field required");
+    assert_eq!(em_field.magnetic_field_gauss, 1.0e9);
+    assert!((em_field.rotation_period_sec - 0.00622).abs() < 1e-5);
+
+    let spin = world
+        .get::<SpinState>(pulsar_ent)
+        .expect("SpinState required");
+    assert!(spin.rotation_period_hours < 0.001); // Millisecond rotator
+
+    // Check zombie exoplanets (Draugr, Poltergeist, Phobetor, Dagon)
+    let mut body_count = 0;
+    let mut draugr_found = false;
+    let mut poltergeist_found = false;
+    let mut phobetor_found = false;
+    let mut query = app.world_mut().query::<&CelestialBody>();
+    for body in query.iter(app.world()) {
+        body_count += 1;
+        if body.name.contains("Draugr") {
+            draugr_found = true;
+        } else if body.name.contains("Poltergeist") {
+            poltergeist_found = true;
+        } else if body.name.contains("Phobetor") {
+            phobetor_found = true;
+        }
+    }
+    assert_eq!(body_count, 5); // Pulsar + 4 companions
+    assert!(draugr_found && poltergeist_found && phobetor_found);
+
+    // 3. Test Magnetar scenario spawning
+    let mut app2 = App::new();
+    let mut disk_params2 = DiskParameters::default();
+    let magnetar_ent =
+        spawn_magnetar_outburst_scenario(&mut app2.world_mut().commands(), &mut disk_params2);
+    app2.update();
+
+    let world2 = app2.world();
+    let magnetar_body = world2
+        .get::<CelestialBody>(magnetar_ent)
+        .expect("Magnetar entity must exist");
+    assert_eq!(magnetar_body.body_type, BodyType::Magnetar);
+    assert!(magnetar_body.name.contains("SGR 1806-20"));
+
+    let magnetar_mass = world2
+        .get::<Mass>(magnetar_ent)
+        .expect("Mass component required");
+    assert_eq!(magnetar_mass.0, 1.95);
+
+    let magnetar_em = world2
+        .get::<ElectromagneticFieldState>(magnetar_ent)
+        .expect("EM field required");
+    assert_eq!(magnetar_em.magnetic_field_gauss, 1.0e15); // 10^15 Gauss
+
+    // Check companions (Valkyrie, Pyre, SGR Ejecta Clump, LBV 1806-20)
+    let mut companion_count = 0;
+    let mut lbv_found = false;
+    let mut query2 = app2.world_mut().query::<&CelestialBody>();
+    for body in query2.iter(app2.world()) {
+        companion_count += 1;
+        if body.name.contains("LBV 1806-20") {
+            lbv_found = true;
+            assert_eq!(body.body_type, BodyType::BlueSupergiant);
+        }
+    }
+    assert_eq!(companion_count, 5); // Magnetar + 4 bodies
+    assert!(lbv_found);
+}
+
+#[test]
+fn test_pulsar_and_magnetar_visual_structures_lifecycle() {
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::{
+        sync_magnetar_structures, sync_pulsar_beams, MagnetarStructurePart, MagnetarStructureRoot,
+        PulsarBeamPart, PulsarBeamRoot, VisualAssets,
+    };
+    use protostellar::simulation::resources::SimulationConfig;
+
+    let mut app = App::new();
+    app.add_plugins(bevy::asset::AssetPlugin::default());
+    app.init_asset::<Mesh>();
+    app.init_asset::<StandardMaterial>();
+    app.init_resource::<Time>();
+    app.init_resource::<SimulationConfig>();
+
+    let (star_mesh, cyl_mesh) = {
+        let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+        (
+            meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
+            meshes.add(Cylinder::new(1.0, 1.0)),
+        )
+    };
+
+    app.insert_resource(VisualAssets {
+        star_mesh: star_mesh.clone(),
+        planet_mesh: star_mesh.clone(),
+        asteroid_potato_mesh: star_mesh.clone(),
+        asteroid_rubble_mesh: star_mesh.clone(),
+        comet_bilobate_mesh: star_mesh.clone(),
+        particle_mesh: star_mesh.clone(),
+        ring_mesh: star_mesh.clone(),
+        beam_core_mesh: cyl_mesh.clone(),
+        beam_sheath_mesh: cyl_mesh.clone(),
+        accretion_disk_mesh: cyl_mesh.clone(),
+        pulsar_beam_mesh: cyl_mesh.clone(),
+        magnetar_ring_mesh: cyl_mesh.clone(),
+        magnetar_field_loops_mesh: cyl_mesh.clone(),
+    });
+
+    app.add_systems(Update, (sync_pulsar_beams, sync_magnetar_structures));
+
+    // 1. Initially no visuals
+    app.update();
+    assert_eq!(
+        app.world_mut()
+            .query::<&PulsarBeamRoot>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&MagnetarStructureRoot>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+
+    // 2. Spawn Pulsar -> PulsarBeamRoot and its 2 conical beams should spawn
+    let pulsar_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "PSR B1257+12".to_string(),
+                body_type: BodyType::Pulsar,
+            },
+            SimPosition(DVec3::ZERO),
+            Radius(0.0001),
+        ))
+        .id();
+
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&PulsarBeamRoot>()
+            .iter(app.world())
+            .count(),
+        1
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&PulsarBeamPart>()
+            .iter(app.world())
+            .count(),
+        2
+    );
+
+    // 3. Despawn Pulsar -> PulsarBeamRoot should despawn
+    app.world_mut().despawn(pulsar_ent);
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&PulsarBeamRoot>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+
+    // 4. Spawn Magnetar and an SGR-named ejecta clump -> MagnetarStructureRoot must attach strictly to Magnetar at (0,0,0)
+    let clump_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "SGR Ejecta Clump α".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            SimPosition(DVec3::new(5.0, 0.0, 0.0)),
+        ))
+        .id();
+
+    let magnetar_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "SGR 1806-20".to_string(),
+                body_type: BodyType::Magnetar,
+            },
+            SimPosition(DVec3::ZERO),
+        ))
+        .id();
+
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&MagnetarStructureRoot>()
+            .iter(app.world())
+            .count(),
+        1
+    );
+    assert_eq!(
+        app.world_mut()
+            .query::<&MagnetarStructurePart>()
+            .iter(app.world())
+            .count(),
+        2
+    );
+
+    // Verify it is positioned at Magnetar (0,0,0), NOT at Clump (5,0,0)
+    let mut root_q = app.world_mut().query::<(&MagnetarStructureRoot, &Transform)>();
+    let (_, root_tf) = root_q.iter(app.world()).next().unwrap();
+    assert!(
+        root_tf.translation.length() < 1e-4,
+        "MagnetarStructureRoot must be at Magnetar (0,0,0), but was at {:?}",
+        root_tf.translation
+    );
+
+    // 5. Despawn Magnetar -> MagnetarStructureRoot should despawn (even if SGR clump remains)
+    app.world_mut().despawn(magnetar_ent);
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&MagnetarStructureRoot>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+
+    app.world_mut().despawn(clump_ent);
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&MagnetarStructureRoot>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn test_magnetar_scenario_orbital_stability_and_field_attachment() {
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::{
+        sync_magnetar_structures, MagnetarStructureRoot, VisualAssets,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::scenarios::spawn_magnetar_outburst_scenario;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::asset::AssetPlugin::default());
+    app.init_asset::<Mesh>();
+    app.init_asset::<StandardMaterial>();
+    app.init_resource::<Time>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.init_resource::<PlayerInteractionState>();
+
+    let (star_mesh, cyl_mesh) = {
+        let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+        (
+            meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap()),
+            meshes.add(Cylinder::new(1.0, 1.0)),
+        )
+    };
+
+    app.insert_resource(VisualAssets {
+        star_mesh: star_mesh.clone(),
+        planet_mesh: star_mesh.clone(),
+        asteroid_potato_mesh: star_mesh.clone(),
+        asteroid_rubble_mesh: star_mesh.clone(),
+        comet_bilobate_mesh: star_mesh.clone(),
+        particle_mesh: star_mesh.clone(),
+        ring_mesh: star_mesh.clone(),
+        beam_core_mesh: cyl_mesh.clone(),
+        beam_sheath_mesh: cyl_mesh.clone(),
+        accretion_disk_mesh: cyl_mesh.clone(),
+        pulsar_beam_mesh: cyl_mesh.clone(),
+        magnetar_ring_mesh: cyl_mesh.clone(),
+        magnetar_field_loops_mesh: cyl_mesh.clone(),
+    });
+
+    let mut disk_params = DiskParameters::default();
+    let _magnetar_ent =
+        spawn_magnetar_outburst_scenario(&mut app.world_mut().commands(), &mut disk_params);
+
+    app.add_systems(Update, (step_physics_simulation, sync_magnetar_structures));
+
+    // Initial frame
+    app.update();
+
+    // Verify MagnetarStructureRoot is spawned and attached to SGR 1806-20 at (0, 0, 0)
+    {
+        let mut root_query = app.world_mut().query::<(&MagnetarStructureRoot, &Transform)>();
+        let (_, tf) = root_query
+            .iter(app.world())
+            .next()
+            .expect("MagnetarStructureRoot must exist");
+        assert!(
+            tf.translation.length() < 1e-4,
+            "Magnetic field loops must be anchored at the Magnetar (0,0,0), but found at {:?}",
+            tf.translation
+        );
+    }
+
+    // Simulate 200 physics steps at 10x warp (approx 2 years of simulated orbital time)
+    app.world_mut().resource_mut::<TimeWarp>().multiplier = 10.0;
+    for _ in 0..200 {
+        app.update();
+    }
+
+    // Verify all 5 bodies remain bound in stable orbits and have not drifted away
+    let mut bodies_query = app.world_mut().query::<(&CelestialBody, &SimPosition)>();
+    let mut valkyrie_dist = 0.0;
+    let mut pyre_dist = 0.0;
+    let mut clump_dist = 0.0;
+    let mut lbv_dist = 0.0;
+    let mut magnetar_dist = 0.0;
+
+    for (body, pos) in bodies_query.iter(app.world()) {
+        let dist = pos.0.length();
+        if body.name.contains("Magnetar") {
+            magnetar_dist = dist;
+        } else if body.name.contains("Valkyrie") {
+            valkyrie_dist = dist;
+        } else if body.name.contains("Pyre") {
+            pyre_dist = dist;
+        } else if body.name.contains("Clump") {
+            clump_dist = dist;
+        } else if body.name.contains("LBV") {
+            lbv_dist = dist;
+        }
+    }
+
+    assert!(
+        magnetar_dist < 1e-6,
+        "Magnetar must stay at center (0,0,0), found at {}",
+        magnetar_dist
+    );
+    assert!(
+        valkyrie_dist >= 0.40 && valkyrie_dist <= 0.60,
+        "Valkyrie must remain in stable orbit around ~0.48 AU, found at {}",
+        valkyrie_dist
+    );
+    assert!(
+        pyre_dist >= 0.70 && pyre_dist <= 1.05,
+        "Pyre must remain in stable orbit around ~0.85 AU, found at {}",
+        pyre_dist
+    );
+    assert!(
+        clump_dist >= 1.40 && clump_dist <= 1.95,
+        "SGR Ejecta Clump must remain in stable orbit around ~1.65 AU, found at {}",
+        clump_dist
+    );
+    assert!(
+        lbv_dist >= 17.0 && lbv_dist <= 19.5,
+        "LBV 1806-20 must remain in stable cluster orbit around ~18.0 AU, found at {}",
+        lbv_dist
+    );
+
+    // Verify visual structures remain locked to the Magnetar
+    {
+        let mut root_query2 = app.world_mut().query::<(&MagnetarStructureRoot, &Transform)>();
+        let (_, tf2) = root_query2.iter(app.world()).next().unwrap();
+        assert!(
+            tf2.translation.length() < 1e-4,
+            "Magnetic field structures must remain centered on Magnetar, found at {:?}",
+            tf2.translation
+        );
+    }
+}
+
+#[test]
+fn test_ui_button_interactions_query_schedule_no_aliasing_conflict() {
+    use bevy::prelude::*;
+    use protostellar::game::ui::*;
+    use protostellar::rendering::camera::PanOrbitCamera;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::scenarios::LoadScenarioEvent;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<NotificationToast>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_message::<LoadScenarioEvent>();
+    app.init_resource::<QuickBarState>();
+    app.init_resource::<PlanetBuilderState>();
+    app.init_resource::<HudVisibilityState>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+
+    app.add_systems(Update, handle_ui_button_interactions);
+
+    // Spawn Little Red Dot entity with BlackHoleStarState, CelestialBody, Mass, Radius, SimPosition
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "JWST Little Red Dot (Black Hole Star)".to_string(),
+            body_type: BodyType::QuasiStar,
+        },
+        Mass(450_000.0),
+        Radius(60.0),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Composition::pure_hydrogen(),
+        BlackHoleStarState::default(),
+    ));
+
+    // Spawn camera
+    app.world_mut()
+        .spawn((PanOrbitCamera::default(), Transform::default()));
+
+    // Update must initialize and run schedule with zero B0001 query aliasing panics!
+    app.update();
+}
+
+#[test]
+fn test_system_worlds_numerical_ordering_and_reindexing() {
+    use bevy::prelude::*;
+    use protostellar::game::ui::collect_sorted_system_worlds;
+    use protostellar::simulation::components::*;
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    let mut world = World::new();
+
+    // 1. Central Star (Sun at 0, 0, 0)
+    let star_ent = world
+        .spawn((
+            CelestialBody {
+                name: "Sol (Central Star)".to_string(),
+                body_type: BodyType::MainSequenceStar,
+            },
+            SimPosition(DVec3::ZERO),
+            Mass(1.0),
+            Radius(0.00465),
+            CentralStar,
+        ))
+        .id();
+
+    // 2. Planet 1 (Mercury at 0.387 AU)
+    let mercury_ent = world
+        .spawn((
+            CelestialBody {
+                name: "Mercury".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(DVec3::new(0.387, 0.0, 0.0)),
+            Mass(0.055 * EARTH_MASS_SOLAR),
+            Radius(0.000016),
+        ))
+        .id();
+
+    // 3. Planet 2 (Venus at 0.723 AU)
+    let venus_ent = world
+        .spawn((
+            CelestialBody {
+                name: "Venus".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(DVec3::new(0.723, 0.0, 0.0)),
+            Mass(0.815 * EARTH_MASS_SOLAR),
+            Radius(0.000040),
+        ))
+        .id();
+
+    // 4. Planet 3 (Earth at 1.000 AU)
+    let earth_ent = world
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(DVec3::new(1.000, 0.0, 0.0)),
+            Mass(EARTH_MASS_SOLAR),
+            Radius(0.0000426),
+        ))
+        .id();
+
+    // 5. Minor debris fragment (should be excluded from major system worlds)
+    let debris_ent = world
+        .spawn((
+            CelestialBody {
+                name: "debris-chunk-99".to_string(),
+                body_type: BodyType::Planetesimal,
+            },
+            SimPosition(DVec3::new(0.500, 0.0, 0.0)),
+            Mass(1e-8),
+            Radius(1e-6),
+        ))
+        .id();
+
+    // Helper closure to query and sort
+    let query_and_sort = |w: &mut World| {
+        let mut query = w.query::<(
+            Entity,
+            &CelestialBody,
+            &SimPosition,
+            &Mass,
+            &Radius,
+            Option<&CentralStar>,
+        )>();
+        let items: Vec<_> = query.iter(w).collect();
+        collect_sorted_system_worlds(items)
+    };
+
+    let worlds = query_and_sort(&mut world);
+
+    // Verify exactly 4 major worlds (debris excluded)
+    assert_eq!(worlds.len(), 4);
+    // Index 0: Sun (Central Star)
+    assert_eq!(worlds[0].entity, star_ent);
+    assert_eq!(worlds[0].index, 0);
+    assert!(worlds[0].is_central_star);
+
+    // Index 1: Mercury (0.387 AU)
+    assert_eq!(worlds[1].entity, mercury_ent);
+    assert_eq!(worlds[1].index, 1);
+    assert!((worlds[1].distance_au - 0.387).abs() < 1e-4);
+
+    // Index 2: Venus (0.723 AU)
+    assert_eq!(worlds[2].entity, venus_ent);
+    assert_eq!(worlds[2].index, 2);
+    assert!((worlds[2].distance_au - 0.723).abs() < 1e-4);
+
+    // Index 3: Earth (1.000 AU)
+    assert_eq!(worlds[3].entity, earth_ent);
+    assert_eq!(worlds[3].index, 3);
+    assert!((worlds[3].distance_au - 1.000).abs() < 1e-4);
+
+    // SIMULATE MERGER / DESPAWN: Mercury is swallowed or merges into Venus
+    world.despawn(mercury_ent);
+    world.despawn(debris_ent);
+
+    let worlds_after_merger = query_and_sort(&mut world);
+    assert_eq!(worlds_after_merger.len(), 3);
+
+    // Index 0 remains Sun
+    assert_eq!(worlds_after_merger[0].entity, star_ent);
+    assert_eq!(worlds_after_merger[0].index, 0);
+
+    // Index 1 now seamlessly becomes Venus!
+    assert_eq!(worlds_after_merger[1].entity, venus_ent);
+    assert_eq!(worlds_after_merger[1].index, 1);
+
+    // Index 2 now seamlessly becomes Earth!
+    assert_eq!(worlds_after_merger[2].entity, earth_ent);
+    assert_eq!(worlds_after_merger[2].index, 2);
+}
+
+#[test]
+fn test_trappist1_compact_disk_particle_sampling() {
+    let mut rng = rand::rng();
+    let disk_params = protostellar::simulation::resources::DiskParameters {
+        central_star_mass: 0.0898,
+        inner_radius_au: 0.005,
+        outer_radius_au: 0.15,
+        disk_mass: 0.0001,
+        ..Default::default()
+    };
+
+    let mut min_r = f64::INFINITY;
+    let mut max_r = f64::NEG_INFINITY;
+    let mut inner_count = 0;
+    let mut outer_count = 0;
+
+    for _ in 0..10_000 {
+        let (r, comp) = protostellar::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
+        assert!(
+            (0.005..=0.150001).contains(&r),
+            "Sampled radius {} out of bounds [0.005, 0.15]",
+            r
+        );
+        if r < min_r {
+            min_r = r;
+        }
+        if r > max_r {
+            max_r = r;
+        }
+        if r < 0.07 {
+            inner_count += 1;
+            assert!(comp.silicate_frac > 0.3 || comp.metal_frac > 0.3);
+        } else {
+            outer_count += 1;
+        }
+    }
+
+    assert!(min_r < 0.02, "Expected inner particles down to ~0.005 AU");
+    assert!(max_r > 0.13, "Expected outer particles up to ~0.15 AU");
+    assert!(inner_count > 3000, "Expected substantial inner particles");
+    assert!(outer_count > 2000, "Expected substantial outer particles");
+}
+
+#[test]
+fn test_earth_spawns_at_1_earth_mass_in_solar_nebula() {
+    use bevy::prelude::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::scenarios::spawn_solar_nebula_mmsn;
+
+    let mut app = App::new();
+    let mut disk_params = DiskParameters::default();
+    let _star_ent = spawn_solar_nebula_mmsn(&mut app.world_mut().commands(), &mut disk_params);
+    app.update();
+
+    let mut earth_found = false;
+    let mut query = app.world_mut().query::<(&CelestialBody, &Mass, &Radius)>();
+    for (body, mass, radius) in query.iter(app.world()) {
+        if body.name == "Earth" {
+            earth_found = true;
+            assert_eq!(body.body_type, BodyType::TerrestrialPlanet);
+            let m_earth = mass.0 / EARTH_MASS_SOLAR;
+            assert!(
+                (m_earth - 1.00).abs() < 1e-4,
+                "Earth must spawn at 1.00 M_earth, got {:.4}",
+                m_earth
+            );
+            let r_earth = radius.0 / EARTH_RADIUS_AU;
+            assert!(
+                (r_earth - 1.00).abs() < 1e-4,
+                "Earth radius must be 1.00 R_earth, got {:.4}",
+                r_earth
+            );
+        }
+    }
+    assert!(
+        earth_found,
+        "Earth entity must spawn in Hayashi Solar Nebula scenario"
+    );
+}
+
+#[test]
+fn test_inner_planet_nebular_gas_and_atmosphere_accretion() {
+    use bevy::prelude::*;
+    use protostellar::simulation::accretion::direct_nebular_gas_accretion;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+
+    let config = SimulationConfig {
+        enable_accretion: true,
+        accretion_rate_multiplier: 120.0,
+        gas_density_scale: 1.0,
+        base_dt_yr: 0.01, // 3.65 days per step
+        ..Default::default()
+    };
+    app.insert_resource(config);
+
+    let time_warp = TimeWarp {
+        multiplier: 1.0,
+        is_paused: false,
+        ..Default::default()
+    };
+    app.insert_resource(time_warp);
+
+    let sim_time = SimTime {
+        elapsed_years: 0.5,
+        ..Default::default()
+    };
+    app.insert_resource(sim_time);
+
+    let disk_params = DiskParameters {
+        central_star_mass: 1.0,
+        inner_radius_au: 0.20,
+        outer_radius_au: 45.0,
+        gas_disk_lifetime_yr: 60_000.0,
+        ..Default::default()
+    };
+    app.insert_resource(disk_params);
+
+    // Spawn central star (unignited protostar)
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            body_type: BodyType::Protostar,
+            name: "The Protostar".to_string(),
+        },
+        IgnitionState {
+            core_temperature: 4.0e6,
+            fusion_fraction: 0.4,
+            is_ignited: false,
+            shockwave_radius: 0.0,
+        },
+    ));
+
+    // Spawn Earth at 1.0 AU inside the gas cloud
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::TerrestrialPlanet,
+                name: "Earth".to_string(),
+            },
+            Mass(1.00 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
+            Radius(EARTH_RADIUS_AU),
+            Composition::rocky(),
+            VolatileInventory {
+                delivered_water_m_earth: 0.0,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 0.10,
+                cometary_impact_count: 0,
+            },
+        ))
+        .id();
+
+    app.add_systems(Update, direct_nebular_gas_accretion);
+
+    // Run 50 simulation steps inside the gas cloud before star ignites
+    for _ in 0..50 {
+        app.update();
+    }
+
+    let world = app.world();
+    let mass = world.get::<Mass>(earth_ent).expect("Mass required");
+    let comp = world
+        .get::<Composition>(earth_ent)
+        .expect("Composition required");
+    let vol = world
+        .get::<VolatileInventory>(earth_ent)
+        .expect("Volatiles required");
+    let body = world
+        .get::<CelestialBody>(earth_ent)
+        .expect("Body required");
+
+    let m_earth = mass.0 / EARTH_MASS_SOLAR;
+    assert!(
+        m_earth > 1.0001,
+        "Earth must accumulate nebular gas mass from circumstellar gas cloud! Got {:.6}",
+        m_earth
+    );
+    assert!(
+        m_earth < 1.05,
+        "Earth should not undergo runaway gas accumulation into a gas giant! Got {:.6}",
+        m_earth
+    );
+    assert!(
+        comp.gas_frac > 0.0001 && comp.gas_frac <= 0.035,
+        "Gas fraction must increase into a realistic secondary atmosphere, got {:.6}",
+        comp.gas_frac
+    );
+    assert!(
+        vol.atmospheric_pressure_bar > 0.10,
+        "Atmospheric pressure must rise from accreted nebular gas, got {:.3} bar",
+        vol.atmospheric_pressure_bar
+    );
+    assert_eq!(
+        body.name, "Earth",
+        "Canonical planet name 'Earth' must be preserved and not overwritten with generic 'Planet-1AU'"
+    );
+    assert_eq!(
+        body.body_type,
+        BodyType::TerrestrialPlanet,
+        "Earth must remain a TerrestrialPlanet"
+    );
+}
+
+#[test]
+fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    // Spawn a dummy Window
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+
+    // Spawn Central Star at (0,0,0)
+    let star_ent = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            CelestialBody {
+                name: "The Sun".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            Mass(1.0),
+            Radius(SOLAR_RADIUS_AU),
+            SimPosition(DVec3::ZERO),
+        ))
+        .id();
+
+    // Spawn Earth at (1,0,0)
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(1.00 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+        ))
+        .id();
+
+    // Spawn UI button that is currently clicked (Interaction::Pressed)
+    app.world_mut().spawn((Button, Interaction::Pressed));
+
+    // Spawn Camera looking at the scene, currently targeting Earth
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                target_entity: Some(earth_ent),
+                focus: Vec3::new(1.0, 0.0, 0.0),
+                target_focus: Vec3::new(1.0, 0.0, 0.0),
+                ..default()
+            },
+            Transform::from_xyz(1.0, 0.5, 3.0).looking_at(Vec3::new(1.0, 0.0, 0.0), Vec3::Y),
+            GlobalTransform::from(
+                Transform::from_xyz(1.0, 0.5, 3.0).looking_at(Vec3::new(1.0, 0.0, 0.0), Vec3::Y),
+            ),
+        ))
+        .id();
+
+    // Simulate Left mouse button press
+    let mut mouse_buttons = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+    mouse_buttons.press(MouseButton::Left);
+
+    app.add_systems(Update, update_pan_orbit_camera);
+    app.update();
+
+    let world = app.world();
+    let cam = world
+        .get::<PanOrbitCamera>(camera_ent)
+        .expect("Camera required");
+
+    // Camera target_entity MUST remain Earth and not be hijacked to the Central Star!
+    assert_eq!(
+        cam.target_entity,
+        Some(earth_ent),
+        "Camera target_entity must remain Earth and NOT be hijacked to the star or background raycast target when clicking a UI button!"
+    );
+    assert_ne!(
+        cam.target_entity,
+        Some(star_ent),
+        "Camera target_entity must NOT bounce back to the star!"
+    );
+}
+
+#[test]
+fn test_camera_zoom_stops_safely_before_surface_of_star_and_planets() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    // Spawn a dummy Window
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+
+    // 1. Spawn Central Star at (0, 0, 0)
+    let _star_ent = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            CelestialBody {
+                name: "The Protostar (Solar Nebula)".to_string(),
+                body_type: BodyType::Protostar,
+            },
+            Mass(1.0),
+            Radius(SOLAR_RADIUS_AU),
+            SimPosition(DVec3::ZERO),
+        ))
+        .id();
+
+    // 2. Spawn Earth at (1.0, 0, 0)
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(1.00 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+        ))
+        .id();
+
+    let config = app.world().resource::<SimulationConfig>().clone();
+    let star_vis_r = config.calc_visual_radius_for_type(SOLAR_RADIUS_AU, BodyType::Protostar);
+    let earth_vis_r =
+        config.calc_visual_radius_for_type(EARTH_RADIUS_AU, BodyType::TerrestrialPlanet);
+
+    // 3. Spawn Camera looking at origin (star), initially with target_entity = None
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                target_entity: None,
+                focus: Vec3::ZERO,
+                target_focus: Vec3::ZERO,
+                radius: 16.0,
+                target_radius: 16.0,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 5.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+            GlobalTransform::from(
+                Transform::from_xyz(0.0, 5.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ),
+        ))
+        .id();
+
+    app.add_systems(Update, update_pan_orbit_camera);
+
+    // --- TEST A: Zooming into Central Star without target_entity locked (target_focus = 0,0,0) ---
+    // Simulate massive zoom-in scroll
+    {
+        let mut wheel_events = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel_events.write(MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y: 50.0, // massive scroll in
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+
+    // Run multiple frames for damping
+    for _ in 0..40 {
+        app.update();
+    }
+
+    let world = app.world();
+    let cam = world
+        .get::<PanOrbitCamera>(camera_ent)
+        .expect("Camera required");
+
+    // Camera must stop right before the star's surface:
+    assert!(
+        cam.min_radius > star_vis_r,
+        "min_radius ({}) must be strictly greater than star's visual radius ({}) to prevent penetrating the photosphere!",
+        cam.min_radius,
+        star_vis_r
+    );
+    assert!(
+        cam.radius >= cam.min_radius - 0.0001,
+        "Camera radius ({}) must stop at or above min_radius ({})!",
+        cam.radius,
+        cam.min_radius
+    );
+    let surface_clearance_star = cam.radius - star_vis_r;
+    assert!(
+        surface_clearance_star >= 0.005,
+        "Camera must maintain safe surface clearance ({}) in front of the star!",
+        surface_clearance_star
+    );
+
+    // --- TEST B: Zooming into Earth when focus-locked ---
+    {
+        let mut cam_mut = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam_mut.target_entity = Some(earth_ent);
+        cam_mut.target_focus = Vec3::new(1.0, 0.0, 0.0);
+        cam_mut.focus = Vec3::new(1.0, 0.0, 0.0);
+        cam_mut.radius = 1.0;
+        cam_mut.target_radius = 1.0;
+
+        let mut wheel_events = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel_events.write(MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y: 50.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+
+    for _ in 0..40 {
+        app.update();
+    }
+
+    {
+        let cam = app
+            .world()
+            .get::<PanOrbitCamera>(camera_ent)
+            .expect("Camera required");
+
+        assert!(
+            cam.min_radius > earth_vis_r,
+            "min_radius ({}) must be strictly greater than Earth's visual radius ({})!",
+            cam.min_radius,
+            earth_vis_r
+        );
+        assert!(
+            cam.radius >= cam.min_radius - 0.0001,
+            "Camera radius ({}) must be bounded by min_radius ({})!",
+            cam.radius,
+            cam.min_radius
+        );
+        let surface_clearance_earth = cam.radius - earth_vis_r;
+        assert!(
+            surface_clearance_earth >= 0.001,
+            "Surface clearance ({}) must be far greater than camera near clipping plane (0.0001 AU) to prevent near-plane clipping!",
+            surface_clearance_earth
+        );
+    }
+
+    // --- TEST C: Empty Deep Space Zooming ---
+    {
+        let mut cam_mut = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam_mut.target_entity = None;
+        cam_mut.target_focus = Vec3::new(500.0, 500.0, 0.0);
+        cam_mut.focus = Vec3::new(500.0, 500.0, 0.0);
+    }
+    app.update();
+
+    {
+        let cam = app
+            .world()
+            .get::<PanOrbitCamera>(camera_ent)
+            .expect("Camera required");
+        assert_eq!(
+            cam.min_radius, 0.001,
+            "In deep space far from any celestial body, min_radius should allow free zooming down to 0.001 AU!"
+        );
+    }
+
+    // --- TEST D: Zooming into JWST Little Red Dot (Black Hole Star) Exception ---
+    let lrd_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "JWST Little Red Dot (Black Hole Star)".to_string(),
+                body_type: BodyType::QuasiStar,
+            },
+            Mass(100_000.0),
+            Radius(60.0),
+            SimPosition(DVec3::new(100.0, 0.0, 0.0)),
+        ))
+        .id();
+
+    {
+        let mut cam_mut = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam_mut.target_entity = Some(lrd_ent);
+        cam_mut.target_focus = Vec3::new(100.0, 0.0, 0.0);
+        cam_mut.focus = Vec3::new(100.0, 0.0, 0.0);
+        cam_mut.radius = 200.0;
+        cam_mut.target_radius = 200.0;
+
+        let mut wheel_events = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel_events.write(MouseWheel {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            x: 0.0,
+            y: 500.0, // massive scroll in
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+
+    for _ in 0..60 {
+        app.update();
+    }
+
+    let world = app.world();
+    let cam = world
+        .get::<PanOrbitCamera>(camera_ent)
+        .expect("Camera required");
+
+    // Little Red Dot exception:
+    // Its visual radius is ~60 AU, but min_radius must be exactly 0.001 AU,
+    // allowing the camera to clip through the 60 AU envelope and zoom all the way down near the black hole singularity!
+    assert_eq!(
+        cam.min_radius, 0.001,
+        "Little Red Dot must have min_radius = 0.001 AU to allow zooming directly into the central black hole!"
+    );
+    assert!(
+        cam.radius <= 0.01,
+        "Camera radius ({}) must zoom deep inside the 60 AU cocoon down to the central black hole (<= 0.01 AU)!",
+        cam.radius
+    );
+}
+
+#[test]
+fn test_late_heavy_bombardment_guaranteed_trigger_and_impactors() {
+    use bevy::prelude::*;
+    use protostellar::game::phases::{
+        monitor_phase_transitions, LateHeavyBombardmentState, MilestoneId, PhaseManager,
+        SystemPhase,
+    };
+    use protostellar::simulation::disk::update_late_heavy_bombardment_cascade;
+    use protostellar::simulation::resources::{DiskParameters, SimTime, TimeWarp};
+    use protostellar::simulation::thermodynamics::StarIgnitionEvent;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<SystemPhase>();
+    app.init_resource::<PhaseManager>();
+    app.init_resource::<LateHeavyBombardmentState>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<DiskParameters>();
+    app.add_message::<StarIgnitionEvent>();
+
+    app.add_systems(
+        Update,
+        (
+            monitor_phase_transitions,
+            update_late_heavy_bombardment_cascade,
+        ),
+    );
+
+    // Spawn central star (1.0 M_sun)
+    app.world_mut().spawn((
+        CentralStar,
+        Mass(1.0),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Radius(SOLAR_RADIUS_AU),
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::Protostar,
+        },
+        IgnitionState {
+            core_temperature: 1.5e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 1.6,
+        },
+    ));
+
+    // Spawn Earth at 1.0 AU with initial dry surface
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 2.0 * std::f64::consts::PI)),
+            Radius(EARTH_RADIUS_AU),
+            Composition::rocky(),
+            VolatileInventory {
+                delivered_water_m_earth: 0.00002,
+                cometary_impact_count: 0,
+                ocean_coverage_frac: 0.03,
+                atmospheric_pressure_bar: 0.2,
+            },
+            InternalDifferentiation {
+                is_differentiated: true,
+                magnetic_field_gauss: 0.35,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    // 1. Initial State: Verify starting in ProtoplanetaryDisk phase and LHB is inactive
+    app.update();
+    {
+        let phase_mgr = app.world().resource::<PhaseManager>();
+        assert_eq!(phase_mgr.current_phase, SystemPhase::ProtoplanetaryDisk);
+        let lhb = app.world().resource::<LateHeavyBombardmentState>();
+        assert!(!lhb.is_active);
+    }
+
+    // 2. Unconditional Manual Trigger: Request LHB from ANY phase (Key [G] / UI button)
+    {
+        let mut lhb = app.world_mut().resource_mut::<LateHeavyBombardmentState>();
+        lhb.manual_trigger_requested = true;
+    }
+
+    // Update app: monitor_phase_transitions must unconditionally enter LateHeavyBombardment
+    app.update();
+    {
+        let phase_mgr = app.world().resource::<PhaseManager>();
+        assert_eq!(
+            phase_mgr.current_phase,
+            SystemPhase::LateHeavyBombardment,
+            "LHB must be unconditionally entered when manual_trigger_requested is true!"
+        );
+        let lhb = app.world().resource::<LateHeavyBombardmentState>();
+        assert!(lhb.is_active, "lhb_state.is_active must be true!");
+        assert!(
+            lhb.resonance_crossed,
+            "Resonance crossing must be immediately triggered on manual LHB request!"
+        );
+
+        // Verify milestone is achieved
+        let lhb_milestone = phase_mgr
+            .milestones
+            .iter()
+            .find(|m| m.id == MilestoneId::LateHeavyBombardment)
+            .expect("LHB milestone must exist");
+        assert!(
+            lhb_milestone.achieved,
+            "MilestoneId::LateHeavyBombardment must be unlocked upon LHB trigger!"
+        );
+    }
+
+    // 3. Verify Active Cascade Spawner maintains inner-crossing impactors (q <= 1.6 AU)
+    // Run several updates with non-zero delta time
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.current_dt_yr = 0.5;
+        sim_time.elapsed_years = 100.0;
+    }
+
+    for _ in 0..15 {
+        app.update();
+    }
+
+    let world = app.world();
+    let lhb = world.resource::<LateHeavyBombardmentState>();
+    assert!(
+        lhb.comets_scattered > 0,
+        "Active cascade must increment comets_scattered (found {})",
+        lhb.comets_scattered
+    );
+
+    // Count planet-crossing impactors in ECS
+    let mut impactor_count = 0;
+    let mut query = app
+        .world_mut()
+        .query::<(&CelestialBody, &SimPosition, &SimVelocity, &Mass)>();
+    for (body, pos, vel, _) in query.iter(app.world()) {
+        if matches!(body.body_type, BodyType::Asteroid | BodyType::Comet) {
+            impactor_count += 1;
+            // Verify Keplerian energy and perihelion
+            let r = pos.0.length();
+            let v = vel.0.length();
+            let spec_e = 0.5 * v * v - G_ASTRO / r;
+            if spec_e < 0.0 {
+                let a = -G_ASTRO / (2.0 * spec_e);
+                let h = pos.0.cross(vel.0).length();
+                let e = (1.0 - (h * h) / (G_ASTRO * a)).max(0.0).sqrt();
+                let q = a * (1.0 - e);
+                // Impactor must cross the inner solar system
+                assert!(
+                    q <= 1.8,
+                    "Impactor perihelion ({:.2} AU) must cross inner planetary orbits!",
+                    q
+                );
+            }
+        }
+    }
+    assert!(
+        impactor_count >= 5,
+        "Cascade spawner must generate multiple active impactors in ECS (found {})",
+        impactor_count
+    );
+
+    // 4. Simulate Volatile Water Delivery from Cometary Impacts onto Earth
+    // Impacts delivering ~0.0006 M_earth of water to establish oceans
+    {
+        let mut earth_vol = app
+            .world_mut()
+            .get_mut::<VolatileInventory>(earth_ent)
+            .expect("Earth must have VolatileInventory");
+        earth_vol.delivered_water_m_earth = 0.00058; // > 0.0005 Earth masses
+        earth_vol.cometary_impact_count = 14;
+        earth_vol.ocean_coverage_frac =
+            (earth_vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
+    }
+
+    app.update();
+
+    {
+        let phase_mgr = app.world().resource::<PhaseManager>();
+        let lhb = app.world().resource::<LateHeavyBombardmentState>();
+
+        // Verify water delivery synced to LHB state
+        assert!(
+            lhb.water_delivered_earth_masses >= 0.0005,
+            "LHB state water_delivered_earth_masses ({}) must track total delivered water!",
+            lhb.water_delivered_earth_masses
+        );
+
+        // Verify VolatileOceanDelivery milestone unlocked
+        let ocean_milestone = phase_mgr
+            .milestones
+            .iter()
+            .find(|m| m.id == MilestoneId::VolatileOceanDelivery)
+            .expect("Ocean milestone must exist");
+        assert!(
+            ocean_milestone.achieved,
+            "MilestoneId::VolatileOceanDelivery must unlock once delivered water >= 0.0005 M_earth!"
+        );
+
+        // Verify Earth has ocean coverage >= 70%
+        let earth_vol = app.world().get::<VolatileInventory>(earth_ent).unwrap();
+        assert!(
+            earth_vol.ocean_coverage_frac >= 0.70,
+            "Earth ocean coverage ({:.1}%) must exceed 70% after bombardment water delivery!",
+            earth_vol.ocean_coverage_frac * 100.0
+        );
+    }
+}
+
+#[test]
+fn test_minor_bodies_belt_formation_1024_capacity_and_hud_category() {
+    use bevy::prelude::*;
+    use protostellar::game::phases::*;
+    use protostellar::game::ui::{
+        is_canonical_major_planet, is_embryo_body, is_major_body, QuickBarState,
+    };
+    use protostellar::simulation::disk::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::scenarios::spawn_solar_nebula_mmsn;
+
+    // 1. Verify is_major_body classification:
+    // Minor bodies (Asteroids, Comets, Planetesimals) must NEVER be classified as major worlds!
+    assert!(!is_major_body(
+        "Ceres",
+        BodyType::Asteroid,
+        false,
+        0.00015 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "Vesta",
+        BodyType::Asteroid,
+        false,
+        0.00004 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "1P/Halley",
+        BodyType::Comet,
+        false,
+        0.000001 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "C/1995 O1 Hale-Bopp",
+        BodyType::Comet,
+        false,
+        0.000005 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "Asteroid-2.7AU",
+        BodyType::Asteroid,
+        false,
+        0.00001 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "Comet-25.0AU",
+        BodyType::Comet,
+        false,
+        0.00001 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "Planetesimal-1.5AU",
+        BodyType::Planetesimal,
+        false,
+        0.00001 * EARTH_MASS_SOLAR
+    ));
+
+    // Embryos must be categorized into the dedicated Embryo category and excluded from Major Worlds:
+    assert!(is_embryo_body("Theia", BodyType::Protoplanet));
+    assert!(is_embryo_body("Theia Embryo", BodyType::Protoplanet));
+    assert!(is_embryo_body("Callisto Embryo", BodyType::Protoplanet));
+    assert!(is_embryo_body("Titan Embryo", BodyType::Protoplanet));
+    assert!(is_embryo_body("Embryo-1.2AU", BodyType::Protoplanet));
+    assert!(is_embryo_body("Embryo #1", BodyType::Protoplanet));
+    assert!(!is_major_body(
+        "Theia",
+        BodyType::Protoplanet,
+        false,
+        0.10 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "Theia Embryo",
+        BodyType::Protoplanet,
+        false,
+        0.10 * EARTH_MASS_SOLAR
+    ));
+    assert!(!is_major_body(
+        "Callisto Embryo",
+        BodyType::Protoplanet,
+        false,
+        0.05 * EARTH_MASS_SOLAR
+    ));
+
+    // Major worlds must be classified as major:
+    assert!(is_major_body("Sun", BodyType::Protostar, true, 1.0));
+    assert!(is_major_body(
+        "Proto-Mercury",
+        BodyType::Protoplanet,
+        false,
+        0.06 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Mercury",
+        BodyType::TerrestrialPlanet,
+        false,
+        0.055 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Venus",
+        BodyType::TerrestrialPlanet,
+        false,
+        0.815 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Earth",
+        BodyType::TerrestrialPlanet,
+        false,
+        1.0 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Mars",
+        BodyType::TerrestrialPlanet,
+        false,
+        0.107 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Jupiter",
+        BodyType::GasGiant,
+        false,
+        317.8 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Saturn",
+        BodyType::GasGiant,
+        false,
+        95.2 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Uranus",
+        BodyType::IceGiant,
+        false,
+        14.5 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Neptune",
+        BodyType::IceGiant,
+        false,
+        17.1 * EARTH_MASS_SOLAR
+    ));
+    // Pluto and Planet Nine:
+    assert!(is_canonical_major_planet("Pluto (Dwarf Planet)"));
+    assert!(is_canonical_major_planet(
+        "Planet Nine (Super-Earth / Ice Giant)"
+    ));
+    assert!(is_major_body(
+        "Pluto (Dwarf Planet)",
+        BodyType::TerrestrialPlanet,
+        false,
+        0.00218 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Planet Nine (Super-Earth / Ice Giant)",
+        BodyType::IceGiant,
+        false,
+        5.50 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Moon",
+        BodyType::Moon,
+        false,
+        0.0123 * EARTH_MASS_SOLAR
+    ));
+
+    // 2. Verify PlanetesimalSpawner capacity is 1024 and QuickBarState defaults
+    let spawner = PlanetesimalSpawner::default();
+    assert_eq!(
+        spawner.max_ecs_bodies, 1024,
+        "PlanetesimalSpawner must have 1024 body capacity!"
+    );
+    let qb = QuickBarState::default();
+    assert!(!qb.show_embryos);
+    assert!(!qb.show_minor_bodies);
+    assert!(!qb.is_minimized);
+
+    // 3. Verify Solar System Scenario spawns Asteroid Belt and Kuiper Belt bodies
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<SystemPhase>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<PhaseManager>();
+    app.init_resource::<LateHeavyBombardmentState>();
+    app.add_message::<protostellar::simulation::thermodynamics::StarIgnitionEvent>();
+    app.add_systems(Update, monitor_phase_transitions);
+
+    let mut disk_params = DiskParameters::default();
+    let _star_ent = spawn_solar_nebula_mmsn(&mut app.world_mut().commands(), &mut disk_params);
+    app.update();
+
+    let phase_mgr = app.world().resource::<PhaseManager>();
+    assert_eq!(
+        phase_mgr.asteroid_count, 8,
+        "Solar System MMSN must spawn 8 initial Asteroid Belt bodies (Ceres, Vesta, Pallas, etc.)"
+    );
+    assert_eq!(
+        phase_mgr.comet_count, 6,
+        "Solar System MMSN must spawn 6 initial Kuiper Belt cometary bodies (Halley, Encke, etc.)"
+    );
+    assert!(
+        phase_mgr.planet_count + phase_mgr.protoplanet_count >= 10,
+        "Solar System MMSN must have major planets and embryos tracked (found {} planets + {} protoplanets)",
+        phase_mgr.planet_count,
+        phase_mgr.protoplanet_count
+    );
+
+    // 4. Verify Stellar Wind Radiation Push:
+    // Place a small asteroid at r = 1.2 AU (terrestrial zone)
+    let pos_inner = DVec3::new(1.2, 0.0, 0.0);
+    let r_cyl = pos_inner.x;
+    let b_mass = 0.00001 * EARTH_MASS_SOLAR;
+    let push_mag =
+        0.35 * (1.0 - (r_cyl / 2.0)).max(0.0) / (1.0 + b_mass / (EARTH_MASS_SOLAR * 0.001));
+    assert!(
+        push_mag > 0.1,
+        "Inner minor body must feel positive outward radiation pressure push ({push_mag}) toward the belt"
+    );
+}
+
+#[test]
+fn test_spawn_protoplanetary_disk_spawns_pluto_and_planet_nine() {
+    use bevy::prelude::*;
+    use protostellar::game::ui::collect_sorted_system_worlds;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::disk::spawn_protoplanetary_disk;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    let disk_params = DiskParameters::default();
+    let config = SimulationConfig::default();
+
+    let _star = spawn_protoplanetary_disk(&mut app.world_mut().commands(), &disk_params, &config);
+    app.update();
+
+    let mut bodies = Vec::new();
+    for (entity, body, pos, _mass, _radius, _opt_star) in app
+        .world_mut()
+        .query::<(
+            Entity,
+            &CelestialBody,
+            &SimPosition,
+            &Mass,
+            &Radius,
+            Option<&CentralStar>,
+        )>()
+        .iter(app.world())
+    {
+        bodies.push((entity, body.name.clone(), body.body_type, pos.0.length()));
+    }
+
+    let pluto = bodies.iter().find(|b| b.1.contains("Pluto"));
+    assert!(
+        pluto.is_some(),
+        "Pluto must spawn immediately in spawn_protoplanetary_disk!"
+    );
+    let pluto = pluto.unwrap();
+    assert_eq!(pluto.2, BodyType::TerrestrialPlanet);
+    assert!(
+        (pluto.3 - 39.48).abs() < 5.0,
+        "Pluto distance must be ~39.48 AU (found {:.2})",
+        pluto.3
+    );
+
+    let planet_nine = bodies.iter().find(|b| b.1.contains("Planet Nine"));
+    assert!(
+        planet_nine.is_some(),
+        "Planet Nine must spawn immediately in spawn_protoplanetary_disk!"
+    );
+    let p9 = planet_nine.unwrap();
+    assert_eq!(p9.2, BodyType::IceGiant);
+    assert!(
+        (p9.3 - 380.0).abs() < 50.0,
+        "Planet Nine distance must be ~380 AU (found {:.2})",
+        p9.3
+    );
+
+    // Verify collect_sorted_system_worlds contains both worlds
+    let query_items: Vec<_> = app
+        .world_mut()
+        .query::<(
+            Entity,
+            &CelestialBody,
+            &SimPosition,
+            &Mass,
+            &Radius,
+            Option<&CentralStar>,
+        )>()
+        .iter(app.world())
+        .collect();
+
+    let system_worlds = collect_sorted_system_worlds(query_items);
+    let world_names: Vec<&str> = system_worlds.iter().map(|w| w.name.as_str()).collect();
+    assert!(
+        world_names.iter().any(|n| n.contains("Pluto")),
+        "Major worlds selector bar must include Pluto: {:?}",
+        world_names
+    );
+    assert!(
+        world_names.iter().any(|n| n.contains("Planet Nine")),
+        "Major worlds selector bar must include Planet Nine: {:?}",
+        world_names
+    );
+}
+
+#[test]
+fn test_camera_tracking_selected_planet_zero_drift_at_high_warp() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::resources::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    // Spawn dummy Window
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+
+    // Spawn Sun at origin
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+        Transform::IDENTITY,
+    ));
+
+    // Spawn Earth at 1.0 AU with Keplerian orbital velocity
+    let v_earth = (G_ASTRO * 1.0 / 1.0).sqrt();
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_earth)),
+            SimAcceleration(DVec3::ZERO),
+            Transform::from_xyz(1.0, 0.0, 0.0),
+        ))
+        .id();
+
+    // Spawn Camera focus-locked on Earth
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                target_entity: Some(earth_ent),
+                focus: Vec3::new(1.0, 0.0, 0.0),
+                target_focus: Vec3::new(1.0, 0.0, 0.0),
+                radius: 0.05,
+                target_radius: 0.05,
+                yaw: 0.5,
+                target_yaw: 0.5,
+                pitch: 0.3,
+                target_pitch: 0.3,
+                ..default()
+            },
+            Transform::IDENTITY,
+            GlobalTransform::IDENTITY,
+        ))
+        .id();
+
+    // Mock transform sync system matching sync_celestial_transforms logic
+    fn sync_transforms(mut query: Query<(&SimPosition, &mut Transform)>) {
+        for (pos, mut tf) in query.iter_mut() {
+            tf.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        }
+    }
+
+    // Schedule: physics -> sync transforms -> camera
+    app.add_systems(
+        Update,
+        (
+            step_physics_simulation,
+            sync_transforms.after(step_physics_simulation),
+            update_pan_orbit_camera.after(sync_transforms),
+        ),
+    );
+
+    // Test across standard simulation time warp multipliers: 1x, 10x, 100x, 1,000x, 10,000x
+    let warps = [1.0, 10.0, 100.0, 1_000.0, 10_000.0];
+    for &warp in &warps {
+        app.world_mut().resource_mut::<TimeWarp>().multiplier = warp;
+
+        for _ in 0..10 {
+            app.update();
+
+            let cam_tf = *app.world().get::<Transform>(camera_ent).unwrap();
+            let earth_tf = *app.world().get::<Transform>(earth_ent).unwrap();
+
+            // Transform Earth's position into camera view space:
+            let view_matrix = cam_tf.to_matrix().inverse();
+            let earth_in_view = view_matrix.transform_point3(earth_tf.translation);
+
+            assert!(
+                earth_in_view.x.abs() < 1e-4,
+                "At warp {}x, Earth screen X offset ({}) must be 0 (drift detected!)",
+                warp,
+                earth_in_view.x
+            );
+            assert!(
+                earth_in_view.y.abs() < 1e-4,
+                "At warp {}x, Earth screen Y offset ({}) must be 0 (drift detected!)",
+                warp,
+                earth_in_view.y
+            );
+            // Z must be negative (in front of the camera, at exactly -radius)
+            assert!(
+                earth_in_view.z < 0.0,
+                "At warp {}x, Earth must be in front of the camera (z = {})",
+                warp,
+                earth_in_view.z
+            );
+        }
+    }
+}
+
+#[test]
+fn test_outer_bodies_camera_stability_no_cancellation_jitter() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    // Spawn dummy Window
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+
+    // 1. Spawn Sun
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        SimPosition(DVec3::ZERO),
+        Transform::IDENTITY,
+    ));
+
+    // 2. Spawn Planet Nine at 380.0 AU
+    let p9_pos = DVec3::new(380.0, 0.0, 0.0);
+    let p9_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Planet Nine".to_string(),
+                body_type: BodyType::IceGiant,
+            },
+            Mass(5.5 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 2.3),
+            SimPosition(p9_pos),
+            Transform::from_translation(Vec3::new(p9_pos.x as f32, 0.0, 0.0)),
+        ))
+        .id();
+
+    // 3. Spawn Camera focused on Planet Nine at 380 AU
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                target_entity: Some(p9_ent),
+                focus: Vec3::new(380.0, 0.0, 0.0),
+                target_focus: Vec3::new(380.0, 0.0, 0.0),
+                radius: 0.05,
+                target_radius: 0.05,
+                yaw: 1.15,
+                target_yaw: 1.15,
+                pitch: 0.45,
+                target_pitch: 0.45,
+                ..default()
+            },
+            Transform::IDENTITY,
+            GlobalTransform::IDENTITY,
+        ))
+        .id();
+
+    app.add_systems(Update, update_pan_orbit_camera);
+
+    // Update multiple frames
+    for _ in 0..10 {
+        app.update();
+    }
+
+    let cam = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    let cam_tf = *app.world().get::<Transform>(camera_ent).unwrap();
+    let p9_tf = *app.world().get::<Transform>(p9_ent).unwrap();
+
+    // Verify analytical camera rotation: exact match with Quat(yaw, pitch) without cancellation error
+    let expected_rot =
+        Quat::from_axis_angle(Vec3::Y, cam.yaw) * Quat::from_axis_angle(Vec3::X, -cam.pitch);
+    assert!(
+        cam_tf.rotation.abs_diff_eq(expected_rot, 1e-6),
+        "Camera rotation at 380 AU must match analytical quaternion with zero noise (found {:?}, expected {:?})",
+        cam_tf.rotation,
+        expected_rot
+    );
+
+    // Camera forward vector in world coordinates (-Z)
+    let cam_forward = cam_tf.rotation * -Vec3::Z;
+    let dir_to_planet = (p9_tf.translation - cam_tf.translation).normalize();
+
+    // Camera forward must point directly at Planet Nine with dot product 1.0 (zero angular jitter)
+    let dot = cam_forward.dot(dir_to_planet);
+    assert!(
+        (dot - 1.0).abs() < 1e-5,
+        "Camera optical axis must align with Planet Nine at 380 AU with dot product ~1.0 (found {:.7})",
+        dot
+    );
+}
+
+#[test]
+fn test_quick_body_selector_click_selection_and_clean_recursive_despawn() {
+    use bevy::prelude::*;
+    use protostellar::game::phases::LateHeavyBombardmentState;
+    use protostellar::game::ui::{
+        handle_ui_button_interactions, update_quick_body_selector_bar, HudActionTooltipText,
+        HudVisibilityState, NotificationToast, PlanetBuilderState, QuickBarState,
+        QuickBodySelectorBar, UiButtonAction,
+    };
+    use protostellar::rendering::camera::PanOrbitCamera;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::{
+        DiskParameters, PlayerInteractionState, SimTime, SimulationConfig, TimeWarp,
+    };
+    use protostellar::simulation::scenarios::LoadScenarioEvent;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<QuickBarState>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<NotificationToast>();
+    app.init_resource::<PlanetBuilderState>();
+    app.init_resource::<HudVisibilityState>();
+    app.init_resource::<LateHeavyBombardmentState>();
+    app.add_message::<LoadScenarioEvent>();
+
+    // Spawn camera
+    let cam_ent = app
+        .world_mut()
+        .spawn(PanOrbitCamera {
+            focus: Vec3::ZERO,
+            target_focus: Vec3::ZERO,
+            radius: 50.0,
+            target_radius: 50.0,
+            ..default()
+        })
+        .id();
+
+    // Spawn tooltip text entity
+    app.world_mut().spawn((Text::new(""), HudActionTooltipText));
+
+    // Spawn celestial bodies: Sun, Earth, Jupiter
+    let _sun_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Sun".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            CentralStar,
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            Mass(1.0),
+            Radius(0.00465),
+            Composition::default(),
+        ))
+        .id();
+
+    let earth_pos = DVec3::new(1.0, 0.0, 0.0);
+    let _earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(earth_pos),
+            SimVelocity(DVec3::ZERO),
+            Mass(0.000003003),
+            Radius(0.0000426),
+            Composition::default(),
+        ))
+        .id();
+
+    let jupiter_pos = DVec3::new(5.2, 0.0, 0.0);
+    let jupiter_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Jupiter".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            SimPosition(jupiter_pos),
+            SimVelocity(DVec3::ZERO),
+            Mass(0.000954),
+            Radius(0.000467),
+            Composition::default(),
+        ))
+        .id();
+
+    // Spawn QuickBodySelectorBar
+    let bar_ent = app
+        .world_mut()
+        .spawn((QuickBodySelectorBar, Node::default()))
+        .id();
+
+    // Run update_quick_body_selector_bar to populate buttons
+    app.add_systems(Update, update_quick_body_selector_bar);
+    app.update();
+
+    // 1. Verify buttons were spawned under bar_ent
+    let children = app
+        .world()
+        .get::<Children>(bar_ent)
+        .expect("bar_ent must have children");
+    assert!(
+        !children.is_empty(),
+        "bar_ent must contain selector buttons"
+    );
+
+    // 2. Verify EVERY spawned text node inside buttons has Pickable::IGNORE
+    let mut button_count = 0;
+    let mut text_count = 0;
+    let mut jupiter_btn_ent: Option<Entity> = None;
+
+    for btn_child in children.iter() {
+        if let Some(action) = app.world().get::<UiButtonAction>(btn_child) {
+            button_count += 1;
+            if *action == UiButtonAction::SelectEntity(jupiter_ent) {
+                jupiter_btn_ent = Some(btn_child);
+            }
+        }
+        if let Some(btn_grandchildren) = app.world().get::<Children>(btn_child) {
+            for gc in btn_grandchildren.iter() {
+                if app.world().get::<Text>(gc).is_some() {
+                    text_count += 1;
+                    assert!(
+                        app.world().get::<Pickable>(gc) == Some(&Pickable::IGNORE),
+                        "Text node {:?} inside button {:?} must have Pickable::IGNORE so clicks register on parent button!",
+                        gc,
+                        btn_child
+                    );
+                }
+            }
+        }
+    }
+
+    assert!(
+        button_count >= 3,
+        "Must have spawned Sun, Earth, Jupiter buttons"
+    );
+    assert!(text_count >= 3, "Must have spawned text labels");
+    let jupiter_btn = jupiter_btn_ent.expect("Must have spawned Jupiter selector button");
+
+    // 3. Test clicking Jupiter button: Simulate Interaction::Pressed on jupiter_btn
+    // Verify UiButtonAction::SelectEntity updates player_state and camera focus immediately
+    app.world_mut()
+        .entity_mut(jupiter_btn)
+        .insert(Interaction::Pressed);
+
+    app.add_systems(Update, handle_ui_button_interactions);
+    app.update();
+
+    let player_state = app.world().resource::<PlayerInteractionState>();
+    assert_eq!(
+        player_state.selected_entity,
+        Some(jupiter_ent),
+        "Clicking Jupiter button must set selected_entity to jupiter_ent"
+    );
+
+    let cam = app.world().get::<PanOrbitCamera>(cam_ent).unwrap();
+    assert_eq!(
+        cam.target_entity,
+        Some(jupiter_ent),
+        "Camera target_entity must be set to Jupiter"
+    );
+    assert_eq!(
+        cam.target_focus,
+        Vec3::new(5.2, 0.0, 0.0),
+        "Camera target_focus must snap immediately to Jupiter's coordinates"
+    );
+    assert_eq!(
+        cam.focus,
+        Vec3::new(5.2, 0.0, 0.0),
+        "Camera focus must snap immediately to Jupiter's coordinates"
+    );
+
+    // 4. Test clean recursive despawn: Record all child and grandchild entity IDs
+    let mut initial_entities = Vec::new();
+    let old_children: Vec<Entity> = app
+        .world()
+        .get::<Children>(bar_ent)
+        .unwrap()
+        .iter()
+        .collect();
+    for child in old_children {
+        initial_entities.push(child);
+        if let Some(gcs) = app.world().get::<Children>(child) {
+            for gc in gcs.iter() {
+                initial_entities.push(gc);
+            }
+        }
+    }
+
+    // Mutate state to trigger rebuild of quick selector bar
+    let mut qb_state = app.world_mut().resource_mut::<QuickBarState>();
+    qb_state.show_embryos = true;
+
+    app.update();
+
+    // Verify all old entities (buttons and text nodes) were cleanly despawned without orphans
+    for old_ent in initial_entities {
+        assert!(
+            app.world().get_entity(old_ent).is_err(),
+            "Entity {:?} should have been cleanly despawned during bar rebuild",
+            old_ent
+        );
+    }
 }

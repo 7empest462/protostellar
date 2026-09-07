@@ -129,18 +129,23 @@ pub fn update_skybox_uniforms(
                 .unwrap_or(if is_blown_out { 1.0 } else { 0.0 });
 
             // Effective gravitational Einstein radius (physical + visual aesthetic scaling)
-            // Pre-blowout: spans outside the 60 AU envelope (R ~ 72 AU).
-            // Post-blowout: focuses onto the 2.5 AU event horizon with a 1.5x photon sphere (R ~ 4.2 AU).
+            // Pre-blowout: subtle relativistic shimmer around the 60 AU envelope (R ~ 12 AU).
+            // Post-blowout: focuses onto the 2.5 AU event horizon with a 1.85x photon sphere (R ~ 4.6 AU).
             let effective_lens_r = if is_blown_out {
-                (visual_r * 1.85).max(3.8)
+                (visual_r * 1.85).clamp(2.0, 6.0)
             } else {
-                let r_cocoon_lens = 72.0f32;
-                let r_bh_lens = (visual_r * 1.85).max(3.8);
+                let r_cocoon_lens = (visual_r * 0.20).clamp(2.0, 12.0);
+                let r_bh_lens = (visual_r * 1.85).clamp(2.0, 6.0);
                 r_cocoon_lens + (r_bh_lens - r_cocoon_lens) * blowout_p
             };
 
+            let shadow_r = if is_blown_out {
+                (visual_r * 0.98).max(0.01)
+            } else {
+                (visual_r * 0.05).clamp(0.5, 3.0)
+            };
             let theta_e = (effective_lens_r / dist_to_bh).atan();
-            let theta_shadow = ((visual_r * 0.98).max(0.01) / dist_to_bh).atan();
+            let theta_shadow = (shadow_r / dist_to_bh).atan();
             let photon_ring_width = (theta_shadow * 0.045).clamp(0.002, 0.06);
 
             lens_pos_and_mass = Vec4::new(bh_rel.x, bh_rel.y, bh_rel.z, theta_e);

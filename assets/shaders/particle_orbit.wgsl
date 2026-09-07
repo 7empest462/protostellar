@@ -47,7 +47,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var pos = p.pos_mass.xyz;
     let dx = pos.x - star.x;
     let dz = pos.z - star.z;
-    var r = max(sqrt(dx * dx + dz * dz), 0.08);
+    let min_r = max(uniforms.inner_radius * 0.5, 0.001);
+    var r = max(sqrt(dx * dx + dz * dz), min_r);
     var phi = atan2(dz, dx);
 
     // Effective stellar mass (radiation pressure reduces effective gravity by ~0.05%)
@@ -61,7 +62,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Aerodynamic Gas Drag & Secular Inward Drift with 3D Flared Scale Height
     if (uniforms.enable_gas_drag != 0u && uniforms.gas_scale > 0.001) {
-        let h_scale = max(0.030 * r * pow(r / 1.0, 0.25), 0.05);
+        let h_scale = max(0.030 * r * pow(r / 1.0, 0.25), 0.0001);
         let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
         let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
         let drag_rate = min(0.000005 * gas_density, 0.0005);
@@ -88,9 +89,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Bound particles within the disk
     r = clamp(r, uniforms.inner_radius * 0.75, uniforms.outer_radius * 1.05);
 
-    // Baseline coordinates
+    // Baseline coordinates with vertical flared scale-height confinement
     pos.x = star.x + r * cos(phi);
-    pos.y = pos.y * exp(-0.005 * uniforms.dt);
+    let h_disk = max(0.030 * r * pow(r / 1.0, 0.25), 0.0002);
+    pos.y = clamp(pos.y * exp(-0.02 * uniforms.dt), -h_disk * 2.5, h_disk * 2.5);
     pos.z = star.z + r * sin(phi);
 
     // Baseline circular velocity
@@ -111,11 +113,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let dist = sqrt(dist_sq);
 
         // Planetary Accretion Check: If particle enters physical/bound envelope, absorb it!
-        let p_dist_au = max(length(mb.xyz), 0.05);
+        let p_dist_au = max(length(mb.xyz), 0.001);
         let hill_r = p_dist_au * pow(m_body_mass / (3.0 * uniforms.star_mass), 0.3333333);
-        let physical_r = clamp(0.005 * pow(m_body_mass / 0.000003003, 0.3333333), 0.002, 0.040);
+        let physical_r = clamp(0.0000426 * pow(m_body_mass / 0.000003003, 0.3333333), 0.00001, 0.010);
         let is_massive = uniforms.star_mass > 10.0;
-        let max_acc = select(0.35, 12.0, is_massive);
+        let max_acc = select(0.005, 0.85, is_massive);
         let acc_r = clamp(physical_r + 0.60 * hill_r, physical_r, max_acc);
 
         if (dist < acc_r) {
@@ -126,8 +128,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
 
-        // Planetary Hill-Sphere resonance
-        let inv_dist3 = 1.0 / (dist_sq * dist);
+        // Planetary Hill-Sphere resonance with numerical close-encounter softening
+        let min_eff_sq = select(0.000001, 0.04, is_massive);
+        let eff_dist_sq = max(dist_sq, min_eff_sq);
+        let inv_dist3 = 1.0 / (eff_dist_sq * sqrt(eff_dist_sq));
         let f_grav = uniforms.g_const * m_body_mass * inv_dist3;
         a_pert = a_pert + to_body * f_grav;
     }
@@ -141,9 +145,48 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         a_pert = a_pert + to_trac * f_trac;
     }
 
+    // Acceleration limiting to protect against numerical kicks
+    let a_mag = length(a_pert);
+    let max_a = select(2500.0, 45000.0, uniforms.star_mass > 10.0);
+    if (a_mag > max_a) {
+        a_pert = a_pert * (max_a / a_mag);
+    }
+
     // Apply acceleration perturbations smoothly
     vel = vel + a_pert * uniforms.dt;
     pos = pos + a_pert * (0.5 * uniforms.dt * uniforms.dt);
+    pos.y = clamp(pos.y, -h_disk * 2.8, h_disk * 2.8);
+
+    // Enforce cosmic speed limit (AU/yr)
+    let speed = length(vel);
+    let max_speed = select(300.0, 8000.0, uniforms.star_mass > 10.0);
+    if (speed > max_speed) {
+        vel = vel * (max_speed / speed);
+    }
+
+    // Restrain particles within disk boundaries
+    let p_r = length(pos.xz - star.xz);
+    if (p_r > uniforms.outer_radius * 1.15) {
+        let unit_dir = normalize(pos.xz - star.xz);
+        let clamped_r = uniforms.outer_radius * 1.05;
+        pos.x = star.x + unit_dir.x * clamped_r;
+        pos.z = star.z + unit_dir.y * clamped_r;
+        let v_rad = dot(vel.xz, unit_dir);
+        if (v_rad > 0.0) {
+            vel.x = vel.x - unit_dir.x * v_rad * 0.85;
+            vel.z = vel.z - unit_dir.y * v_rad * 0.85;
+        }
+    } else if (p_r < uniforms.inner_radius * 0.85) {
+        let unit_dir = normalize(pos.xz - star.xz);
+        let clamped_r = uniforms.inner_radius * 0.95;
+        pos.x = star.x + unit_dir.x * clamped_r;
+        pos.z = star.z + unit_dir.y * clamped_r;
+        let v_rad = dot(vel.xz, unit_dir);
+        if (v_rad < 0.0) {
+            vel.x = vel.x - unit_dir.x * v_rad * 0.85;
+            vel.z = vel.z - unit_dir.y * v_rad * 0.85;
+        }
+    }
 
     // Blackbody temperature calculation
     let temp = uniforms.ref_temp_1au * pow(r / 1.0, -0.5);

@@ -87,6 +87,8 @@ pub struct PhaseManager {
     pub planet_count: usize,
     pub protoplanet_count: usize,
     pub planetesimal_count: usize,
+    pub asteroid_count: usize,
+    pub comet_count: usize,
     pub disk_mass_remaining: f64,
     pub star_mass: f64,
     pub is_star_ignited: bool,
@@ -103,6 +105,8 @@ impl Default for PhaseManager {
             planet_count: 0,
             protoplanet_count: 0,
             planetesimal_count: 0,
+            asteroid_count: 0,
+            comet_count: 0,
             disk_mass_remaining: 0.035,
             star_mass: 1.0,
             is_star_ignited: false,
@@ -237,6 +241,8 @@ pub fn monitor_phase_transitions(
     let mut planets = 0;
     let mut protoplanets = 0;
     let mut planetesimals = 0;
+    let mut asteroids = 0;
+    let mut comets = 0;
     let mut has_differentiated = false;
     let mut has_rings = false;
     let mut has_dynamo = false;
@@ -252,6 +258,8 @@ pub fn monitor_phase_transitions(
             | BodyType::GasGiant
             | BodyType::IceGiant => planets += 1,
             BodyType::Protoplanet => protoplanets += 1,
+            BodyType::Asteroid => asteroids += 1,
+            BodyType::Comet => comets += 1,
             BodyType::Planetesimal | BodyType::DustGrain => planetesimals += 1,
             _ => {}
         }
@@ -280,6 +288,8 @@ pub fn monitor_phase_transitions(
     phase_mgr.planet_count = planets;
     phase_mgr.protoplanet_count = protoplanets;
     phase_mgr.planetesimal_count = planetesimals;
+    phase_mgr.asteroid_count = asteroids;
+    phase_mgr.comet_count = comets;
     phase_mgr.disk_mass_remaining = remaining_disk_mass;
 
     if let Ok((mass, ignition, opt_evo)) = star_query.single() {
@@ -298,7 +308,29 @@ pub fn monitor_phase_transitions(
         }
     }
 
-    // 2. Evaluate Scientific Milestones
+    // Sync total delivered water into LHB state for real-time tracking
+    lhb_state.water_delivered_earth_masses = total_delivered_water;
+
+    // 2. Check for Ignition Event
+    for _ in ignition_events.read() {
+        phase_mgr.current_phase = SystemPhase::StarIgnition;
+        phase_mgr.phase_description =
+            "⭐ Hydrogen fusion has ignited in the core! Radiation pressure sweeps the inner disk.";
+        next_phase.set(SystemPhase::StarIgnition);
+    }
+
+    // 3. Unconditional Late Heavy Bombardment Manual Trigger (Key [G] or HUD Button)
+    if lhb_state.manual_trigger_requested {
+        lhb_state.is_active = true;
+        lhb_state.manual_trigger_requested = false;
+        lhb_state.resonance_crossed = true;
+        phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
+        phase_mgr.phase_description =
+            "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
+        next_phase.set(SystemPhase::LateHeavyBombardment);
+    }
+
+    // 4. Evaluate Scientific Milestones
     let current_sim_yr = sim_time.elapsed_years;
     let is_star_ignited = phase_mgr.is_star_ignited;
     let mut unlock_name = None;
@@ -336,15 +368,7 @@ pub fn monitor_phase_transitions(
         phase_mgr.milestone_toast_timer = 6.0;
     }
 
-    // 3. Check for Ignition Event
-    for _ in ignition_events.read() {
-        phase_mgr.current_phase = SystemPhase::StarIgnition;
-        phase_mgr.phase_description =
-            "⭐ Hydrogen fusion has ignited in the core! Radiation pressure sweeps the inner disk.";
-        next_phase.set(SystemPhase::StarIgnition);
-    }
-
-    // 4. Check for Accretion, LHB, and Mature System Transitions
+    // 5. Automatic Accretion, LHB, and Mature System Phase Transitions
     match phase_mgr.current_phase {
         SystemPhase::StarIgnition => {
             if planets + protoplanets >= 1 {
@@ -355,10 +379,9 @@ pub fn monitor_phase_transitions(
             }
         }
         SystemPhase::PlanetaryAccretion => {
-            // Trigger LHB automatically after planetary accretion epoch or manual trigger
-            if lhb_state.manual_trigger_requested || (planets >= 3 && current_sim_yr >= 800.0) {
+            // Trigger LHB automatically after planetary accretion epoch
+            if planets >= 3 && current_sim_yr >= 800.0 {
                 lhb_state.is_active = true;
-                lhb_state.manual_trigger_requested = false;
                 phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
                 phase_mgr.phase_description =
                     "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";

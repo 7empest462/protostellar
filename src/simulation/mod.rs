@@ -51,6 +51,7 @@ impl Plugin for SimulationPlugin {
                     update_photoevaporative_escape.after(update_thermodynamics),
                     auto_spawn_planetesimals.after(step_physics_simulation),
                     auto_spawn_delayed_proto_earth.after(step_physics_simulation),
+                    update_late_heavy_bombardment_cascade.after(step_physics_simulation),
                     update_black_hole_star_dynamics.after(step_physics_simulation),
                     dissipate_gas_disk.after(step_physics_simulation),
                 ),

@@ -273,55 +273,171 @@ pub fn draw_orbital_effects_and_gizmos(
             0.08,
             Color::srgba(0.75, 0.90, 1.0, 0.20),
         );
-    } else if matches!(
-        star_body.body_type,
-        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
-    ) {
-        // Pulsar / Magnetar: Rapidly spinning relativistic synchrotron beam lighthouse jets!
-        let spin_rate = if star_body.body_type == BodyType::Magnetar {
-            1.5
-        } else {
-            12.0
-        };
-        let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.35); // 20-degree magnetic axis tilt
-        let jet_len = if star_body.body_type == BodyType::Magnetar {
-            4.5
-        } else {
-            3.0
-        };
+    } else if star_body.body_type == BodyType::Pulsar {
+        // =========================================================================
+        // RAPIDLY SPINNING PULSAR: Relativistic Lighthouse Beams & Synchrotron Cones
+        // =========================================================================
+        let spin_rate = 24.0; // Rapid ~4 Hz rotation (24 rad/s)
+        let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.38); // 22-degree magnetic tilt
+        let jet_len = 8.0f32; // Extends ~8 AU across planetary orbits
 
         let north_beam = beam_rot * Vec3::Y;
         let south_beam = -north_beam;
 
-        let beam_color = if star_body.body_type == BodyType::Magnetar {
-            Color::srgba(1.0, 0.25, 0.55, 0.85) // Vivid magenta for Magnetar
-        } else {
-            Color::srgba(0.20, 0.85, 1.0, 0.85) // Electric cyan for Pulsar
-        };
+        let core_color = Color::srgba(0.85, 0.95, 1.0, 0.95); // Incandescent white-cyan
+        let sheath_color = Color::srgba(0.25, 0.85, 1.0, 0.85); // Electric cyan
 
-        // Polar relativistic beams
+        // Polar relativistic laser beams
+        gizmos.line(star_vec, star_vec + north_beam * jet_len, core_color);
+        gizmos.line(star_vec, star_vec + south_beam * jet_len, core_color);
+
+        // Synchrotron beam emission cones & expanding wavefront rings
+        for &dist in &[2.0f32, 4.0, 6.0, 8.0] {
+            let ring_r = 0.15 + (dist / jet_len) * 0.65;
+            gizmos.circle(
+                Isometry3d::new(
+                    star_vec + north_beam * dist,
+                    Quat::from_rotation_arc(Vec3::Z, north_beam),
+                ),
+                ring_r,
+                sheath_color,
+            );
+            gizmos.circle(
+                Isometry3d::new(
+                    star_vec + south_beam * dist,
+                    Quat::from_rotation_arc(Vec3::Z, south_beam),
+                ),
+                ring_r,
+                sheath_color,
+            );
+        }
+
+        // Conical boundary rays
+        let north_perp1 = (beam_rot * Vec3::X) * 0.70;
+        let north_perp2 = (beam_rot * Vec3::Z) * 0.70;
+        gizmos.line(
+            star_vec,
+            star_vec + north_beam * jet_len + north_perp1,
+            sheath_color,
+        );
+        gizmos.line(
+            star_vec,
+            star_vec + north_beam * jet_len - north_perp1,
+            sheath_color,
+        );
+        gizmos.line(
+            star_vec,
+            star_vec + north_beam * jet_len + north_perp2,
+            sheath_color,
+        );
+        gizmos.line(
+            star_vec,
+            star_vec + north_beam * jet_len - north_perp2,
+            sheath_color,
+        );
+
+        let south_perp1 = -north_perp1;
+        let south_perp2 = -north_perp2;
+        gizmos.line(
+            star_vec,
+            star_vec + south_beam * jet_len + south_perp1,
+            sheath_color,
+        );
+        gizmos.line(
+            star_vec,
+            star_vec + south_beam * jet_len - south_perp1,
+            sheath_color,
+        );
+        gizmos.line(
+            star_vec,
+            star_vec + south_beam * jet_len + south_perp2,
+            sheath_color,
+        );
+        gizmos.line(
+            star_vec,
+            star_vec + south_beam * jet_len - south_perp2,
+            sheath_color,
+        );
+
+        // Equatorial Light Cylinder boundary circle
+        gizmos.circle(
+            Isometry3d::new(star_vec, beam_rot),
+            1.85,
+            Color::srgba(0.20, 0.75, 1.0, 0.45),
+        );
+    } else if star_body.body_type == BodyType::Magnetar {
+        // =========================================================================
+        // ULTRA-MAGNETIZED MAGNETAR: Towering 3D Dipole Field Arches & Plasma Torus
+        // =========================================================================
+        let spin_rate = 1.5; // ~0.24 Hz majestic rotation
+        let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.26); // 15-degree magnetic tilt
+
+        // Towering 3D Dipole Loops across 4 radial tiers reaching up to 6.2 AU into space!
+        // r(theta) = r_0 * sin^2(theta) for theta in [0.25, pi - 0.25]
+        let loop_tiers: [(f32, Color); 4] = [
+            (1.3, Color::srgba(0.20, 0.95, 1.0, 0.85)), // Inner neon cyan
+            (2.4, Color::srgba(0.60, 0.35, 1.0, 0.80)), // Mid royal violet
+            (4.0, Color::srgba(0.95, 0.20, 0.75, 0.75)), // Outer electric magenta
+            (6.2, Color::srgba(1.00, 0.15, 0.45, 0.70)), // Towering crimson-violet
+        ];
+
+        let num_quadrants = 4;
+        let num_segments = 24;
+
+        for &(r_0, loop_color) in &loop_tiers {
+            for q in 0..num_quadrants {
+                let azimuth = (q as f32) * (std::f32::consts::PI * 0.5);
+                let loop_rot = beam_rot * Quat::from_rotation_y(azimuth);
+
+                let mut prev_pt: Option<Vec3> = None;
+
+                for s in 0..=num_segments {
+                    let frac = (s as f32) / (num_segments as f32);
+                    let theta = 0.25 + frac * (std::f32::consts::PI - 0.50);
+                    let sin_t = theta.sin();
+                    let cos_t = theta.cos();
+                    let r = r_0 * sin_t * sin_t;
+
+                    let x_l = r * sin_t;
+                    let y_l = r * cos_t;
+                    // Traveling Alfvén wave ripple along the magnetic flux tube
+                    let alfven_phase = (s as f32) * 0.45 - elapsed * 6.5 + (q as f32) * 1.5;
+                    let z_l = alfven_phase.sin() * 0.07 * (r_0 / 2.0).clamp(0.5, 2.5);
+
+                    let pt = star_vec + loop_rot * Vec3::new(x_l, y_l, z_l);
+
+                    if let Some(p) = prev_pt {
+                        gizmos.line(p, pt, loop_color);
+                    }
+                    prev_pt = Some(pt);
+                }
+
+                // Dynamic reconnection plasma knot at the apex of the magnetic arch
+                let apex_r = r_0;
+                let knot_phase = elapsed * 5.0 + (q as f32) * 2.0;
+                let knot_z = knot_phase.sin() * 0.06;
+                let knot_pos = star_vec + loop_rot * Vec3::new(apex_r, 0.0, knot_z);
+                let knot_radius = 0.04 + 0.02 * (knot_phase * 1.7).sin().abs();
+                gizmos.sphere(
+                    Isometry3d::from_translation(knot_pos),
+                    knot_radius,
+                    loop_color,
+                );
+            }
+        }
+    } else if star_body.body_type == BodyType::NeutronStar {
+        // Standard Neutron Star: Compact synchrotron beams and magnetic loops
+        let spin_rate = 8.0;
+        let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.35);
+        let jet_len = 3.0;
+
+        let north_beam = beam_rot * Vec3::Y;
+        let south_beam = -north_beam;
+        let beam_color = Color::srgba(0.40, 0.85, 1.0, 0.80);
+
         gizmos.line(star_vec, star_vec + north_beam * jet_len, beam_color);
         gizmos.line(star_vec, star_vec + south_beam * jet_len, beam_color);
 
-        // Synchrotron beam emission cones
-        gizmos.circle(
-            Isometry3d::new(
-                star_vec + north_beam * jet_len,
-                Quat::from_rotation_arc(Vec3::Z, north_beam),
-            ),
-            0.45,
-            beam_color,
-        );
-        gizmos.circle(
-            Isometry3d::new(
-                star_vec + south_beam * jet_len,
-                Quat::from_rotation_arc(Vec3::Z, south_beam),
-            ),
-            0.45,
-            beam_color,
-        );
-
-        // Magnetospheric Dipole Field Loops
         for i in 0..4 {
             let angle = (i as f32) * (std::f32::consts::PI / 2.0);
             let rot = beam_rot * Quat::from_rotation_y(angle);

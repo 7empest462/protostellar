@@ -554,26 +554,15 @@ fn render_early_universe(dir: vec3<f32>, time: f32) -> vec3<f32> {
 // PART 3: GENERAL RELATIVISTIC GRAVITATIONAL LENSING & WARPING
 // ============================================================================
 
-struct LensingResult {
-    deflected_dir: vec3<f32>,
-    shadow_mask: f32,
-    photon_ring_emission: vec3<f32>,
-};
-
-fn compute_gravitational_lensing(view_dir: vec3<f32>) -> LensingResult {
-    var res: LensingResult;
-    res.deflected_dir = view_dir;
-    res.shadow_mask = 1.0;
-    res.photon_ring_emission = vec3<f32>(0.0);
-
+fn compute_gravitational_lensing(view_dir: vec3<f32>) -> vec3<f32> {
     if (skybox.lens_params.z < 0.5) {
-        return res; // Lensing inactive
+        return view_dir; // Lensing inactive
     }
 
     let bh_rel = skybox.lens_pos_and_mass.xyz;
     let dist_to_bh = length(bh_rel);
     if (dist_to_bh < 0.001) {
-        return res;
+        return view_dir;
     }
 
     let bh_dir = bh_rel / dist_to_bh;
@@ -581,25 +570,8 @@ fn compute_gravitational_lensing(view_dir: vec3<f32>) -> LensingResult {
     let theta = acos(cos_theta);
 
     let theta_E = skybox.lens_pos_and_mass.w;
-    let theta_shadow = skybox.lens_params.x;
-    let photon_ring_width = max(skybox.lens_params.y, 0.0015);
 
-    // 1. Photon Sphere Caustic Ring (at theta ~ theta_shadow)
-    let d_photon = abs(theta - theta_shadow) / photon_ring_width;
-    let photon_core = exp(-d_photon * d_photon * 8.0) * 3.2;
-    let photon_halo = exp(-d_photon * 2.5) * 1.1;
-
-    // Relativistic Doppler beaming asymmetry (frame-dragging along black hole rotation)
-    let phi_angle = atan2(view_dir.z, view_dir.x);
-    let doppler_boost = 1.0 + sin(phi_angle * 2.0) * 0.25 * skybox.lens_params.w;
-
-    let photon_ring_color = (vec3<f32>(1.0, 0.96, 0.88) * photon_core + vec3<f32>(0.35, 0.75, 1.25) * photon_halo) * doppler_boost;
-    res.photon_ring_emission = photon_ring_color;
-
-    // 2. Black Hole Event Horizon Shadow Mask
-    res.shadow_mask = smoothstep(theta_shadow * 0.94, theta_shadow * 1.02, theta);
-
-    // 3. General Relativistic Light Ray Deflection
+    // General Relativistic Light Ray Deflection
     // Deflection angle alpha(theta) = theta_E^2 / theta
     let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
     if (sin_theta > 0.0001) {
@@ -610,10 +582,10 @@ fn compute_gravitational_lensing(view_dir: vec3<f32>) -> LensingResult {
         let alpha = (theta_E * theta_E / (theta + 0.004)) * lens_falloff;
         let beta = theta - alpha; // Source angular position
 
-        res.deflected_dir = normalize(cos(beta) * bh_dir + sin(beta) * v_perp);
+        return normalize(cos(beta) * bh_dir + sin(beta) * v_perp);
     }
 
-    return res;
+    return view_dir;
 }
 
 // ============================================================================
@@ -628,8 +600,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let blend = clamp(skybox.params.y, 0.0, 1.0);
 
     // Apply General Relativistic Gravitational Lensing & Warping
-    let lens = compute_gravitational_lensing(raw_dir);
-    let dir = lens.deflected_dir;
+    let dir = compute_gravitational_lensing(raw_dir);
 
     var color = vec3<f32>(0.0);
 
@@ -646,12 +617,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         color = mix(modern, early, blend);
     }
 
-    // Apply black hole shadow occlusion and add photon sphere caustic ring
-    color = color * lens.shadow_mask + lens.photon_ring_emission;
-
     // Exposure tone multiplier
     let final_color = color * skybox.params.z;
 
     return vec4<f32>(final_color, 1.0);
 }
+
 

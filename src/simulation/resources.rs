@@ -121,6 +121,20 @@ impl SimulationConfig {
         }
     }
 
+    /// Computes the safe minimum camera zoom radius for a celestial body with given visual radius (AU).
+    /// Provides a spectacular, cinematic close-up view occupying ~75-80% of screen height while
+    /// guaranteeing safe surface clearance so the camera never penetrates or near-clips through the body.
+    pub fn calc_camera_min_zoom_radius(&self, visual_radius: f32) -> f32 {
+        (visual_radius * 1.55).max(visual_radius + 0.0015)
+    }
+
+    /// Computes the optimal camera framing distance when focusing or locking onto a celestial body.
+    /// Nicely frames the body in view (~30-35% screen height) with room to observe its immediate orbits.
+    pub fn calc_camera_framing_radius(&self, visual_radius: f32) -> f32 {
+        let min_r = self.calc_camera_min_zoom_radius(visual_radius);
+        (visual_radius * 3.6).clamp(min_r, 250.0)
+    }
+
     /// Legacy mass-based render radius used only for accretion collision cross-sections.
     /// NOT used for visual rendering (use `calc_visual_radius` instead).
     pub fn calc_collision_radius(

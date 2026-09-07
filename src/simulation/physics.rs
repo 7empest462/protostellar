@@ -13,7 +13,7 @@ use crate::utils::constants::*;
 /// Advances the N-body gravitational physics simulation using a Symplectic Kick-Drift-Kick Leapfrog integrator.
 pub fn step_physics_simulation(
     config: Res<SimulationConfig>,
-    _disk_params: Res<DiskParameters>,
+    disk_params: Res<DiskParameters>,
     time_warp: Res<TimeWarp>,
     mut sim_time: ResMut<SimTime>,
     mut energy_monitor: ResMut<EnergyMonitor>,
@@ -52,7 +52,8 @@ pub fn step_physics_simulation(
         f64,
         BodyType,
         Option<SatelliteOf>,
-        bool, // is_central_star
+        bool,   // is_central_star
+        String, // name
     )> = bodies_query
         .iter()
         .map(|(e, m, pos, vel, acc, rad, body, sat, opt_central)| {
@@ -66,6 +67,7 @@ pub fn step_physics_simulation(
                 body.body_type,
                 sat.copied(),
                 opt_central.is_some(),
+                body.name.clone(),
             )
         })
         .collect();
@@ -75,9 +77,7 @@ pub fn step_physics_simulation(
     }
 
     // Find central star index if present
-    let star_index = body_data
-        .iter()
-        .position(|(_, _, _, _, _, _, _, _, is_central)| *is_central);
+    let star_index = body_data.iter().position(|b| b.8);
 
     let (star_mass, star_pos, is_central_quasi) = if let Some(idx) = star_index {
         (
@@ -99,19 +99,29 @@ pub fn step_physics_simulation(
 
     // Adaptive substepping: For extreme mass systems (Little Red Dot), scale substep resolution
     // so high time warp multipliers never cause numerical leapfrog tangent blowout.
+    // For compact systems (e.g. TRAPPIST-1 with 1.5-day orbits), scale substep resolution so
+    // sub_dt <= 0.00008 yr (~42 minutes), resolving close-in orbits with ~60 steps per revolution.
+    let is_compact_system = star_mass < 0.25 && disk_params.outer_radius_au < 1.0;
     let max_substeps = if is_little_red_dot {
         config.max_substeps_per_frame.max(128)
+    } else if is_compact_system {
+        config.max_substeps_per_frame.max(64)
     } else {
         config.max_substeps_per_frame
     };
-    let n_substeps = ((target_dt / dt).ceil() as usize).clamp(1, max_substeps);
+    let eff_dt = if is_compact_system {
+        dt.min(0.00008)
+    } else {
+        dt
+    };
+    let n_substeps = ((target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
     let sub_dt = target_dt / (n_substeps as f64);
 
     // Filter massive bodies (embryos, planets, stars) for full mutual N-body interactions
     let massive_indices: Vec<usize> = body_data
         .iter()
         .enumerate()
-        .filter(|(_, (_, m, _, _, _, _, t, _, is_central))| {
+        .filter(|(_, (_, m, _, _, _, _, t, _, is_central, _))| {
             *m > EARTH_MASS_SOLAR * 0.1
                 || *is_central
                 || t.is_star_or_remnant()
@@ -239,7 +249,7 @@ pub fn step_physics_simulation(
             if !b_type.is_star_or_remnant() {
                 // Gas aerodynamic drag and orbital circularization
                 if config.enable_gas_drag && config.gas_density_scale > 0.001 {
-                    let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.1);
+                    let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.005);
                     let v_k = (G_ASTRO * star_mass / r_cyl).sqrt();
                     let v_gas_mag = v_k * 0.998;
                     let phi = pos.z.atan2(pos.x);
@@ -266,6 +276,25 @@ pub fn step_physics_simulation(
                     acc -= r_unit * (v_radial * damp_rate);
                     acc.y -= vel.y * damp_rate * 2.0;
                 }
+
+                // Stellar Wind Radiation Pressure: On star ignition and gas clearing,
+                // radiation pressure exerts an outward radial push on loose inner minor bodies (r < 2.0 AU),
+                // migrating them outward into the Main Asteroid Belt (2.1 - 3.3 AU) and keeping the inner terrestrial zone clean!
+                if matches!(
+                    b_type,
+                    BodyType::Asteroid
+                        | BodyType::Comet
+                        | BodyType::Planetesimal
+                        | BodyType::DustGrain
+                ) {
+                    let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.005);
+                    if r_cyl < 2.0 && config.gas_density_scale < 0.95 {
+                        let r_unit = DVec3::new(pos.x / r_cyl, 0.0, pos.z / r_cyl);
+                        let push_mag = 0.35 * (1.0 - (r_cyl / 2.0)).max(0.0)
+                            / (1.0 + b_mass / (EARTH_MASS_SOLAR * 0.001));
+                        acc += r_unit * push_mag;
+                    }
+                }
             }
 
             // Mutual N-body interactions with Adaptive Softening (Newton's Shell Theorem)
@@ -279,6 +308,19 @@ pub fn step_physics_simulation(
                 let dist_sq = r_vec.length_squared() + softening_sq;
                 let dist = dist_sq.sqrt();
                 acc -= (G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
+
+                // Heliocentric Indirect Term (Standard Jacobi correction for pinned central star frame):
+                // In a coordinate system anchored to the central star, an external massive body m
+                // accelerates the primary star toward it. Subtracting this frame acceleration ensures
+                // orbiting bodies experience the true physical tidal gravitational field rather than an
+                // unphysical one-sided coordinate drag.
+                if let Some(s_idx) = star_index {
+                    if m_idx != s_idx && i != s_idx {
+                        let m_r_sq = m_pos.length_squared() + softening_sq;
+                        let m_dist = m_r_sq.sqrt();
+                        acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_pos;
+                    }
+                }
             }
 
             // Gravitational tractor tool acceleration
@@ -312,7 +354,7 @@ pub fn step_physics_simulation(
         let new_accelerations: Vec<DVec3> = body_data
             .iter()
             .enumerate()
-            .map(|(i, (_, mass, pos, vel, _, rad, b_type, _, _))| {
+            .map(|(i, (_, mass, pos, vel, _, rad, b_type, _, _, _))| {
                 compute_acc(i, pos, vel, *mass, *rad, *b_type)
             })
             .collect();
@@ -332,16 +374,21 @@ pub fn step_physics_simulation(
             let progress = (lhb_state.time_active_years / 2500.0).clamp(0.0, 1.0);
             lhb_state.migration_progress = progress;
 
-            // Find Jupiter and Saturn indices
+            // Find Jupiter and Saturn indices (robust identification by name or mass/distance)
             let mut jupiter_idx = None;
             let mut saturn_idx = None;
 
-            for (i, (_, m, pos, _, _, _, b_type, _, _)) in body_data.iter().enumerate() {
+            for (i, (_, m, pos, _, _, _, b_type, _, _, name)) in body_data.iter().enumerate() {
                 let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
-                if matches!(b_type, BodyType::GasGiant) || *m >= JUPITER_MASS_SOLAR * 0.15 {
-                    if r < 10.0 && jupiter_idx.is_none() {
+                let name_lower = name.to_lowercase();
+                if name_lower.contains("jupiter") {
+                    jupiter_idx = Some((i, r));
+                } else if name_lower.contains("saturn") {
+                    saturn_idx = Some((i, r));
+                } else if matches!(b_type, BodyType::GasGiant) || *m >= JUPITER_MASS_SOLAR * 0.05 {
+                    if r < 7.5 && jupiter_idx.is_none() {
                         jupiter_idx = Some((i, r));
-                    } else if (8.0..20.0).contains(&r) {
+                    } else if (7.5..16.0).contains(&r) && saturn_idx.is_none() {
                         saturn_idx = Some((i, r));
                     }
                 }
@@ -352,7 +399,7 @@ pub fn step_physics_simulation(
                 lhb_state.resonance_ratio = p_ratio;
 
                 // Check resonance crossing at 2:1
-                if p_ratio >= 2.0 && !lhb_state.resonance_crossed {
+                if (p_ratio >= 2.0 || progress >= 0.05) && !lhb_state.resonance_crossed {
                     lhb_state.resonance_crossed = true;
                     // Resonant eccentricity kick
                     let v_j = body_data[j_i].3;
@@ -373,27 +420,55 @@ pub fn step_physics_simulation(
                     let v_dir = body_data[s_i].3.normalize_or_zero();
                     body_data[s_i].4 += v_dir * 0.0006;
                 }
+            } else if progress >= 0.05 && !lhb_state.resonance_crossed {
+                // Guaranteed resonance crossing even in scenarios without explicit Jupiter/Saturn
+                lhb_state.resonance_crossed = true;
             }
 
-            // Outward migration for Ice Giants and comet scattering
-            for (i, (_, _m, pos, vel, acc, _, b_type, _, _)) in body_data.iter_mut().enumerate() {
+            // Outward migration for Ice Giants, and two-pronged resonance scattering of Asteroids and Comets
+            for (i, (_, _m, pos, vel, acc, _, b_type, _, _, name)) in
+                body_data.iter_mut().enumerate()
+            {
                 let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
                 let v_dir = vel.normalize_or_zero();
+                let name_lower = name.to_lowercase();
 
-                if matches!(b_type, BodyType::IceGiant) {
-                    if r < 30.0 && progress < 0.95 {
+                if matches!(b_type, BodyType::IceGiant)
+                    || name_lower.contains("uranus")
+                    || name_lower.contains("neptune")
+                {
+                    if r < 32.0 && progress < 0.95 {
                         *acc += v_dir * 0.0012; // Outward migration through icy disk
+                    }
+                } else if matches!(b_type, BodyType::Asteroid | BodyType::Planetesimal)
+                    && (1.9..=3.8).contains(&r)
+                {
+                    // 1. Asteroid Belt secular resonance sweeping (nu_6 and 2:1 MMR)
+                    // Pumps eccentricity and delivers retrograde/inward deflection into Earth/Venus-crossing orbits
+                    if lhb_state.resonance_crossed && progress < 0.92 {
+                        let inward = -pos.normalize_or_zero();
+                        let retrograde = -v_dir;
+                        let inclination_perturb =
+                            DVec3::new(0.0, ((i % 7) as f64 - 3.0) * 0.05, 0.0);
+                        let kick_dir = (inward * 0.65 + retrograde * 0.35 + inclination_perturb)
+                            .normalize_or_zero();
+                        *acc += kick_dir * 0.006;
+                        lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
                     }
                 } else if matches!(
                     b_type,
-                    BodyType::Planetesimal | BodyType::Asteroid | BodyType::Comet
-                ) && r >= 15.0
+                    BodyType::Comet | BodyType::Planetesimal | BodyType::Asteroid
+                ) && r >= 12.0
                 {
-                    // Gravitational scattering: Comets get perturbed into high-eccentricity inner crossing orbits
-                    if lhb_state.resonance_crossed && progress < 0.90 {
-                        let kick_dir = -pos.normalize_or_zero()
-                            + DVec3::new(0.0, (i % 5) as f64 * 0.05 - 0.1, 0.0);
-                        *acc += kick_dir.normalize_or_zero() * 0.0045;
+                    // 2. Kuiper Belt & Trans-Neptunian comets: Ice giant scattering flings icy bodies inward on high-e plunges
+                    if lhb_state.resonance_crossed && progress < 0.92 {
+                        let inward = -pos.normalize_or_zero();
+                        let retrograde = -v_dir;
+                        let inclination_perturb =
+                            DVec3::new(0.0, (i % 5) as f64 * 0.08 - 0.16, 0.0);
+                        let kick_dir = (inward * 0.80 + retrograde * 0.20 + inclination_perturb)
+                            .normalize_or_zero();
+                        *acc += kick_dir * 0.0055;
                         lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
                     }
                 }
@@ -501,7 +576,7 @@ pub fn step_physics_simulation(
     let mut kinetic_e = 0.0;
     let mut potential_e = 0.0;
 
-    for (i, (_, m, pos, vel, _, _, _, _, _)) in body_data.iter().enumerate() {
+    for (i, (_, m, pos, vel, _, _, _, _, _, _)) in body_data.iter().enumerate() {
         kinetic_e += 0.5 * m * vel.length_squared();
 
         // Potential energy against central star

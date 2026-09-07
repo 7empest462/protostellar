@@ -61,6 +61,7 @@ pub struct GpuSimExtractedParams {
     pub tractor_pos_mass: [f32; 4],
     pub massive_bodies: [MassiveBodyGpu; 32],
     pub count: u32,
+    pub disk_mass: f32,
     pub elapsed_years: f64,
 }
 
@@ -140,6 +141,7 @@ pub fn extract_gpu_sim_data(
         tractor_pos_mass,
         massive_bodies,
         count: config.target_particle_count as u32,
+        disk_mass: disk_params.disk_mass as f32,
         elapsed_years: sim_time.elapsed_years,
     });
 }
@@ -367,53 +369,67 @@ pub fn step_gpu_simulation_render_world(
     {
         let mut rng = rand::rng();
         let mut reseed_particles = Vec::with_capacity(engine.num_particles as usize);
-        let disk_mass = if params.star_mass > 10.0 {
+        let is_empty_disk = params.disk_mass <= 0.0;
+        let disk_mass = if is_empty_disk {
+            0.0
+        } else if params.star_mass > 10.0 {
             500.0 // Circum-nuclear disk for Little Red Dot
         } else {
             0.00010 // Authentic Hayashi MMSN solid dust (~33 Earth masses)
         };
-        let disk_params = DiskParameters {
-            central_star_mass: params.star_mass as f64,
-            disk_mass,
-            inner_radius_au: params.inner_radius as f64,
-            outer_radius_au: params.outer_radius as f64,
-            reference_temp_1au: params.ref_temp_1au as f64,
-            ..default()
-        };
-        let individual_mass = (disk_mass / (engine.num_particles as f64)) as f32;
-        for _ in 0..engine.num_particles {
-            let (r, comp_struct) =
-                crate::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
-            let phi = rng.random_range(0.0..2.0 * PI);
-            let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
-            let normal_dist =
-                Normal::new(0.0, h_scale).unwrap_or_else(|_| Normal::new(0.0, 1e-3).unwrap());
-            let z_height: f64 = rng.sample(normal_dist);
-            let pos = [
-                (r * phi.cos()) as f32,
-                z_height as f32,
-                (r * phi.sin()) as f32,
-                individual_mass,
-            ];
-            let v_k = (G_ASTRO * params.star_mass as f64 / r).sqrt();
-            let v_phi = v_k as f32;
-            let vel = [
-                (-v_phi * phi.sin() as f32),
-                0.0,
-                (v_phi * phi.cos() as f32),
-                (params.ref_temp_1au as f64 * (r / 1.0).powf(-0.5)) as f32,
-            ];
-            let comp = [
-                comp_struct.silicate_frac as f32,
-                comp_struct.ice_frac as f32,
-                comp_struct.metal_frac as f32,
-                comp_struct.gas_frac as f32,
-            ];
-            reseed_particles.push(GpuParticle {
-                pos_mass: pos,
-                vel_temp: vel,
-                composition: comp,
-            });
+
+        if is_empty_disk {
+            for _ in 0..engine.num_particles {
+                reseed_particles.push(GpuParticle {
+                    pos_mass: [0.0, -5000.0, 0.0, 0.0],
+                    vel_temp: [0.0, 0.0, 0.0, 0.0],
+                    composition: [0.0, 0.0, 0.0, 0.0],
+                });
+            }
+        } else {
+            let disk_params = DiskParameters {
+                central_star_mass: params.star_mass as f64,
+                disk_mass,
+                inner_radius_au: params.inner_radius as f64,
+                outer_radius_au: params.outer_radius as f64,
+                reference_temp_1au: params.ref_temp_1au as f64,
+                ..default()
+            };
+            let individual_mass = (disk_mass / (engine.num_particles as f64)) as f32;
+            for _ in 0..engine.num_particles {
+                let (r, comp_struct) =
+                    crate::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
+                let phi = rng.random_range(0.0..2.0 * PI);
+                let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
+                let normal_dist =
+                    Normal::new(0.0, h_scale).unwrap_or_else(|_| Normal::new(0.0, 1e-3).unwrap());
+                let z_height: f64 = rng.sample(normal_dist);
+                let pos = [
+                    (r * phi.cos()) as f32,
+                    z_height as f32,
+                    (r * phi.sin()) as f32,
+                    individual_mass,
+                ];
+                let v_k = (G_ASTRO * params.star_mass as f64 / r).sqrt();
+                let v_phi = v_k as f32;
+                let vel = [
+                    (-v_phi * phi.sin() as f32),
+                    0.0,
+                    (v_phi * phi.cos() as f32),
+                    (params.ref_temp_1au as f64 * (r / 1.0).powf(-0.5)) as f32,
+                ];
+                let comp = [
+                    comp_struct.silicate_frac as f32,
+                    comp_struct.ice_frac as f32,
+                    comp_struct.metal_frac as f32,
+                    comp_struct.gas_frac as f32,
+                ];
+                reseed_particles.push(GpuParticle {
+                    pos_mass: pos,
+                    vel_temp: vel,
+                    composition: comp,
+                });
+            }
         }
         queue.write_buffer(
             &engine.particle_buffer,
@@ -572,6 +588,12 @@ pub fn receive_gpu_readback(
 
     if let Some(ref mut cfg) = config {
         cfg.gpu_compute_active = true;
-        cfg.active_particles = n as u32;
+        let mut active = 0u32;
+        for p in particles.iter().take(n) {
+            if p.pos_mass[3] > 0.0 {
+                active += 1;
+            }
+        }
+        cfg.active_particles = active;
     }
 }
