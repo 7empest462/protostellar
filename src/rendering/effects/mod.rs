@@ -224,9 +224,8 @@ fn draw_single_body_gizmos(
 
     let should_draw_tail = match player_state.orbit_mode {
         OrbitVisualizationMode::Off => false,
-        OrbitVisualizationMode::SelectedOnly => {
-            is_selected || body.body_type == BodyType::Comet || opt_tail.is_some()
-        }
+        // SelectedOnly: only the selected body — no comet/tail exceptions.
+        OrbitVisualizationMode::SelectedOnly => is_selected,
         OrbitVisualizationMode::All => true,
     };
 
@@ -361,7 +360,10 @@ pub fn draw_orbital_effects_and_gizmos(
 
     draw_impact_shockwaves(&mut gizmos, &shockwave_pool);
     draw_roche_debris_streamers(&mut gizmos, &debris_pool);
-    draw_au_guide_rings(&mut gizmos, star_vec);
+    // AU distance guides look like planetary orbits — hide them with orbit trails.
+    if player_state.orbit_mode != OrbitVisualizationMode::Off {
+        draw_au_guide_rings(&mut gizmos, star_vec);
+    }
 
     let params = BodyEffectParams {
         star_vec,
