@@ -211,6 +211,185 @@ impl Default for PhaseManager {
     }
 }
 
+#[derive(Default)]
+struct SystemStats {
+    planets: usize,
+    protoplanets: usize,
+    planetesimals: usize,
+    asteroids: usize,
+    comets: usize,
+    has_differentiated: bool,
+    has_rings: bool,
+    has_dynamo: bool,
+    has_biosphere: bool,
+    total_delivered_water: f64,
+    remaining_disk_mass: f64,
+    is_red_giant_or_wd: bool,
+}
+
+fn collect_system_statistics(
+    star_query: &Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
+    bodies_query: &Query<
+        (
+            &Mass,
+            &CelestialBody,
+            Option<&InternalDifferentiation>,
+            Option<&VolatileInventory>,
+            Option<&PlanetaryRingSystem>,
+            Option<&BiosphereState>,
+        ),
+        Without<CentralStar>,
+    >,
+    phase_mgr: &mut PhaseManager,
+) -> SystemStats {
+    let mut stats = SystemStats::default();
+
+    for (mass, body, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
+        match body.body_type {
+            BodyType::TerrestrialPlanet
+            | BodyType::SuperEarth
+            | BodyType::GasGiant
+            | BodyType::IceGiant => stats.planets += 1,
+            BodyType::Protoplanet => stats.protoplanets += 1,
+            BodyType::Asteroid => stats.asteroids += 1,
+            BodyType::Comet => stats.comets += 1,
+            BodyType::Planetesimal | BodyType::DustGrain => stats.planetesimals += 1,
+            _ => {}
+        }
+        if let Some(diff) = opt_diff {
+            if diff.is_differentiated {
+                stats.has_differentiated = true;
+            }
+            if diff.magnetic_field_gauss >= 0.15 {
+                stats.has_dynamo = true;
+            }
+        }
+        if let Some(vol) = opt_vol {
+            stats.total_delivered_water += vol.delivered_water_m_earth;
+        }
+        if opt_rings.is_some() {
+            stats.has_rings = true;
+        }
+        if let Some(bio) = opt_bio {
+            if bio.biomass_coverage_frac >= 0.02 || bio.emergence_year.is_some() {
+                stats.has_biosphere = true;
+            }
+        }
+        stats.remaining_disk_mass += mass.0;
+    }
+
+    phase_mgr.planet_count = stats.planets;
+    phase_mgr.protoplanet_count = stats.protoplanets;
+    phase_mgr.planetesimal_count = stats.planetesimals;
+    phase_mgr.asteroid_count = stats.asteroids;
+    phase_mgr.comet_count = stats.comets;
+    phase_mgr.disk_mass_remaining = stats.remaining_disk_mass;
+
+    if let Ok((mass, ignition, opt_evo)) = star_query.single() {
+        phase_mgr.star_mass = mass.0;
+        phase_mgr.is_star_ignited = ignition.is_ignited;
+        if let Some(evo) = opt_evo {
+            if matches!(
+                evo.phase,
+                StellarEvolutionPhase::RedGiantBranch
+                    | StellarEvolutionPhase::HeliumFlashAgb
+                    | StellarEvolutionPhase::PlanetaryNebulaEjection
+                    | StellarEvolutionPhase::WhiteDwarf
+            ) {
+                stats.is_red_giant_or_wd = true;
+            }
+        }
+    }
+
+    stats
+}
+
+fn evaluate_scientific_milestones(
+    stats: &SystemStats,
+    phase_mgr: &mut PhaseManager,
+    lhb_state: &LateHeavyBombardmentState,
+    current_sim_yr: f64,
+) {
+    let is_star_ignited = phase_mgr.is_star_ignited;
+    let mut unlock_name = None;
+
+    for milestone in &mut phase_mgr.milestones {
+        if milestone.achieved {
+            continue;
+        }
+
+        let passed = match milestone.id {
+            MilestoneId::DustCoagulation => stats.planetesimals >= 4,
+            MilestoneId::PlanetesimalGrowth => stats.protoplanets + stats.planets >= 1,
+            MilestoneId::StellarIgnition => is_star_ignited,
+            MilestoneId::GapClearing => stats.planets >= 1,
+            MilestoneId::CoreDifferentiation => stats.has_differentiated,
+            MilestoneId::StableMultiPlanet => stats.planets >= 3,
+            MilestoneId::GiantPlanetResonance => lhb_state.resonance_crossed,
+            MilestoneId::LateHeavyBombardment => lhb_state.is_active,
+            MilestoneId::VolatileOceanDelivery => stats.total_delivered_water >= 0.0005,
+            MilestoneId::PlanetaryRingGenesis => stats.has_rings,
+            MilestoneId::DynamoMagneticShield => stats.has_dynamo,
+            MilestoneId::BiosphereGenesis => stats.has_biosphere,
+            MilestoneId::StellarMetamorphosis => stats.is_red_giant_or_wd,
+        };
+
+        if passed {
+            milestone.achieved = true;
+            milestone.achieve_timestamp = Some(current_sim_yr);
+            unlock_name = Some(milestone.title.to_string());
+        }
+    }
+
+    if let Some(name) = unlock_name {
+        phase_mgr.latest_unlocked_milestone = Some(name);
+        phase_mgr.milestone_toast_timer = 6.0;
+    }
+}
+
+fn evaluate_system_phase_transitions(
+    stats: &SystemStats,
+    phase_mgr: &mut PhaseManager,
+    lhb_state: &mut LateHeavyBombardmentState,
+    next_phase: &mut NextState<SystemPhase>,
+    current_sim_yr: f64,
+) {
+    match phase_mgr.current_phase {
+        SystemPhase::StarIgnition => {
+            if stats.planets + stats.protoplanets >= 1 {
+                phase_mgr.current_phase = SystemPhase::PlanetaryAccretion;
+                phase_mgr.phase_description =
+                    "Planetesimals are actively coalescing into planetary embryos.";
+                next_phase.set(SystemPhase::PlanetaryAccretion);
+            }
+        }
+        SystemPhase::PlanetaryAccretion => {
+            if stats.planets >= 3 && current_sim_yr >= 800.0 {
+                lhb_state.is_active = true;
+                phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
+                phase_mgr.phase_description =
+                    "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
+                next_phase.set(SystemPhase::LateHeavyBombardment);
+            }
+        }
+        SystemPhase::LateHeavyBombardment
+            if lhb_state.migration_progress >= 0.95 && current_sim_yr >= 3500.0 =>
+        {
+            phase_mgr.current_phase = SystemPhase::MatureSolarSystem;
+            phase_mgr.phase_description =
+                "🌟 Orbits have relaxed into stable, clean architectures with water-bearing worlds.";
+            next_phase.set(SystemPhase::MatureSolarSystem);
+        }
+        SystemPhase::MatureSolarSystem if stats.is_red_giant_or_wd => {
+            phase_mgr.current_phase = SystemPhase::StellarMetamorphosis;
+            phase_mgr.phase_description =
+                "🌟 Stellar Metamorphosis! The star has swelled into a Red Giant or shed its envelope into a White Dwarf.";
+            next_phase.set(SystemPhase::StellarMetamorphosis);
+        }
+        _ => {}
+    }
+}
+
 /// Evaluates phase transition conditions based on astrophysical state.
 pub fn monitor_phase_transitions(
     time: Res<Time>,
@@ -237,81 +416,9 @@ pub fn monitor_phase_transitions(
         phase_mgr.milestone_toast_timer -= dt;
     }
 
-    // 1. Update counts and detect milestones
-    let mut planets = 0;
-    let mut protoplanets = 0;
-    let mut planetesimals = 0;
-    let mut asteroids = 0;
-    let mut comets = 0;
-    let mut has_differentiated = false;
-    let mut has_rings = false;
-    let mut has_dynamo = false;
-    let mut has_biosphere = false;
-    let mut total_delivered_water = 0.0;
-    let mut remaining_disk_mass = 0.0;
-    let mut is_red_giant_or_wd = false;
+    let stats = collect_system_statistics(&star_query, &bodies_query, &mut phase_mgr);
+    lhb_state.water_delivered_earth_masses = stats.total_delivered_water;
 
-    for (mass, body, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
-        match body.body_type {
-            BodyType::TerrestrialPlanet
-            | BodyType::SuperEarth
-            | BodyType::GasGiant
-            | BodyType::IceGiant => planets += 1,
-            BodyType::Protoplanet => protoplanets += 1,
-            BodyType::Asteroid => asteroids += 1,
-            BodyType::Comet => comets += 1,
-            BodyType::Planetesimal | BodyType::DustGrain => planetesimals += 1,
-            _ => {}
-        }
-        if let Some(diff) = opt_diff {
-            if diff.is_differentiated {
-                has_differentiated = true;
-            }
-            if diff.magnetic_field_gauss >= 0.15 {
-                has_dynamo = true;
-            }
-        }
-        if let Some(vol) = opt_vol {
-            total_delivered_water += vol.delivered_water_m_earth;
-        }
-        if opt_rings.is_some() {
-            has_rings = true;
-        }
-        if let Some(bio) = opt_bio {
-            if bio.biomass_coverage_frac >= 0.02 || bio.emergence_year.is_some() {
-                has_biosphere = true;
-            }
-        }
-        remaining_disk_mass += mass.0;
-    }
-
-    phase_mgr.planet_count = planets;
-    phase_mgr.protoplanet_count = protoplanets;
-    phase_mgr.planetesimal_count = planetesimals;
-    phase_mgr.asteroid_count = asteroids;
-    phase_mgr.comet_count = comets;
-    phase_mgr.disk_mass_remaining = remaining_disk_mass;
-
-    if let Ok((mass, ignition, opt_evo)) = star_query.single() {
-        phase_mgr.star_mass = mass.0;
-        phase_mgr.is_star_ignited = ignition.is_ignited;
-        if let Some(evo) = opt_evo {
-            if matches!(
-                evo.phase,
-                StellarEvolutionPhase::RedGiantBranch
-                    | StellarEvolutionPhase::HeliumFlashAgb
-                    | StellarEvolutionPhase::PlanetaryNebulaEjection
-                    | StellarEvolutionPhase::WhiteDwarf
-            ) {
-                is_red_giant_or_wd = true;
-            }
-        }
-    }
-
-    // Sync total delivered water into LHB state for real-time tracking
-    lhb_state.water_delivered_earth_masses = total_delivered_water;
-
-    // 2. Check for Ignition Event
     for _ in ignition_events.read() {
         phase_mgr.current_phase = SystemPhase::StarIgnition;
         phase_mgr.phase_description =
@@ -319,7 +426,6 @@ pub fn monitor_phase_transitions(
         next_phase.set(SystemPhase::StarIgnition);
     }
 
-    // 3. Unconditional Late Heavy Bombardment Manual Trigger (Key [G] or HUD Button)
     if lhb_state.manual_trigger_requested {
         lhb_state.is_active = true;
         lhb_state.manual_trigger_requested = false;
@@ -330,78 +436,13 @@ pub fn monitor_phase_transitions(
         next_phase.set(SystemPhase::LateHeavyBombardment);
     }
 
-    // 4. Evaluate Scientific Milestones
     let current_sim_yr = sim_time.elapsed_years;
-    let is_star_ignited = phase_mgr.is_star_ignited;
-    let mut unlock_name = None;
-
-    for milestone in phase_mgr.milestones.iter_mut() {
-        if milestone.achieved {
-            continue;
-        }
-
-        let passed = match milestone.id {
-            MilestoneId::DustCoagulation => planetesimals >= 4,
-            MilestoneId::PlanetesimalGrowth => protoplanets + planets >= 1,
-            MilestoneId::StellarIgnition => is_star_ignited,
-            MilestoneId::GapClearing => planets >= 1,
-            MilestoneId::CoreDifferentiation => has_differentiated,
-            MilestoneId::StableMultiPlanet => planets >= 3,
-            MilestoneId::GiantPlanetResonance => lhb_state.resonance_crossed,
-            MilestoneId::LateHeavyBombardment => lhb_state.is_active,
-            MilestoneId::VolatileOceanDelivery => total_delivered_water >= 0.0005,
-            MilestoneId::PlanetaryRingGenesis => has_rings,
-            MilestoneId::DynamoMagneticShield => has_dynamo,
-            MilestoneId::BiosphereGenesis => has_biosphere,
-            MilestoneId::StellarMetamorphosis => is_red_giant_or_wd,
-        };
-
-        if passed {
-            milestone.achieved = true;
-            milestone.achieve_timestamp = Some(current_sim_yr);
-            unlock_name = Some(milestone.title.to_string());
-        }
-    }
-
-    if let Some(name) = unlock_name {
-        phase_mgr.latest_unlocked_milestone = Some(name);
-        phase_mgr.milestone_toast_timer = 6.0;
-    }
-
-    // 5. Automatic Accretion, LHB, and Mature System Phase Transitions
-    match phase_mgr.current_phase {
-        SystemPhase::StarIgnition => {
-            if planets + protoplanets >= 1 {
-                phase_mgr.current_phase = SystemPhase::PlanetaryAccretion;
-                phase_mgr.phase_description =
-                    "Planetesimals are actively coalescing into planetary embryos.";
-                next_phase.set(SystemPhase::PlanetaryAccretion);
-            }
-        }
-        SystemPhase::PlanetaryAccretion => {
-            // Trigger LHB automatically after planetary accretion epoch
-            if planets >= 3 && current_sim_yr >= 800.0 {
-                lhb_state.is_active = true;
-                phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
-                phase_mgr.phase_description =
-                    "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
-                next_phase.set(SystemPhase::LateHeavyBombardment);
-            }
-        }
-        SystemPhase::LateHeavyBombardment
-            if lhb_state.migration_progress >= 0.95 && current_sim_yr >= 3500.0 =>
-        {
-            phase_mgr.current_phase = SystemPhase::MatureSolarSystem;
-            phase_mgr.phase_description =
-                "🌟 Orbits have relaxed into stable, clean architectures with water-bearing worlds.";
-            next_phase.set(SystemPhase::MatureSolarSystem);
-        }
-        SystemPhase::MatureSolarSystem if is_red_giant_or_wd => {
-            phase_mgr.current_phase = SystemPhase::StellarMetamorphosis;
-            phase_mgr.phase_description =
-                "🌟 Stellar Metamorphosis! The star has swelled into a Red Giant or shed its envelope into a White Dwarf.";
-            next_phase.set(SystemPhase::StellarMetamorphosis);
-        }
-        _ => {}
-    }
+    evaluate_scientific_milestones(&stats, &mut phase_mgr, &lhb_state, current_sim_yr);
+    evaluate_system_phase_transitions(
+        &stats,
+        &mut phase_mgr,
+        &mut lhb_state,
+        &mut next_phase,
+        current_sim_yr,
+    );
 }

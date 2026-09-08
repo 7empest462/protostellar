@@ -20,10 +20,10 @@ pub const G_ASTRO: f64 = 4.0 * PI * PI;
 pub const G_SI: f64 = 6.67430e-11;
 
 /// $1 \text{ AU}$ in meters
-pub const AU_TO_METERS: f64 = 1.495978707e11;
+pub const AU_TO_METERS: f64 = 1.495_978_707e11;
 
 /// $1 \text{ AU}$ in kilometers
-pub const AU_TO_KM: f64 = 1.495978707e8;
+pub const AU_TO_KM: f64 = 1.495_978_707e8;
 
 /// $1 M_\odot$ (Solar Mass) in kilograms
 pub const SOLAR_MASS_KG: f64 = 1.98847e30;
@@ -53,7 +53,7 @@ pub const EARTH_RADIUS_AU: f64 = 6.371e6 / AU_TO_METERS; // ~4.25875e-5 AU
 pub const EARTH_RADIUS_KM: f64 = 6371.0;
 
 /// 1 Year in seconds
-pub const YEAR_SECONDS: f64 = 31557600.0; // Julian year: 365.25 days
+pub const YEAR_SECONDS: f64 = 31_557_600.0; // Julian year: 365.25 days
 
 /// $1 \text{ AU/yr}$ in $\text{km/s}$
 pub const AU_PER_YR_TO_KM_PER_S: f64 = AU_TO_KM / YEAR_SECONDS; // ~4.74047 km/s
@@ -65,10 +65,10 @@ pub const CHANDRASEKHAR_LIMIT_SOLAR: f64 = 1.44;
 pub const TOV_LIMIT_SOLAR: f64 = 2.17;
 
 /// Speed of light in AU/yr
-pub const SPEED_OF_LIGHT_AU_YR: f64 = (299792458.0 * YEAR_SECONDS) / AU_TO_METERS; // ~63241.077 AU/yr
+pub const SPEED_OF_LIGHT_AU_YR: f64 = (299_792_458.0 * YEAR_SECONDS) / AU_TO_METERS; // ~63241.077 AU/yr
 
 /// Stefan-Boltzmann Constant in $\text{W} / (\text{m}^2 \cdot \text{K}^4)$
-pub const STEFAN_BOLTZMANN_SI: f64 = 5.670374419e-8;
+pub const STEFAN_BOLTZMANN_SI: f64 = 5.670_374_419e-8;
 
 /// Solar Luminosity $L_\odot$ in Watts
 pub const SOLAR_LUMINOSITY_WATTS: f64 = 3.828e26;
@@ -107,16 +107,16 @@ pub fn blackbody_to_srgb(temp_kelvin: f64) -> (f32, f32, f32) {
         255.0
     } else {
         let x = t - 60.0;
-        (329.698727446 * x.powf(-0.1332047592)).clamp(0.0, 255.0)
+        (329.698_727_446 * x.powf(-0.133_204_759_2)).clamp(0.0, 255.0)
     };
 
     // Green component
     let g = if t <= 66.0 {
         let x = t;
-        (99.4708025861 * x.ln() - 161.1195681661).clamp(0.0, 255.0)
+        (99.470_802_586_1 * x.ln() - 161.119_568_166_1).clamp(0.0, 255.0)
     } else {
         let x = t - 60.0;
-        (288.1221695283 * x.powf(-0.0755148492)).clamp(0.0, 255.0)
+        (288.122_169_528_3 * x.powf(-0.075_514_849_2)).clamp(0.0, 255.0)
     };
 
     // Blue component
@@ -126,7 +126,7 @@ pub fn blackbody_to_srgb(temp_kelvin: f64) -> (f32, f32, f32) {
         0.0
     } else {
         let x = t - 10.0;
-        (138.5177312231 * x.ln() - 305.0447927307).clamp(0.0, 255.0)
+        (138.517_731_223_1 * x.ln() - 305.044_792_730_7).clamp(0.0, 255.0)
     };
 
     ((r / 255.0) as f32, (g / 255.0) as f32, (b / 255.0) as f32)

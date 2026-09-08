@@ -47,6 +47,7 @@ pub struct GpuOrbitUniforms {
     pub shockwave_radius: f32,
     pub softening_sq: f32,
     pub num_massive_bodies: u32,
+    #[allow(clippy::pub_underscore_fields)]
     pub _pad: f32,
     pub tractor_pos_mass: [f32; 4],
     pub massive_bodies: [MassiveBodyGpu; 32],
@@ -61,7 +62,7 @@ impl Default for GpuOrbitUniforms {
             gas_scale: 1.0,
             inner_radius: 0.06,
             outer_radius: 35.0,
-            g_const: 39.478418, // 4 * PI^2
+            g_const: 39.478_418, // 4 * PI^2
             enable_gas_drag: 1,
             num_particles: 50000,
             ref_temp_1au: 280.0,

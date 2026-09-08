@@ -13,7 +13,7 @@ pub struct OrbitalElements {
     pub semi_major_axis: f64,
     /// Orbital Eccentricity ($e$), dimensionless ($0 \le e < 1$ for bound elliptical orbits)
     pub eccentricity: f64,
-    /// Orbital Inclination ($i$) in radians
+    /// Orbital Inclination ($i$) in radians relative to the disk plane (Y-axis normal)
     pub inclination: f64,
     /// Longitude of the Ascending Node ($\Omega$) in radians
     pub longitude_ascending_node: f64,
@@ -29,6 +29,10 @@ pub struct OrbitalElements {
     pub apoapsis: f64,
     /// Specific orbital energy ($\mathcal{E} = -\mu / 2a$) in $(\text{AU/yr})^2$
     pub specific_energy: f64,
+    /// Unit vector towards periapsis in 3D simulation space
+    pub periapsis_dir: DVec3,
+    /// Unit vector orthogonal to periapsis in orbital plane in direction of motion
+    pub semilatus_dir: DVec3,
 }
 
 impl Default for OrbitalElements {
@@ -44,6 +48,8 @@ impl Default for OrbitalElements {
             periapsis: 1.0,
             apoapsis: 1.0,
             specific_energy: -G_ASTRO / 2.0,
+            periapsis_dir: DVec3::X,
+            semilatus_dir: DVec3::Z,
         }
     }
 }
@@ -71,6 +77,10 @@ pub fn state_vectors_to_orbital_elements(
     // Specific angular momentum vector h = r x v
     let h_vec = rel_pos.cross(rel_vel);
     let h = h_vec.length();
+    if h < 1e-12 {
+        return None;
+    }
+    let h_hat = h_vec / h;
 
     // Specific orbital energy E = v^2 / 2 - mu / r
     let specific_energy = (v * v) / 2.0 - (mu / r);
@@ -86,63 +96,62 @@ pub fn state_vectors_to_orbital_elements(
     let e_vec = (rel_vel.cross(h_vec) / mu) - (rel_pos / r);
     let e = e_vec.length();
 
-    // Node vector n = k x h = (-h_y, h_x, 0)
-    let n_vec = DVec3::new(-h_vec.y, h_vec.x, 0.0);
+    // Perifocal frame unit vectors:
+    // P points towards periapsis. If near circular (e <= 1e-5), define P along current position
+    let periapsis_dir = if e > 1e-5 { e_vec / e } else { rel_pos / r };
+
+    // Q points in the orbital plane 90 degrees ahead of periapsis in direction of orbital motion
+    let mut semilatus_dir = h_hat.cross(periapsis_dir);
+    if semilatus_dir.length_squared() > 1e-12 {
+        semilatus_dir = semilatus_dir.normalize();
+    } else {
+        semilatus_dir = DVec3::Z;
+    }
+
+    // Reference coordinate frame: protoplanetary disk in X-Z plane with normal along -Y (for prograde motion)
+    let cos_inc = (-h_vec.y / h).clamp(-1.0, 1.0);
+    let inclination = cos_inc.acos();
+
+    // Line of nodes: intersection of orbital plane with disk plane (Y = 0)
+    // n_vec = (0, -1, 0) x h_vec = (-h_vec.z, 0.0, h_vec.x)
+    let n_vec = DVec3::new(-h_vec.z, 0.0, h_vec.x);
     let n = n_vec.length();
 
-    // Inclination i = acos(h_z / h)
-    let inclination = if h > 1e-12 {
-        (h_vec.z / h).clamp(-1.0, 1.0).acos()
-    } else {
-        0.0
-    };
-
-    // Longitude of Ascending Node Omega
     let longitude_ascending_node = if n > 1e-12 {
-        let omega_node = (n_vec.x / n).clamp(-1.0, 1.0).acos();
-        if n_vec.y < 0.0 {
-            2.0 * PI - omega_node
-        } else {
-            omega_node
+        let mut omega_node = n_vec.z.atan2(n_vec.x);
+        if omega_node < 0.0 {
+            omega_node += 2.0 * PI;
         }
+        omega_node
     } else {
         0.0
     };
 
-    // Argument of Periapsis omega
     let argument_of_periapsis = if n > 1e-12 && e > 1e-12 {
-        let cos_arg = (n_vec.dot(e_vec) / (n * e)).clamp(-1.0, 1.0);
-        let arg = cos_arg.acos();
-        if e_vec.z < 0.0 {
-            2.0 * PI - arg
-        } else {
-            arg
+        let cos_arg = (n_vec.dot(periapsis_dir) / n).clamp(-1.0, 1.0);
+        let mut arg = cos_arg.acos();
+        if n_vec.cross(periapsis_dir).dot(h_vec) < 0.0 {
+            arg = 2.0 * PI - arg;
         }
+        arg
     } else if e > 1e-12 {
-        // Equatorial orbit
-        let cos_arg = (e_vec.x / e).clamp(-1.0, 1.0);
-        let arg = cos_arg.acos();
-        if e_vec.y < 0.0 {
-            2.0 * PI - arg
-        } else {
-            arg
+        // Coplanar orbit: argument of periapsis is longitude of periapsis measured from +X axis
+        let mut arg = periapsis_dir.z.atan2(periapsis_dir.x);
+        if arg < 0.0 {
+            arg += 2.0 * PI;
         }
+        arg
     } else {
         0.0
     };
 
-    // True Anomaly nu
-    let true_anomaly = if e > 1e-12 {
-        let cos_nu = (e_vec.dot(rel_pos) / (e * r)).clamp(-1.0, 1.0);
-        let nu = cos_nu.acos();
-        if rel_pos.dot(rel_vel) < 0.0 {
-            2.0 * PI - nu
-        } else {
-            nu
-        }
-    } else {
-        0.0
-    };
+    // True Anomaly nu measured in the orbital plane (P, Q)
+    let cos_nu = (rel_pos.dot(periapsis_dir) / r).clamp(-1.0, 1.0);
+    let sin_nu = (rel_pos.dot(semilatus_dir) / r).clamp(-1.0, 1.0);
+    let mut true_anomaly = sin_nu.atan2(cos_nu);
+    if true_anomaly < 0.0 {
+        true_anomaly += 2.0 * PI;
+    }
 
     // Orbital Period P = 2 * PI * sqrt(a^3 / mu)
     let period_years = if a > 0.0 {
@@ -175,6 +184,8 @@ pub fn state_vectors_to_orbital_elements(
         periapsis,
         apoapsis,
         specific_energy,
+        periapsis_dir,
+        semilatus_dir,
     })
 }
 
@@ -203,29 +214,8 @@ pub fn position_at_true_anomaly(elements: &OrbitalElements, nu: f64) -> Option<V
         return None;
     }
 
-    let inc = elements.inclination;
-    let lan = elements.longitude_ascending_node;
-    let arg_p = elements.argument_of_periapsis;
-
-    let sin_inc = inc.sin();
-    let cos_inc = inc.cos();
-    let sin_lan = lan.sin();
-    let cos_lan = lan.cos();
-    let sin_arg = arg_p.sin();
-    let cos_arg = arg_p.cos();
-
-    let x_orb = r * nu.cos();
-    let y_orb = r * nu.sin();
-
-    let x_node = x_orb * cos_arg - y_orb * sin_arg;
-    let y_node = x_orb * sin_arg + y_orb * cos_arg;
-
-    let x_ecl = x_node * cos_lan - y_node * cos_inc * sin_lan;
-    let y_ecl = x_node * sin_lan + y_node * cos_inc * cos_lan;
-    let z_ecl = y_node * sin_inc;
-
-    // Bevy 3D coordinate system: X = right, Y = up (Z in astro), Z = towards viewer
-    Some(Vec3::new(x_ecl as f32, z_ecl as f32, y_ecl as f32))
+    let pos_3d = elements.periapsis_dir * (r * nu.cos()) + elements.semilatus_dir * (r * nu.sin());
+    Some(Vec3::new(pos_3d.x as f32, pos_3d.y as f32, pos_3d.z as f32))
 }
 
 /// Generates a series of 3D orbital curve points in AU for visualization of bound orbits ($e < 1.0$).
@@ -234,39 +224,13 @@ pub fn generate_orbit_points(elements: &OrbitalElements, num_samples: usize) -> 
         return Vec::new();
     }
 
-    let a = elements.semi_major_axis;
-    let e = elements.eccentricity;
-    let inc = elements.inclination;
-    let lan = elements.longitude_ascending_node;
-    let arg_p = elements.argument_of_periapsis;
-
-    let sin_inc = inc.sin();
-    let cos_inc = inc.cos();
-    let sin_lan = lan.sin();
-    let cos_lan = lan.cos();
-    let sin_arg = arg_p.sin();
-    let cos_arg = arg_p.cos();
-
     let mut points = Vec::with_capacity(num_samples + 1);
 
     for i in 0..=num_samples {
         let nu = (i as f64 / num_samples as f64) * 2.0 * PI;
-        let r = (a * (1.0 - e * e)) / (1.0 + e * nu.cos());
-
-        // Position in orbital plane
-        let x_orb = r * nu.cos();
-        let y_orb = r * nu.sin();
-
-        // Rotate by argument of periapsis, inclination, and ascending node
-        let x_node = x_orb * cos_arg - y_orb * sin_arg;
-        let y_node = x_orb * sin_arg + y_orb * cos_arg;
-
-        let x_ecl = x_node * cos_lan - y_node * cos_inc * sin_lan;
-        let y_ecl = x_node * sin_lan + y_node * cos_inc * cos_lan;
-        let z_ecl = y_node * sin_inc;
-
-        // Bevy 3D coordinate system: X = right, Y = up (Z in astro), Z = towards viewer
-        points.push(Vec3::new(x_ecl as f32, z_ecl as f32, y_ecl as f32));
+        if let Some(pt) = position_at_true_anomaly(elements, nu) {
+            points.push(pt);
+        }
     }
 
     points
@@ -365,4 +329,3 @@ pub fn nodal_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3
     };
     (asc, desc)
 }
-

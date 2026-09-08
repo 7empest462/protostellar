@@ -144,7 +144,7 @@ pub fn update_gas_cloud_material(
             mat.extension.uniforms.time_data.z = disk_outer;
 
             if let Ok((rad, temp, lum, ignition, opt_bhs, star_body)) = star_query.single() {
-                let is_blown_out = opt_bhs.map(|s| s.is_blown_out).unwrap_or(false);
+                let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
                 let is_black_hole = star_body.body_type == BodyType::BlackHole;
 
                 let target_inner = if is_massive {
@@ -155,7 +155,7 @@ pub fn update_gas_cloud_material(
                         (disk_params.inner_radius_au as f32).clamp(1.2, 3.5)
                     }
                 } else if is_blown_out || is_black_hole {
-                    let blowout_p = opt_bhs.map(|s| s.blowout_progress).unwrap_or(1.0);
+                    let blowout_p = opt_bhs.map_or(1.0, |s| s.blowout_progress);
                     0.5 + blowout_p * 24.5
                 } else if is_compact {
                     (disk_params.inner_radius_au as f32).clamp(0.003, 0.015)

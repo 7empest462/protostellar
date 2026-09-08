@@ -14,6 +14,7 @@ use crate::gpu::particle_pipeline::*;
 #[derive(Resource)]
 pub struct GpuReadbackSender {
     pub tx: flume::Sender<Vec<u8>>,
+    pub recycle_rx: flume::Receiver<Vec<u8>>,
 }
 
 /// Plugin registering GPU computing resources, compute pipelines, and instanced particle rendering.
@@ -23,11 +24,12 @@ impl Plugin for GpuSimPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ParticleRenderPlugin);
 
-        // Create cross-world readback channel
+        // Create cross-world readback channel and recycling channel
         let (tx, rx) = flume::bounded::<Vec<u8>>(2);
+        let (recycle_tx, recycle_rx) = flume::bounded::<Vec<u8>>(2);
 
         // Main-world: insert receiver + readback system
-        app.insert_resource(GpuReadbackReceiver { rx });
+        app.insert_resource(GpuReadbackReceiver { rx, recycle_tx });
         app.add_systems(Update, receive_gpu_readback);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -35,7 +37,7 @@ impl Plugin for GpuSimPlugin {
         };
 
         // RenderApp: insert sender + compute systems
-        render_app.insert_resource(GpuReadbackSender { tx });
+        render_app.insert_resource(GpuReadbackSender { tx, recycle_rx });
         render_app
             .add_systems(ExtractSchedule, extract_gpu_sim_data)
             .add_systems(Render, step_gpu_simulation_render_world);

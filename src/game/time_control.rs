@@ -42,9 +42,9 @@ pub fn handle_time_control_input(
         time_warp.set_preset(10000.0);
     }
     if keyboard.just_pressed(KeyCode::Digit6) || keyboard.just_pressed(KeyCode::Numpad6) {
-        time_warp.set_preset(100000.0);
+        time_warp.set_preset(100_000.0);
     }
     if keyboard.just_pressed(KeyCode::Digit7) || keyboard.just_pressed(KeyCode::Numpad7) {
-        time_warp.set_preset(1000000.0);
+        time_warp.set_preset(1_000_000.0);
     }
 }

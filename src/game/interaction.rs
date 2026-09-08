@@ -10,6 +10,441 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
+fn handle_tab_selection(
+    keyboard: &ButtonInput<KeyCode>,
+    config: &SimulationConfig,
+    player_state: &mut PlayerInteractionState,
+    toast: &mut crate::game::ui::NotificationToast,
+    camera_query: &mut Query<(&Transform, &mut PanOrbitCamera)>,
+    selected_query: &Query<
+        (
+            Entity,
+            &mut Mass,
+            &mut Radius,
+            &mut Temperature,
+            &mut SimPosition,
+            &mut SimVelocity,
+            &mut Composition,
+            &mut CelestialBody,
+            Option<&mut InternalDifferentiation>,
+            Option<&mut Transform>,
+            Option<&mut IgnitionState>,
+            Option<&mut BlackHoleStarState>,
+            Option<&CentralStar>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
+) {
+    if !keyboard.just_pressed(KeyCode::Tab) {
+        return;
+    }
+    let worlds = crate::game::ui::collect_sorted_system_worlds(
+        selected_query
+            .iter()
+            .map(|item| (item.0, item.7, item.4, item.1, item.2, item.12)),
+    );
+    if worlds.is_empty() {
+        return;
+    }
+    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    let len = worlds.len();
+    let next_idx = if let Some(curr) = player_state.selected_entity {
+        if let Some(curr_idx) = worlds.iter().position(|w| w.entity == curr) {
+            if shift {
+                (curr_idx + len - 1) % len
+            } else {
+                (curr_idx + 1) % len
+            }
+        } else {
+            0
+        }
+    } else if shift {
+        len - 1
+    } else {
+        0
+    };
+
+    let Some(target) = worlds.get(next_idx) else {
+        return;
+    };
+    player_state.selected_entity = Some(target.entity);
+    if let Ok((_, mut cam)) = camera_query.single_mut() {
+        cam.target_entity = Some(target.entity);
+        let visual_r = config.calc_visual_radius_for_type(target.radius_au, target.body_type);
+        cam.target_radius = config.calc_camera_framing_radius(visual_r);
+    }
+
+    let m_str = if target.mass_solar >= 0.01 {
+        format!("{:.2} M☉", target.mass_solar)
+    } else {
+        format!("{:.2} M⊕", target.mass_solar / EARTH_MASS_SOLAR)
+    };
+    let icon = if target.is_central_star || target.body_type.is_star_or_remnant() {
+        "☀️"
+    } else if target.name.to_lowercase().contains("earth")
+        || target.name.to_lowercase().contains("habitable")
+        || target.name.to_lowercase().contains("1e")
+        || target.name.to_lowercase().contains("1f")
+        || target.name.to_lowercase().contains("1g")
+    {
+        "🌍"
+    } else if target.body_type == BodyType::GasGiant
+        || target.name.to_lowercase().contains("jupiter")
+        || target.name.to_lowercase().contains("saturn")
+    {
+        "🪐"
+    } else if target.name.to_lowercase().contains("rogue")
+        || target.name.to_lowercase().contains("nemesis")
+    {
+        "☄️"
+    } else {
+        "🪨"
+    };
+    toast.message = format!(
+        ">> TARGET: {} {} ({:.3} AU) | Mass: {}",
+        icon, target.name, target.distance_au, m_str
+    );
+    toast.timer = 4.0;
+}
+
+fn handle_viewport_and_tool_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    config: &mut SimulationConfig,
+    player_state: &mut PlayerInteractionState,
+    builder_state: &mut crate::game::ui::PlanetBuilderState,
+    toast: &mut crate::game::ui::NotificationToast,
+    camera_query: &Query<(&Transform, &mut PanOrbitCamera)>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        builder_state.is_open = !builder_state.is_open;
+        toast.message = if builder_state.is_open {
+            "🛠️ Planet Builder & Spawner Opened [P]".to_string()
+        } else {
+            "🛠️ Planet Builder Closed [P]".to_string()
+        };
+        toast.timer = 2.5;
+    }
+    if keyboard.just_pressed(KeyCode::Comma) {
+        config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
+        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
+    }
+    if keyboard.just_pressed(KeyCode::Period) {
+        config.size_exaggeration = (config.size_exaggeration * 1.4).min(20.0);
+        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
+    }
+    if keyboard.just_pressed(KeyCode::Escape) {
+        player_state.selected_entity = None;
+    }
+    if keyboard.just_pressed(KeyCode::KeyV) {
+        player_state.overlay_mode = player_state.overlay_mode.cycle();
+    }
+    if keyboard.just_pressed(KeyCode::KeyY) {
+        player_state.orbit_mode = player_state.orbit_mode.cycle();
+        toast.message = match player_state.orbit_mode {
+            OrbitVisualizationMode::All => "궤 Orbit Visualization: All Worlds [Y]".to_string(),
+            OrbitVisualizationMode::SelectedOnly => {
+                "궤 Orbit Visualization: Selected Target Only [Y]".to_string()
+            }
+            OrbitVisualizationMode::Off => {
+                "궤 Orbit Visualization: Hidden (Cinematic) [Y]".to_string()
+            }
+        };
+        toast.timer = 2.5;
+    }
+    if keyboard.just_pressed(KeyCode::KeyT) {
+        if player_state.active_tool == PlayerTool::GravitationalTractor {
+            player_state.active_tool = PlayerTool::Inspect;
+            player_state.tractor_position = None;
+            player_state.tractor_mass = 0.0;
+        } else {
+            player_state.active_tool = PlayerTool::GravitationalTractor;
+            if let Ok((cam_trans, _)) = camera_query.single() {
+                let tractor_pt = cam_trans.translation + cam_trans.forward() * 15.0;
+                player_state.tractor_position = Some(DVec3::new(
+                    f64::from(tractor_pt.x),
+                    f64::from(tractor_pt.y),
+                    f64::from(tractor_pt.z),
+                ));
+                player_state.tractor_mass = EARTH_MASS_SOLAR * 5.0;
+            }
+        }
+    }
+}
+
+fn apply_body_mass_and_orbit_edits(
+    keyboard: &ButtonInput<KeyCode>,
+    star_mass: f64,
+    mass: &mut Mass,
+    radius: &mut Radius,
+    pos: &mut SimPosition,
+    vel: &mut SimVelocity,
+    comp: &Composition,
+    body: &CelestialBody,
+    mut diff_opt: Option<&mut InternalDifferentiation>,
+    mut trans_opt: Option<&mut Transform>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyU)
+        || keyboard.just_pressed(KeyCode::Equal)
+        || keyboard.just_pressed(KeyCode::NumpadAdd)
+    {
+        mass.0 *= 1.25;
+        if !body.body_type.is_star_or_remnant() {
+            let avg_density = comp.average_density();
+            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                .cbrt()
+                .max(EARTH_RADIUS_AU * 0.1);
+        }
+        if let Some(ref mut diff) = diff_opt {
+            diff.recalculate(mass.0, radius.0, comp);
+        }
+        if let Some(ref mut trans) = trans_opt {
+            let scale = (radius.0 as f32 * 50.0).clamp(0.02, 1.5);
+            trans.scale = Vec3::splat(scale);
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyJ)
+        || keyboard.just_pressed(KeyCode::Minus)
+        || keyboard.just_pressed(KeyCode::NumpadSubtract)
+    {
+        mass.0 = (mass.0 * 0.8).max(1e-7 * EARTH_MASS_SOLAR);
+        if !body.body_type.is_star_or_remnant() {
+            let avg_density = comp.average_density();
+            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                .cbrt()
+                .max(EARTH_RADIUS_AU * 0.1);
+        }
+        if let Some(ref mut diff) = diff_opt {
+            diff.recalculate(mass.0, radius.0, comp);
+        }
+        if let Some(ref mut trans) = trans_opt {
+            let scale = (radius.0 as f32 * 50.0).clamp(0.02, 1.5);
+            trans.scale = Vec3::splat(scale);
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyO) && !body.body_type.is_star_or_remnant() {
+        pos.0 *= 1.10;
+        let r = pos.0.length().max(0.1);
+        let v_circ = (G_ASTRO * star_mass / r).sqrt();
+        let phi = pos.0.z.atan2(pos.0.x);
+        vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
+    }
+    if keyboard.just_pressed(KeyCode::KeyL) && !body.body_type.is_star_or_remnant() {
+        pos.0 = (pos.0 * 0.90).clamp_length_min(0.25);
+        let r = pos.0.length().max(0.1);
+        let v_circ = (G_ASTRO * star_mass / r).sqrt();
+        let phi = pos.0.z.atan2(pos.0.x);
+        vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
+    }
+}
+
+fn apply_body_interaction_actions(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    star_mass: f64,
+    entity: Entity,
+    mass: &Mass,
+    radius: &mut Radius,
+    pos: &mut SimPosition,
+    vel: &mut SimVelocity,
+    comp: &mut Composition,
+    body: &mut CelestialBody,
+    mut ignition_opt: Option<&mut IgnitionState>,
+    opt_quasi: Option<&mut BlackHoleStarState>,
+    player_state: &mut PlayerInteractionState,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        *comp = comp.cycle_next_composition();
+        if !body.body_type.is_star_or_remnant() {
+            let avg_density = comp.average_density();
+            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                .cbrt()
+                .max(EARTH_RADIUS_AU * 0.1);
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyI) {
+        if body.body_type.is_star_or_remnant() {
+            if let Some(ref mut ignition) = ignition_opt {
+                if ignition.is_ignited {
+                    ignition.shockwave_radius = 1.6;
+                } else {
+                    ignition.core_temperature = 1.0e7;
+                }
+            }
+        } else {
+            let speed = vel.0.length();
+            if speed > 0.0 {
+                vel.0 += (vel.0 / speed) * (speed * 0.15);
+            }
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyB) && !body.body_type.is_star_or_remnant() {
+        let speed = vel.0.length();
+        if speed > 0.0 {
+            vel.0 += (vel.0 / speed) * (speed * 0.15);
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyK) && !body.body_type.is_star_or_remnant() {
+        let speed = vel.0.length();
+        if speed > 0.0 {
+            vel.0 -= (vel.0 / speed) * (speed * 0.15);
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyZ) && !body.body_type.is_star_or_remnant() {
+        let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
+        let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
+        let phi = pos.0.z.atan2(pos.0.x);
+        vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
+        pos.0.y = 0.0;
+    }
+    if (keyboard.just_pressed(KeyCode::Delete) || keyboard.just_pressed(KeyCode::Backspace))
+        && !body.body_type.is_star_or_remnant()
+    {
+        if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.despawn();
+        }
+        player_state.selected_entity = None;
+    }
+    if keyboard.just_pressed(KeyCode::KeyX) && !body.body_type.is_star_or_remnant() {
+        if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.insert(PlanetaryRingSystem {
+                inner_radius_au: 0.0008,
+                outer_radius_au: 0.0028,
+                ring_mass_earth: 0.0002,
+                optical_depth: 0.88,
+                ice_fraction: 0.95,
+                silicate_fraction: 0.05,
+            });
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyE) && !body.body_type.is_star_or_remnant() {
+        if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.insert((
+                VolatileInventory {
+                    delivered_water_m_earth: 0.002,
+                    ocean_coverage_frac: 0.70,
+                    atmospheric_pressure_bar: 1.0,
+                    cometary_impact_count: 12,
+                },
+                BiosphereState {
+                    habitability_score: 0.95,
+                    biomass_coverage_frac: 0.65,
+                    oxygen_fraction: 0.21,
+                    emergence_year: Some(0.0),
+                },
+                PlanetaryClimate {
+                    surface_temperature_k: 288.0,
+                    equilibrium_temperature_k: 255.0,
+                    greenhouse_delta_k: 33.0,
+                    albedo: 0.30,
+                    ice_coverage_frac: 0.10,
+                    cloud_coverage_frac: 0.55,
+                    climate_regime: ClimateRegime::TemperateHabitable,
+                },
+            ));
+            comp.ice_frac = 0.08;
+            comp.gas_frac = 0.02;
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
+        if let Some(ref mut ignition) = ignition_opt {
+            if !ignition.is_ignited {
+                ignition.core_temperature = 1.0e7;
+                ignition.is_ignited = true;
+                ignition.fusion_fraction = 1.0;
+                ignition.shockwave_radius = 1.6;
+                body.body_type = BodyType::MainSequenceStar;
+                body.name = "The Star (Main Sequence)".to_string();
+            }
+        }
+    }
+    if let Some(qs) = opt_quasi {
+        if keyboard.just_pressed(KeyCode::KeyX) {
+            qs.toggle_super_eddington();
+            let mode = if qs.super_eddington_active {
+                "4.5x Eddington (Hyper-Accretion Active)"
+            } else {
+                "0.9x Eddington (Sub-Eddington Normal)"
+            };
+            toast.message = format!("⚡ Inflow Rate: {} on {}", mode, body.name);
+            toast.timer = 4.5;
+        }
+        if keyboard.just_pressed(KeyCode::KeyB) {
+            qs.trigger_blowout();
+            toast.message =
+                "💥 COCOON BLOWOUT: Radiation pressure shedding hydrogen envelope into Quasar!"
+                    .to_string();
+            toast.timer = 6.0;
+        }
+    }
+}
+
+fn handle_scenario_and_system_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    config: &mut SimulationConfig,
+    lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
+    scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyG) {
+        lhb_state.is_active = true;
+        lhb_state.manual_trigger_requested = true;
+    }
+    let preset_map = [
+        (
+            KeyCode::F1,
+            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
+        ),
+        (
+            KeyCode::F2,
+            crate::simulation::scenarios::ScenarioPreset::Trappist1System,
+        ),
+        (
+            KeyCode::F3,
+            crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary,
+        ),
+        (
+            KeyCode::F4,
+            crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration,
+        ),
+        (
+            KeyCode::F5,
+            crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby,
+        ),
+        (
+            KeyCode::F6,
+            crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
+        ),
+        (
+            KeyCode::F7,
+            crate::simulation::scenarios::ScenarioPreset::PulsarSystem,
+        ),
+        (
+            KeyCode::F9,
+            crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst,
+        ),
+    ];
+    for (key, preset) in preset_map {
+        if keyboard.just_pressed(key) {
+            scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(preset));
+            break;
+        }
+    }
+    if keyboard.just_pressed(KeyCode::F8) {
+        config.enable_gpu_compute = !config.enable_gpu_compute;
+        if !config.enable_gpu_compute {
+            config.gpu_compute_active = false;
+        }
+        let status = if config.enable_gpu_compute {
+            "⚡ GPU COMPUTE: Enabled (WGPU Compute Dispatch @ 100,000 Particles)"
+        } else {
+            "🖥️ CPU FALLBACK: Active (Rayon Multithreading)"
+        };
+        toast.message = status.to_string();
+        toast.timer = 4.0;
+    }
+}
+
 /// Handles player tool activation and direct live editing of celestial bodies.
 pub fn handle_player_tools(
     mut commands: Commands,
@@ -44,148 +479,24 @@ pub fn handle_player_tools(
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
 
-    // Hotkey [P]: Toggle Planet Builder Panel
-    if keyboard.just_pressed(KeyCode::KeyP) {
-        builder_state.is_open = !builder_state.is_open;
-        toast.message = if builder_state.is_open {
-            "🛠️ Planet Builder & Spawner Opened [P]".to_string()
-        } else {
-            "🛠️ Planet Builder Closed [P]".to_string()
-        };
-        toast.timer = 2.5;
-    }
+    handle_viewport_and_tool_hotkeys(
+        &keyboard,
+        &mut config,
+        &mut player_state,
+        &mut builder_state,
+        &mut toast,
+        &camera_query,
+    );
 
-    // 0. Tab Key: Smooth, Deterministic Cycling Through All Celestial Bodies & The Central Star
-    // Sorted from Central Star outward by orbital distance. Micro-debris is excluded so Tab never gets stuck.
-    if keyboard.just_pressed(KeyCode::Tab) {
-        let worlds = crate::game::ui::collect_sorted_system_worlds(
-            selected_query
-                .iter()
-                .map(|item| (item.0, item.7, item.4, item.1, item.2, item.12)),
-        );
+    handle_tab_selection(
+        &keyboard,
+        &config,
+        &mut player_state,
+        &mut toast,
+        &mut camera_query,
+        &selected_query,
+    );
 
-        if !worlds.is_empty() {
-            let shift =
-                keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-            let len = worlds.len();
-            let next_idx = if let Some(curr) = player_state.selected_entity {
-                if let Some(curr_idx) = worlds.iter().position(|w| w.entity == curr) {
-                    if shift {
-                        (curr_idx + len - 1) % len
-                    } else {
-                        (curr_idx + 1) % len
-                    }
-                } else {
-                    0
-                }
-            } else {
-                if shift {
-                    len - 1
-                } else {
-                    0
-                }
-            };
-
-            let target = &worlds[next_idx];
-            player_state.selected_entity = Some(target.entity);
-            if let Ok((_, mut cam)) = camera_query.single_mut() {
-                cam.target_entity = Some(target.entity);
-                let visual_r =
-                    config.calc_visual_radius_for_type(target.radius_au, target.body_type);
-                cam.target_radius = config.calc_camera_framing_radius(visual_r);
-            }
-
-            let m_str = if target.mass_solar >= 0.01 {
-                format!("{:.2} M☉", target.mass_solar)
-            } else {
-                format!("{:.2} M⊕", target.mass_solar / EARTH_MASS_SOLAR)
-            };
-            let icon = if target.is_central_star || target.body_type.is_star_or_remnant() {
-                "☀️"
-            } else if target.name.to_lowercase().contains("earth")
-                || target.name.to_lowercase().contains("habitable")
-                || target.name.to_lowercase().contains("1e")
-                || target.name.to_lowercase().contains("1f")
-                || target.name.to_lowercase().contains("1g")
-            {
-                "🌍"
-            } else if target.body_type == BodyType::GasGiant
-                || target.name.to_lowercase().contains("jupiter")
-                || target.name.to_lowercase().contains("saturn")
-            {
-                "🪐"
-            } else if target.name.to_lowercase().contains("rogue")
-                || target.name.to_lowercase().contains("nemesis")
-            {
-                "☄️"
-            } else {
-                "🪨"
-            };
-            toast.message = format!(
-                ">> TARGET: {} {} ({:.3} AU) | Mass: {}",
-                icon, target.name, target.distance_au, m_str
-            );
-            toast.timer = 4.0;
-        }
-    }
-
-    // 0A. Size Exaggeration Slider (Comma = decrease, Period = increase)
-    if keyboard.just_pressed(KeyCode::Comma) {
-        config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
-        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
-    }
-    if keyboard.just_pressed(KeyCode::Period) {
-        config.size_exaggeration = (config.size_exaggeration * 1.4).min(20.0);
-        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
-    }
-
-    // 0B. Escape Key: Deselect Current Target
-    if keyboard.just_pressed(KeyCode::Escape) {
-        player_state.selected_entity = None;
-    }
-
-    // 0B. Key V: Cycle Diagnostic Overlay Modes (Realistic -> Spectral Composition -> Hill Spheres & Gaps)
-    if keyboard.just_pressed(KeyCode::KeyV) {
-        player_state.overlay_mode = player_state.overlay_mode.cycle();
-    }
-
-    // 0C. Key Y: Cycle Orbit Trail & Conic Visualization Modes (All -> Selected Only -> Off)
-    if keyboard.just_pressed(KeyCode::KeyY) {
-        player_state.orbit_mode = player_state.orbit_mode.cycle();
-        toast.message = match player_state.orbit_mode {
-            OrbitVisualizationMode::All => "궤 Orbit Visualization: All Worlds [Y]".to_string(),
-            OrbitVisualizationMode::SelectedOnly => {
-                "궤 Orbit Visualization: Selected Target Only [Y]".to_string()
-            }
-            OrbitVisualizationMode::Off => {
-                "궤 Orbit Visualization: Hidden (Cinematic) [Y]".to_string()
-            }
-        };
-        toast.timer = 2.5;
-    }
-
-    // 1. Toggle Gravitational Tractor Tool (Key T)
-    if keyboard.just_pressed(KeyCode::KeyT) {
-        if player_state.active_tool == PlayerTool::GravitationalTractor {
-            player_state.active_tool = PlayerTool::Inspect;
-            player_state.tractor_position = None;
-            player_state.tractor_mass = 0.0;
-        } else {
-            player_state.active_tool = PlayerTool::GravitationalTractor;
-            if let Ok((cam_trans, _)) = camera_query.single() {
-                // Place tractor 15 AU in front of camera
-                let tractor_pt = cam_trans.translation + cam_trans.forward() * 15.0;
-                player_state.tractor_position = Some(DVec3::new(
-                    tractor_pt.x as f64,
-                    tractor_pt.y as f64,
-                    tractor_pt.z as f64,
-                ));
-                player_state.tractor_mass = EARTH_MASS_SOLAR * 5.0;
-            }
-        }
-    }
-
-    // 2. LIVE CELESTIAL BODY EDITOR (When a body is selected)
     if let Some(selected_ent) = player_state.selected_entity {
         if let Ok((
             entity,
@@ -203,235 +514,53 @@ pub fn handle_player_tools(
             _opt_star,
         )) = selected_query.get_mut(selected_ent)
         {
-            // A. Increase Mass (Key U or Key + / =)
-            if keyboard.just_pressed(KeyCode::KeyU)
-                || keyboard.just_pressed(KeyCode::Equal)
-                || keyboard.just_pressed(KeyCode::NumpadAdd)
-            {
-                mass.0 *= 1.25; // +25% mass
-                if !body.body_type.is_star_or_remnant() {
-                    let avg_density = comp.average_density();
-                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                        .cbrt()
-                        .max(EARTH_RADIUS_AU * 0.1);
-                }
-
-                if let Some(ref mut diff) = diff_opt {
-                    diff.recalculate(mass.0, radius.0, &comp);
-                }
-                if let Some(ref mut trans) = trans_opt {
-                    let scale = (radius.0 as f32 * 50.0).clamp(0.02, 1.5);
-                    trans.scale = Vec3::splat(scale);
-                }
-            }
-
-            // B. Decrease Mass (Key J or Key - / _)
-            if keyboard.just_pressed(KeyCode::KeyJ)
-                || keyboard.just_pressed(KeyCode::Minus)
-                || keyboard.just_pressed(KeyCode::NumpadSubtract)
-            {
-                mass.0 = (mass.0 * 0.8).max(1e-7 * EARTH_MASS_SOLAR);
-                if !body.body_type.is_star_or_remnant() {
-                    let avg_density = comp.average_density();
-                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                        .cbrt()
-                        .max(EARTH_RADIUS_AU * 0.1);
-                }
-
-                if let Some(ref mut diff) = diff_opt {
-                    diff.recalculate(mass.0, radius.0, &comp);
-                }
-                if let Some(ref mut trans) = trans_opt {
-                    let scale = (radius.0 as f32 * 50.0).clamp(0.02, 1.5);
-                    trans.scale = Vec3::splat(scale);
-                }
-            }
-
-            // C. Expand Orbit (Key O)
-            if keyboard.just_pressed(KeyCode::KeyO) && !body.body_type.is_star_or_remnant() {
-                pos.0 *= 1.10;
-                let r = pos.0.length().max(0.1);
-                let v_circ = (G_ASTRO * star_mass / r).sqrt();
-                let phi = pos.0.z.atan2(pos.0.x);
-                vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
-            }
-
-            // D. Contract Orbit (Key L)
-            if keyboard.just_pressed(KeyCode::KeyL) && !body.body_type.is_star_or_remnant() {
-                pos.0 = (pos.0 * 0.90).clamp_length_min(0.25);
-                let r = pos.0.length().max(0.1);
-                let v_circ = (G_ASTRO * star_mass / r).sqrt();
-                let phi = pos.0.z.atan2(pos.0.x);
-                vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
-            }
-
-            // E. Cycle Composition (Key C)
-            if keyboard.just_pressed(KeyCode::KeyC) {
-                *comp = comp.cycle_next_composition();
-                if !body.body_type.is_star_or_remnant() {
-                    let avg_density = comp.average_density();
-                    radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                        .cbrt()
-                        .max(EARTH_RADIUS_AU * 0.1);
-                }
-            }
-
-            // F. Stellar Core Ignition (Key I on Star) or Prograde Delta-V Boost (Key I or B on Planets)
-            if keyboard.just_pressed(KeyCode::KeyI) {
-                if body.body_type.is_star_or_remnant() {
-                    if let Some(ref mut ignition) = ignition_opt {
-                        if !ignition.is_ignited {
-                            ignition.core_temperature = 1.0e7; // Trigger instant fusion!
-                        } else {
-                            ignition.shockwave_radius = 1.6; // Trigger new coronal solar blast!
-                        }
-                    }
-                } else {
-                    let speed = vel.0.length();
-                    if speed > 0.0 {
-                        let dir = vel.0 / speed;
-                        vel.0 += dir * (speed * 0.15);
-                    }
-                }
-            }
-
-            // F2. Prograde Delta-V Boost alternative (Key B on Planets)
-            if keyboard.just_pressed(KeyCode::KeyB) && !body.body_type.is_star_or_remnant() {
-                let speed = vel.0.length();
-                if speed > 0.0 {
-                    let dir = vel.0 / speed;
-                    vel.0 += dir * (speed * 0.15);
-                }
-            }
-
-            // G. Retrograde Delta-V Brake (Key K)
-            if keyboard.just_pressed(KeyCode::KeyK) && !body.body_type.is_star_or_remnant() {
-                let speed = vel.0.length();
-                if speed > 0.0 {
-                    let dir = vel.0 / speed;
-                    vel.0 -= dir * (speed * 0.15);
-                }
-            }
-
-            // H. Circularize / Fix Orbit (Key Z)
-            if keyboard.just_pressed(KeyCode::KeyZ) && !body.body_type.is_star_or_remnant() {
-                let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
-                let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
-                let phi = pos.0.z.atan2(pos.0.x);
-                vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
-                pos.0.y = 0.0;
-            }
-
-            // I. Delete / Vaporize Selected Body (Key Delete or Backspace)
-            if (keyboard.just_pressed(KeyCode::Delete) || keyboard.just_pressed(KeyCode::Backspace))
-                && !body.body_type.is_star_or_remnant()
-            {
-                if let Ok(mut cmd) = commands.get_entity(entity) {
-                    cmd.despawn();
-                }
-                player_state.selected_entity = None;
-            }
-
-            // J. Shatter / Form Planetary Rings (Key X)
-            if keyboard.just_pressed(KeyCode::KeyX) && !body.body_type.is_star_or_remnant() {
-                if let Ok(mut cmd) = commands.get_entity(entity) {
-                    cmd.insert(PlanetaryRingSystem {
-                        inner_radius_au: 0.0008,
-                        outer_radius_au: 0.0028,
-                        ring_mass_earth: 0.0002,
-                        optical_depth: 0.88,
-                        ice_fraction: 0.95,
-                        silicate_fraction: 0.05,
-                    });
-                }
-            }
-
-            // K. Seed Photosynthetic Biosphere & Oceans (Key E)
-            if keyboard.just_pressed(KeyCode::KeyE) && !body.body_type.is_star_or_remnant() {
-                if let Ok(mut cmd) = commands.get_entity(entity) {
-                    cmd.insert((
-                        VolatileInventory {
-                            delivered_water_m_earth: 0.002,
-                            ocean_coverage_frac: 0.70,
-                            atmospheric_pressure_bar: 1.0,
-                            cometary_impact_count: 12,
-                        },
-                        BiosphereState {
-                            habitability_score: 0.95,
-                            biomass_coverage_frac: 0.65,
-                            oxygen_fraction: 0.21,
-                            emergence_year: Some(0.0),
-                        },
-                        PlanetaryClimate {
-                            surface_temperature_k: 288.0,
-                            equilibrium_temperature_k: 255.0,
-                            greenhouse_delta_k: 33.0,
-                            albedo: 0.30,
-                            ice_coverage_frac: 0.10,
-                            cloud_coverage_frac: 0.55,
-                            climate_regime: ClimateRegime::TemperateHabitable,
-                        },
-                    ));
-                    comp.ice_frac = 0.08;
-                    comp.gas_frac = 0.02;
-                }
-            }
-
-            // L. Stellar Evolution Metamorphosis (Key N on Star)
-            if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
-                if let Some(ref mut ignition) = ignition_opt {
-                    if !ignition.is_ignited {
-                        ignition.core_temperature = 1.0e7;
-                        ignition.is_ignited = true;
-                        ignition.fusion_fraction = 1.0;
-                        ignition.shockwave_radius = 1.6;
-                        body.body_type = BodyType::MainSequenceStar;
-                        body.name = "The Star (Main Sequence)".to_string();
-                    }
-                }
-            }
-
-            // M. JWST Little Red Dot / Black Hole Star Experiments (Keys X, B)
-            if let Some(ref mut qs) = opt_quasi {
-                if keyboard.just_pressed(KeyCode::KeyX) {
-                    qs.toggle_super_eddington();
-                    let mode = if qs.super_eddington_active {
-                        "4.5x Eddington (Hyper-Accretion Active)"
-                    } else {
-                        "0.9x Eddington (Sub-Eddington Normal)"
-                    };
-                    toast.message = format!("⚡ Inflow Rate: {} on {}", mode, body.name);
-                    toast.timer = 4.5;
-                }
-                if keyboard.just_pressed(KeyCode::KeyB) {
-                    qs.trigger_blowout();
-                    toast.message = "💥 COCOON BLOWOUT: Radiation pressure shedding hydrogen envelope into Quasar!".to_string();
-                    toast.timer = 6.0;
-                }
-            }
+            apply_body_mass_and_orbit_edits(
+                &keyboard,
+                star_mass,
+                &mut mass,
+                &mut radius,
+                &mut pos,
+                &mut vel,
+                &comp,
+                &body,
+                diff_opt.as_deref_mut(),
+                trans_opt.as_deref_mut(),
+            );
+            apply_body_interaction_actions(
+                &mut commands,
+                &keyboard,
+                star_mass,
+                entity,
+                &mass,
+                &mut radius,
+                &mut pos,
+                &mut vel,
+                &mut comp,
+                &mut body,
+                ignition_opt.as_deref_mut(),
+                opt_quasi.as_deref_mut(),
+                &mut player_state,
+                &mut toast,
+            );
         }
     }
 
-    // 3. Mass Injection / Seed Planetesimal (Key M)
     if keyboard.just_pressed(KeyCode::KeyM) {
         let spawn_radius = rng.random_range(0.8..12.0);
         let phi = rng.random_range(0.0..2.0 * PI);
         let pos = DVec3::new(spawn_radius * phi.cos(), 0.0, spawn_radius * phi.sin());
-
         let v_k = (G_ASTRO * star_mass / spawn_radius).sqrt();
         let vel = DVec3::new(-v_k * phi.sin(), 0.0, v_k * phi.cos());
-
         let mass = EARTH_MASS_SOLAR * 0.20;
         let comp = if spawn_radius < 2.7 {
             Composition::rocky()
         } else {
             Composition::icy()
         };
-
         commands.spawn((
             CelestialBody {
                 body_type: BodyType::Protoplanet,
-                name: format!("Injected Embryo @ {:.1} AU", spawn_radius),
+                name: format!("Injected Embryo @ {spawn_radius:.1} AU"),
             },
             Mass(mass),
             SimPosition(pos),
@@ -445,61 +574,13 @@ pub fn handle_player_tools(
         ));
     }
 
-    // 4. Trigger Late Heavy Bombardment & Giant Planet Migration (Key G)
-    if keyboard.just_pressed(KeyCode::KeyG) {
-        lhb_state.is_active = true;
-        lhb_state.manual_trigger_requested = true;
-    }
-
-    // 5. Exoplanet System Generator Scenario Hotkeys (F1 - F5)
-    if keyboard.just_pressed(KeyCode::F1) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F2) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::Trappist1System,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F3) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F4) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F5) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F6) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F7) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::PulsarSystem,
-        ));
-    } else if keyboard.just_pressed(KeyCode::F9) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst,
-        ));
-    }
-
-    // 6. GPU Compute Pipeline Toggle (F8)
-    if keyboard.just_pressed(KeyCode::F8) {
-        config.enable_gpu_compute = !config.enable_gpu_compute;
-        if !config.enable_gpu_compute {
-            config.gpu_compute_active = false;
-        }
-        let status = if config.enable_gpu_compute {
-            "⚡ GPU COMPUTE: Enabled (WGPU Compute Dispatch @ 100,000 Particles)"
-        } else {
-            "🖥️ CPU FALLBACK: Active (Rayon Multithreading)"
-        };
-        toast.message = status.to_string();
-        toast.timer = 4.0;
-    }
+    handle_scenario_and_system_hotkeys(
+        &keyboard,
+        &mut config,
+        &mut lhb_state,
+        &mut scenario_events,
+        &mut toast,
+    );
 }
 
 /// System that handles direct 3D plane click-to-place spawning when builder click mode is active.
@@ -542,7 +623,7 @@ pub fn handle_planet_builder_click_spawn(
                     let t = -ray.origin.y / ray.direction.y;
                     if t > 0.0 {
                         let hit = ray.origin + *ray.direction * t;
-                        let spawn_coords = DVec3::new(hit.x as f64, 0.0, hit.z as f64);
+                        let spawn_coords = DVec3::new(f64::from(hit.x), 0.0, f64::from(hit.z));
                         crate::game::ui::spawn_custom_builder_world(
                             &mut commands,
                             &builder_state,

@@ -44,7 +44,12 @@ pub fn setup_space_environment(
     ));
 
     // 3. Procedural Celestial Sphere (1,000,000 AU radius, camera-centered)
-    let skybox_mesh = meshes.add(Sphere::new(1_000_000.0).mesh().ico(5).unwrap());
+    let skybox_mesh = meshes.add(
+        Sphere::new(1_000_000.0)
+            .mesh()
+            .ico(5)
+            .unwrap_or_else(|_| Sphere::new(1_000_000.0).mesh().uv(32, 18)),
+    );
     let skybox_material = materials.add(SkyboxMaterial::default());
 
     commands.spawn((
@@ -108,8 +113,7 @@ pub fn update_skybox_uniforms(
     // 2. Gravitational Lensing Parameters Calculation
     let camera_pos = camera_query
         .single()
-        .map(|tf| tf.translation)
-        .unwrap_or(Vec3::ZERO);
+        .map_or(Vec3::ZERO, |tf| tf.translation);
     let mut lens_pos_and_mass = Vec4::ZERO;
     let mut lens_params = Vec4::ZERO;
 
@@ -123,10 +127,9 @@ pub fn update_skybox_uniforms(
             let dist_to_bh = bh_rel.length().max(0.01);
 
             let visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
-            let is_blown_out = opt_bhs.map(|s| s.is_blown_out).unwrap_or(is_massive_bh);
-            let blowout_p = opt_bhs
-                .map(|s| s.blowout_progress)
-                .unwrap_or(if is_blown_out { 1.0 } else { 0.0 });
+            let is_blown_out = opt_bhs.map_or(is_massive_bh, |s| s.is_blown_out);
+            let blowout_p =
+                opt_bhs.map_or(if is_blown_out { 1.0 } else { 0.0 }, |s| s.blowout_progress);
 
             // Effective gravitational Einstein radius (physical + visual aesthetic scaling)
             // Pre-blowout: subtle relativistic shimmer around the 60 AU envelope (R ~ 12 AU).

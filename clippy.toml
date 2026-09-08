@@ -1,0 +1,5 @@
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 22
+type-complexity-threshold = 350
+
+disallowed-types = ["std::collections::HashMap", "std::collections::HashSet"]

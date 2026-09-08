@@ -54,10 +54,10 @@ impl Default for SimulationConfig {
             enable_gas_drag: true,
             enable_accretion: true,
             enable_thermodynamics: true,
-            target_particle_count: 100000,
+            target_particle_count: 100_000,
             accretion_rate_multiplier: 120.0,
             gas_density_scale: 1.0,
-            active_particles: 100000,
+            active_particles: 100_000,
             particle_render_scale: 0.3,
             size_exaggeration: 1.0,
             min_body_visual_radius: 0.0006,
@@ -415,11 +415,11 @@ pub enum PlayerTool {
 /// Controls which orbital trails and conic overlays are drawn in the viewport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum OrbitVisualizationMode {
-    /// Render orbital ribbons and conics for all planets, companions, and embryos.
-    #[default]
-    All,
     /// Render orbital ribbons and conics strictly for the currently selected body.
+    #[default]
     SelectedOnly,
+    /// Render orbital ribbons and conics for all planets, companions, and embryos.
+    All,
     /// Completely hide all orbital trails for a clean cinematic view.
     Off,
 }
@@ -427,16 +427,16 @@ pub enum OrbitVisualizationMode {
 impl OrbitVisualizationMode {
     pub fn cycle(self) -> Self {
         match self {
-            Self::All => Self::SelectedOnly,
-            Self::SelectedOnly => Self::Off,
-            Self::Off => Self::All,
+            Self::SelectedOnly => Self::All,
+            Self::All => Self::Off,
+            Self::Off => Self::SelectedOnly,
         }
     }
 
     pub fn display_label(self) -> &'static str {
         match self {
-            Self::All => "All",
             Self::SelectedOnly => "Selected",
+            Self::All => "All",
             Self::Off => "Hidden",
         }
     }
@@ -455,4 +455,3 @@ pub struct PlayerInteractionState {
     pub impulse_delta_v: Option<DVec3>,
     pub impulse_target_entity: Option<Entity>,
 }
-

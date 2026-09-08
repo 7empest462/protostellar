@@ -34,7 +34,12 @@ impl Plugin for RenderingPlugin {
             ))
             .add_systems(
                 Startup,
-                (setup_camera, setup_visual_assets, setup_space_environment),
+                (
+                    setup_camera,
+                    setup_gizmo_configuration,
+                    setup_visual_assets,
+                    setup_space_environment,
+                ),
             )
             .add_systems(
                 Update,

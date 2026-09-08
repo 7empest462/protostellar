@@ -1,0 +1,351 @@
+//! Hayashi Minimum Mass Solar Nebula (MMSN) scenario.
+
+use bevy::math::DVec3;
+use bevy::prelude::*;
+use std::f64::consts::PI;
+
+use crate::simulation::components::*;
+use crate::simulation::resources::*;
+use crate::utils::constants::*;
+
+type MmsnSeed = (f64, f64, f64, &'static str, Composition, BodyType, f64);
+
+fn get_mmsn_inner_seeds() -> [MmsnSeed; 13] {
+    [
+        (
+            0.40,
+            0.06 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.40,
+            "Proto-Mercury",
+            Composition::metal_rich(),
+            BodyType::Protoplanet,
+            0.05,
+        ),
+        (
+            0.72,
+            0.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.80,
+            "Proto-Venus",
+            Composition::rocky(),
+            BodyType::Protoplanet,
+            0.01,
+        ),
+        (
+            1.00,
+            1.00 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.00,
+            "Earth",
+            Composition::rocky(),
+            BodyType::TerrestrialPlanet,
+            0.016,
+        ),
+        (
+            1.25,
+            0.10 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.48,
+            "Theia Embryo",
+            Composition::rocky(),
+            BodyType::Protoplanet,
+            0.04,
+        ),
+        (
+            1.52,
+            0.11 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.53,
+            "Proto-Mars",
+            Composition::rocky(),
+            BodyType::Protoplanet,
+            0.07,
+        ),
+        (
+            5.20,
+            3.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.50,
+            "Proto-Jupiter",
+            Composition::solar_gas(),
+            BodyType::GasGiant,
+            0.03,
+        ),
+        (
+            7.50,
+            0.05 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.38,
+            "Callisto Embryo",
+            Composition::icy(),
+            BodyType::Protoplanet,
+            0.02,
+        ),
+        (
+            9.50,
+            2.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.25,
+            "Proto-Saturn",
+            Composition::solar_gas(),
+            BodyType::GasGiant,
+            0.04,
+        ),
+        (
+            14.00,
+            0.05 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.38,
+            "Titan Embryo",
+            Composition::icy(),
+            BodyType::Protoplanet,
+            0.03,
+        ),
+        (
+            19.20,
+            1.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.05,
+            "Proto-Uranus",
+            Composition::icy(),
+            BodyType::IceGiant,
+            0.05,
+        ),
+        (
+            30.00,
+            1.20 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 1.05,
+            "Proto-Neptune",
+            Composition::icy(),
+            BodyType::IceGiant,
+            0.02,
+        ),
+        // Canonical Dwarf Planet Pluto (Trans-Neptunian Kuiper Belt Monarch)
+        (
+            39.48,
+            0.00218 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.186,
+            "Pluto (Dwarf Planet)",
+            Composition::icy(),
+            BodyType::TerrestrialPlanet,
+            1.85,
+        ),
+        // Canonical Deep Outer Planet Nine (Hypothetical Super-Earth / Ice Giant Shepherding the Oort Cloud)
+        (
+            380.00,
+            5.50 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 2.30,
+            "Planet Nine (Super-Earth / Ice Giant)",
+            Composition::icy(),
+            BodyType::IceGiant,
+            4.10,
+        ),
+    ]
+}
+
+fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
+    [
+        // Canonical Asteroid Belt Minor Planets (Silicate, Carbonaceous, Metal)
+        (
+            2.77,
+            0.00015 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.18,
+            "Ceres (Dwarf Planet)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.08,
+        ),
+        (
+            2.36,
+            0.00008 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.14,
+            "Vesta (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.09,
+        ),
+        (
+            2.77,
+            0.00007 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.14,
+            "Pallas (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.23,
+        ),
+        (
+            3.15,
+            0.00004 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.12,
+            "Hygiea (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.11,
+        ),
+        (
+            2.92,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.10,
+            "Psyche (Metal Asteroid)",
+            Composition::metal_rich(),
+            BodyType::Asteroid,
+            0.13,
+        ),
+        (
+            2.21,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.06,
+            "Gaspra (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.17,
+        ),
+        (
+            2.86,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.07,
+            "Ida (Asteroid)",
+            Composition::rocky(),
+            BodyType::Asteroid,
+            0.04,
+        ),
+        (
+            2.65,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.06,
+            "Mathilde (Asteroid)",
+            Composition::carbonaceous(),
+            BodyType::Asteroid,
+            0.26,
+        ),
+        // Canonical Kuiper Belt & Trans-Neptunian Cometary Reservoir (Volatile Ices)
+        (
+            17.80,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.08,
+            "1P/Halley (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.65,
+        ),
+        (
+            3.30,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "2P/Encke (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.85,
+        ),
+        (
+            18.50,
+            0.00001 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.05,
+            "67P/C-G (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.64,
+        ),
+        (
+            28.40,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.09,
+            "Hale-Bopp (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.99,
+        ),
+        (
+            25.20,
+            0.00002 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.07,
+            "Swift-Tuttle (Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.96,
+        ),
+        (
+            13.70,
+            0.00003 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.09,
+            "Chiron (Centaur Comet)",
+            Composition::icy(),
+            BodyType::Comet,
+            0.38,
+        ),
+    ]
+}
+
+/// Spawns the Hayashi Minimum Mass Solar Nebula (MMSN) scenario.
+pub fn spawn_solar_nebula_mmsn(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> Entity {
+    disk_params.central_star_mass = 1.0;
+    disk_params.inner_radius_au = 0.20;
+    disk_params.outer_radius_au = 45.0;
+    disk_params.disk_mass = 0.00010;
+
+    let star = commands
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Protostar,
+                name: "The Protostar (Solar Nebula)".to_string(),
+            },
+            CentralStar,
+            Mass(1.0),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration::default(),
+            Radius(SOLAR_RADIUS_AU),
+            Temperature(5778.0),
+            Luminosity(1.0),
+            AngularMomentum::default(),
+            Composition::solar_gas(),
+            IgnitionState {
+                core_temperature: 4.0e6,
+                fusion_fraction: 0.4,
+                is_ignited: false,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState::default(),
+        ))
+        .id();
+
+    let all_seeds = get_mmsn_inner_seeds()
+        .into_iter()
+        .chain(get_mmsn_outer_seeds());
+
+    for (r_au, mass_s, rad_au, name, comp, b_type, phi_off) in all_seeds {
+        let v_circ = (G_ASTRO * 1.0 / r_au).sqrt();
+        let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
+        let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
+
+        let mut diff = InternalDifferentiation::default();
+        diff.recalculate(mass_s, rad_au, &comp);
+
+        let mut spin = SpinState::default();
+        let initial_spin =
+            (mass_s * rad_au * rad_au * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
+        spin.update_from_spin(initial_spin, mass_s, rad_au);
+
+        let vol = VolatileInventory {
+            delivered_water_m_earth: 0.0,
+            ocean_coverage_frac: 0.0,
+            atmospheric_pressure_bar: if r_au < 2.7 { 0.10 } else { 0.0 },
+            cometary_impact_count: 0,
+        };
+
+        commands.spawn((
+            CelestialBody {
+                body_type: b_type,
+                name: name.to_string(),
+            },
+            Mass(mass_s),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration::default(),
+            Radius(rad_au),
+            Temperature(280.0 * (1.0 / r_au.sqrt())),
+            Luminosity(0.0),
+            AngularMomentum(pos.cross(vel) * mass_s),
+            comp,
+            diff,
+            spin,
+            vol,
+        ));
+    }
+
+    star
+}

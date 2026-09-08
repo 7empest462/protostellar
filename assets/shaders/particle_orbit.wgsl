@@ -121,8 +121,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let acc_r = clamp(physical_r + 0.60 * hill_r, physical_r, max_acc);
 
         if (dist < acc_r) {
-            // Accreted! Zero out mass and hide off-screen permanently
-            p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, 0.0);
+            // Accreted! Encode capturing body index in negative mass field: -(1.0 + j)
+            p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, -(1.0 + f32(j)));
             p.vel_temp = vec4<f32>(0.0, 0.0, 0.0, 0.0);
             particles[idx] = p;
             return;
