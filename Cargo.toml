@@ -21,7 +21,6 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
-
 [package.metadata.cargo-machete]
 ignored = ["glam"]
 
@@ -43,18 +42,23 @@ too_many_lines          = "allow"
 must_use_candidate      = "allow"
 missing_errors_doc      = "allow"
 missing_panics_doc      = "allow"
-wildcard_imports        = "allow"          # if you use them intentionally
+wildcard_imports        = "allow"
 struct_excessive_bools  = "allow"
 cast_possible_truncation = "allow"
 cast_precision_loss     = "allow"
 cast_sign_loss          = "allow"
 doc_markdown            = "allow"
 many_single_char_names  = "allow"
-needless_pass_by_value = "allow"
+needless_pass_by_value  = "allow"
 return_self_not_must_use = "allow"
-# …add more allows as you triage
 
-# Nursery – keep off or very selective until the codebase is cleaner
+# Former crate-level allows from src/lib.rs (now Cargo-scoped)
+type_complexity              = "allow"
+trivially_copy_pass_by_ref   = "allow"
+explicit_auto_deref          = "allow"
+chunks_exact_to_as_chunks    = "allow"
+
+# Nursery – keep off until the codebase is cleaner
 nursery = { level = "allow", priority = -1 }
 
 [dependencies]
@@ -88,28 +92,16 @@ bevy = { version = "0.19.1", default-features = false, features = [
 # Direct WGPU & Math Pipelines
 wgpu = "29.0"
 glam = { version = "0.29", features = ["fast-math"] }
-encase = "0.12"
 bytemuck = { version = "1.21", features = ["derive"] }
 
-# High-Performance Specialized Data Structures & Concurrency Crates
+# High-Performance Data Structures (kept where still useful)
 hashbrown = "0.15"
-parking_lot = "0.12"
-dashmap = "6.1"
-crossbeam = "0.8"
-crossbeam-channel = "0.5"
 flume = "0.11"
-slab = "0.4"
-once_cell = "1.21"
 smallvec = "1.16"
-crossterm = "0.28"
-tokio = { version = "1.44", features = ["rt", "sync"] }
 
 # Parallelism & Random Utilities
 rayon = "1.10"
 rand = "0.9"
 rand_distr = "0.5"
 serde = { version = "1.0", features = ["derive"] }
-ron = "0.8"
 bevy_shader = "0.19.1"
-
-
