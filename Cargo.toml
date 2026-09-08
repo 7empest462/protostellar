@@ -52,13 +52,10 @@ needless_pass_by_value  = "allow"
 return_self_not_must_use = "allow"
 
 # Formerly crate-level allows (Cargo-scoped, not file-wide)
-type_complexity            = "allow"
+# type_complexity removed — do not silence workspace-wide (rust-doctor)
 trivially_copy_pass_by_ref = "allow"
 explicit_auto_deref        = "allow"
 chunks_exact_to_as_chunks  = "allow"
-
-# nursery left at default (allow) via Clippy defaults — do not set a
-# workspace-wide allow entry (rust-doctor::cargo::permissive_lint_table)
 
 [dependencies]
 # Bevy 0.19.1 Engine
