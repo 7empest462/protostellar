@@ -174,12 +174,30 @@ protostellar/
 │       └── particle_render.wgsl  # GPU instanced particle swarm rendering
 ├── src/
 │   ├── gpu/                      # WebGPU compute nodes, double-buffered async staging buffers
-│   ├── simulation/               # Symplectic leapfrog physics, accretion, thermodynamics, scenarios
-│   ├── rendering/                # Procedural shaders, celestial meshes, camera, effects, skybox
-│   ├── game/                     # UI overlays, Planet Builder HUD, time control, interaction
+│   ├── simulation/
+│   │   ├── accretion/            # Collision regimes, mergers, Roche disruption, moon capture
+│   │   ├── components/           # ECS component definitions (Mass, Velocity, Composition, etc.)
+│   │   ├── disk/                 # Protoplanetary disk structure, gas drag, particle seeding
+│   │   ├── scenarios/            # Preset system configurations (Solar Nebula, TRAPPIST-1, etc.)
+│   │   ├── physics.rs            # Symplectic leapfrog integrator, N-body gravity
+│   │   ├── thermodynamics.rs     # Stellar evolution, climate, habitability modeling
+│   │   └── resources.rs          # Shared simulation state and configuration
+│   ├── rendering/
+│   │   ├── bodies/               # Celestial body meshes, palettes, ring structures
+│   │   ├── effects/              # Orbital ribbons, conics, cometary tails, lensing
+│   │   ├── particle_swarm/       # CPU billboard rendering, particle simulation fallback
+│   │   ├── camera.rs             # Pan-orbit camera, zoom, body tracking
+│   │   ├── gas_clouds.rs         # Volumetric protoplanetary disk rendering
+│   │   └── skybox.rs             # Procedural skybox (Milky Way / Cosmic Web)
+│   ├── game/
+│   │   ├── ui/                   # HUD panels, inspector, Planet Builder, telemetry
+│   │   ├── interaction.rs        # Selection, click-to-place, keyboard input
+│   │   ├── phases.rs             # Formation phase state machine
+│   │   └── time_control.rs       # Time warp, pause, step-once
 │   └── utils/                    # Astronomical constants, math solvers, orbital mechanics
 └── tests/
-    └── simulation_tests.rs       # 96 rigorous automated astrophysics, climate, and stability tests
+    ├── simulation_tests.rs       # Test harness entry point
+    └── simulation_tests/         # 105 rigorous automated astrophysics, climate, and stability tests
 ```
 
 ---
@@ -202,7 +220,7 @@ cargo run --release
 > **Note:** Always compile with `--release`! Protostellar's numerical integrators, GPU compute pipeline, and 100,000-particle swarms are heavily optimized for release builds, running locked at 120+ FPS on Apple Silicon M-series chips and modern GPUs.
 
 ### Running Automated Astrophysics Tests
-To run all 96 unit and integration tests:
+To run all 105 unit and integration tests:
 
 ```bash
 cargo test --test simulation_tests
