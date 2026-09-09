@@ -288,6 +288,11 @@ fn update_gas_accretion_body_name(
 }
 
 /// Accretes gas envelope onto protoplanetary cores / stellar seeds from the ambient gas disk.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    reason = "Nebular gas accretion involves many simulation components and per-body state"
+)]
 pub fn direct_nebular_gas_accretion(
     config: Res<SimulationConfig>,
     time_warp: Res<TimeWarp>,

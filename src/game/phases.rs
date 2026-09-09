@@ -227,6 +227,8 @@ struct SystemStats {
     is_red_giant_or_wd: bool,
 }
 
+#[allow
+(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn collect_system_statistics(
     star_query: &Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
     bodies_query: &Query<
@@ -391,6 +393,7 @@ fn evaluate_system_phase_transitions(
 }
 
 /// Evaluates phase transition conditions based on astrophysical state.
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn monitor_phase_transitions(
     time: Res<Time>,
     sim_time: Res<SimTime>,

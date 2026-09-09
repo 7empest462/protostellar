@@ -218,6 +218,7 @@ pub fn body_to_button_label_and_colors(
     (label, bg, border)
 }
 
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn collect_embryo_and_minor_bodies(
     bodies: impl Iterator<Item = (Entity, CelestialBody, SimPosition, Mass, Radius, bool)>,
 ) -> (

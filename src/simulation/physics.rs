@@ -353,6 +353,7 @@ fn update_physics_energy_monitor(
     energy_monitor.relative_energy_drift = rel_drift;
 }
 
+#[allow(clippy::type_complexity, reason = "Physics State Writeback")]
 fn write_back_physics_results(
     commands: &mut Commands,
     body_data: &[PhysicsBodyEntry],
@@ -615,6 +616,7 @@ fn analyze_physics_system(
 }
 
 /// Advances the N-body gravitational physics simulation using a Symplectic Kick-Drift-Kick Leapfrog integrator.
+#[allow(clippy::type_complexity, reason = "N-body Simulation State")]
 pub fn step_physics_simulation(
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,

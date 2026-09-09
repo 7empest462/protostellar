@@ -292,6 +292,7 @@ fn draw_single_body_gizmos(
     }
 }
 
+#[allow(clippy::type_complexity, reason = "Orbital Effects Gizmos")]
 pub fn draw_orbital_effects_and_gizmos(
     mut gizmos: Gizmos,
     config: Res<SimulationConfig>,

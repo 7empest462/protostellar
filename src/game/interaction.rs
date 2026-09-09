@@ -10,6 +10,7 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn handle_tab_selection(
     keyboard: &ButtonInput<KeyCode>,
     config: &SimulationConfig,
@@ -446,6 +447,7 @@ fn handle_scenario_and_system_hotkeys(
 }
 
 /// Handles player tool activation and direct live editing of celestial bodies.
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn handle_player_tools(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,

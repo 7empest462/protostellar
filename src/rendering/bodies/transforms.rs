@@ -267,6 +267,7 @@ fn update_body_material_properties(
     }
 }
 
+#[allow(clippy::type_complexity, reason = "Celestial Transform Sync")]
 pub fn sync_celestial_transforms(
     time: Res<Time>,
     config: Res<SimulationConfig>,

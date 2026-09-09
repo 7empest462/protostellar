@@ -183,6 +183,7 @@ fn spawn_planet_visual(
 }
 
 /// Spawns visual meshes and point lights for newly created celestial bodies.
+#[allow(clippy::type_complexity, reason = "Spawner Complexity")]
 pub fn spawn_missing_visuals(
     mut commands: Commands,
     config: Res<SimulationConfig>,

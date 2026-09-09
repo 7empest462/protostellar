@@ -17,6 +17,7 @@ pub struct StarIgnitionEvent {
 }
 
 /// Updates stellar thermodynamics, core heating, planetary dynamos, greenhouse atmospheres, biospheres, and stellar evolution.
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn update_thermodynamics(
     mut commands: Commands,
     time_warp: Res<TimeWarp>,
@@ -169,6 +170,7 @@ pub fn update_thermodynamics(
 /// beyond the gravitational escape velocity, driving supersonic hydrodynamic mass loss (Parker-type wind).
 /// This physically strips volatile hydrogen/helium envelopes, sculpting mini-Neptunes into bare rocky cores
 /// (the "Hot Neptune Desert") and feeding prominent 3D cometary outflow tails.
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn update_photoevaporative_escape(
     mut commands: Commands,
     config: Res<SimulationConfig>,

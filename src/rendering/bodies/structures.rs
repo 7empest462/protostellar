@@ -235,6 +235,7 @@ fn spawn_quasar_beam_hierarchy(
 }
 
 /// Synchronizes 3D volumetric laser beam columns for active Quasars / Black Hole Stars.
+#[allow(clippy::type_complexity, reason = "Quasar Beam Sync")]
 pub fn sync_quasar_beams(
     mut commands: Commands,
     visual_assets: Option<Res<VisualAssets>>,
@@ -336,6 +337,7 @@ pub enum PulsarBeamPart {
 }
 
 /// Synchronizes 3D volumetric relativistic lighthouse beams for active Pulsars.
+#[allow(clippy::type_complexity, reason = "Pulsar Beam Sync")]
 pub fn sync_pulsar_beams(
     mut commands: Commands,
     time: Res<Time>,
@@ -437,6 +439,7 @@ pub enum MagnetarStructurePart {
 }
 
 /// Synchronizes 3D volumetric magnetic field loops and incandescent equatorial ring for active Magnetars.
+#[allow(clippy::type_complexity, reason = "Magnetar Structure Sync")]
 pub fn sync_magnetar_structures(
     mut commands: Commands,
     time: Res<Time>,

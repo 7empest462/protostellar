@@ -47,7 +47,7 @@ pub struct GpuOrbitUniforms {
     pub shockwave_radius: f32,
     pub softening_sq: f32,
     pub num_massive_bodies: u32,
-    #[allow(clippy::pub_underscore_fields)]
+    #[allow(clippy::pub_underscore_fields, reason = "padding for alignment")]
     pub _pad: f32,
     pub tractor_pos_mass: [f32; 4],
     pub massive_bodies: [MassiveBodyGpu; 32],

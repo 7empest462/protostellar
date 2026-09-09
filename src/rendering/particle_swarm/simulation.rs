@@ -494,7 +494,7 @@ pub fn build_spatial_hash_bins(data: &mut ParticleSwarmData, disk_params: &DiskP
                 *next = head;
             }
         }
-        #[allow(clippy::cast_possible_wrap)]
+        #[allow(clippy::cast_possible_wrap, reason = "index wrapping is safe here")]
         let i_i32 = i as i32;
         if let Some(head) = data.bin_heads.get_mut(bin_idx) {
             *head = i_i32;

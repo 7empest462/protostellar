@@ -11,6 +11,10 @@ use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
 use super::events::*;
+use super::impact_regimes::{
+    classify_impact, estimate_visual_radius_au, radius_from_mass_density, ImpactParams,
+    ImpactRegime,
+};
 
 pub type AccretionQuery<'w, 's> = Query<
     'w,
@@ -589,7 +593,7 @@ fn deliver_volatiles_and_crater(ctx: &mut CollisionContext, pair: &SortedPair) {
 
 pub fn handle_aerocapture(
     ctx: &mut CollisionContext,
-    b1: &BodySnapshot,
+    b1: &mut BodySnapshot,
     b2: &BodySnapshot,
     min_dist: f64,
     v_rel: f64,
@@ -635,36 +639,42 @@ pub fn handle_aerocapture(
         if min_dist < hill_radius * 0.65 {
             let v_esc_local = (2.0 * G_ASTRO * p_m / min_dist.max(1e-6)).sqrt();
             if v_rel < v_esc_local * 1.5 && v_rel > v_esc_local * 0.05 {
-                let p_phys_r = ((3.0 * p_m / DENSITY_ROCK_ASTRO) / (4.0 * PI))
-                    .cbrt()
-                    .max(EARTH_RADIUS_AU * 0.3);
-                let visual_r = {
-                    let ratio = (p_phys_r as f32 / 0.00465).max(1e-6);
-                    f64::from(0.025 * ratio.powf(0.45))
-                };
-                let orbit_dist_au = min_dist.max(p_phys_r * 3.0).max(visual_r * 1.45);
+                let p_phys_r =
+                    radius_from_mass_density(p_m, DENSITY_ROCK_ASTRO).max(EARTH_RADIUS_AU * 0.3);
+                let visual_r = estimate_visual_radius_au(p_phys_r);
+
+                // Close enough that it sits in the crust → pull in and merge.
+                if min_dist < visual_r * 2.5 {
+                    let pair = sort_collision_pair(b1, b2);
+                    // b1 must be &mut BodySnapshot — see signature note below.
+                    handle_inelastic_merger(ctx, &pair, v_rel, b1);
+                    return;
+                }
+
+                // Safe exterior capture → bound moon outside the mesh.
+                let orbit_dist_au = min_dist.max(p_phys_r * 5.0).max(visual_r * 2.5);
                 let p_moon_yr = 2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * p_m)).sqrt();
 
                 if let Ok((_, _, _, _, _, _, _, _, mut body, _, _, opt_sat_mut, _)) =
                     ctx.bodies_query.get_mut(secondary_entity)
                 {
-                    if !matches!(body.body_type, BodyType::Moon) {
-                        body.body_type = BodyType::Moon;
+                    body.body_type = BodyType::Moon;
+                    if !body.name.contains("(Moon)") && !body.name.starts_with("Captured") {
                         body.name = format!("Captured {s_name}");
+                    }
 
-                        if let Some(mut sat) = opt_sat_mut {
-                            sat.parent = primary_entity;
-                            sat.semi_major_axis_au = orbit_dist_au;
-                            sat.orbital_period_years = p_moon_yr;
-                            sat.true_anomaly = 0.0;
-                        } else if let Ok(mut s_cmd) = ctx.commands.get_entity(secondary_entity) {
-                            s_cmd.try_insert(SatelliteOf {
-                                parent: primary_entity,
-                                semi_major_axis_au: orbit_dist_au,
-                                orbital_period_years: p_moon_yr,
-                                true_anomaly: 0.0,
-                            });
-                        }
+                    if let Some(mut sat) = opt_sat_mut {
+                        sat.parent = primary_entity;
+                        sat.semi_major_axis_au = orbit_dist_au.max(sat.semi_major_axis_au);
+                        sat.orbital_period_years = p_moon_yr;
+                        sat.true_anomaly = 0.0;
+                    } else if let Ok(mut s_cmd) = ctx.commands.get_entity(secondary_entity) {
+                        s_cmd.try_insert(SatelliteOf {
+                            parent: primary_entity,
+                            semi_major_axis_au: orbit_dist_au,
+                            orbital_period_years: p_moon_yr,
+                            true_anomaly: 0.0,
+                        });
                     }
                 }
             }
@@ -831,7 +841,6 @@ fn execute_collision_regimes(
     r_contact: f64,
 ) {
     let v_rel_km_s = v_rel * AU_PER_YR_TO_KM_PER_S;
-    let v_esc_km_s = v_esc * AU_PER_YR_TO_KM_PER_S;
 
     let angular_momentum_rel = r_closest.cross(v_rel_vec).length();
     let b = (angular_momentum_rel / (v_rel.max(1e-8) * effective_collision_radius.max(1e-8)))
@@ -841,48 +850,47 @@ fn execute_collision_regimes(
 
     let p_density = pair.p_comp.average_density();
     let s_density = pair.s_comp.average_density();
-    let p_rad_au = ((3.0 * pair.p_m / p_density) / (4.0 * PI))
-        .cbrt()
-        .max(EARTH_RADIUS_AU * 0.3);
+    let p_rad_au = radius_from_mass_density(pair.p_m, p_density).max(EARTH_RADIUS_AU * 0.3);
+    let s_rad_au = radius_from_mass_density(pair.s_m, s_density);
     let d_roche = 2.44 * p_rad_au * (p_density / s_density.max(1e-4)).cbrt();
 
-    let is_roche_disruption = min_dist <= d_roche
-        && b >= 0.20
-        && pair.p_m >= EARTH_MASS_SOLAR * 0.05
-        && pair.s_m <= pair.p_m * 0.20
-        && !pair.p_type.is_star_or_remnant()
-        && !b2.body_type.is_star_or_remnant();
+    let params = ImpactParams {
+        primary_mass: pair.p_m,
+        secondary_mass: pair.s_m,
+        primary_radius_au: p_rad_au,
+        secondary_radius_au: s_rad_au,
+        primary_type: pair.p_type,
+        secondary_type: b2.body_type,
+        min_dist,
+        b,
+        v_rel,
+        v_esc,
+    };
 
-    if is_roche_disruption {
-        handle_roche_disruption(ctx, &pair, min_dist, d_roche, p_rad_au);
-        return;
-    }
-
-    let is_giant_impact_moon = b >= 0.45
-        && pair.p_m >= EARTH_MASS_SOLAR * 0.01
-        && pair.s_m <= pair.p_m * 0.65
-        && pair.s_m >= pair.p_m * 0.02
-        && pair.s_m >= EARTH_MASS_SOLAR * 0.0001
-        && !pair.p_type.is_star_or_remnant()
-        && !b2.body_type.is_star_or_remnant();
-
-    if is_giant_impact_moon {
-        handle_giant_impact_moon(ctx, &pair, b, r_closest, r_contact, b1);
-    } else if b > 0.85 && v_rel_km_s > v_esc_km_s * 1.5 {
-        handle_grazing_bounce(
-            ctx,
-            b1.entity,
-            b2.entity,
-            b1.mass,
-            b2.mass,
-            b1.is_central,
-            b2.is_central,
-            r_closest,
-            v_rel_vec,
-            v_rel_km_s,
-            b,
-        );
-    } else {
-        handle_inelastic_merger(ctx, &pair, v_rel, b1);
+    match classify_impact(params, d_roche) {
+        ImpactRegime::EmbeddedMerge | ImpactRegime::Merger => {
+            handle_inelastic_merger(ctx, &pair, v_rel, b1);
+        }
+        ImpactRegime::Disrupt => {
+            handle_roche_disruption(ctx, &pair, min_dist, d_roche, p_rad_au);
+        }
+        ImpactRegime::GiantImpactMoon => {
+            handle_giant_impact_moon(ctx, &pair, b, r_closest, r_contact, b1);
+        }
+        ImpactRegime::HitAndRun | ImpactRegime::Graze => {
+            handle_grazing_bounce(
+                ctx,
+                b1.entity,
+                b2.entity,
+                b1.mass,
+                b2.mass,
+                b1.is_central,
+                b2.is_central,
+                r_closest,
+                v_rel_vec,
+                v_rel_km_s,
+                b,
+            );
+        }
     }
 }

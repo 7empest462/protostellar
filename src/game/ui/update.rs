@@ -24,6 +24,7 @@ pub fn handle_roche_disruption_toasts(
     }
 }
 
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn update_toast_text(
     toast_text: &mut Text,
     phase_mgr: &PhaseManager,
@@ -534,6 +535,7 @@ fn format_body_environment_telemetry(
 }
 
 #[allow(
+    clippy::type_complexity,
     clippy::too_many_arguments,
     reason = "Telemetry inspector requires full access to celestial body components and configuration state"
 )]
@@ -704,6 +706,10 @@ fn update_inspector_body_telemetry(
 }
 
 /// Updates the dynamic content of the HUD and notification toast banner every frame.
+#[allow(
+    clippy::type_complexity,
+    reason = "HUD update requires access to a wide range of celestial body components and simulation state"
+)]
 pub fn update_hud(
     time: Res<Time>,
     sim_time: Res<SimTime>,
