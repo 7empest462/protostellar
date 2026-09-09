@@ -227,8 +227,7 @@ struct SystemStats {
     is_red_giant_or_wd: bool,
 }
 
-#[allow
-(clippy::type_complexity, reason = "bevy ECS query is complex")]
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn collect_system_statistics(
     star_query: &Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
     bodies_query: &Query<

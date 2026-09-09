@@ -7,6 +7,7 @@ pub mod physics;
 pub mod resources;
 pub mod scenarios;
 pub mod thermodynamics;
+pub mod disk_migration;
 
 use bevy::prelude::*;
 

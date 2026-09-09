@@ -67,8 +67,7 @@ pub struct GpuSimExtractedParams {
 }
 
 /// Extracts state from the Main App into the Render Sub-App.
-#[allow(clippy::type_complexity, reason = "GPU Sim Data Extraction")
-]
+#[allow(clippy::type_complexity, reason = "GPU Sim Data Extraction")]
 pub fn extract_gpu_sim_data(
     mut commands: Commands,
     config: Extract<Res<SimulationConfig>>,
