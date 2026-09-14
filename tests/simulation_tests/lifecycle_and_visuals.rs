@@ -1038,4 +1038,3 @@ fn test_pulsar_beam_polar_taper_and_magnetar_field_symmetry() {
         min_z
     );
 }
-
