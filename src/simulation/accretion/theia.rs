@@ -26,6 +26,8 @@ pub struct TheiaImpactState {
     pub manual_trigger_requested: bool,
     /// Number of simulation updates spent actively steering toward Earth.
     pub intercept_steps: usize,
+    /// Locked primary entity (Earth) targeted for intercept.
+    pub target_primary: Option<Entity>,
 }
 
 /// Automatically activates intercept at T ~ 50-100 yr or upon on-demand trigger,
@@ -68,6 +70,7 @@ pub fn update_theia_rendezvous(
     if moon_exists {
         theia_state.moon_formed = true;
         theia_state.intercept_active = false;
+        theia_state.target_primary = None;
         return;
     }
 
@@ -101,25 +104,89 @@ pub fn update_theia_rendezvous(
     }
 
     // 1. Locate or spawn Earth/Proto-Earth
-    let earth_opt = bodies_query
-        .iter()
-        .find(|(_, pos, _, _, _, body, ..)| {
-            let name = body.name.as_str();
-            let is_earth_name = name == "Earth"
-                || name == "Proto-Earth"
-                || name.starts_with("Proto-Earth")
-                || name.starts_with("Earth (");
-            let r_xy = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt();
-            let near_1au = (r_xy - 1.0).abs() < 0.35;
-            !name.contains("Theia")
-                && !name.contains("Moon")
-                && !name.contains("Planet Nine")
-                && (is_earth_name
-                    || (body.body_type.is_planet() && near_1au && !name.contains("Super-Earth")))
-        })
-        .map(|(e, ..)| e);
+    let is_explicit_earth = |name: &str| {
+        let is_earth = name == "Earth"
+            || name == "Proto-Earth"
+            || name.starts_with("Proto-Earth")
+            || name.starts_with("Earth (")
+            || (name.contains("Earth") && !name.contains("Super-Earth"));
+        let is_excluded = name.contains("Planet Nine")
+            || name.contains("Planet 9")
+            || name.contains("Theia")
+            || name.contains("Moon")
+            || name.contains("Venus")
+            || name.contains("Mercury")
+            || name.contains("Mars")
+            || name.contains("Jupiter")
+            || name.contains("Saturn")
+            || name.contains("Uranus")
+            || name.contains("Neptune")
+            || name.contains("Pluto");
+        is_earth && !is_excluded
+    };
+
+    let locked_earth = theia_state.target_primary.filter(|&ent| {
+        if let Ok((_, _, _, _, _, body, ..)) = bodies_query.get(ent) {
+            is_explicit_earth(body.name.as_str())
+        } else {
+            false
+        }
+    });
+
+    let earth_opt = locked_earth.or_else(|| {
+        // Prioritize explicit Earth bodies (closest to 1.0 AU, then highest mass)
+        bodies_query
+            .iter()
+            .filter(|(_, _, _, _, _, body, ..)| is_explicit_earth(body.name.as_str()))
+            .min_by(|(_, pos_a, _, mass_a, ..), (_, pos_b, _, mass_b, ..)| {
+                let dist_a = ((pos_a.0.x * pos_a.0.x + pos_a.0.z * pos_a.0.z).sqrt() - 1.0).abs();
+                let dist_b = ((pos_b.0.x * pos_b.0.x + pos_b.0.z * pos_b.0.z).sqrt() - 1.0).abs();
+                dist_a
+                    .total_cmp(&dist_b)
+                    .then_with(|| mass_b.0.total_cmp(&mass_a.0))
+            })
+            .map(|(e, ..)| e)
+            .or_else(|| {
+                // Fallback for procedural disks without canonical named planets:
+                // Must be strictly within [0.85, 1.15] AU and cannot be any named Solar System body
+                bodies_query
+                    .iter()
+                    .filter(|(_, pos, _, _, _, body, ..)| {
+                        let name = body.name.as_str();
+                        let r_xy = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt();
+                        let in_earth_zone = (r_xy - 1.0).abs() <= 0.15;
+                        let is_excluded = name.contains("Theia")
+                            || name.contains("Moon")
+                            || name.contains("Planet Nine")
+                            || name.contains("Planet 9")
+                            || name.contains("Super-Earth")
+                            || name.contains("Venus")
+                            || name.contains("Mercury")
+                            || name.contains("Mars")
+                            || name.contains("Jupiter")
+                            || name.contains("Saturn")
+                            || name.contains("Uranus")
+                            || name.contains("Neptune")
+                            || name.contains("Pluto")
+                            || name.contains("Sun")
+                            || name.contains("Star");
+                        body.body_type.is_planet() && in_earth_zone && !is_excluded
+                    })
+                    .min_by(|(_, pos_a, _, mass_a, ..), (_, pos_b, _, mass_b, ..)| {
+                        let dist_a =
+                            ((pos_a.0.x * pos_a.0.x + pos_a.0.z * pos_a.0.z).sqrt() - 1.0).abs();
+                        let dist_b =
+                            ((pos_b.0.x * pos_b.0.x + pos_b.0.z * pos_b.0.z).sqrt() - 1.0).abs();
+                        dist_a
+                            .total_cmp(&dist_b)
+                            .then_with(|| mass_b.0.total_cmp(&mass_a.0))
+                    })
+                    .map(|(e, ..)| e)
+            })
+    });
 
     let earth_ent = if let Some(e) = earth_opt {
+        theia_state.target_primary = Some(e);
         e
     } else {
         let Ok((star_pos, star_mass)) = star_query.single() else {
@@ -133,7 +200,7 @@ pub fn update_theia_rendezvous(
         let comp = Composition::rocky();
         let mut diff = InternalDifferentiation::default();
         diff.recalculate(m_s, rad, &comp);
-        commands
+        let spawned_e = commands
             .spawn((
                 SimPosition(pos),
                 SimVelocity(vel),
@@ -150,17 +217,23 @@ pub fn update_theia_rendezvous(
                 VolatileInventory::default(),
                 SpinState::default(),
             ))
-            .id()
+            .id();
+        theia_state.target_primary = Some(spawned_e);
+        spawned_e
     };
 
     // 2. Locate or spawn Theia
     let theia_opt = bodies_query
         .iter()
-        .find(|(_, _, _, _, _, body, ..)| {
-            !body.name.contains("Earth")
-                && !body.name.contains("Moon")
-                && (body.name == "Theia" || body.name.starts_with("Theia"))
+        .filter(|(_, _, _, _, _, body, ..)| {
+            let n = body.name.as_str();
+            (n == "Theia" || n.starts_with("Theia"))
+                && !n.contains("Earth")
+                && !n.contains("Moon")
+                && !n.contains("Planet Nine")
+                && !n.contains("Venus")
         })
+        .max_by(|(_, _, _, mass_a, ..), (_, _, _, mass_b, ..)| mass_a.0.total_cmp(&mass_b.0))
         .map(|(e, ..)| e);
 
     let theia_ent = if let Some(t) = theia_opt {
@@ -245,6 +318,7 @@ pub fn update_theia_rendezvous(
         // Execute Giant Impact resolution:
         theia_state.moon_formed = true;
         theia_state.intercept_active = false;
+        theia_state.target_primary = None;
 
         // 1. Earth state update
         let total_primary_mass = p_mass + s_mass * 0.897; // ~90% mantle accretes

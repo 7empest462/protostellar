@@ -900,3 +900,291 @@ fn test_theia_intercept_with_planet_nine_at_380_au_selects_earth_and_forms_moon(
         moon_dist_to_earth
     );
 }
+
+#[test]
+fn test_theia_intercept_with_full_solar_system_selects_earth_not_venus_or_embryo() {
+    let mut app = App::new();
+    app.init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<TheiaImpactState>()
+        .add_systems(Update, update_theia_rendezvous);
+
+    // 1. Central Star
+    let star_mass = 1.0;
+    app.world_mut().spawn((
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+        Mass(star_mass),
+        Radius(0.00465),
+        CentralStar,
+    ));
+
+    // 2. Proto-Mercury at 0.39 AU
+    let r_merc = 0.39;
+    let v_merc = (G_ASTRO * star_mass / r_merc).sqrt();
+    let merc_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_merc, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_merc)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.055 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.38),
+            Temperature(440.0),
+            Composition::rocky(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Proto-Mercury".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 3. Proto-Venus at 0.72 AU (must NEVER be chosen as Earth!)
+    let r_ven = 0.72;
+    let v_ven = (G_ASTRO * star_mass / r_ven).sqrt();
+    let venus_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_ven, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_ven)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.815 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.95),
+            Temperature(730.0),
+            Composition::rocky(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Proto-Venus".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 4. Proto-Earth at 1.00 AU (the canonical target)
+    let r_earth = 1.00;
+    let v_earth = (G_ASTRO * star_mass / r_earth).sqrt();
+    let mut earth_diff = InternalDifferentiation::default();
+    earth_diff.recalculate(0.88 * EARTH_MASS_SOLAR, EARTH_RADIUS_AU * 0.94, &Composition::rocky());
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_earth, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_earth)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.88 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.94),
+            Temperature(288.0),
+            Composition::rocky(),
+            earth_diff,
+            CelestialBody {
+                name: "Proto-Earth".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 5. Embryo-1.0AU at 0.98 AU (must not hijack Earth or be chosen as Moon)
+    let r_emb = 0.98;
+    let v_emb = (G_ASTRO * star_mass / r_emb).sqrt();
+    let embryo_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_emb, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_emb)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.02 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.25),
+            Temperature(280.0),
+            Composition::rocky(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Embryo-1.0AU".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 6. Theia at 1.18 AU
+    let r_theia = 1.18;
+    let v_theia = (G_ASTRO * star_mass / r_theia).sqrt();
+    let theia_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_theia, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_theia)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.12 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.53),
+            Temperature(260.0),
+            Composition::rocky(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Theia".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 7. Proto-Mars at 1.52 AU
+    let r_mars = 1.52;
+    let v_mars = (G_ASTRO * star_mass / r_mars).sqrt();
+    let mars_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_mars, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_mars)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.107 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.53),
+            Temperature(215.0),
+            Composition::rocky(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Proto-Mars".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 8. Planet Nine at 380 AU
+    let r_p9 = 380.0;
+    let v_p9 = (G_ASTRO * star_mass / r_p9).sqrt();
+    let p9_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(r_p9, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_p9)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(10.0 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 3.5),
+            Temperature(40.0),
+            Composition::icy(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Planet Nine (Super-Earth / Ice Giant)".to_string(),
+                body_type: BodyType::IceGiant,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // Request on-demand Moon formation
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.elapsed_years = 48.0;
+        sim_time.current_dt_yr = 0.02;
+        let mut state = app.world_mut().resource_mut::<TheiaImpactState>();
+        state.manual_trigger_requested = true;
+    }
+
+    // Step the simulation
+    for _ in 0..25 {
+        app.world_mut().resource_mut::<SimTime>().elapsed_years += 0.05;
+        app.update();
+    }
+
+    let final_state = app.world().resource::<TheiaImpactState>();
+    assert!(
+        final_state.moon_formed,
+        "Moon must form reliably when Earth, Venus, and embryos all exist"
+    );
+
+    let world = app.world();
+
+    // 1. Verify Proto-Venus is UNTOUCHED and did NOT get hijacked!
+    let venus_body = world.get::<CelestialBody>(venus_ent).expect("Venus exists");
+    assert_eq!(
+        venus_body.name, "Proto-Venus",
+        "Venus must NOT be renamed to Earth!"
+    );
+    let venus_sat = world.get::<SatelliteOf>(venus_ent);
+    assert!(venus_sat.is_none(), "Venus must NOT have acquired a satellite!");
+    let venus_diff = world.get::<InternalDifferentiation>(venus_ent).unwrap();
+    assert!(
+        !venus_diff.has_theia_llsvp,
+        "Venus must NOT have Theia LLSVPs!"
+    );
+    let venus_pos = world.get::<SimPosition>(venus_ent).unwrap().0;
+    let venus_dist = (venus_pos.x * venus_pos.x + venus_pos.z * venus_pos.z).sqrt();
+    assert!(
+        (venus_dist - 0.72).abs() < 0.05,
+        "Venus must remain in Venus orbit ~0.72 AU, found: {} AU",
+        venus_dist
+    );
+
+    // 2. Verify Embryo-1.0AU is UNTOUCHED
+    let embryo_body = world.get::<CelestialBody>(embryo_ent).expect("Embryo exists");
+    assert_eq!(embryo_body.name, "Embryo-1.0AU");
+    assert!(world.get::<SatelliteOf>(embryo_ent).is_none());
+
+    // 3. Verify Proto-Mars and Proto-Mercury are untouched
+    assert_eq!(world.get::<CelestialBody>(merc_ent).unwrap().name, "Proto-Mercury");
+    assert_eq!(world.get::<CelestialBody>(mars_ent).unwrap().name, "Proto-Mars");
+    assert_eq!(
+        world.get::<CelestialBody>(p9_ent).unwrap().name,
+        "Planet Nine (Super-Earth / Ice Giant)"
+    );
+
+    // 4. Verify Proto-Earth is transformed into Earth
+    let earth_body = world.get::<CelestialBody>(earth_ent).expect("Earth exists");
+    assert_eq!(earth_body.name, "Earth");
+    assert_eq!(earth_body.body_type, BodyType::TerrestrialPlanet);
+    let earth_diff_res = world.get::<InternalDifferentiation>(earth_ent).unwrap();
+    assert!(
+        earth_diff_res.has_theia_llsvp,
+        "Earth must have Theia LLSVP mantle remnants"
+    );
+    let earth_pos = world.get::<SimPosition>(earth_ent).unwrap().0;
+    let earth_dist = (earth_pos.x * earth_pos.x + earth_pos.z * earth_pos.z).sqrt();
+    assert!(
+        (earth_dist - 1.00).abs() < 0.10,
+        "Earth must be in 1.00 AU orbit, found: {} AU",
+        earth_dist
+    );
+
+    // 5. Verify Theia is transformed into The Moon in orbit around Earth
+    let moon_body = world.get::<CelestialBody>(theia_ent).expect("The Moon exists");
+    assert_eq!(moon_body.name, "The Moon");
+    assert_eq!(moon_body.body_type, BodyType::Moon);
+    let moon_sat = world.get::<SatelliteOf>(theia_ent).expect("The Moon must have SatelliteOf");
+    assert_eq!(
+        moon_sat.parent, earth_ent,
+        "The Moon must be satellite of Earth, NOT Venus!"
+    );
+    let moon_pos = world.get::<SimPosition>(theia_ent).unwrap().0;
+    let moon_earth_dist = (moon_pos - earth_pos).length();
+    assert!(
+        moon_earth_dist < 0.05,
+        "The Moon must be near Earth (< 0.05 AU), found: {} AU",
+        moon_earth_dist
+    );
+
+    // 6. Verify count of Earths in the entire simulation is EXACTLY ONE!
+    let mut bodies_query = app.world_mut().query::<&CelestialBody>();
+    let earth_count = bodies_query
+        .iter(app.world())
+        .filter(|b| b.name == "Earth")
+        .count();
+    let moon_count = bodies_query
+        .iter(app.world())
+        .filter(|b| b.name == "The Moon")
+        .count();
+    assert_eq!(earth_count, 1, "Exactly one Earth must exist in the simulation!");
+    assert_eq!(moon_count, 1, "Exactly one Moon must exist in the simulation!");
+}

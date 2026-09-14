@@ -293,7 +293,12 @@ pub fn handle_giant_impact_moon(
         b1.vel = moon_vel;
         b1.radius = moon_radius;
         b1.body_type = BodyType::Moon;
-        if pair.p_name.contains("Earth") || pair.s_name.contains("Theia") {
+        let is_canonical_earth_theia = (pair.p_name.contains("Earth")
+            && !pair.p_name.contains("Super-Earth")
+            && !pair.p_name.contains("Planet Nine")
+            && !pair.p_name.contains("Venus"))
+            && (pair.s_name.contains("Theia") || pair.s_name.contains("Moon"));
+        if is_canonical_earth_theia {
             b1.name = "The Moon".to_string();
         } else {
             b1.name = format!("{} I (Moon)", pair.p_name);
@@ -394,7 +399,12 @@ fn apply_giant_impact_moon_state(
         t.0 = 220.0;
         *comp = moon_comp;
         body.body_type = BodyType::Moon;
-        if pair.p_name.contains("Earth") || pair.s_name.contains("Theia") {
+        let is_canonical_earth_theia = (pair.p_name.contains("Earth")
+            && !pair.p_name.contains("Super-Earth")
+            && !pair.p_name.contains("Planet Nine")
+            && !pair.p_name.contains("Venus"))
+            && (pair.s_name.contains("Theia") || pair.s_name.contains("Moon"));
+        if is_canonical_earth_theia {
             body.name = "The Moon".to_string();
         } else {
             body.name = format!("{} I (Moon)", pair.p_name);
@@ -462,18 +472,26 @@ pub fn handle_grazing_bounce(
                 || n == "Proto-Earth"
                 || n.starts_with("Proto-Earth")
                 || n.starts_with("Earth (")
+                || (n.contains("Earth") && !n.contains("Super-Earth"))
                 || n.contains("Theia"))
                 && !n.contains("Planet Nine")
-                && !n.contains("Super-Earth")
+                && !n.contains("Planet 9")
+                && !n.contains("Venus")
+                && !n.contains("Mercury")
+                && !n.contains("Mars")
         };
         let is_earth_or_moon = |n: &str| {
             (n == "Earth"
                 || n == "Proto-Earth"
                 || n.starts_with("Proto-Earth")
                 || n.starts_with("Earth (")
+                || (n.contains("Earth") && !n.contains("Super-Earth"))
                 || n.contains("Moon"))
                 && !n.contains("Planet Nine")
-                && !n.contains("Super-Earth")
+                && !n.contains("Planet 9")
+                && !n.contains("Venus")
+                && !n.contains("Mercury")
+                && !n.contains("Mars")
         };
         if (is_theia_or_earth(&name1) && is_theia_or_earth(&name2))
             || (is_earth_or_moon(&name1) && is_earth_or_moon(&name2))
@@ -537,7 +555,11 @@ pub fn handle_inelastic_merger(
             || n.starts_with("Earth")
             || n.starts_with("Proto-Earth"))
             && !n.contains("Planet Nine")
+            && !n.contains("Planet 9")
             && !n.contains("Super-Earth")
+            && !n.contains("Venus")
+            && !n.contains("Mercury")
+            && !n.contains("Mars")
     };
     if (is_earth_name(&pair.p_name) && pair.s_name.contains("Moon"))
         || (is_earth_name(&pair.s_name) && pair.p_name.contains("Moon"))
@@ -912,7 +934,11 @@ fn process_body_pair(
             || n.starts_with("Earth")
             || n.starts_with("Proto-Earth"))
             && !n.contains("Planet Nine")
+            && !n.contains("Planet 9")
             && !n.contains("Super-Earth")
+            && !n.contains("Venus")
+            && !n.contains("Mercury")
+            && !n.contains("Mars")
     };
     let is_earth_moon = (is_earth_name(&b1.name) && b2.name.contains("Moon"))
         || (is_earth_name(&b2.name) && b1.name.contains("Moon"));
@@ -988,17 +1014,37 @@ fn process_body_pair(
 
     let is_earth = |b: &BodySnapshot| {
         let n = b.name.as_str();
-        (n == "Earth"
+        let is_explicit = n == "Earth"
             || n == "Proto-Earth"
             || n.starts_with("Proto-Earth")
             || n.starts_with("Earth (")
-            || (b.pos.length() > 0.65 && b.pos.length() < 1.35 && b.body_type.is_planet()))
-            && !n.contains("Planet Nine")
-            && !n.contains("Super-Earth")
-            && !n.contains("Theia")
-            && !n.contains("Moon")
+            || (n.contains("Earth") && !n.contains("Super-Earth"));
+        let is_procedural =
+            b.pos.length() >= 0.85 && b.pos.length() <= 1.15 && b.body_type.is_planet();
+        let is_excluded = n.contains("Planet Nine")
+            || n.contains("Planet 9")
+            || n.contains("Super-Earth")
+            || n.contains("Theia")
+            || n.contains("Moon")
+            || n.contains("Venus")
+            || n.contains("Mercury")
+            || n.contains("Mars")
+            || n.contains("Jupiter")
+            || n.contains("Saturn")
+            || n.contains("Uranus")
+            || n.contains("Neptune")
+            || n.contains("Pluto");
+        (is_explicit || is_procedural) && !is_excluded
     };
-    let is_theia = |b: &BodySnapshot| b.name.contains("Theia");
+    let is_theia = |b: &BodySnapshot| {
+        let n = b.name.as_str();
+        (n == "Theia" || n.starts_with("Theia"))
+            && !n.contains("Earth")
+            && !n.contains("Moon")
+            && !n.contains("Planet Nine")
+            && !n.contains("Planet 9")
+            && !n.contains("Venus")
+    };
     let is_theia_earth = (is_theia(b1) && is_earth(b2)) || (is_theia(b2) && is_earth(b1));
 
     let interpenetrating =
@@ -1068,19 +1114,38 @@ fn execute_collision_regimes(
     };
 
     let is_earth_cand = |n: &str, pos: DVec3, b_type: BodyType| {
-        (n == "Earth"
+        let is_explicit = n == "Earth"
             || n == "Proto-Earth"
             || n.starts_with("Proto-Earth")
             || n.starts_with("Earth (")
-            || (pos.length() > 0.65 && pos.length() < 1.35 && b_type.is_planet()))
-            && !n.contains("Planet Nine")
-            && !n.contains("Super-Earth")
-            && !n.contains("Theia")
-            && !n.contains("Moon")
+            || (n.contains("Earth") && !n.contains("Super-Earth"));
+        let is_procedural = pos.length() >= 0.85 && pos.length() <= 1.15 && b_type.is_planet();
+        let is_excluded = n.contains("Planet Nine")
+            || n.contains("Planet 9")
+            || n.contains("Super-Earth")
+            || n.contains("Theia")
+            || n.contains("Moon")
+            || n.contains("Venus")
+            || n.contains("Mercury")
+            || n.contains("Mars")
+            || n.contains("Jupiter")
+            || n.contains("Saturn")
+            || n.contains("Uranus")
+            || n.contains("Neptune")
+            || n.contains("Pluto");
+        (is_explicit || is_procedural) && !is_excluded
     };
-    let is_theia_earth = (pair.p_name.contains("Theia")
+    let is_theia_cand = |n: &str| {
+        (n == "Theia" || n.starts_with("Theia"))
+            && !n.contains("Earth")
+            && !n.contains("Moon")
+            && !n.contains("Planet Nine")
+            && !n.contains("Planet 9")
+            && !n.contains("Venus")
+    };
+    let is_theia_earth = (is_theia_cand(&pair.p_name)
         && is_earth_cand(&pair.s_name, pair.s_pos, pair.s_type))
-        || (pair.s_name.contains("Theia") && is_earth_cand(&pair.p_name, pair.p_pos, pair.p_type));
+        || (is_theia_cand(&pair.s_name) && is_earth_cand(&pair.p_name, pair.p_pos, pair.p_type));
 
     let regime = if is_theia_earth {
         ImpactRegime::GiantImpactMoon
