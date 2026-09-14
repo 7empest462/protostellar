@@ -236,8 +236,6 @@ pub fn update_theia_rendezvous(
     let dt = sim_time.current_dt_yr;
 
     theia_state.intercept_steps += 1;
-    let start_yr = theia_state.intercept_start_year.unwrap_or(elapsed);
-    let _time_in_intercept = elapsed - start_yr;
 
     // Trigger condition: within contact envelope or swept past in a large time-step
     let is_impact_imminent =
