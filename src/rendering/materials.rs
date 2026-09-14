@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy_shader::ShaderRef;
 
-#[derive(Clone, Default, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug)]
 pub struct PlanetUniforms {
     pub planet_type: u32,
     pub temperature: f32,
@@ -18,6 +18,31 @@ pub struct PlanetUniforms {
     pub atmosphere_params: Vec4,
     /// x: magnetic_field_gauss, y: lava_fraction, z: storm_intensity, w: axial_tilt_rad
     pub dynamics_and_mag: Vec4,
+    /// x, y, z: unit 3D spin axis in world coordinates, w: reserved
+    pub spin_axis: Vec4,
+    /// Recent impact basins: xyz = local unit normal, w = angular radius (rad)
+    pub impact_basins_pos: [Vec4; 4],
+    /// Basin dynamics: x = melt_glow_fraction, y = elongation, z = rim_height, w = active flag
+    pub impact_basins_data: [Vec4; 4],
+}
+
+impl Default for PlanetUniforms {
+    fn default() -> Self {
+        Self {
+            planet_type: 0,
+            temperature: 300.0,
+            time: 0.0,
+            spin_rate: 0.15,
+            composition: Vec4::ZERO,
+            color_seed: Vec4::ONE,
+            climate_and_bio: Vec4::ZERO,
+            atmosphere_params: Vec4::ZERO,
+            dynamics_and_mag: Vec4::ZERO,
+            spin_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
+            impact_basins_pos: [Vec4::ZERO; 4],
+            impact_basins_data: [Vec4::ZERO; 4],
+        }
+    }
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]

@@ -113,8 +113,8 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
     let vel = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
 
     let mut comp = Composition::rocky();
-    if ocean_frac > 0.3 {
-        comp.ice_frac = ocean_frac * 0.15;
+    if ocean_frac > 0.01 {
+        comp.ice_frac = (ocean_frac * 0.15).max(0.01);
     }
 
     let p_yr = a_au.powf(1.5) / m_star.sqrt();
@@ -143,6 +143,8 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
             ocean_ice_thickness_au: if ocean_frac > 0.3 { rad_au * 0.01 } else { 0.0 },
             magnetic_field_gauss: if is_hab { 0.85 } else { 0.35 },
             core_temp_k: 4500.0,
+            has_theia_llsvp: false,
+            llsvp_density_contrast: 0.0,
         },
         SpinState {
             rotation_period_hours: p_hours,
@@ -182,7 +184,8 @@ pub fn spawn_trappist_1_system(
     disk_params.central_star_mass = m_star;
     disk_params.inner_radius_au = 0.005;
     disk_params.outer_radius_au = 0.15;
-    disk_params.disk_mass = 0.0001;
+    disk_params.disk_mass = 0.0;
+    disk_params.gas_disk_lifetime_yr = 0.0;
 
     let star = commands
         .spawn((

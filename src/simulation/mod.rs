@@ -3,20 +3,26 @@
 pub mod accretion;
 pub mod components;
 pub mod disk;
+pub mod disk_migration;
+pub mod pebble_accretion;
 pub mod physics;
 pub mod resources;
 pub mod scenarios;
+pub mod telemetry;
 pub mod thermodynamics;
-pub mod disk_migration;
 
 use bevy::prelude::*;
 
 use crate::simulation::accretion::*;
 use crate::simulation::components::*;
 use crate::simulation::disk::*;
+use crate::simulation::pebble_accretion::{
+    apply_pebble_accretion, spawn_streaming_instability_minor_bodies,
+};
 use crate::simulation::physics::*;
 use crate::simulation::resources::*;
 use crate::simulation::scenarios::*;
+use crate::simulation::telemetry::*;
 use crate::simulation::thermodynamics::*;
 
 pub struct SimulationPlugin;
@@ -31,6 +37,8 @@ impl Plugin for SimulationPlugin {
             .init_resource::<PlayerInteractionState>()
             .init_resource::<PlanetesimalSpawner>()
             .init_resource::<ActiveScenarioState>()
+            .init_resource::<SimulationTelemetryHistory>()
+            .init_resource::<TheiaImpactState>()
             .add_message::<AccretionMergeEvent>()
             .add_message::<MoonFormationEvent>()
             .add_message::<CollisionBounceEvent>()
@@ -47,14 +55,19 @@ impl Plugin for SimulationPlugin {
                     update_active_scenarios,
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),
+                    apply_pebble_accretion.after(step_physics_simulation),
+                    spawn_streaming_instability_minor_bodies.after(step_physics_simulation),
                     direct_nebular_gas_accretion.after(step_physics_simulation),
                     update_thermodynamics.after(step_physics_simulation),
+                    update_impact_basin_relaxation.after(step_physics_simulation),
                     update_photoevaporative_escape.after(update_thermodynamics),
                     auto_spawn_planetesimals.after(step_physics_simulation),
                     auto_spawn_delayed_proto_earth.after(step_physics_simulation),
+                    update_theia_rendezvous.after(process_accretion_and_collisions),
                     update_late_heavy_bombardment_cascade.after(step_physics_simulation),
                     update_black_hole_star_dynamics.after(step_physics_simulation),
                     dissipate_gas_disk.after(step_physics_simulation),
+                    record_planetary_telemetry.after(step_physics_simulation),
                 ),
             );
     }

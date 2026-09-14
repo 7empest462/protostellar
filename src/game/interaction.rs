@@ -2,7 +2,6 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
 use std::f64::consts::PI;
 
 use crate::rendering::camera::PanOrbitCamera;
@@ -113,6 +112,7 @@ fn handle_viewport_and_tool_hotkeys(
     config: &mut SimulationConfig,
     player_state: &mut PlayerInteractionState,
     builder_state: &mut crate::game::ui::PlanetBuilderState,
+    telemetry_state: &mut crate::game::ui::TelemetryPanelState,
     toast: &mut crate::game::ui::NotificationToast,
     camera_query: &Query<(&Transform, &mut PanOrbitCamera)>,
 ) {
@@ -122,6 +122,15 @@ fn handle_viewport_and_tool_hotkeys(
             "🛠️ Planet Builder & Spawner Opened [P]".to_string()
         } else {
             "🛠️ Planet Builder Closed [P]".to_string()
+        };
+        toast.timer = 2.5;
+    }
+    if keyboard.just_pressed(KeyCode::F10) {
+        telemetry_state.is_open = !telemetry_state.is_open;
+        toast.message = if telemetry_state.is_open {
+            "📈 Telemetry & Habitability Graph Opened [F10]".to_string()
+        } else {
+            "📈 Telemetry Graph Closed [F10]".to_string()
         };
         toast.timer = 2.5;
     }
@@ -141,6 +150,12 @@ fn handle_viewport_and_tool_hotkeys(
     }
     if keyboard.just_pressed(KeyCode::KeyY) {
         player_state.orbit_mode = player_state.orbit_mode.cycle();
+        // If the player toggles to cinematic/Hidden orbit mode, also hide
+        // diagnostic overlays for a clean view.
+        if player_state.orbit_mode == OrbitVisualizationMode::Off {
+            player_state.overlay_mode = DiagnosticOverlayMode::Hidden;
+        }
+
         toast.message = match player_state.orbit_mode {
             OrbitVisualizationMode::All => "궤 Orbit Visualization: All Worlds [Y]".to_string(),
             OrbitVisualizationMode::SelectedOnly => {
@@ -390,6 +405,10 @@ fn handle_scenario_and_system_hotkeys(
     if keyboard.just_pressed(KeyCode::KeyG) {
         lhb_state.is_active = true;
         lhb_state.manual_trigger_requested = true;
+        toast.message =
+            "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
+                .to_string();
+        toast.timer = 8.0;
     }
     let preset_map = [
         (
@@ -455,8 +474,10 @@ pub fn handle_player_tools(
     mut config: ResMut<SimulationConfig>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
+    mut telemetry_state: ResMut<crate::game::ui::TelemetryPanelState>,
     mut toast: ResMut<crate::game::ui::NotificationToast>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut selected_query: Query<
@@ -478,7 +499,6 @@ pub fn handle_player_tools(
         Without<PanOrbitCamera>,
     >,
 ) {
-    let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
 
     handle_viewport_and_tool_hotkeys(
@@ -486,6 +506,7 @@ pub fn handle_player_tools(
         &mut config,
         &mut player_state,
         &mut builder_state,
+        &mut telemetry_state,
         &mut toast,
         &camera_query,
     );
@@ -548,32 +569,13 @@ pub fn handle_player_tools(
     }
 
     if keyboard.just_pressed(KeyCode::KeyM) {
-        let spawn_radius = rng.random_range(0.8..12.0);
-        let phi = rng.random_range(0.0..2.0 * PI);
-        let pos = DVec3::new(spawn_radius * phi.cos(), 0.0, spawn_radius * phi.sin());
-        let v_k = (G_ASTRO * star_mass / spawn_radius).sqrt();
-        let vel = DVec3::new(-v_k * phi.sin(), 0.0, v_k * phi.cos());
-        let mass = EARTH_MASS_SOLAR * 0.20;
-        let comp = if spawn_radius < 2.7 {
-            Composition::rocky()
-        } else {
-            Composition::icy()
-        };
-        commands.spawn((
-            CelestialBody {
-                body_type: BodyType::Protoplanet,
-                name: format!("Injected Embryo @ {spawn_radius:.1} AU"),
-            },
-            Mass(mass),
-            SimPosition(pos),
-            SimVelocity(vel),
-            SimAcceleration::default(),
-            Radius(EARTH_RADIUS_AU * 0.8),
-            Temperature(280.0 * spawn_radius.powf(-0.5)),
-            Luminosity(0.0),
-            AngularMomentum(pos.cross(vel) * mass),
-            comp,
-        ));
+        if let Some(ref mut state) = theia_state {
+            state.manual_trigger_requested = true;
+        }
+        toast.message =
+            "🌑 THEIA MOON COLLISION TRIGGERED // Intercept trajectory locked for Moon formation!"
+                .to_string();
+        toast.timer = 8.0;
     }
 
     handle_scenario_and_system_hotkeys(

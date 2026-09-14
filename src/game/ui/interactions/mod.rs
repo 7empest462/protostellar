@@ -12,6 +12,7 @@ use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
+use super::telemetry_panel::handle_telemetry_action;
 use super::types::*;
 use builder::handle_builder_action;
 use editor::handle_body_editor_action;
@@ -22,6 +23,7 @@ use time_and_panels::{handle_instrument_action, handle_panel_toggle_action, hand
 /// Handles interactive mouse clicks and hover highlights on all on-screen HUD buttons.
 #[allow(
     clippy::too_many_arguments,
+    clippy::type_complexity,
     reason = "HUD button interaction system dispatches across all active simulation controls, cameras, and states"
 )]
 pub fn handle_ui_button_interactions(
@@ -42,6 +44,8 @@ pub fn handle_ui_button_interactions(
         mut quick_bar_state,
         mut builder_state,
         mut hud_visibility,
+        mut telemetry_panel_state,
+        mut telemetry_history,
     ): (
         ResMut<TimeWarp>,
         ResMut<PlayerInteractionState>,
@@ -49,12 +53,15 @@ pub fn handle_ui_button_interactions(
         ResMut<QuickBarState>,
         ResMut<PlanetBuilderState>,
         ResMut<HudVisibilityState>,
+        ResMut<TelemetryPanelState>,
+        ResMut<crate::simulation::telemetry::SimulationTelemetryHistory>,
     ),
     disk_params: Res<DiskParameters>,
     config: Res<SimulationConfig>,
     mut selected_query: SelectedWorldQuery,
     mut camera_query: Query<&mut PanOrbitCamera>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
@@ -82,6 +89,14 @@ pub fn handle_ui_button_interactions(
                     continue;
                 }
                 if handle_panel_toggle_action(action, &mut hud_visibility, &mut toast) {
+                    continue;
+                }
+                if handle_telemetry_action(
+                    action,
+                    &mut telemetry_panel_state,
+                    &mut telemetry_history,
+                    &mut toast,
+                ) {
                     continue;
                 }
                 if handle_instrument_action(action, &mut player_state, &mut toast) {
@@ -130,6 +145,7 @@ pub fn handle_ui_button_interactions(
                     &mut commands,
                     &mut toast,
                     &mut lhb_state,
+                    theia_state.as_deref_mut(),
                     sim_time.elapsed_years,
                     &mut rng,
                 );

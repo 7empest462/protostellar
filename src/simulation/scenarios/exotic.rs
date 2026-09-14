@@ -416,67 +416,167 @@ fn spawn_pulsar_planets(commands: &mut Commands, pulsar_mass: f64) {
     }
 }
 
-/// Spawns the PSR B1257+12 (Lich) Millisecond Pulsar System with 3 confirmed zombie exoplanets.
-pub fn spawn_pulsar_system_scenario(
-    commands: &mut Commands,
-    disk_params: &mut DiskParameters,
-) -> Entity {
-    let pulsar_mass = 1.40;
-    disk_params.central_star_mass = pulsar_mass;
-    disk_params.inner_radius_au = 0.10;
-    disk_params.outer_radius_au = 2.20;
-    disk_params.reference_temp_1au = 280.0;
-    disk_params.gas_disk_lifetime_yr = 10_000_000.0;
-    disk_params.disk_mass = 0.0;
+struct CompactRemnantConfig {
+    name: &'static str,
+    body_type: BodyType,
+    mass: f64,
+    radius: f64,
+    temperature: f64,
+    luminosity: f64,
+    spin_vector: DVec3,
+    rotation_period_hours: f64,
+    axial_tilt_degrees: f64,
+    core_temperature: f64,
+    evolution_phase: StellarEvolutionPhase,
+    envelope_loss_rate: f64,
+    phase_timer_years: f64,
+    nebula_radius_au: f32,
+    nebula_opacity: f32,
+    em_field: ElectromagneticFieldState,
+}
 
-    let pulsar_ent = commands
+fn spawn_compact_remnant_star(commands: &mut Commands, config: CompactRemnantConfig) -> Entity {
+    commands
         .spawn((
             CelestialBody {
-                name: "PSR B1257+12 (Lich)".to_string(),
-                body_type: BodyType::Pulsar,
+                name: config.name.to_string(),
+                body_type: config.body_type,
             },
             CentralStar,
-            Mass(pulsar_mass),
+            Mass(config.mass),
             SimPosition(DVec3::ZERO),
             SimVelocity(DVec3::ZERO),
             SimAcceleration(DVec3::ZERO),
-            Radius(0.00008),
-            Temperature(200_000.0),
-            Luminosity(5.2),
+            Radius(config.radius),
+            Temperature(config.temperature),
+            Luminosity(config.luminosity),
             Composition::pure_hydrogen(),
             SpinState {
-                spin_vector: DVec3::new(0.0, 1.01e3, 0.0),
-                rotation_period_hours: 0.00622 / 3600.0,
-                axial_tilt_degrees: 20.0,
+                spin_vector: config.spin_vector,
+                rotation_period_hours: config.rotation_period_hours,
+                axial_tilt_degrees: config.axial_tilt_degrees,
             },
             VolatileInventory::default(),
             IgnitionState {
-                core_temperature: 1.0e8,
+                core_temperature: config.core_temperature,
                 fusion_fraction: 0.0,
                 is_ignited: true,
                 shockwave_radius: 0.0,
             },
             StellarEvolutionState {
-                phase: StellarEvolutionPhase::NeutronStarPulsar,
+                phase: config.evolution_phase,
                 hydrogen_core_fraction: 0.0,
                 helium_core_fraction: 0.0,
-                envelope_mass_loss_rate: 1e-12,
-                phase_timer_years: 1e9,
-                nebula_expansion_radius_au: 2.5,
-                nebula_opacity: 0.45,
+                envelope_mass_loss_rate: config.envelope_loss_rate,
+                phase_timer_years: config.phase_timer_years,
+                nebula_expansion_radius_au: config.nebula_radius_au,
+                nebula_opacity: config.nebula_opacity,
             },
         ))
-        .insert(ElectromagneticFieldState {
-            magnetic_field_gauss: 1.0e9,
-            rotation_period_sec: 0.00622,
-            magnetic_inclination_rad: 0.35,
-            jet_length_au: 2.5,
-            synchrotron_intensity: 2.5,
-        })
-        .id();
+        .insert(config.em_field)
+        .id()
+}
 
-    spawn_pulsar_planets(commands, pulsar_mass);
-    pulsar_ent
+enum CompactRemnantPreset {
+    Pulsar,
+    Magnetar,
+}
+
+fn spawn_compact_remnant_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+    preset: CompactRemnantPreset,
+) -> Entity {
+    match preset {
+        CompactRemnantPreset::Pulsar => {
+            let pulsar_mass = 1.40;
+            disk_params.central_star_mass = pulsar_mass;
+            disk_params.inner_radius_au = 0.10;
+            disk_params.outer_radius_au = 2.20;
+            disk_params.reference_temp_1au = 280.0;
+            disk_params.gas_disk_lifetime_yr = 10_000_000.0;
+            disk_params.disk_mass = 0.0;
+
+            let pulsar_ent = spawn_compact_remnant_star(
+                commands,
+                CompactRemnantConfig {
+                    name: "PSR B1257+12 (Lich)",
+                    body_type: BodyType::Pulsar,
+                    mass: pulsar_mass,
+                    radius: 0.00008,
+                    temperature: 200_000.0,
+                    luminosity: 5.2,
+                    spin_vector: DVec3::new(0.0, 1.01e3, 0.0),
+                    rotation_period_hours: 0.00622 / 3600.0,
+                    axial_tilt_degrees: 20.0,
+                    core_temperature: 1.0e8,
+                    evolution_phase: StellarEvolutionPhase::NeutronStarPulsar,
+                    envelope_loss_rate: 1e-12,
+                    phase_timer_years: 1e9,
+                    nebula_radius_au: 2.5,
+                    nebula_opacity: 0.45,
+                    em_field: ElectromagneticFieldState {
+                        magnetic_field_gauss: 1.0e9,
+                        rotation_period_sec: 0.00622,
+                        magnetic_inclination_rad: 0.35,
+                        jet_length_au: 2.5,
+                        synchrotron_intensity: 2.5,
+                    },
+                },
+            );
+
+            spawn_pulsar_planets(commands, pulsar_mass);
+            pulsar_ent
+        }
+        CompactRemnantPreset::Magnetar => {
+            let magnetar_mass = 1.95;
+            disk_params.central_star_mass = magnetar_mass;
+            disk_params.inner_radius_au = 0.20;
+            disk_params.outer_radius_au = 22.0;
+            disk_params.reference_temp_1au = 1200.0;
+            disk_params.gas_disk_lifetime_yr = 5_000_000.0;
+            disk_params.disk_mass = 0.0;
+
+            let magnetar_ent = spawn_compact_remnant_star(
+                commands,
+                CompactRemnantConfig {
+                    name: "SGR 1806-20 (Magnetar)",
+                    body_type: BodyType::Magnetar,
+                    mass: magnetar_mass,
+                    radius: 0.000_075,
+                    temperature: 5_500_000.0,
+                    luminosity: 10_000.0,
+                    spin_vector: DVec3::new(0.0, 0.83, 0.0),
+                    rotation_period_hours: 7.56 / 3600.0,
+                    axial_tilt_degrees: 26.0,
+                    core_temperature: 2.5e8,
+                    evolution_phase: StellarEvolutionPhase::MagnetarRemnant,
+                    envelope_loss_rate: 1e-10,
+                    phase_timer_years: 1e5,
+                    nebula_radius_au: 5.5,
+                    nebula_opacity: 0.65,
+                    em_field: ElectromagneticFieldState {
+                        magnetic_field_gauss: 1.0e15,
+                        rotation_period_sec: 7.56,
+                        magnetic_inclination_rad: 0.45,
+                        jet_length_au: 4.5,
+                        synchrotron_intensity: 5.0,
+                    },
+                },
+            );
+
+            spawn_magnetar_cluster_bodies(commands, magnetar_mass);
+            magnetar_ent
+        }
+    }
+}
+
+/// Spawns the PSR B1257+12 (Lich) Millisecond Pulsar System with 3 confirmed zombie exoplanets.
+pub fn spawn_pulsar_system_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> Entity {
+    spawn_compact_remnant_scenario(commands, disk_params, CompactRemnantPreset::Pulsar)
 }
 
 fn spawn_magnetar_cluster_bodies(commands: &mut Commands, magnetar_mass: f64) {
@@ -562,60 +662,5 @@ pub fn spawn_magnetar_outburst_scenario(
     commands: &mut Commands,
     disk_params: &mut DiskParameters,
 ) -> Entity {
-    let magnetar_mass = 1.95;
-    disk_params.central_star_mass = magnetar_mass;
-    disk_params.inner_radius_au = 0.20;
-    disk_params.outer_radius_au = 22.0;
-    disk_params.reference_temp_1au = 1200.0;
-    disk_params.gas_disk_lifetime_yr = 5_000_000.0;
-    disk_params.disk_mass = 0.0;
-
-    let magnetar_ent = commands
-        .spawn((
-            CelestialBody {
-                name: "SGR 1806-20 (Magnetar)".to_string(),
-                body_type: BodyType::Magnetar,
-            },
-            CentralStar,
-            Mass(magnetar_mass),
-            SimPosition(DVec3::ZERO),
-            SimVelocity(DVec3::ZERO),
-            SimAcceleration(DVec3::ZERO),
-            Radius(0.000_075),
-            Temperature(5_500_000.0),
-            Luminosity(10_000.0),
-            Composition::pure_hydrogen(),
-            SpinState {
-                spin_vector: DVec3::new(0.0, 0.83, 0.0),
-                rotation_period_hours: 7.56 / 3600.0,
-                axial_tilt_degrees: 26.0,
-            },
-            VolatileInventory::default(),
-            IgnitionState {
-                core_temperature: 2.5e8,
-                fusion_fraction: 0.0,
-                is_ignited: true,
-                shockwave_radius: 0.0,
-            },
-            StellarEvolutionState {
-                phase: StellarEvolutionPhase::MagnetarRemnant,
-                hydrogen_core_fraction: 0.0,
-                helium_core_fraction: 0.0,
-                envelope_mass_loss_rate: 1e-10,
-                phase_timer_years: 1e5,
-                nebula_expansion_radius_au: 5.5,
-                nebula_opacity: 0.65,
-            },
-        ))
-        .insert(ElectromagneticFieldState {
-            magnetic_field_gauss: 1.0e15,
-            rotation_period_sec: 7.56,
-            magnetic_inclination_rad: 0.45,
-            jet_length_au: 4.5,
-            synchrotron_intensity: 5.0,
-        })
-        .id();
-
-    spawn_magnetar_cluster_bodies(commands, magnetar_mass);
-    magnetar_ent
+    spawn_compact_remnant_scenario(commands, disk_params, CompactRemnantPreset::Magnetar)
 }

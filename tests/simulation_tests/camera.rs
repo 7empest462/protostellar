@@ -532,3 +532,198 @@ fn test_outer_bodies_camera_stability_no_cancellation_jitter() {
         dot
     );
 }
+
+#[test]
+fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
+    use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+
+    // Spawn Sun
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        SimPosition(DVec3::ZERO),
+        Transform::IDENTITY,
+    ));
+
+    // Spawn Camera at 16.0 AU
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                radius: 16.0,
+                target_radius: 16.0,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 5.0, 16.0),
+            GlobalTransform::IDENTITY,
+        ))
+        .id();
+
+    app.add_systems(Update, update_pan_orbit_camera);
+
+    // 1. Test Line scroll vs Pixel scroll calibration:
+    // A 1-line scroll in (zoom in)
+    {
+        let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel.write(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: 1.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+    app.update();
+
+    let target_r_line = app
+        .world()
+        .get::<PanOrbitCamera>(camera_ent)
+        .unwrap()
+        .target_radius;
+    // 16.0 * exp(-1.0 * 0.055) = ~15.14 AU
+    assert!(
+        (target_r_line - 15.14).abs() < 0.05,
+        "1-line scroll must zoom gently by ~5.4% (got target_radius {})",
+        target_r_line
+    );
+
+    // Reset back to 16.0 AU
+    {
+        let mut cam = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam.radius = 16.0;
+        cam.target_radius = 16.0;
+    }
+
+    // A 24-pixel trackpad gesture (macOS smooth scroll) must yield the EXACT same gentle 1-line zoom!
+    {
+        let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel.write(MouseWheel {
+            unit: MouseScrollUnit::Pixel,
+            x: 0.0,
+            y: 24.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+    app.update();
+
+    let target_r_pixel = app
+        .world()
+        .get::<PanOrbitCamera>(camera_ent)
+        .unwrap()
+        .target_radius;
+    assert!(
+        (target_r_pixel - target_r_line).abs() < 1e-4,
+        "24-pixel macOS trackpad gesture ({}) must match 1-line scroll ({}) precisely!",
+        target_r_pixel,
+        target_r_line
+    );
+
+    // 2. Test Shift precision micro-zoom
+    {
+        let mut cam = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam.radius = 16.0;
+        cam.target_radius = 16.0;
+
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::ShiftLeft);
+
+        let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel.write(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: 1.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+    app.update();
+
+    let target_r_shift = app
+        .world()
+        .get::<PanOrbitCamera>(camera_ent)
+        .unwrap()
+        .target_radius;
+    // 16.0 * exp(-1.0 * (0.055 * 0.35)) = ~16.0 * 0.9809 = ~15.69 AU
+    assert!(
+        (target_r_shift - 15.69).abs() < 0.05,
+        "Shift-held scroll must provide precision micro-zoom (~1.9% delta, got target_radius {})",
+        target_r_shift
+    );
+
+    // Release Shift
+    {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::ShiftLeft);
+    }
+
+    // 3. Test UI protection: when cursor is interacting with UI, mouse wheel is ignored
+    {
+        let mut cam = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam.radius = 16.0;
+        cam.target_radius = 16.0;
+
+        // Spawn a hovered UI element
+        let ui_node = app
+            .world_mut()
+            .spawn((Node::default(), Interaction::Hovered))
+            .id();
+
+        let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel.write(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: 5.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+
+        app.update();
+
+        let target_r_ui = app
+            .world()
+            .get::<PanOrbitCamera>(camera_ent)
+            .unwrap()
+            .target_radius;
+        assert_eq!(
+            target_r_ui, 16.0,
+            "Mouse wheel over UI must be suppressed to prevent accidental background camera zoom!"
+        );
+
+        app.world_mut().despawn(ui_node);
+    }
+}

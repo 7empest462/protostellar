@@ -33,21 +33,27 @@ fn get_major_seeds() -> [SeedTuple; 12] {
         ),
         (
             1.00,
-            0.50 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.82,
+            0.88 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.94,
             "Proto-Earth",
             Composition::rocky(),
             BodyType::Protoplanet,
             0.016,
         ),
         (
-            1.25,
-            0.10 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.48,
-            "Theia Embryo",
-            Composition::rocky(),
+            1.18,
+            0.12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.53,
+            "Theia",
+            Composition {
+                metal_frac: 0.42,
+                silicate_frac: 0.58,
+                ice_frac: 0.0,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
             BodyType::Protoplanet,
-            0.04,
+            0.165,
         ),
         (
             1.52,
@@ -401,6 +407,9 @@ fn spawn_seed_body(
     let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
     let initial_spin = 0.33 * mass * radius * radius * DVec3::new(0.0, omega, 0.0);
     spin.update_from_spin(initial_spin, mass, radius);
+    if name.contains("Saturn") {
+        spin.axial_tilt_degrees = 26.7;
+    }
 
     let vol = VolatileInventory {
         delivered_water_m_earth: 0.0,
@@ -409,7 +418,7 @@ fn spawn_seed_body(
         cometary_impact_count: 0,
     };
 
-    commands.spawn((
+    let mut entity_cmds = commands.spawn((
         CelestialBody {
             body_type,
             name: name.to_string(),
@@ -427,6 +436,17 @@ fn spawn_seed_body(
         spin,
         vol,
     ));
+
+    if name.contains("Saturn") {
+        entity_cmds.insert(PlanetaryRingSystem {
+            inner_radius_au: (radius * 1.25) as f32,
+            outer_radius_au: (radius * 2.35) as f32,
+            ring_mass_earth: 0.000_028,
+            optical_depth: 0.88,
+            ice_fraction: 0.96,
+            silicate_fraction: 0.04,
+        });
+    }
 }
 
 /// Spawns the initial protostellar system: only the central protostar in ECS.

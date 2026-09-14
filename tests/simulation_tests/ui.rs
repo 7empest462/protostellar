@@ -234,161 +234,77 @@ fn test_late_heavy_bombardment_guaranteed_trigger_and_impactors() {
     verify_volatile_water_delivery(&mut app, earth_ent);
 }
 
-fn verify_minor_body_classification() {
-    use protostellar::game::ui::is_major_body;
+fn verify_body_classification_rules() {
+    use protostellar::game::ui::{is_canonical_major_planet, is_embryo_body, is_major_body};
 
-    assert!(!is_major_body(
-        "Ceres",
-        BodyType::Asteroid,
-        false,
-        0.00015 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "Vesta",
-        BodyType::Asteroid,
-        false,
-        0.00004 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "1P/Halley",
-        BodyType::Comet,
-        false,
-        0.000001 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "C/1995 O1 Hale-Bopp",
-        BodyType::Comet,
-        false,
-        0.000005 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "Asteroid-2.7AU",
-        BodyType::Asteroid,
-        false,
-        0.00001 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "Comet-25.0AU",
-        BodyType::Comet,
-        false,
-        0.00001 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "Planetesimal-1.5AU",
-        BodyType::Planetesimal,
-        false,
-        0.00001 * EARTH_MASS_SOLAR
-    ));
-}
+    // 1. Minor bodies (Asteroids, Comets, Planetesimals) are never major bodies
+    let minor_cases = [
+        ("Ceres", BodyType::Asteroid, 0.00015),
+        ("Vesta", BodyType::Asteroid, 0.00004),
+        ("1P/Halley", BodyType::Comet, 0.000001),
+        ("C/1995 O1 Hale-Bopp", BodyType::Comet, 0.000005),
+        ("Asteroid-2.7AU", BodyType::Asteroid, 0.00001),
+        ("Comet-25.0AU", BodyType::Comet, 0.00001),
+        ("Planetesimal-1.5AU", BodyType::Planetesimal, 0.00001),
+    ];
+    for (name, b_type, mass_earth) in minor_cases {
+        assert!(!is_major_body(
+            name,
+            b_type,
+            false,
+            mass_earth * EARTH_MASS_SOLAR
+        ));
+    }
 
-fn verify_embryo_body_classification() {
-    use protostellar::game::ui::{is_embryo_body, is_major_body};
-
-    assert!(is_embryo_body("Theia", BodyType::Protoplanet));
-    assert!(is_embryo_body("Theia Embryo", BodyType::Protoplanet));
-    assert!(is_embryo_body("Callisto Embryo", BodyType::Protoplanet));
-    assert!(is_embryo_body("Titan Embryo", BodyType::Protoplanet));
-    assert!(is_embryo_body("Embryo-1.2AU", BodyType::Protoplanet));
-    assert!(is_embryo_body("Embryo #1", BodyType::Protoplanet));
-    assert!(!is_major_body(
-        "Theia",
-        BodyType::Protoplanet,
-        false,
-        0.10 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
-        "Theia Embryo",
-        BodyType::Protoplanet,
-        false,
-        0.10 * EARTH_MASS_SOLAR
-    ));
-    assert!(!is_major_body(
+    // 2. Protoplanetary Embryos
+    let embryo_cases = [
         "Callisto Embryo",
-        BodyType::Protoplanet,
-        false,
-        0.05 * EARTH_MASS_SOLAR
-    ));
-}
+        "Titan Embryo",
+        "Embryo-1.2AU",
+        "Embryo #1",
+    ];
+    for name in embryo_cases {
+        assert!(is_embryo_body(name, BodyType::Protoplanet));
+        assert!(!is_major_body(
+            name,
+            BodyType::Protoplanet,
+            false,
+            0.10 * EARTH_MASS_SOLAR
+        ));
+    }
 
-fn verify_major_body_classification() {
-    use protostellar::game::ui::{is_canonical_major_planet, is_major_body};
-
+    // 3. Central Star and Major Worlds
     assert!(is_major_body("Sun", BodyType::Protostar, true, 1.0));
-    assert!(is_major_body(
-        "Proto-Mercury",
-        BodyType::Protoplanet,
-        false,
-        0.06 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Mercury",
-        BodyType::TerrestrialPlanet,
-        false,
-        0.055 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Venus",
-        BodyType::TerrestrialPlanet,
-        false,
-        0.815 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Earth",
-        BodyType::TerrestrialPlanet,
-        false,
-        1.0 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Mars",
-        BodyType::TerrestrialPlanet,
-        false,
-        0.107 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Jupiter",
-        BodyType::GasGiant,
-        false,
-        317.8 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Saturn",
-        BodyType::GasGiant,
-        false,
-        95.2 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Uranus",
-        BodyType::IceGiant,
-        false,
-        14.5 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Neptune",
-        BodyType::IceGiant,
-        false,
-        17.1 * EARTH_MASS_SOLAR
-    ));
+    let major_worlds = [
+        ("Theia", BodyType::Protoplanet, 0.12),
+        ("Proto-Mercury", BodyType::Protoplanet, 0.06),
+        ("Mercury", BodyType::TerrestrialPlanet, 0.055),
+        ("Venus", BodyType::TerrestrialPlanet, 0.815),
+        ("Earth", BodyType::TerrestrialPlanet, 1.0),
+        ("Mars", BodyType::TerrestrialPlanet, 0.107),
+        ("Jupiter", BodyType::GasGiant, 317.8),
+        ("Saturn", BodyType::GasGiant, 95.2),
+        ("Uranus", BodyType::IceGiant, 14.5),
+        ("Neptune", BodyType::IceGiant, 17.1),
+        ("Pluto (Dwarf Planet)", BodyType::TerrestrialPlanet, 0.00218),
+        (
+            "Planet Nine (Super-Earth / Ice Giant)",
+            BodyType::IceGiant,
+            5.50,
+        ),
+        ("Moon", BodyType::Moon, 0.0123),
+    ];
+    for (name, b_type, mass_earth) in major_worlds {
+        assert!(is_major_body(
+            name,
+            b_type,
+            false,
+            mass_earth * EARTH_MASS_SOLAR
+        ));
+    }
     assert!(is_canonical_major_planet("Pluto (Dwarf Planet)"));
     assert!(is_canonical_major_planet(
         "Planet Nine (Super-Earth / Ice Giant)"
-    ));
-    assert!(is_major_body(
-        "Pluto (Dwarf Planet)",
-        BodyType::TerrestrialPlanet,
-        false,
-        0.00218 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Planet Nine (Super-Earth / Ice Giant)",
-        BodyType::IceGiant,
-        false,
-        5.50 * EARTH_MASS_SOLAR
-    ));
-    assert!(is_major_body(
-        "Moon",
-        BodyType::Moon,
-        false,
-        0.0123 * EARTH_MASS_SOLAR
     ));
 }
 
@@ -461,9 +377,7 @@ fn verify_stellar_wind_radiation_push() {
 
 #[test]
 fn test_minor_bodies_belt_formation_1024_capacity_and_hud_category() {
-    verify_minor_body_classification();
-    verify_embryo_body_classification();
-    verify_major_body_classification();
+    verify_body_classification_rules();
     verify_planetesimal_spawner_and_quick_bar_defaults();
     verify_solar_system_scenario_belts();
     verify_stellar_wind_radiation_push();
@@ -579,6 +493,8 @@ fn setup_quick_selector_app() -> (App, Entity, Entity, Entity) {
     app.init_resource::<SimTime>();
     app.init_resource::<NotificationToast>();
     app.init_resource::<PlanetBuilderState>();
+    app.init_resource::<protostellar::game::ui::TelemetryPanelState>();
+    app.init_resource::<protostellar::simulation::telemetry::SimulationTelemetryHistory>();
     app.init_resource::<HudVisibilityState>();
     app.init_resource::<LateHeavyBombardmentState>();
     app.add_message::<LoadScenarioEvent>();
@@ -788,4 +704,183 @@ fn test_quick_body_selector_click_selection_and_clean_recursive_despawn() {
     let jupiter_btn = verify_selector_bar_buttons(&app, bar_ent, jupiter_ent);
     verify_selector_button_click(&mut app, jupiter_btn, cam_ent, jupiter_ent);
     verify_clean_recursive_despawn(&mut app, bar_ent);
+}
+
+#[test]
+fn test_astronomical_belt_zoning_and_census() {
+    use protostellar::simulation::disk::belts::{BeltCensus, BeltZone};
+
+    // 1. Validate boundary zoning
+    assert_eq!(BeltZone::from_distance_au(0.8), BeltZone::InnerSystem);
+    assert_eq!(BeltZone::from_distance_au(2.09), BeltZone::InnerSystem);
+    assert_eq!(BeltZone::from_distance_au(2.10), BeltZone::AsteroidBelt);
+    assert_eq!(BeltZone::from_distance_au(2.77), BeltZone::AsteroidBelt);
+    assert_eq!(BeltZone::from_distance_au(3.45), BeltZone::AsteroidBelt);
+    assert_eq!(BeltZone::from_distance_au(5.20), BeltZone::TrojanCentaur);
+    assert_eq!(BeltZone::from_distance_au(16.0), BeltZone::TrojanCentaur);
+    assert_eq!(BeltZone::from_distance_au(16.1), BeltZone::KuiperBelt);
+    assert_eq!(BeltZone::from_distance_au(30.0), BeltZone::KuiperBelt);
+    assert_eq!(BeltZone::from_distance_au(45.0), BeltZone::KuiperBelt);
+    assert_eq!(BeltZone::from_distance_au(55.0), BeltZone::ScatteredDisk);
+
+    // 2. Validate census recording
+    let mut census = BeltCensus::default();
+    census.record(1.2); // Inner
+    census.record(2.3); // Asteroid
+    census.record(2.77); // Asteroid
+    census.record(5.2); // Trojan
+    census.record(18.0); // Kuiper
+    census.record(25.0); // Kuiper
+    census.record(35.0); // Kuiper
+    census.record(60.0); // Scattered
+
+    assert_eq!(census.inner_count, 1);
+    assert_eq!(census.asteroid_belt_count, 2);
+    assert_eq!(census.trojan_count, 1);
+    assert_eq!(census.kuiper_count, 3);
+    assert_eq!(census.scattered_count, 1);
+    assert_eq!(census.total(), 8);
+
+    let summary = census.format_summary_line();
+    assert!(summary.contains("☀️ In: 1"));
+    assert!(summary.contains("🪨 Main: 2"));
+    assert!(summary.contains("🪐 Troj: 1"));
+    assert!(summary.contains("🧊 Kuiper: 3"));
+    assert!(summary.contains("🌌 Oort: 1"));
+}
+
+#[test]
+fn test_quick_bar_belt_expand_and_contract_interactions() {
+    use bevy::prelude::*;
+    use protostellar::game::ui::{handle_ui_button_interactions, BeltZone, QuickBarState};
+
+    let (mut app, bar_ent, _cam_ent, _jupiter_ent) = setup_quick_selector_app();
+
+    // Spawn minor bodies in Asteroid Belt and Kuiper Belt
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Ceres (Dwarf Planet)".to_string(),
+            body_type: BodyType::Asteroid,
+        },
+        SimPosition(DVec3::new(2.77, 0.0, 0.0)),
+        SimVelocity(DVec3::ZERO),
+        Mass(0.00015 * EARTH_MASS_SOLAR),
+        Radius(0.0001),
+    ));
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "1P/Halley (Comet)".to_string(),
+            body_type: BodyType::Comet,
+        },
+        SimPosition(DVec3::new(17.8, 0.0, 0.0)),
+        SimVelocity(DVec3::ZERO),
+        Mass(0.00002 * EARTH_MASS_SOLAR),
+        Radius(0.00005),
+    ));
+
+    app.add_systems(Update, handle_ui_button_interactions);
+    app.update();
+
+    // Initially show_minor_bodies is false and expanded_belts is empty
+    let qb_state = app.world().resource::<QuickBarState>();
+    assert!(!qb_state.show_minor_bodies);
+    assert!(qb_state.expanded_belts.is_empty());
+
+    // Toggle minor bodies on
+    app.world_mut()
+        .resource_mut::<QuickBarState>()
+        .show_minor_bodies = true;
+    app.update();
+
+    // Verify buttons spawned in the selector bar
+    let children: Vec<Entity> = app
+        .world()
+        .get::<Children>(bar_ent)
+        .unwrap()
+        .iter()
+        .collect();
+    assert!(
+        !children.is_empty(),
+        "Buttons must be spawned in the selector bar"
+    );
+
+    // Test expanding Asteroid Belt
+    let mut qb_state = app.world_mut().resource_mut::<QuickBarState>();
+    qb_state.expanded_belts.insert(BeltZone::AsteroidBelt);
+    app.update();
+
+    let qb_state = app.world().resource::<QuickBarState>();
+    assert!(qb_state.expanded_belts.contains(&BeltZone::AsteroidBelt));
+    assert!(!qb_state.expanded_belts.contains(&BeltZone::KuiperBelt));
+
+    // Test collapsing Asteroid Belt
+    let mut qb_state = app.world_mut().resource_mut::<QuickBarState>();
+    qb_state.expanded_belts.remove(&BeltZone::AsteroidBelt);
+    app.update();
+
+    let qb_state = app.world().resource::<QuickBarState>();
+    assert!(qb_state.expanded_belts.is_empty());
+}
+
+#[test]
+fn test_inspector_composition_water_ice_formatting() {
+    use protostellar::game::ui::format_composition_water_ice;
+
+    // 1. Warm Earth-like planet with 81% ocean coverage and 0% bulk ice
+    let comp_earth = Composition::rocky();
+    let vol_earth = VolatileInventory {
+        ocean_coverage_frac: 0.81,
+        delivered_water_m_earth: 0.0005,
+        ..default()
+    };
+    let s1 = format_composition_water_ice(&comp_earth, Some(&vol_earth), None, 343.0, false);
+    assert_eq!(s1, "81% Ocean Water");
+
+    // 2. Warm water world with 25% bulk water and 95% ocean coverage
+    let comp_waterworld = Composition {
+        silicate_frac: 0.50,
+        ice_frac: 0.25,
+        metal_frac: 0.25,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    };
+    let vol_waterworld = VolatileInventory {
+        ocean_coverage_frac: 0.95,
+        delivered_water_m_earth: 0.05,
+        ..default()
+    };
+    let s2 =
+        format_composition_water_ice(&comp_waterworld, Some(&vol_waterworld), None, 300.0, false);
+    assert_eq!(s2, "95% Ocean (25% Water)");
+
+    // 3. Dry warm planet (Venus 737 K, no volatiles)
+    let s3 = format_composition_water_ice(&comp_earth, None, None, 737.0, false);
+    assert_eq!(s3, "0% Water");
+
+    // 4. Trace water warm planet
+    let vol_trace = VolatileInventory {
+        ocean_coverage_frac: 0.0,
+        delivered_water_m_earth: 0.00001,
+        ..default()
+    };
+    let s4 = format_composition_water_ice(&comp_earth, Some(&vol_trace), None, 290.0, false);
+    assert_eq!(s4, "<1% Water");
+
+    // 5. Cold snowball world with 90% surface ice coverage
+    let climate_snowball = PlanetaryClimate {
+        ice_coverage_frac: 0.90,
+        surface_temperature_k: 210.0,
+        ..default()
+    };
+    let s5 = format_composition_water_ice(&comp_earth, None, Some(&climate_snowball), 210.0, false);
+    assert_eq!(s5, "90% Surface Ice");
+
+    // 6. Cold icy world / comet (55% bulk ice)
+    let comp_icy = Composition::icy();
+    let s6 = format_composition_water_ice(&comp_icy, None, None, 100.0, false);
+    assert_eq!(s6, "55% Ice");
+
+    // 7. Central star (Sun, 5778 K)
+    let s7 = format_composition_water_ice(&Composition::pure_hydrogen(), None, None, 5778.0, true);
+    assert_eq!(s7, "0% Ice");
 }

@@ -252,6 +252,16 @@ pub fn handle_selection_action(
             cycle_target_body(selected_query, player_state, camera_query, config, toast);
             true
         }
+        _ => handle_quick_bar_action(action, quick_bar_state, toast),
+    }
+}
+
+fn handle_quick_bar_action(
+    action: &UiButtonAction,
+    quick_bar_state: &mut QuickBarState,
+    toast: &mut NotificationToast,
+) -> bool {
+    match action {
         UiButtonAction::ToggleMinimizeQuickBar => {
             quick_bar_state.is_minimized = !quick_bar_state.is_minimized;
             toast.message = if quick_bar_state.is_minimized {
@@ -265,11 +275,41 @@ pub fn handle_selection_action(
         UiButtonAction::ToggleMinorBodies => {
             quick_bar_state.show_minor_bodies = !quick_bar_state.show_minor_bodies;
             toast.message = if quick_bar_state.show_minor_bodies {
-                "🪐 Showing All Asteroids & Planetesimals".to_string()
+                "☄️ Showing Asteroids & Comets by Belt".to_string()
             } else {
                 "🪐 Showing Major Worlds Only".to_string()
             };
             toast.timer = 3.0;
+            true
+        }
+        UiButtonAction::ToggleBelt(zone) => {
+            let is_now_expanded = if quick_bar_state.expanded_belts.contains(zone) {
+                quick_bar_state.expanded_belts.remove(zone);
+                false
+            } else {
+                quick_bar_state.expanded_belts.insert(*zone);
+                true
+            };
+            toast.message = if is_now_expanded {
+                format!("{} {}: Expanded", zone.icon(), zone.short_name())
+            } else {
+                format!("{} {}: Contracted", zone.icon(), zone.short_name())
+            };
+            toast.timer = 2.5;
+            true
+        }
+        UiButtonAction::ExpandAllBelts => {
+            for zone in BeltZone::all() {
+                quick_bar_state.expanded_belts.insert(*zone);
+            }
+            toast.message = "☄️ All Astronomical Belts Expanded".to_string();
+            toast.timer = 2.5;
+            true
+        }
+        UiButtonAction::CollapseAllBelts => {
+            quick_bar_state.expanded_belts.clear();
+            toast.message = "☄️ All Astronomical Belts Contracted".to_string();
+            toast.timer = 2.5;
             true
         }
         UiButtonAction::ToggleEmbryos => {

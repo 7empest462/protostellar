@@ -26,6 +26,9 @@ struct PlanetExtension {
     climate_and_bio: vec4<f32>, // x: ocean_frac, y: ice_frac, z: biomass_frac, w: cloud_density
     atmosphere_params: vec4<f32>, // x: surface_pressure_bar, y: scale_height, z: haze_density, w: greenhouse_factor
     dynamics_and_mag: vec4<f32>, // x: magnetic_field_gauss, y: lava_fraction, z: storm_intensity, w: axial_tilt_rad
+    spin_axis: vec4<f32>, // x, y, z: unit 3D spin axis in world coordinates, w: reserved
+    impact_basins_pos: array<vec4<f32>, 4>, // xyz = unit normal in crust space, w = angular radius (rad)
+    impact_basins_data: array<vec4<f32>, 4>, // x = melt_glow_fraction, y = elongation, z = rim_height, w = active
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(101)
@@ -523,6 +526,95 @@ fn render_stellar_photosphere(
     return final_col;
 }
 
+struct CraterShadingResult {
+    color: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    emissive: vec3<f32>,
+};
+
+fn apply_impact_craters_and_basins(
+    p_surf: vec3<f32>,
+    in_color: vec3<f32>,
+    in_roughness: f32,
+    in_metallic: f32,
+    time: f32,
+) -> CraterShadingResult {
+    var out_res: CraterShadingResult;
+    out_res.color = in_color;
+    out_res.roughness = in_roughness;
+    out_res.metallic = in_metallic;
+    out_res.emissive = vec3<f32>(0.0);
+
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let b_pos = planet.impact_basins_pos[i];
+        let b_data = planet.impact_basins_data[i];
+        let radius = b_pos.w;
+        if (radius <= 0.005 || b_data.w < 0.5) {
+            continue;
+        }
+
+        let center = normalize(b_pos.xyz);
+        let melt_glow = b_data.x;
+        let elongation = max(b_data.y, 1.0);
+
+        let cos_dist = clamp(dot(p_surf, center), -1.0, 1.0);
+        let dist = acos(cos_dist);
+
+        var effective_dist = dist;
+        if (elongation > 1.05) {
+            let tangent = normalize(cross(center, vec3<f32>(0.0, 1.0, 0.001)));
+            let d_tangent = dot(p_surf - center, tangent);
+            let d_norm = sqrt(max(dist * dist - d_tangent * d_tangent, 0.0));
+            effective_dist = sqrt((d_tangent / elongation) * (d_tangent / elongation) + d_norm * d_norm);
+        }
+
+        let u = effective_dist / radius;
+        if (u < 1.6) {
+            let ray_angle = atan2(p_surf.x - center.x, p_surf.z - center.z);
+            let ray_noise = sin(ray_angle * 14.0 + fbm(p_surf * 18.0) * 4.0) * 0.5 + 0.5;
+            let ejecta_blanket = smoothstep(1.6, 0.95, u) * ray_noise * 0.45;
+            let ejecta_dust = vec3<f32>(0.48, 0.45, 0.42);
+
+            let rim_factor = smoothstep(0.75, 0.98, u) * smoothstep(1.25, 0.98, u);
+            let rim_rock = vec3<f32>(0.38, 0.35, 0.33);
+
+            let floor_factor = smoothstep(0.85, 0.70, u);
+            let basalt_mare = vec3<f32>(0.09, 0.085, 0.08);
+
+            var central_peak = 0.0;
+            if (radius > 0.12 && u < 0.22) {
+                central_peak = smoothstep(0.22, 0.05, u) * 0.7;
+            }
+
+            var crater_col = mix(out_res.color, ejecta_dust, ejecta_blanket);
+            crater_col = mix(crater_col, rim_rock, rim_factor);
+            crater_col = mix(crater_col, basalt_mare, floor_factor);
+            crater_col = mix(crater_col, rim_rock, central_peak);
+
+            out_res.color = crater_col;
+            out_res.roughness = mix(out_res.roughness, 0.92, floor_factor * 0.8 + rim_factor * 0.5);
+            out_res.metallic = mix(out_res.metallic, 0.08, floor_factor * 0.7);
+
+            if (melt_glow > 0.005 && u < 0.82) {
+                let pool_mask = smoothstep(0.82, 0.55, u);
+                let convection_cracks = fbm(p_surf * 32.0 + vec3<f32>(time * 0.05, 0.0, 0.0));
+                let lava_core = vec3<f32>(1.0, 0.48, 0.08) * (3.8 + sin(time * 2.8 + u * 10.0) * 0.6);
+                let dark_crust = vec3<f32>(0.12, 0.09, 0.08);
+
+                let is_open_lava = smoothstep(0.38, 0.62, convection_cracks);
+                let lava_mix = mix(dark_crust, lava_core, is_open_lava);
+
+                out_res.color = mix(out_res.color, lava_mix, pool_mask * melt_glow);
+                out_res.emissive += lava_core * pool_mask * melt_glow * (is_open_lava * 0.85 + 0.15);
+                out_res.roughness = mix(out_res.roughness, 0.25, pool_mask * melt_glow);
+            }
+        }
+    }
+
+    return out_res;
+}
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -531,6 +623,21 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
     let norm = normalize(in.world_normal);
+    let to_star = normalize(-in.world_position.xyz);
+    let stellar_insolation = max(dot(norm, to_star), 0.0);
+
+    // Normalized 3D physical spin axis in world coordinates
+    var s_axis = planet.spin_axis.xyz;
+    if (length(s_axis) < 0.1) {
+        s_axis = vec3<f32>(0.0, 1.0, 0.0);
+    } else {
+        s_axis = normalize(s_axis);
+    }
+
+    // Rotational latitude: dot product with physical 3D spin axis
+    let sin_lat = dot(norm, s_axis);
+    let polar_angle = abs(sin_lat);
+
     let tilt = planet.dynamics_and_mag.w;
     let p_tilted = rotate_z(norm, -tilt);
     
@@ -552,9 +659,10 @@ fn fragment(
     let metal = planet.composition.z;
     let gas = planet.composition.w;
 
-    let ocean_frac = max(planet.climate_and_bio.x, ice);
-    let ice_frac = planet.climate_and_bio.y;
-    let biomass = planet.climate_and_bio.z;
+    let has_volatiles = (ice > 0.002 || planet.climate_and_bio.x > 0.01 || planet.climate_and_bio.y > 0.005);
+    let ocean_frac = select(0.0, max(planet.climate_and_bio.x, ice), has_volatiles);
+    let ice_frac = select(0.0, planet.climate_and_bio.y, has_volatiles);
+    let biomass = select(0.0, planet.climate_and_bio.z, has_volatiles);
     let cloud_density = max(planet.climate_and_bio.w, gas * 0.5);
     let pressure_bar = planet.atmosphere_params.x;
     let mag_gauss = planet.dynamics_and_mag.x;
@@ -647,21 +755,24 @@ fn fragment(
         let elev = fbm(p_surf * 3.4);
         let ridge = ridge_noise(p_surf * 7.2);
         let combined_elev = elev * 0.65 + ridge * 0.35;
-        let polar_angle = abs(p_surf.y);
         
-        let sea_level = 0.46; // Balanced global ocean-to-continent ratio (~68% water, ~32% land)
-        let ice_cap_thresh = clamp(0.92 - (273.0 / max(temp, 160.0)) * 0.08, 0.64, 0.98);
+        let has_oceans = has_volatiles && ocean_frac > 0.02;
+        let sea_level = clamp(0.20 + ocean_frac * 0.45, 0.25, 0.80);
+        let is_ice_cold = temp < 285.0; // Ice caps melt completely above 12 °C
+        let ice_cap_thresh = clamp(0.95 - (ice_frac * 0.40) - (273.0 / max(temp, 160.0)) * 0.04, 0.70, 0.99);
         
-        // Polar Ice Shields & Glacial Calving Shelves
-        if (polar_angle > ice_cap_thresh) {
+        // Polar Ice Shields & Glacial Calving Shelves:
+        // Form ONLY if planet has volatiles, is cold enough, at the true 3D spin poles,
+        // and not facing baking direct sunlight (insolation < 0.35)
+        if (has_volatiles && is_ice_cold && polar_angle > ice_cap_thresh && stellar_insolation < 0.35) {
             let frost = fbm(p_surf * 14.0);
             let pack_ice = vec3<f32>(0.94, 0.97, 1.0);
             let glacial_blue = vec3<f32>(0.65, 0.82, 0.98);
             color = mix(pack_ice, glacial_blue, frost * 0.45);
             pbr_input.material.perceptual_roughness = 0.25;
         }
-        // Vast Sapphire Oceans & Coastal Turquoise Continental Shelves
-        else if (combined_elev < sea_level) {
+        // Vast Sapphire Oceans & Coastal Turquoise Continental Shelves (ONLY if world has oceans!)
+        else if (has_oceans && combined_elev < sea_level) {
             let depth = (sea_level - combined_elev) / sea_level;
             let abyssal_trench = vec3<f32>(0.01, 0.04, 0.24);
             let deep_sapphire = vec3<f32>(0.02, 0.14, 0.48);
@@ -676,62 +787,91 @@ fn fragment(
             pbr_input.material.perceptual_roughness = 0.05;
             pbr_input.material.metallic = 0.02;
         }
-        // Continents, Mountain Ranges & Biomes
+        // Continents, Mountain Ranges & Biomes (or Dry Super-Earth Lithosphere)
         else {
-            let rel_elev = (combined_elev - sea_level) / (1.0 - sea_level);
-            pbr_input.material.perceptual_roughness = 0.84;
-            
             let terrain_var = fbm(p_surf * 8.5);
             
-            // Biome Palette
-            let rainforest = vec3<f32>(0.08, 0.46, 0.16); // Lush emerald jungle
-            let savanna = vec3<f32>(0.34, 0.58, 0.22);    // Verdant grassland
-            let temperate_forest = vec3<f32>(0.14, 0.40, 0.18); // Mixed woodland
-            let steppe = vec3<f32>(0.58, 0.52, 0.35);      // Golden-tan plains
-            let mountain_basalt = vec3<f32>(0.32, 0.30, 0.28); // Jagged rock
-            let snow_peaks = vec3<f32>(0.92, 0.95, 1.0);   // Snowcaps
-            
-            var land_color = vec3<f32>(0.0);
-            if (rel_elev > 0.42) {
-                // Alpine mountain ranges with glacier crowns
-                land_color = mix(mountain_basalt, snow_peaks, smoothstep(0.42, 0.72, rel_elev));
-            } else if (rel_elev > 0.22) {
-                // Highland plateau
-                land_color = mix(temperate_forest, mountain_basalt, (rel_elev - 0.22) * 5.0);
-            } else if (polar_angle > 0.52) {
-                // High-latitude tundra & boreal forest
-                land_color = mix(temperate_forest, steppe, terrain_var);
-            } else if (polar_angle < 0.24) {
-                // Equatorial mega-rainforest belt
-                land_color = mix(rainforest, savanna, terrain_var * 0.5);
+            if (has_oceans) {
+                let rel_elev = (combined_elev - sea_level) / (1.0 - sea_level);
+                pbr_input.material.perceptual_roughness = 0.84;
+                
+                // Biome Palette
+                let rainforest = vec3<f32>(0.08, 0.46, 0.16); // Lush emerald jungle
+                let savanna = vec3<f32>(0.34, 0.58, 0.22);    // Verdant grassland
+                let temperate_forest = vec3<f32>(0.14, 0.40, 0.18); // Mixed woodland
+                let steppe = vec3<f32>(0.58, 0.52, 0.35);      // Golden-tan plains
+                let mountain_basalt = vec3<f32>(0.32, 0.30, 0.28); // Jagged rock
+                let snow_peaks = vec3<f32>(0.92, 0.95, 1.0);   // Snowcaps
+                
+                var land_color = vec3<f32>(0.0);
+                if (rel_elev > 0.42) {
+                    // Alpine mountain ranges with glacier crowns
+                    land_color = mix(mountain_basalt, snow_peaks, smoothstep(0.42, 0.72, rel_elev));
+                } else if (rel_elev > 0.22) {
+                    // Highland plateau
+                    land_color = mix(temperate_forest, mountain_basalt, (rel_elev - 0.22) * 5.0);
+                } else if (polar_angle > 0.52) {
+                    // High-latitude tundra & boreal forest
+                    land_color = mix(temperate_forest, steppe, terrain_var);
+                } else if (polar_angle < 0.24) {
+                    // Equatorial mega-rainforest belt
+                    land_color = mix(rainforest, savanna, terrain_var * 0.5);
+                } else {
+                    // Temperate fertile plains & woodlands
+                    land_color = mix(savanna, temperate_forest, terrain_var);
+                }
+                color = land_color;
             } else {
-                // Temperate fertile plains & woodlands
-                land_color = mix(savanna, temperate_forest, terrain_var);
+                // Dry Super-Earth: Sprawling arid lithosphere, volcanic basalt plains, terracotta plateaus
+                let rel_elev = combined_elev;
+                pbr_input.material.perceptual_roughness = 0.88;
+                pbr_input.material.metallic = 0.12;
+                
+                let volcanic_basalt = vec3<f32>(0.16, 0.14, 0.13); // Dark solidified mare / rift valley
+                let ironstone_lowland = vec3<f32>(0.28, 0.22, 0.17); // Lowland depression
+                let terracotta_plateau = vec3<f32>(0.48, 0.34, 0.22); // Oxidized desert highlands
+                let craggy_cordillera = vec3<f32>(0.60, 0.48, 0.36); // Folded mountain ridges
+                let granite_summit = vec3<f32>(0.68, 0.64, 0.58);   // Silicate granite peaks
+                
+                var rock_color = vec3<f32>(0.0);
+                if (rel_elev < 0.35) {
+                    rock_color = mix(volcanic_basalt, ironstone_lowland, rel_elev / 0.35);
+                } else if (rel_elev < 0.60) {
+                    let t_mid = (rel_elev - 0.35) / 0.25;
+                    rock_color = mix(ironstone_lowland, terracotta_plateau, t_mid + terrain_var * 0.2 - 0.1);
+                } else if (rel_elev < 0.82) {
+                    let t_high = (rel_elev - 0.60) / 0.22;
+                    rock_color = mix(terracotta_plateau, craggy_cordillera, t_high);
+                } else {
+                    let t_summit = (rel_elev - 0.82) / 0.18;
+                    rock_color = mix(craggy_cordillera, granite_summit, clamp(t_summit, 0.0, 1.0));
+                }
+                color = rock_color;
+            }
+        }
+        
+        // Massive Multi-Scale Atmospheric Cloud Circulation & Storm Vortices (only if world has atmosphere/volatiles)
+        if (has_volatiles || gas > 0.05) {
+            let p_cloud_rot = rotate_y(p_tilted, t * (spin * 1.12) + zonal_drift);
+            let cloud_main = fbm(p_cloud_rot * 4.6);
+            let cloud_spirals = fbm(p_cloud_rot * 9.5 + vec3<f32>(0.0, t * 0.02, 0.0));
+            let storm_bands = sin(lat * 10.0 + cloud_main * 2.2) * 0.5 + 0.5;
+            let super_clouds = cloud_main * 0.60 + cloud_spirals * 0.25 + storm_bands * 0.15;
+            
+            // Soft cloud drop shadows on land and ocean surfaces
+            let shadow_rot = rotate_y(p_tilted, t * (spin * 1.12) + zonal_drift) + vec3<f32>(0.025, 0.015, 0.025);
+            let shadow_val = fbm(shadow_rot * 4.6);
+            if (shadow_val > 0.50) {
+                color = color * (1.0 - (shadow_val - 0.50) * 0.45);
             }
             
-            color = land_color;
-        }
-        
-        // Massive Multi-Scale Atmospheric Cloud Circulation & Storm Vortices
-        let p_cloud_rot = rotate_y(p_tilted, t * (spin * 1.12) + zonal_drift);
-        let cloud_main = fbm(p_cloud_rot * 4.6);
-        let cloud_spirals = fbm(p_cloud_rot * 9.5 + vec3<f32>(0.0, t * 0.02, 0.0));
-        let storm_bands = sin(lat * 10.0 + cloud_main * 2.2) * 0.5 + 0.5;
-        let super_clouds = cloud_main * 0.60 + cloud_spirals * 0.25 + storm_bands * 0.15;
-        
-        // Soft cloud drop shadows on land and ocean surfaces
-        let shadow_rot = rotate_y(p_tilted, t * (spin * 1.12) + zonal_drift) + vec3<f32>(0.025, 0.015, 0.025);
-        let shadow_val = fbm(shadow_rot * 4.6);
-        if (shadow_val > 0.50) {
-            color = color * (1.0 - (shadow_val - 0.50) * 0.45);
-        }
-        
-        let cloud_thresh = 0.46;
-        if (super_clouds > cloud_thresh) {
-            let cloud_alpha = clamp((super_clouds - cloud_thresh) * 2.8, 0.0, 0.94);
-            let cloud_white = vec3<f32>(0.96, 0.98, 1.0);
-            color = mix(color, cloud_white, cloud_alpha);
-            pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.92, cloud_alpha);
+            let cloud_thresh = 0.46;
+            if (super_clouds > cloud_thresh) {
+                let cloud_alpha = clamp((super_clouds - cloud_thresh) * 2.8, 0.0, 0.94);
+                let cloud_white = vec3<f32>(0.96, 0.98, 1.0);
+                color = mix(color, cloud_white, cloud_alpha);
+                pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.92, cloud_alpha);
+            }
         }
     }
     // =========================================================================
@@ -739,7 +879,6 @@ fn fragment(
     // =========================================================================
     else if (planet.planet_type == 3u || planet.planet_type == 4u) {
         let elev = fbm(p_surf * 3.8);
-        let polar_angle = abs(p_surf.y);
 
         // A. Molten Magma Ocean Planet (temp >= 600K or young accretion embryo)
         if (temp >= 600.0 || lava_frac > 0.05) {
@@ -773,7 +912,7 @@ fn fragment(
             color = sulfur_deck * (0.90 + clouds * 0.20);
         }
         // C. Frozen Snowball Glacial World (ice_frac >= 0.60 or temp < 255K with water)
-        else if (ice_frac >= 0.60 || (temp < 255.0 && ocean_frac > 0.05)) {
+        else if (has_volatiles && (ice_frac >= 0.60 || (temp < 255.0 && ocean_frac > 0.05))) {
             let frost = fbm(p_surf * 8.0);
             let glaciers = mix(vec3<f32>(0.85, 0.92, 0.99), vec3<f32>(0.45, 0.75, 0.92), elev);
             let pack_ice = vec3<f32>(0.94, 0.97, 1.00);
@@ -781,12 +920,13 @@ fn fragment(
             pbr_input.material.perceptual_roughness = 0.22;
         }
         // D. Temperate Water-Bearing / Habitable Biosphere World
-        else if (ocean_frac >= 0.04 && temp >= 250.0 && temp <= 380.0) {
+        else if (has_volatiles && ocean_frac >= 0.04 && temp >= 240.0 && temp <= 380.0) {
             let sea_level = clamp(0.40 + ocean_frac * 0.45, 0.42, 0.80);
-            let ice_cap_thresh = clamp(0.94 - (ice_frac * 0.50) - (273.0 / max(temp, 150.0)) * 0.05, 0.60, 0.98);
+            let is_ice_cold = temp < 288.0; // Polar ice caps melt if global temp exceeds 15 °C (Earth ~288 K)
+            let ice_cap_thresh = clamp(0.95 - (ice_frac * 0.50) - (273.0 / max(temp, 150.0)) * 0.05, 0.68, 0.99);
             
-            // Polar Ice Caps
-            if (polar_angle > ice_cap_thresh) {
+            // Polar Ice Caps: requires cold temperature, 3D spin pole latitude, and low insolation
+            if (is_ice_cold && polar_angle > ice_cap_thresh && stellar_insolation < 0.35) {
                 color = vec3<f32>(0.94, 0.97, 1.0);
                 pbr_input.material.perceptual_roughness = 0.25;
             }
@@ -901,6 +1041,9 @@ fn fragment(
             let craters = fbm(p_surf * 8.0);
             let highlands = fbm(p_surf * 3.5);
             
+            pbr_input.material.perceptual_roughness = 0.88;
+            pbr_input.material.metallic = 0.10;
+            
             if (temp > 280.0) {
                 let lowlands = vec3<f32>(0.42, 0.25, 0.15);
                 let peaks = vec3<f32>(0.72, 0.48, 0.28);
@@ -911,6 +1054,20 @@ fn fragment(
                 color = mix(lowlands, peaks, highlands * 0.7 + craters * 0.3);
             }
         }
+    }
+
+    if (planet.planet_type != 0u && planet.planet_type != 1u && planet.planet_type != 5u && planet.planet_type != 7u) {
+        let crater_res = apply_impact_craters_and_basins(
+            p_surf,
+            color,
+            pbr_input.material.perceptual_roughness,
+            pbr_input.material.metallic,
+            planet.time,
+        );
+        color = crater_res.color;
+        pbr_input.material.perceptual_roughness = crater_res.roughness;
+        pbr_input.material.metallic = crater_res.metallic;
+        pbr_input.material.emissive = vec4<f32>(pbr_input.material.emissive.rgb + crater_res.emissive, 1.0);
     }
 
     pbr_input.material.base_color = vec4<f32>(color, 1.0);

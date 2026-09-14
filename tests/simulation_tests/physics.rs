@@ -377,3 +377,289 @@ fn test_giant_impact_moon_formation_mechanics() {
     let orbit_dist = p_rad * (3.5 + 2.5 * b);
     assert!(orbit_dist >= 2.5 * p_rad);
 }
+
+#[test]
+fn test_high_time_warp_orbital_stability() {
+    use bevy::prelude::*;
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    let mut config = SimulationConfig::default();
+    config.enable_gas_drag = false;
+    config.gas_density_scale = 0.0;
+    app.insert_resource(config)
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+
+    // Central Sun (1.0 M_sun)
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+    ));
+
+    // Mercury at 0.387 AU (P ~ 0.24 yr)
+    let v_merc = (G_ASTRO * 1.0 / 0.387).sqrt();
+    let merc_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Mercury".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(0.055 * EARTH_MASS_SOLAR),
+            Radius(0.38 * EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(0.387, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_merc)),
+            SimAcceleration(DVec3::ZERO),
+        ))
+        .id();
+
+    // Earth at 1.0 AU (P = 1.0 yr)
+    let v_earth = (G_ASTRO * 1.0 / 1.0).sqrt();
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_earth)),
+            SimAcceleration(DVec3::ZERO),
+        ))
+        .id();
+
+    // Asteroid Ceres at 2.77 AU (P ~ 4.6 yr)
+    let v_ceres = (G_ASTRO * 1.0 / 2.77).sqrt();
+    let ceres_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Ceres".to_string(),
+                body_type: BodyType::Asteroid,
+            },
+            Mass(0.00015 * EARTH_MASS_SOLAR),
+            Radius(0.18 * EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(2.77, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_ceres)),
+            SimAcceleration(DVec3::ZERO),
+        ))
+        .id();
+
+    // Jupiter at 5.20 AU (P ~ 11.86 yr)
+    let v_jup = (G_ASTRO * 1.0 / 5.20).sqrt();
+    let jup_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Jupiter".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            Mass(JUPITER_MASS_SOLAR),
+            Radius(11.2 * EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(5.20, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_jup)),
+            SimAcceleration(DVec3::ZERO),
+        ))
+        .id();
+
+    let mut sched = Schedule::default();
+    sched.add_systems(step_physics_simulation);
+
+    // Test 1: Run at 10,000x time warp for 50 frames (target_dt = 5.0 yr/frame -> 250 years total)
+    app.world_mut().resource_mut::<TimeWarp>().multiplier = 10_000.0;
+    for _ in 0..50 {
+        sched.run(app.world_mut());
+    }
+
+    let p_merc = app.world().get::<SimPosition>(merc_ent).unwrap().0.length();
+    let p_earth = app
+        .world()
+        .get::<SimPosition>(earth_ent)
+        .unwrap()
+        .0
+        .length();
+    let p_ceres = app
+        .world()
+        .get::<SimPosition>(ceres_ent)
+        .unwrap()
+        .0
+        .length();
+    let p_jup = app.world().get::<SimPosition>(jup_ent).unwrap().0.length();
+
+    assert!(
+        (p_merc - 0.387).abs() < 0.01,
+        "Mercury radius diverged: {}",
+        p_merc
+    );
+    assert!(
+        (p_earth - 1.00).abs() < 0.02,
+        "Earth radius diverged: {}",
+        p_earth
+    );
+    assert!(
+        (p_ceres - 2.77).abs() < 0.05,
+        "Ceres radius diverged: {}",
+        p_ceres
+    );
+    assert!(
+        (p_jup - 5.20).abs() < 0.10,
+        "Jupiter radius diverged: {}",
+        p_jup
+    );
+
+    // Test 2: Run at 1,000,000x time warp for 10 frames (target_dt = 500 yr/frame -> 5,000 years total!)
+    app.world_mut().resource_mut::<TimeWarp>().multiplier = 1_000_000.0;
+    for _ in 0..10 {
+        sched.run(app.world_mut());
+    }
+
+    let p_earth_warp = app
+        .world()
+        .get::<SimPosition>(earth_ent)
+        .unwrap()
+        .0
+        .length();
+    let p_ceres_warp = app
+        .world()
+        .get::<SimPosition>(ceres_ent)
+        .unwrap()
+        .0
+        .length();
+    let p_jup_warp = app.world().get::<SimPosition>(jup_ent).unwrap().0.length();
+
+    // After 5,250 years of simulated time at up to 1,000,000x speed, orbits must stay stable!
+    assert!(
+        (p_earth_warp - 1.00).abs() < 0.05,
+        "Earth flung out at 1,000,000x: {}",
+        p_earth_warp
+    );
+    assert!(
+        (p_ceres_warp - 2.77).abs() < 0.25,
+        "Ceres flung out of Asteroid Belt at 1,000,000x: {}",
+        p_ceres_warp
+    );
+    assert!(
+        (p_jup_warp - 5.20).abs() < 0.20,
+        "Jupiter flung out at 1,000,000x: {}",
+        p_jup_warp
+    );
+}
+
+#[test]
+fn test_full_simulation_speed_7_stability() {
+    use bevy::prelude::*;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_plugins(protostellar::simulation::SimulationPlugin);
+
+    // Initial update to run Startup systems
+    app.update();
+
+    // Set time warp to speed 7 (1,000,000x)
+    app.world_mut().resource_mut::<TimeWarp>().multiplier = 1_000_000.0;
+
+    // Run 50 frames (25,000 simulated years elapsed!)
+    for _ in 1..=50 {
+        app.update();
+    }
+
+    let mut census = protostellar::simulation::disk::belts::BeltCensus::default();
+    let mut total_bodies = 0;
+    let mut bound_bodies = 0;
+    let mut major_planets_checked = 0;
+    let major_planet_names = [
+        "Mercury",
+        "Venus",
+        "Earth",
+        "Mars",
+        "Jupiter",
+        "Saturn",
+        "Uranus",
+        "Neptune",
+        "Pluto",
+        "Planet Nine",
+    ];
+
+    let mut found_names = Vec::new();
+    let mut q = app.world_mut().query::<(
+        Entity,
+        &CelestialBody,
+        &SimPosition,
+        Option<&SatelliteOf>,
+        Option<&CentralStar>,
+    )>();
+    for (b_ent, b, p, sat, star) in q.iter(app.world()) {
+        if star.is_none() && sat.is_none() {
+            total_bodies += 1;
+            let r = p.0.length();
+            census.record(r);
+            let mu = 39.4784176;
+            let vel = app.world().get::<SimVelocity>(b_ent).unwrap().0;
+            let specific_energy = 0.5 * vel.length_squared() - mu / r;
+
+            let is_major = major_planet_names.iter().any(|name| b.name.contains(name));
+            if is_major {
+                major_planets_checked += 1;
+                found_names.push(b.name.clone());
+                assert!(
+                    specific_energy < 0.0 && r < 5000.0,
+                    "Major planet '{}' was ejected! r = {:.2} AU, energy = {:.4}",
+                    b.name,
+                    r,
+                    specific_energy
+                );
+            }
+
+            if specific_energy < 0.0 && r < 5000.0 {
+                bound_bodies += 1;
+            }
+        }
+    }
+
+    // All major planets must be present and bound (or merged via giant impact)
+    assert!(
+        major_planets_checked >= 8,
+        "Too few major planets found: {} (found: {:?})",
+        major_planets_checked,
+        found_names
+    );
+
+    // Over 90% of all generated bodies remain bound in the solar system
+    assert!(
+        bound_bodies as f64 / total_bodies as f64 >= 0.90,
+        "Too many minor bodies ejected: {}/{} bound",
+        bound_bodies,
+        total_bodies
+    );
+
+    // Belts must be actively populated after 25,000 years under 1,000,000x time warp
+    assert!(
+        census.asteroid_belt_count >= 20,
+        "Asteroid Belt underpopulated at 1,000,000x warp: got {}",
+        census.asteroid_belt_count
+    );
+    assert!(
+        census.kuiper_count >= 10,
+        "Kuiper Belt underpopulated at 1,000,000x warp: got {}",
+        census.kuiper_count
+    );
+}

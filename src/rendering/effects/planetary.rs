@@ -222,7 +222,7 @@ pub fn draw_diagnostic_overlays(
                 );
             }
         }
-        DiagnosticOverlayMode::Realistic => {}
+        DiagnosticOverlayMode::Realistic | DiagnosticOverlayMode::Hidden => {}
     }
 }
 

@@ -37,16 +37,22 @@ fn get_mmsn_inner_seeds() -> [MmsnSeed; 13] {
             "Earth",
             Composition::rocky(),
             BodyType::TerrestrialPlanet,
-            0.016,
+            0.0,
         ),
         (
-            1.25,
-            0.10 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.48,
-            "Theia Embryo",
-            Composition::rocky(),
+            1.18,
+            0.12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.53,
+            "Theia",
+            Composition {
+                metal_frac: 0.42,
+                silicate_frac: 0.58,
+                ice_frac: 0.0,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
             BodyType::Protoplanet,
-            0.04,
+            0.08,
         ),
         (
             1.52,
@@ -308,9 +314,28 @@ pub fn spawn_solar_nebula_mmsn(
         .chain(get_mmsn_outer_seeds());
 
     for (r_au, mass_s, rad_au, name, comp, b_type, phi_off) in all_seeds {
-        let v_circ = (G_ASTRO * 1.0 / r_au).sqrt();
-        let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
-        let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
+        let (pos, vel) = if name == "Theia" {
+            let ecc = 0.165;
+            let peri_angle = 0.35;
+            let true_anomaly = phi_off - peri_angle;
+            let r_theia = (r_au * (1.0 - ecc * ecc)) / (1.0 + ecc * true_anomaly.cos());
+            let pos_theia = DVec3::new(r_theia * phi_off.cos(), 0.0, r_theia * phi_off.sin());
+            let p_orb = r_au * (1.0 - ecc * ecc);
+            let h = (G_ASTRO * 1.0 * p_orb).sqrt();
+            let v_r = (G_ASTRO * 1.0 / h) * ecc * true_anomaly.sin();
+            let v_theta = (G_ASTRO * 1.0 / h) * (1.0 + ecc * true_anomaly.cos());
+            let vel_theia = DVec3::new(
+                v_r * phi_off.cos() - v_theta * phi_off.sin(),
+                0.0,
+                v_r * phi_off.sin() + v_theta * phi_off.cos(),
+            );
+            (pos_theia, vel_theia)
+        } else {
+            let v_circ = (G_ASTRO * 1.0 / r_au).sqrt();
+            let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
+            let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
+            (pos, vel)
+        };
 
         let mut diff = InternalDifferentiation::default();
         diff.recalculate(mass_s, rad_au, &comp);
@@ -319,6 +344,9 @@ pub fn spawn_solar_nebula_mmsn(
         let initial_spin =
             (mass_s * rad_au * rad_au * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
         spin.update_from_spin(initial_spin, mass_s, rad_au);
+        if name.contains("Saturn") {
+            spin.axial_tilt_degrees = 26.7;
+        }
 
         let vol = VolatileInventory {
             delivered_water_m_earth: 0.0,
@@ -327,7 +355,7 @@ pub fn spawn_solar_nebula_mmsn(
             cometary_impact_count: 0,
         };
 
-        commands.spawn((
+        let mut entity_cmds = commands.spawn((
             CelestialBody {
                 body_type: b_type,
                 name: name.to_string(),
@@ -345,6 +373,17 @@ pub fn spawn_solar_nebula_mmsn(
             spin,
             vol,
         ));
+
+        if name.contains("Saturn") {
+            entity_cmds.insert(PlanetaryRingSystem {
+                inner_radius_au: (rad_au * 1.25) as f32,
+                outer_radius_au: (rad_au * 2.35) as f32,
+                ring_mass_earth: 0.000_028,
+                optical_depth: 0.88,
+                ice_fraction: 0.96,
+                silicate_fraction: 0.04,
+            });
+        }
     }
 
     star

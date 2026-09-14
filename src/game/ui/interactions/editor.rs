@@ -270,52 +270,6 @@ fn handle_view_and_target(
     }
 }
 
-fn handle_inject_embryo(
-    commands: &mut Commands,
-    player_state: &mut PlayerInteractionState,
-    camera_query: &mut Query<&mut PanOrbitCamera>,
-    star_mass: f64,
-    toast: &mut NotificationToast,
-    rng: &mut impl Rng,
-) {
-    let radius_au = rng.random_range(1.5..7.5);
-    let angle = rng.random_range(0.0..(2.0 * PI));
-    let spawn_pos = DVec3::new(radius_au * angle.cos(), 0.0, radius_au * angle.sin());
-    let v_circ = (G_ASTRO * star_mass / radius_au).sqrt();
-    let spawn_vel = DVec3::new(-v_circ * angle.sin(), 0.0, v_circ * angle.cos());
-    let embryo_mass = EARTH_MASS_SOLAR * rng.random_range(0.05..0.25);
-    let comp = Composition::rocky();
-    let avg_density = comp.average_density();
-    let embryo_rad = ((3.0 * embryo_mass / avg_density) / (4.0 * PI))
-        .cbrt()
-        .max(EARTH_RADIUS_AU * 0.3);
-
-    let new_entity = commands
-        .spawn((
-            SimPosition(spawn_pos),
-            SimVelocity(spawn_vel),
-            SimAcceleration(DVec3::ZERO),
-            Mass(embryo_mass),
-            Radius(embryo_rad),
-            Temperature(250.0),
-            comp,
-            CelestialBody {
-                name: format!("Embryo-{}", rng.random_range(100..999)),
-                body_type: BodyType::Protoplanet,
-            },
-            InternalDifferentiation::default(),
-            SpinState::default(),
-        ))
-        .id();
-
-    player_state.selected_entity = Some(new_entity);
-    if let Ok(mut cam) = camera_query.single_mut() {
-        cam.target_entity = Some(new_entity);
-    }
-    toast.message = format!("☄️ Spawned New Planetesimal Embryo at {radius_au:.2} AU!");
-    toast.timer = 5.0;
-}
-
 fn handle_star_aging_transition(
     mass: &mut Mass,
     radius: &mut Radius,
@@ -621,8 +575,9 @@ pub fn handle_body_editor_action(
     commands: &mut Commands,
     toast: &mut NotificationToast,
     lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
-    rng: &mut impl Rng,
+    _rng: &mut impl Rng,
 ) -> bool {
     if handle_mass_change(action, selected_query, player_state, toast) {
         return true;
@@ -646,7 +601,13 @@ pub fn handle_body_editor_action(
 
     match action {
         UiButtonAction::InjectEmbryo => {
-            handle_inject_embryo(commands, player_state, camera_query, star_mass, toast, rng);
+            if let Some(state) = theia_state {
+                state.manual_trigger_requested = true;
+            }
+            toast.message =
+                "🌑 THEIA MOON COLLISION TRIGGERED // Intercept trajectory locked for Moon formation!"
+                    .to_string();
+            toast.timer = 8.0;
             true
         }
         UiButtonAction::IgniteStar => {
@@ -657,7 +618,8 @@ pub fn handle_body_editor_action(
             lhb_state.is_active = true;
             lhb_state.manual_trigger_requested = true;
             toast.message =
-                "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // 2:1 Giant resonance active!".to_string();
+                "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
+                    .to_string();
             toast.timer = 8.0;
             true
         }

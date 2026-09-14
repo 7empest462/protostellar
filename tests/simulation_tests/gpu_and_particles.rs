@@ -785,3 +785,66 @@ fn test_nan_and_inf_state_vector_sanitization() {
     assert_eq!(lrd_pos.x, 120.0);
     assert!(lrd_vel.z > 380.0 && lrd_vel.z < 390.0); // ~384.8 AU/yr
 }
+
+#[test]
+fn test_pop3_infalling_star_particle_accretion_safety() {
+    use protostellar::rendering::particle_swarm::simulation::*;
+    use protostellar::rendering::particle_swarm::ParticleSwarmData;
+    use protostellar::simulation::resources::DiskParameters;
+
+    let count = 1024;
+    let mut data = ParticleSwarmData {
+        positions: (0..count)
+            .map(|i| [0.5 + (i as f32 / count as f32) * 2.5, 0.0, 0.0])
+            .collect(),
+        velocities: vec![[0.0, 0.0, 1.0]; count],
+        masses: vec![1e-9; count],
+        compositions: vec![Composition::default(); count],
+        temperatures: vec![1500.0; count],
+        colors: vec![[1.0, 0.8, 0.6, 1.0]; count],
+        mesh_positions: vec![[0.0; 3]; count * 4],
+        mesh_colors: vec![[1.0; 4]; count * 4],
+        bin_heads: vec![-1; 4096],
+        bin_next: vec![-1; count],
+        mesh_handle: Handle::default(),
+        count,
+        base_mass: 1e-9,
+        is_dirty: false,
+        pending_gpu_accretions: Vec::new(),
+    };
+
+    let disk_params = DiskParameters::default();
+    let pop3_entity = Entity::from_bits(42);
+    let massive_bodies = vec![(
+        pop3_entity,
+        DVec3::new(2.0, 0.0, 0.0),
+        120.0,
+        BodyType::BlueSupergiant,
+    )];
+
+    let params = ParticleIntegrationParams {
+        star_m: 1.0,
+        star_pos_f32: [0.0, 0.0, 0.0],
+        speed_mult: 1000.0,
+        visual_flow_dt: 0.016,
+        g_const: G_ASTRO as f32,
+        enable_gas_drag: true,
+        gas_scale: 1.0,
+        shockwave_r: 0.0,
+        quasar_blown_out: false,
+        tractor_pos_mass: [0.0, 0.0, 0.0, 0.0],
+        star_is_ignited: true,
+        gpu_active: false,
+        lhb_active: false,
+        lhb_resonance: false,
+        disk_params: &disk_params,
+        massive_bodies: &massive_bodies,
+    };
+
+    // Must execute cleanly without panicking on min > max clamp
+    let accretions = integrate_particles_and_collect_accretions(&mut data, &params);
+    assert!(
+        !accretions.is_empty(),
+        "Pop-III hypergiant should accrete nearby particles"
+    );
+}

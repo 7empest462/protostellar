@@ -113,8 +113,10 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
         ))
         .id();
 
-    let r_moon_orbit = 0.0028;
+    let r_moon_orbit = 0.0150;
     let v_moon = (G_ASTRO * m_planet / r_moon_orbit).sqrt();
+    let p_moon_yr =
+        2.0 * std::f64::consts::PI * (r_moon_orbit.powi(3) / (G_ASTRO * m_planet)).sqrt();
     commands.spawn((
         CelestialBody {
             body_type: BodyType::Moon,
@@ -123,7 +125,7 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
         SatelliteOf {
             parent: planet_ent,
             semi_major_axis_au: r_moon_orbit,
-            orbital_period_years: 0.02,
+            orbital_period_years: p_moon_yr,
             true_anomaly: 0.0,
         },
         Mass(0.45 * EARTH_MASS_SOLAR),
@@ -134,7 +136,10 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
         Temperature(275.0),
         Luminosity(0.0),
         AngularMomentum::default(),
-        Composition::rocky(),
+        Composition {
+            ice_frac: 0.06,
+            ..Composition::rocky()
+        },
         VolatileInventory {
             delivered_water_m_earth: 0.001,
             ocean_coverage_frac: 0.60,
@@ -173,7 +178,10 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
         Temperature(285.0),
         Luminosity(0.0),
         AngularMomentum(DVec3::new(0.0, a_c * v_c * 1.15 * EARTH_MASS_SOLAR, 0.0)),
-        Composition::rocky(),
+        Composition {
+            ice_frac: 0.08,
+            ..Composition::rocky()
+        },
         VolatileInventory {
             delivered_water_m_earth: 0.0025,
             ocean_coverage_frac: 0.70,

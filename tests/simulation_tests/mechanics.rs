@@ -757,3 +757,18 @@ fn test_quasistar_photosphere_and_blowout_states() {
         "Blown out quasi-star must transition to planet_type 5 (Black Hole)"
     );
 }
+
+#[test]
+fn test_giant_planet_resonance_migration() {
+    let r_j: f64 = 5.5; // Jupiter semi-major axis (initial compact configuration)
+    let r_s: f64 = 8.5; // Saturn semi-major axis (inside 2:1 resonance, ratio ~ 1.92)
+    let p_ratio_initial: f64 = (r_s / r_j).powf(1.5);
+    assert!(p_ratio_initial < 2.0); // Before 2:1 resonance
+
+    // Outward migration of Saturn to 9.58 AU and inward migration of Jupiter to 5.2 AU
+    let r_j_final: f64 = 5.20;
+    let r_s_final: f64 = 9.58;
+    let p_ratio_final: f64 = (r_s_final / r_j_final).powf(1.5);
+    assert!(p_ratio_final > 2.0); // Crossed 2:1 resonance!
+    assert!((p_ratio_final - 2.50).abs() < 0.1);
+}

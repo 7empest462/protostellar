@@ -207,8 +207,10 @@ fn update_header_stats(
         "🖥️ CPU Fallback [F8]"
     };
 
+    let belt_line = phase_mgr.belt_census.format_summary_line();
+
     text.0 = format!(
-        "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / {} particles [{}] | Gas: {}\nPlanets: {} | Embryos: {} | 🪨 Asteroids: {} | ☄️ Comets: {}{}\nGoal: {}",
+        "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / {} particles [{}] | Gas: {}\nPlanets: {} | Embryos: {} | 🪨 Ast: {} | ☄️ Comets: {}\n{}\nGoal: {}{}",
         phase_str,
         time_formatted,
         phase_mgr.star_mass,
@@ -220,8 +222,9 @@ fn update_header_stats(
         phase_mgr.protoplanet_count,
         phase_mgr.asteroid_count,
         phase_mgr.comet_count,
-        lhb_info,
+        belt_line,
         active_goal,
+        lhb_info,
     );
 }
 
@@ -450,6 +453,13 @@ fn format_body_environment_telemetry(
                 "\nStructure: Differentiated (Core: {:.0} km | Mantle: {:.0} km | Crust: {:.0} km)\nDynamo: {:.2} G | Core Temp: {:.0} K",
                 core_km, mantle_km, crust_km, diff.magnetic_field_gauss, diff.core_temp_k
             );
+            if diff.has_theia_llsvp {
+                let _ = write!(
+                    out,
+                    "\nMantle Blobs (LLSVPs): +{:.1}% denser (Theia basal mantle remnants)",
+                    diff.llsvp_density_contrast * 100.0
+                );
+            }
         } else {
             out.push_str("\nStructure: Undifferentiated Chondritic Mixture");
         }
@@ -599,36 +609,11 @@ fn update_inspector_body_telemetry(
     };
     let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
-    let mass_str = if mass.0 >= 10_000.0 {
-        format!("{:.0} M☉ (Supermassive Seed)", mass.0)
-    } else if mass.0 >= 0.01 {
-        format!(
-            "{:.3} M_sun ({:.1} M_J)",
-            mass.0,
-            mass.0 / JUPITER_MASS_SOLAR
-        )
-    } else {
-        format!(
-            "{:.2} M_earth ({:.4} M_sun)",
-            mass.0 / EARTH_MASS_SOLAR,
-            mass.0
-        )
-    };
-
+    let mass_str = format_mass_string(mass.0);
     let radius_km = rad.0 * AU_TO_KM;
     let density_g_cm3 = (comp.average_density() * SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0))
         .clamp(0.01, 20.0);
-
-    let period_str = if dist_au > 0.05 && !body.body_type.is_star_or_remnant() {
-        let p_yr = dist_au.powf(1.5) / phase_mgr.star_mass.max(0.1).sqrt();
-        if p_yr >= 1.0 {
-            format!(" | Period: {p_yr:.2} yr")
-        } else {
-            format!(" | Period: {:.1} days", p_yr * 365.25)
-        }
-    } else {
-        String::new()
-    };
+    let period_str = format_orbital_period_string(dist_au, body.body_type, phase_mgr.star_mass);
 
     let spin_str = if let Some(spin) = opt_spin {
         format!(
@@ -658,9 +643,26 @@ fn update_inspector_body_telemetry(
     let ice_pct = (norm.ice_frac * 100.0).round();
     let metal_pct = (norm.metal_frac * 100.0).round();
     let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
+    let water_ice_str = super::inspector_panel::format_composition_water_ice(
+        comp,
+        opt_vol,
+        opt_climate,
+        temp.0,
+        body.body_type.is_star_or_remnant(),
+    );
+
+    let zone = BeltZone::from_distance_au(dist_au);
+    let belt_suffix = if matches!(
+        body.body_type,
+        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+    ) {
+        format!(" | Belt: {} {}", zone.icon(), zone.short_name())
+    } else {
+        String::new()
+    };
 
     text.0 = format!(
-        ">> {} [{}]\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance from Star: {:.2} AU | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {:.0}% Ice | {:.0}% Metal | {:.0}% Gas{}",
+        ">> {} [{}]\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {} | {:.0}% Metal | {:.0}% Gas{}",
         body.name.to_uppercase(),
         format_body_inspector_type(body.body_type).to_uppercase(),
         mass_str,
@@ -671,38 +673,74 @@ fn update_inspector_body_telemetry(
         spin_str,
         period_str,
         dist_au,
+        belt_suffix,
         speed_km_s,
         rock_pct,
-        ice_pct,
+        water_ice_str,
         metal_pct,
         gas_pct,
         env_str,
     );
 
     if let Ok(qs) = quasi_hud_query.get(selected_entity) {
-        let acc_mode = if qs.super_eddington_active {
-            "SUPER-EDDINGTON (4.5x)"
-        } else {
-            "SUB-EDDINGTON (0.9x)"
-        };
-        let status = if qs.is_blown_out {
-            format!(
-                "QUASAR TRANSITION (Progress: {:.0}%)",
-                qs.blowout_progress * 100.0
-            )
-        } else {
-            format!("HYDROGEN COCOON INTACT ({:.0} AU)", qs.cocoon_radius_au)
-        };
-        let _ = write!(
-            text.0,
-            "\n--------------------------------------------------\n  >> JWST LITTLE RED DOT / QUASI-STAR <<\n--------------------------------------------------\n  • BH Seed Mass:     {:>10.0} M☉\n  • Cocoon Mass:      {:>10.0} M☉\n  • Inflow Rate:      {:>10.1}x ({})\n  • Cocoon Status:    {}\n  • Redshift Epoch:   z ≈ 8.5 (Cosmic Dawn, 660 Myr)\n  • Controls:         [X] Accrete | [B] Blowout | [T] Pop-III TDE\n--------------------------------------------------",
-            qs.black_hole_mass_solar,
-            qs.cocoon_mass_solar,
-            qs.eddington_ratio,
-            acc_mode,
-            status,
-        );
+        append_quasi_star_telemetry(&mut text.0, qs);
     }
+}
+
+fn format_mass_string(mass_val: f64) -> String {
+    if mass_val >= 10_000.0 {
+        format!("{mass_val:.0} M☉ (Supermassive Seed)")
+    } else if mass_val >= 0.01 {
+        format!(
+            "{:.3} M_sun ({:.1} M_J)",
+            mass_val,
+            mass_val / JUPITER_MASS_SOLAR
+        )
+    } else {
+        format!(
+            "{:.2} M_earth ({:.4} M_sun)",
+            mass_val / EARTH_MASS_SOLAR,
+            mass_val
+        )
+    }
+}
+
+fn format_orbital_period_string(dist_au: f64, body_type: BodyType, star_mass: f64) -> String {
+    if dist_au > 0.05 && !body_type.is_star_or_remnant() {
+        let p_yr = dist_au.powf(1.5) / star_mass.max(0.1).sqrt();
+        if p_yr >= 1.0 {
+            format!(" | Period: {p_yr:.2} yr")
+        } else {
+            format!(" | Period: {:.1} days", p_yr * 365.25)
+        }
+    } else {
+        String::new()
+    }
+}
+
+fn append_quasi_star_telemetry(out: &mut String, qs: &BlackHoleStarState) {
+    let acc_mode = if qs.super_eddington_active {
+        "SUPER-EDDINGTON (4.5x)"
+    } else {
+        "SUB-EDDINGTON (0.9x)"
+    };
+    let status = if qs.is_blown_out {
+        format!(
+            "QUASAR TRANSITION (Progress: {:.0}%)",
+            qs.blowout_progress * 100.0
+        )
+    } else {
+        format!("HYDROGEN COCOON INTACT ({:.0} AU)", qs.cocoon_radius_au)
+    };
+    let _ = write!(
+        out,
+        "\n--------------------------------------------------\n  >> JWST LITTLE RED DOT / QUASI-STAR <<\n--------------------------------------------------\n  • BH Seed Mass:     {:>10.0} M☉\n  • Cocoon Mass:      {:>10.0} M☉\n  • Inflow Rate:      {:>10.1}x ({})\n  • Cocoon Status:    {}\n  • Redshift Epoch:   z ≈ 8.5 (Cosmic Dawn, 660 Myr)\n  • Controls:         [X] Accrete | [B] Blowout | [T] Pop-III TDE\n--------------------------------------------------",
+        qs.black_hole_mass_solar,
+        qs.cocoon_mass_solar,
+        qs.eddington_ratio,
+        acc_mode,
+        status,
+    );
 }
 
 /// Updates the dynamic content of the HUD and notification toast banner every frame.
@@ -852,7 +890,9 @@ pub fn update_hud_visibility(
 ) {
     for (mut node, element) in panels_query.iter_mut() {
         match element {
-            HudPanelElement::RootContainer | HudPanelElement::OrbitModeBadge => {
+            HudPanelElement::RootContainer
+            | HudPanelElement::OrbitModeBadge
+            | HudPanelElement::OverlayModeBadge => {
                 node.display = if hud_visibility.is_full_screen_clean {
                     Display::None
                 } else {
@@ -922,6 +962,9 @@ pub fn update_hud_visibility(
             }
             HudDynamicText::OrbitModeBadge => {
                 text.0 = format!("궤 Orbits: {} [Y]", player_state.orbit_mode.display_label());
+            }
+            HudDynamicText::OverlayModeBadge => {
+                text.0 = format!("OVERLAY: {} [V]", player_state.overlay_mode.display_name());
             }
             HudDynamicText::InspectorChip => {
                 if let Some(target) = player_state.selected_entity {

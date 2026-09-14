@@ -10,10 +10,10 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
+use super::basins::*;
 use super::events::*;
 use super::impact_regimes::{
-    classify_impact, estimate_visual_radius_au, radius_from_mass_density, ImpactParams,
-    ImpactRegime,
+    classify_impact, radius_from_mass_density, ImpactParams, ImpactRegime,
 };
 
 pub type AccretionQuery<'w, 's> = Query<
@@ -49,6 +49,7 @@ pub struct BodySnapshot {
     pub spin: DVec3,
     pub name: String,
     pub is_central: bool,
+    pub satellite_parent: Option<Entity>,
 }
 
 #[derive(Clone)]
@@ -67,6 +68,7 @@ pub struct SortedPair {
     pub s_pos: DVec3,
     pub s_vel: DVec3,
     pub s_comp: Composition,
+    pub s_type: BodyType,
     pub s_spin: DVec3,
     pub s_name: String,
 }
@@ -80,50 +82,36 @@ pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4> {
     pub bounce_events: &'a mut MessageWriter<'m3, CollisionBounceEvent>,
     pub roche_events: &'a mut MessageWriter<'m4, RocheDisruptionEvent>,
     pub merged_away: &'a mut HashSet<Entity>,
+    pub newly_formed_moons: &'a mut HashSet<Entity>,
     pub pending_despawns: &'a mut SmallVec<[Entity; 32]>,
     pub star_mass: f64,
     pub sim_time_years: f64,
 }
 
 pub fn sort_collision_pair(b1: &BodySnapshot, b2: &BodySnapshot) -> SortedPair {
-    if b1.is_central || (!b2.is_central && b1.mass >= b2.mass) {
-        SortedPair {
-            primary_entity: b1.entity,
-            p_m: b1.mass,
-            p_pos: b1.pos,
-            p_vel: b1.vel,
-            p_comp: b1.comp,
-            p_type: b1.body_type,
-            p_spin: b1.spin,
-            p_name: b1.name.clone(),
-            p_is_central: b1.is_central,
-            secondary_entity: b2.entity,
-            s_m: b2.mass,
-            s_pos: b2.pos,
-            s_vel: b2.vel,
-            s_comp: b2.comp,
-            s_spin: b2.spin,
-            s_name: b2.name.clone(),
-        }
+    let (p, s) = if b1.is_central || (!b2.is_central && b1.mass >= b2.mass) {
+        (b1, b2)
     } else {
-        SortedPair {
-            primary_entity: b2.entity,
-            p_m: b2.mass,
-            p_pos: b2.pos,
-            p_vel: b2.vel,
-            p_comp: b2.comp,
-            p_type: b2.body_type,
-            p_spin: b2.spin,
-            p_name: b2.name.clone(),
-            p_is_central: b2.is_central,
-            secondary_entity: b1.entity,
-            s_m: b1.mass,
-            s_pos: b1.pos,
-            s_vel: b1.vel,
-            s_comp: b1.comp,
-            s_spin: b1.spin,
-            s_name: b1.name.clone(),
-        }
+        (b2, b1)
+    };
+    SortedPair {
+        primary_entity: p.entity,
+        p_m: p.mass,
+        p_pos: p.pos,
+        p_vel: p.vel,
+        p_comp: p.comp,
+        p_type: p.body_type,
+        p_spin: p.spin,
+        p_name: p.name.clone(),
+        p_is_central: p.is_central,
+        secondary_entity: s.entity,
+        s_m: s.mass,
+        s_pos: s.pos,
+        s_vel: s.vel,
+        s_comp: s.comp,
+        s_type: s.body_type,
+        s_spin: s.spin,
+        s_name: s.name.clone(),
     }
 }
 
@@ -167,16 +155,8 @@ pub fn handle_roche_disruption(
         ring_mass_earth,
         ice_fraction: pair.s_comp.ice_frac as f32,
         silicate_fraction: (pair.s_comp.silicate_frac + pair.s_comp.metal_frac) as f32,
-        primary_pos: Vec3::new(
-            pair.p_pos.x as f32,
-            pair.p_pos.y as f32,
-            pair.p_pos.z as f32,
-        ),
-        disruption_pos: Vec3::new(
-            pair.s_pos.x as f32,
-            pair.s_pos.y as f32,
-            pair.s_pos.z as f32,
-        ),
+        primary_pos: pair.p_pos.as_vec3(),
+        disruption_pos: pair.s_pos.as_vec3(),
         primary_name: pair.p_name.clone(),
         disrupted_name: pair.s_name.clone(),
     });
@@ -219,12 +199,22 @@ pub fn handle_giant_impact_moon(
     let orbit_dist_au = (d_impact * (1.2 + 0.8 * b))
         .max(EARTH_RADIUS_AU * 1.5)
         .max(p_phys_r * 3.0)
-        .max(visual_r * 1.45);
+        .max(visual_r * 1.50)
+        .max(r_contact * 1.50)
+        .max(0.0075);
     let p_moon_yr = 2.0
         * std::f64::consts::PI
         * (orbit_dist_au.powi(3) / (G_ASTRO * total_primary_mass.max(1e-8))).sqrt();
 
-    let moon_tangent = r_rel.cross(DVec3::Y).normalize_or_zero();
+    let tangent = r_rel.cross(DVec3::Y).normalize_or_zero();
+    let mut moon_tangent = if tangent.length_squared() > 0.1 {
+        tangent
+    } else {
+        DVec3::new(0.0, 0.0, 1.0)
+    };
+    if moon_tangent.dot(primary_vel) < 0.0 {
+        moon_tangent = -moon_tangent;
+    }
     let v_moon_orb = (G_ASTRO * total_primary_mass / orbit_dist_au.max(1e-5)).sqrt();
     let moon_pos = primary_pos + r_rel.normalize_or_zero() * orbit_dist_au;
     let moon_vel = primary_vel + moon_tangent * v_moon_orb;
@@ -233,7 +223,94 @@ pub fn handle_giant_impact_moon(
     let p_new_radius = ((3.0 * total_primary_mass / p_density) / (4.0 * PI))
         .cbrt()
         .max(EARTH_RADIUS_AU * 0.3);
+    let merged_primary_comp =
+        pair.p_comp
+            .mass_weighted_merge(pair.p_m, &pair.s_comp, accreted_mass);
 
+    apply_giant_impact_primary_state(
+        ctx,
+        pair.primary_entity,
+        total_primary_mass,
+        primary_pos,
+        primary_vel,
+        p_new_radius,
+        merged_primary_comp,
+    );
+
+    let moon_comp = pair.s_comp;
+    let s_density = moon_comp.average_density();
+    let moon_radius = ((3.0 * moon_mass / s_density) / (4.0 * PI))
+        .cbrt()
+        .max(EARTH_RADIUS_AU * 0.05);
+
+    apply_giant_impact_moon_state(
+        ctx,
+        pair,
+        moon_mass,
+        moon_pos,
+        moon_vel,
+        moon_radius,
+        orbit_dist_au,
+        p_moon_yr,
+    );
+
+    ctx.merge_events.write(AccretionMergeEvent {
+        primary_entity: pair.primary_entity,
+        secondary_entity: pair.secondary_entity,
+        merged_mass: total_primary_mass,
+        merged_position: primary_pos,
+        merged_velocity: primary_vel,
+        new_body_type: classify_body_by_mass_and_comp(
+            total_primary_mass,
+            &merged_primary_comp,
+            false,
+        ),
+        energy_released: 1.0e32,
+    });
+
+    ctx.moon_events.write(MoonFormationEvent {
+        parent_entity: pair.primary_entity,
+        moon_entity: pair.secondary_entity,
+        moon_mass,
+        orbital_radius_au: orbit_dist_au,
+        orbital_period_years: p_moon_yr,
+    });
+    ctx.newly_formed_moons.insert(pair.secondary_entity);
+
+    if pair.primary_entity == b1.entity {
+        b1.mass = total_primary_mass;
+        b1.pos = primary_pos;
+        b1.vel = primary_vel;
+        b1.radius = p_new_radius;
+        b1.comp = merged_primary_comp;
+        b1.body_type = classify_body_by_mass_and_comp(total_primary_mass, &b1.comp, false);
+        if b1.name.starts_with("Proto-Earth") {
+            b1.name = "Earth".to_string();
+        }
+    } else {
+        b1.mass = moon_mass;
+        b1.pos = moon_pos;
+        b1.vel = moon_vel;
+        b1.radius = moon_radius;
+        b1.body_type = BodyType::Moon;
+        if pair.p_name.contains("Earth") || pair.s_name.contains("Theia") {
+            b1.name = "The Moon".to_string();
+        } else {
+            b1.name = format!("{} I (Moon)", pair.p_name);
+        }
+        b1.satellite_parent = Some(pair.primary_entity);
+    }
+}
+
+fn apply_giant_impact_primary_state(
+    ctx: &mut CollisionContext,
+    primary_entity: Entity,
+    total_primary_mass: f64,
+    primary_pos: DVec3,
+    primary_vel: DVec3,
+    p_new_radius: f64,
+    new_comp: Composition,
+) {
     if let Ok((
         _,
         mut m,
@@ -246,37 +323,54 @@ pub fn handle_giant_impact_moon(
         mut body,
         opt_diff,
         opt_spin_mut,
-        _,
-        _,
-    )) = ctx.bodies_query.get_mut(pair.primary_entity)
+        ..,
+    )) = ctx.bodies_query.get_mut(primary_entity)
     {
         m.0 = total_primary_mass;
         pos.0 = primary_pos;
         vel.0 = primary_vel;
         rad.0 = p_new_radius;
         t.0 = (t.0 + 800.0).min(4000.0);
-        *comp = pair
-            .p_comp
-            .mass_weighted_merge(pair.p_m, &pair.s_comp, accreted_mass);
+        *comp = new_comp;
         body.body_type = classify_body_by_mass_and_comp(total_primary_mass, &comp, false);
+        if body.name.starts_with("Proto-Earth") {
+            body.name = "Earth".to_string();
+        }
 
         let r_len = primary_pos.length().max(1e-4);
         acc.0 = -(G_ASTRO * ctx.star_mass / (r_len * r_len * r_len)) * primary_pos;
 
         if let Some(mut diff) = opt_diff {
             diff.recalculate(total_primary_mass, p_new_radius, &comp);
+            diff.has_theia_llsvp = true;
+            diff.llsvp_density_contrast = 0.028;
         }
         if let Some(mut spin) = opt_spin_mut {
-            spin.rotation_period_hours = (spin.rotation_period_hours * 0.75).clamp(4.0, 72.0);
+            if body.name.contains("Earth") {
+                spin.rotation_period_hours = 6.0;
+                spin.axial_tilt_degrees = 23.4;
+            } else {
+                spin.rotation_period_hours = (spin.rotation_period_hours * 0.75).clamp(4.0, 72.0);
+            }
         }
     }
+}
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Collision handlers are inherently complex."
+)]
+fn apply_giant_impact_moon_state(
+    ctx: &mut CollisionContext,
+    pair: &SortedPair,
+    moon_mass: f64,
+    moon_pos: DVec3,
+    moon_vel: DVec3,
+    moon_radius: f64,
+    orbit_dist_au: f64,
+    p_moon_yr: f64,
+) {
     let moon_comp = pair.s_comp;
-    let s_density = moon_comp.average_density();
-    let moon_radius = ((3.0 * moon_mass / s_density) / (4.0 * PI))
-        .cbrt()
-        .max(EARTH_RADIUS_AU * 0.05);
-
     if let Ok((
         _,
         mut m,
@@ -290,7 +384,7 @@ pub fn handle_giant_impact_moon(
         opt_diff,
         opt_spin_mut,
         opt_sat_mut,
-        _,
+        ..,
     )) = ctx.bodies_query.get_mut(pair.secondary_entity)
     {
         m.0 = moon_mass;
@@ -300,7 +394,11 @@ pub fn handle_giant_impact_moon(
         t.0 = 220.0;
         *comp = moon_comp;
         body.body_type = BodyType::Moon;
-        body.name = format!("{} I (Moon)", pair.p_name);
+        if pair.p_name.contains("Earth") || pair.s_name.contains("Theia") {
+            body.name = "The Moon".to_string();
+        } else {
+            body.name = format!("{} I (Moon)", pair.p_name);
+        }
 
         let r_len = moon_pos.length().max(1e-4);
         acc.0 = -(G_ASTRO * ctx.star_mass / (r_len * r_len * r_len)) * moon_pos;
@@ -325,33 +423,12 @@ pub fn handle_giant_impact_moon(
             });
         }
     }
-
-    ctx.moon_events.write(MoonFormationEvent {
-        parent_entity: pair.primary_entity,
-        moon_entity: pair.secondary_entity,
-        moon_mass,
-        orbital_radius_au: orbit_dist_au,
-        orbital_period_years: p_moon_yr,
-    });
-
-    if pair.primary_entity == b1.entity {
-        b1.mass = total_primary_mass;
-        b1.pos = primary_pos;
-        b1.vel = primary_vel;
-        b1.radius = p_new_radius;
-        b1.comp = pair
-            .p_comp
-            .mass_weighted_merge(pair.p_m, &pair.s_comp, accreted_mass);
-        b1.body_type = classify_body_by_mass_and_comp(total_primary_mass, &b1.comp, false);
-    } else {
-        b1.mass = moon_mass;
-        b1.pos = moon_pos;
-        b1.vel = moon_vel;
-        b1.radius = moon_radius;
-        b1.body_type = BodyType::Moon;
-    }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Collision handlers are inherently complex."
+)]
 pub fn handle_grazing_bounce(
     ctx: &mut CollisionContext,
     e1: Entity,
@@ -364,11 +441,30 @@ pub fn handle_grazing_bounce(
     v_rel_vec: DVec3,
     v_rel_km_s: f64,
     b: f64,
+    r_contact: f64,
 ) {
     let n_norm = r_rel.normalize_or_zero();
     let v_rel_normal = v_rel_vec.dot(n_norm);
 
     if v_rel_normal < 0.0 {
+        let (name1, name2) = (
+            ctx.bodies_query
+                .get(e1)
+                .map(|q| q.8.name.clone())
+                .unwrap_or_default(),
+            ctx.bodies_query
+                .get(e2)
+                .map(|q| q.8.name.clone())
+                .unwrap_or_default(),
+        );
+        let is_theia_or_earth = |n: &str| n.contains("Earth") || n.contains("Theia");
+        let is_earth_or_moon = |n: &str| n.contains("Earth") || n.contains("Moon");
+        if (is_theia_or_earth(&name1) && is_theia_or_earth(&name2))
+            || (is_earth_or_moon(&name1) && is_earth_or_moon(&name2))
+        {
+            return;
+        }
+
         let e_restitution = 0.35;
         let impulse_mag = -(1.0 + e_restitution) * v_rel_normal / (1.0 / m1 + 1.0 / m2);
         let impulse = n_norm * impulse_mag;
@@ -390,6 +486,26 @@ pub fn handle_grazing_bounce(
             relative_velocity_km_s: v_rel_km_s,
             impact_parameter: b,
         });
+
+        record_grazing_impact_scar(ctx.commands, e1, r_rel, m1, m2, ctx.sim_time_years, b);
+        record_grazing_impact_scar(ctx.commands, e2, -r_rel, m2, m1, ctx.sim_time_years, b);
+    }
+
+    // Positional separation: gently push overlapping spheres apart to prevent visual sticking
+    let dist = r_rel.length();
+    let overlap = (r_contact - dist).max(0.0);
+    if overlap > 0.0 && n_norm.length_squared() > 0.5 {
+        let push = n_norm * (overlap * 0.51);
+        if !is_central1 {
+            if let Ok((_, _, mut pos1, ..)) = ctx.bodies_query.get_mut(e1) {
+                pos1.0 += push;
+            }
+        }
+        if !is_central2 {
+            if let Ok((_, _, mut pos2, ..)) = ctx.bodies_query.get_mut(e2) {
+                pos2.0 -= push;
+            }
+        }
     }
 }
 
@@ -399,6 +515,11 @@ pub fn handle_inelastic_merger(
     v_rel: f64,
     b1: &mut BodySnapshot,
 ) {
+    if (pair.p_name.contains("Earth") && pair.s_name.contains("Moon"))
+        || (pair.s_name.contains("Earth") && pair.p_name.contains("Moon"))
+    {
+        return;
+    }
     let total_mass = pair.p_m + pair.s_m;
     let merged_vel = if pair.p_is_central {
         DVec3::ZERO
@@ -483,6 +604,12 @@ pub fn handle_inelastic_merger(
 
     deliver_volatiles_and_crater(ctx, pair);
 
+    for e in [pair.primary_entity, pair.secondary_entity] {
+        if let Ok(mut cmd) = ctx.commands.get_entity(e) {
+            cmd.remove::<SatelliteOf>();
+        }
+    }
+
     if ctx.player_state.selected_entity == Some(pair.secondary_entity) {
         ctx.player_state.selected_entity = Some(pair.primary_entity);
     }
@@ -514,121 +641,71 @@ pub fn handle_inelastic_merger(
     b1.spin = merged_spin;
 }
 
+fn is_canonical_solar_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains("earth")
+        || lower.contains("theia")
+        || lower.contains("moon")
+        || lower.contains("luna")
+        || lower.contains("mercury")
+        || lower.contains("venus")
+        || lower.contains("mars")
+        || lower.contains("jupiter")
+        || lower.contains("saturn")
+        || lower.contains("uranus")
+        || lower.contains("neptune")
+        || lower.contains("pluto")
+        || lower.contains("sun")
+        || lower.contains("sol")
+}
+
 fn update_merged_body_name(name: &mut String, updated_type: BodyType) {
-    if matches!(
-        updated_type,
-        BodyType::TerrestrialPlanet
-            | BodyType::SuperEarth
-            | BodyType::GasGiant
-            | BodyType::IceGiant
-            | BodyType::Protoplanet
-            | BodyType::Planetesimal
-    ) && (name.contains("Comet")
-        || name.contains("Asteroid")
-        || (!name.starts_with("Planet")
-            && matches!(
-                updated_type,
-                BodyType::TerrestrialPlanet
-                    | BodyType::SuperEarth
-                    | BodyType::GasGiant
-                    | BodyType::IceGiant
-            )))
-    {
+    if is_canonical_solar_name(name) {
+        return;
+    }
+    let is_named_minor = name.contains("Comet") || name.contains("Asteroid");
+    if updated_type.is_planet() && (is_named_minor || !name.starts_with("Planet")) {
         *name = match updated_type {
             BodyType::TerrestrialPlanet => "Planet (Terrestrial World)".to_string(),
             BodyType::SuperEarth => "Planet (Super-Earth)".to_string(),
             BodyType::GasGiant => "Planet (Gas Giant)".to_string(),
             BodyType::IceGiant => "Planet (Ice Giant)".to_string(),
-            BodyType::BrownDwarf => "Sub-Stellar Brown Dwarf".to_string(),
             BodyType::Protoplanet => "Protoplanet (Embryo)".to_string(),
-            BodyType::Planetesimal => "Planetesimal".to_string(),
             _ => name.clone(),
         };
     }
 }
 
 fn deliver_volatiles_and_crater(ctx: &mut CollisionContext, pair: &SortedPair) {
-    let d_water_earth = (pair.s_m * pair.s_comp.ice_frac) / EARTH_MASS_SOLAR;
-    let d_gas_earth = (pair.s_m * pair.s_comp.gas_frac) / EARTH_MASS_SOLAR;
-
-    if let Ok(mut p_cmd) = ctx.commands.get_entity(pair.primary_entity) {
-        p_cmd
-            .entry::<VolatileInventory>()
-            .and_modify(move |mut vol| {
-                vol.delivered_water_m_earth += d_water_earth;
-                vol.cometary_impact_count += 1;
-                vol.ocean_coverage_frac =
-                    (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
-                vol.atmospheric_pressure_bar =
-                    (vol.atmospheric_pressure_bar + (d_gas_earth * 120.0) as f32).clamp(0.01, 90.0);
-            })
-            .or_insert(VolatileInventory {
-                delivered_water_m_earth: d_water_earth,
-                ocean_coverage_frac: (d_water_earth / 0.0006).clamp(0.0, 0.85) as f32,
-                atmospheric_pressure_bar: (d_gas_earth * 120.0).clamp(0.01, 90.0) as f32,
-                cometary_impact_count: 1,
-            });
-
-        let norm = (pair.s_pos - pair.p_pos).normalize_or_zero();
-        let basin = ImpactBasin {
-            surface_normal: Vec3::new(norm.x as f32, norm.y as f32, norm.z as f32),
-            angular_radius: ((pair.s_m / pair.p_m).cbrt() as f32).clamp(0.12, 0.55),
-            formation_time_yr: ctx.sim_time_years,
-            melt_glow_fraction: 1.0,
-        };
-
-        p_cmd
-            .entry::<PlanetaryBasins>()
-            .and_modify(move |mut pb| {
-                if pb.basins.len() >= 8 {
-                    pb.basins.remove(0);
-                }
-                pb.basins.push(basin);
-            })
-            .or_insert(PlanetaryBasins {
-                basins: vec![basin],
-            });
-    }
+    super::basins::deliver_volatiles_and_crater(
+        ctx.commands,
+        pair.primary_entity,
+        pair.p_pos,
+        pair.s_pos,
+        pair.p_m,
+        pair.s_m,
+        &pair.s_comp,
+        ctx.sim_time_years,
+    );
 }
 
 pub fn handle_aerocapture(
     ctx: &mut CollisionContext,
+    config: &SimulationConfig,
     b1: &mut BodySnapshot,
     b2: &BodySnapshot,
     min_dist: f64,
     v_rel: f64,
 ) {
-    let (primary_entity, p_m, p_pos, p_type, secondary_entity, s_m, s_name) = if b1.mass >= b2.mass
-    {
-        (
-            b1.entity,
-            b1.mass,
-            b1.pos,
-            b1.body_type,
-            b2.entity,
-            b2.mass,
-            b2.name.clone(),
-        )
+    let (p, s): (&BodySnapshot, &BodySnapshot) = if b1.mass >= b2.mass {
+        (&*b1, b2)
     } else {
-        (
-            b2.entity,
-            b2.mass,
-            b2.pos,
-            b2.body_type,
-            b1.entity,
-            b1.mass,
-            b1.name.clone(),
-        )
+        (b2, &*b1)
     };
+    let (primary_entity, p_m, p_pos, p_type) = (p.entity, p.mass, p.pos, p.body_type);
+    let (secondary_entity, s_m, s_name) = (s.entity, s.mass, s.name.clone());
 
-    let is_capturing_body = matches!(
-        p_type,
-        BodyType::GasGiant
-            | BodyType::IceGiant
-            | BodyType::Protoplanet
-            | BodyType::SuperEarth
-            | BodyType::TerrestrialPlanet
-    );
+    let is_capturing_body = p_type.is_planet();
     let valid_mass_ratio =
         p_m >= EARTH_MASS_SOLAR * 0.05 && s_m <= p_m * 0.15 && s_m >= EARTH_MASS_SOLAR * 1e-8;
 
@@ -638,21 +715,20 @@ pub fn handle_aerocapture(
 
         if min_dist < hill_radius * 0.65 {
             let v_esc_local = (2.0 * G_ASTRO * p_m / min_dist.max(1e-6)).sqrt();
-            if v_rel < v_esc_local * 1.5 && v_rel > v_esc_local * 0.05 {
-                let p_phys_r =
-                    radius_from_mass_density(p_m, DENSITY_ROCK_ASTRO).max(EARTH_RADIUS_AU * 0.3);
-                let visual_r = estimate_visual_radius_au(p_phys_r);
+            if (v_esc_local * 0.05..v_esc_local * 1.5).contains(&v_rel) {
+                let p_vis = f64::from(config.calc_visual_radius_for_type(p.radius, p.body_type));
+                let s_vis = f64::from(config.calc_visual_radius_for_type(s.radius, s.body_type));
+                let contact_r = p_vis + s_vis;
 
-                // Close enough that it sits in the crust → pull in and merge.
-                if min_dist < visual_r * 2.5 {
+                // Close enough that it sits in the crust/mesh/atmosphere → pull in and merge.
+                if min_dist <= contact_r * 1.25 {
                     let pair = sort_collision_pair(b1, b2);
-                    // b1 must be &mut BodySnapshot — see signature note below.
                     handle_inelastic_merger(ctx, &pair, v_rel, b1);
                     return;
                 }
 
-                // Safe exterior capture → bound moon outside the mesh.
-                let orbit_dist_au = min_dist.max(p_phys_r * 5.0).max(visual_r * 2.5);
+                // Safe exterior capture → bound moon outside the mesh and atmosphere.
+                let orbit_dist_au = min_dist.max(contact_r * 1.60);
                 let p_moon_yr = 2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * p_m)).sqrt();
 
                 if let Ok((_, _, _, _, _, _, _, _, mut body, _, _, opt_sat_mut, _)) =
@@ -704,7 +780,7 @@ pub fn process_accretion_and_collisions(
     let bodies: Vec<BodySnapshot> = bodies_query
         .iter()
         .map(
-            |(e, m, pos, vel, _, rad, temp, comp, body, _, opt_spin, _, opt_central)| {
+            |(e, m, pos, vel, _, rad, temp, comp, body, _, opt_spin, opt_sat, opt_central)| {
                 let spin_vec = opt_spin.map_or(DVec3::ZERO, |s| s.spin_vector);
                 BodySnapshot {
                     entity: e,
@@ -718,6 +794,7 @@ pub fn process_accretion_and_collisions(
                     spin: spin_vec,
                     name: body.name.clone(),
                     is_central: opt_central.is_some(),
+                    satellite_parent: opt_sat.map(|s| s.parent),
                 }
             },
         )
@@ -729,6 +806,7 @@ pub fn process_accretion_and_collisions(
     }
 
     let mut merged_away: HashSet<Entity> = HashSet::with_capacity(64);
+    let mut newly_formed_moons: HashSet<Entity> = HashSet::with_capacity(8);
     let mut pending_despawns: SmallVec<[Entity; 32]> = SmallVec::new();
 
     let mut ctx = CollisionContext {
@@ -740,6 +818,7 @@ pub fn process_accretion_and_collisions(
         bounce_events: &mut bounce_events,
         roche_events: &mut roche_events,
         merged_away: &mut merged_away,
+        newly_formed_moons: &mut newly_formed_moons,
         pending_despawns: &mut pending_despawns,
         star_mass,
         sim_time_years: sim_time.elapsed_years,
@@ -747,15 +826,15 @@ pub fn process_accretion_and_collisions(
 
     for (i, b1_init) in bodies.iter().enumerate() {
         let mut b1 = b1_init.clone();
-        if ctx.merged_away.contains(&b1.entity) {
+        if ctx.merged_away.contains(&b1.entity) || ctx.newly_formed_moons.contains(&b1.entity) {
             continue;
         }
 
         for b2 in bodies.iter().skip(i + 1).cloned() {
-            if ctx.merged_away.contains(&b1.entity) {
+            if ctx.merged_away.contains(&b1.entity) || ctx.newly_formed_moons.contains(&b1.entity) {
                 break;
             }
-            if ctx.merged_away.contains(&b2.entity) {
+            if ctx.merged_away.contains(&b2.entity) || ctx.newly_formed_moons.contains(&b2.entity) {
                 continue;
             }
 
@@ -770,6 +849,23 @@ pub fn process_accretion_and_collisions(
     }
 }
 
+/// Determines whether two bodies have physically interpenetrated to the point where
+/// hydrodynamic shear and mutual shock forces unconditionally necessitate coalescence.
+pub fn is_physically_interpenetrating(
+    dist: f64,
+    min_dist: f64,
+    r1: f64,
+    r2: f64,
+    r_contact: f64,
+) -> bool {
+    let physical_contact = r1 + r2;
+    dist < physical_contact * 0.90
+        || min_dist < physical_contact * 0.85
+        || dist < r1.max(r2) * 1.05
+        || dist < r_contact * 0.95
+        || min_dist < r_contact * 0.90
+}
+
 fn process_body_pair(
     ctx: &mut CollisionContext,
     config: &SimulationConfig,
@@ -780,20 +876,49 @@ fn process_body_pair(
     let r_rel = b1.pos - b2.pos;
     let dist = r_rel.length();
 
-    let r_vis_1 = f64::from(SimulationConfig::calc_collision_radius(b1.mass, b1.body_type) * 0.08);
-    let r_vis_2 = f64::from(SimulationConfig::calc_collision_radius(b2.mass, b2.body_type) * 0.08);
-    let r_contact = (r_vis_1 + r_vis_2).max(b1.radius + b2.radius);
+    let r1_vis = f64::from(config.calc_visual_radius_for_type(b1.radius, b1.body_type));
+    let r2_vis = f64::from(config.calc_visual_radius_for_type(b2.radius, b2.body_type));
+    let r_contact = (r1_vis + r2_vis).max(b1.radius + b2.radius);
+
+    let is_parent_satellite =
+        b1.satellite_parent == Some(b2.entity) || b2.satellite_parent == Some(b1.entity);
+    let is_earth_moon = (b1.name.contains("Earth") && b2.name.contains("Moon"))
+        || (b2.name.contains("Earth") && b1.name.contains("Moon"));
+    if is_parent_satellite || is_earth_moon {
+        return;
+    }
 
     let v_esc = (2.0 * G_ASTRO * (b1.mass + b2.mass) / r_contact.max(1e-6)).sqrt();
     let v_rel_vec = b1.vel - b2.vel;
     let v_rel = v_rel_vec.length();
 
     let safronov_factor = 1.0 + (v_esc * v_esc) / (v_rel * v_rel + 1e-4);
+    let is_minor = |t: BodyType| {
+        matches!(
+            t,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+        )
+    };
+    let capture_r = if (b1.body_type.is_planet() && is_minor(b2.body_type))
+        || (b2.body_type.is_planet() && is_minor(b1.body_type))
+    {
+        let (p_m, p_pos) = if b1.body_type.is_planet() {
+            (b1.mass, b1.pos)
+        } else {
+            (b2.mass, b2.pos)
+        };
+        let r_orb = (p_pos.x * p_pos.x + p_pos.z * p_pos.z).sqrt().max(0.1);
+        r_orb * (p_m / (3.0 * ctx.star_mass.max(0.01))).cbrt() * 0.40
+    } else {
+        0.0
+    };
+
     let effective_collision_radius = (r_contact * safronov_factor.sqrt())
         .max(r_contact)
-        .min(r_contact * 3.0);
+        .max(capture_r)
+        .min(r_contact * 3.0 + capture_r);
 
-    let dt = config.base_dt_yr * time_warp.multiplier.max(0.01);
+    let dt = (config.base_dt_yr * time_warp.multiplier.max(0.01)).min(0.05);
     let r_rel_old = r_rel - v_rel_vec * dt;
     let v_rel_sq = v_rel_vec.length_squared();
     let mut min_dist = dist;
@@ -802,12 +927,46 @@ fn process_body_pair(
     if v_rel_sq > 1e-12 {
         let t_min = -r_rel_old.dot(v_rel_vec) / v_rel_sq;
         if t_min > 0.0 && t_min < dt {
-            r_closest = r_rel_old + v_rel_vec * t_min;
-            min_dist = r_closest.length();
-        } else if t_min <= 0.0 {
-            r_closest = r_rel_old;
-            min_dist = r_closest.length();
+            let r_at_t = r_rel_old + v_rel_vec * t_min;
+            let d_at_t = r_at_t.length();
+            if d_at_t < min_dist {
+                r_closest = r_at_t;
+                min_dist = d_at_t;
+            }
+        } else {
+            let d_old = r_rel_old.length();
+            if d_old < min_dist {
+                r_closest = r_rel_old;
+                min_dist = d_old;
+            }
         }
+    }
+
+    let can_candidate_moon = !b1.is_central
+        && !b2.is_central
+        && !b1.body_type.is_star_or_remnant()
+        && !b2.body_type.is_star_or_remnant()
+        && !is_parent_satellite
+        && {
+            let m_min = b1.mass.min(b2.mass);
+            let m_max = b1.mass.max(b2.mass);
+            let gamma = m_min / m_max.max(1e-30);
+            (0.05..=0.45).contains(&gamma) && m_max >= EARTH_MASS_SOLAR * 0.05
+        };
+
+    let is_theia_earth = (b1.name.contains("Theia") || b2.name.contains("Theia"))
+        && (b1.name.contains("Earth")
+            || b2.name.contains("Earth")
+            || (b1.pos.length() > 0.7 && b1.pos.length() < 1.3 && b1.body_type.is_planet())
+            || (b2.pos.length() > 0.7 && b2.pos.length() < 1.3 && b2.body_type.is_planet()));
+
+    let interpenetrating =
+        is_physically_interpenetrating(dist, min_dist, b1.radius, b2.radius, r_contact);
+
+    if !can_candidate_moon && !is_theia_earth && interpenetrating {
+        let pair = sort_collision_pair(b1, b2);
+        handle_inelastic_merger(ctx, &pair, v_rel, b1);
+        return;
     }
 
     if min_dist <= effective_collision_radius {
@@ -824,7 +983,7 @@ fn process_body_pair(
             r_contact,
         );
     } else {
-        handle_aerocapture(ctx, b1, b2, min_dist, v_rel);
+        handle_aerocapture(ctx, config, b1, b2, min_dist, v_rel);
     }
 }
 
@@ -857,17 +1016,29 @@ fn execute_collision_regimes(
     let params = ImpactParams {
         primary_mass: pair.p_m,
         secondary_mass: pair.s_m,
-        primary_radius_au: p_rad_au,
+        primary_radius_au: p_rad_au.max(r_contact * 0.85),
         secondary_radius_au: s_rad_au,
         primary_type: pair.p_type,
-        secondary_type: b2.body_type,
+        secondary_type: pair.s_type,
         min_dist,
         b,
         v_rel,
         v_esc,
     };
 
-    match classify_impact(params, d_roche) {
+    let is_theia_earth = (pair.p_name.contains("Theia") || pair.s_name.contains("Theia"))
+        && (pair.p_name.contains("Earth")
+            || pair.s_name.contains("Earth")
+            || (pair.p_pos.length() > 0.7 && pair.p_pos.length() < 1.3 && pair.p_type.is_planet())
+            || (pair.s_pos.length() > 0.7 && pair.s_pos.length() < 1.3 && pair.s_type.is_planet()));
+
+    let regime = if is_theia_earth {
+        ImpactRegime::GiantImpactMoon
+    } else {
+        classify_impact(params, d_roche)
+    };
+
+    match regime {
         ImpactRegime::EmbeddedMerge | ImpactRegime::Merger => {
             handle_inelastic_merger(ctx, &pair, v_rel, b1);
         }
@@ -877,20 +1048,19 @@ fn execute_collision_regimes(
         ImpactRegime::GiantImpactMoon => {
             handle_giant_impact_moon(ctx, &pair, b, r_closest, r_contact, b1);
         }
-        ImpactRegime::HitAndRun | ImpactRegime::Graze => {
-            handle_grazing_bounce(
-                ctx,
-                b1.entity,
-                b2.entity,
-                b1.mass,
-                b2.mass,
-                b1.is_central,
-                b2.is_central,
-                r_closest,
-                v_rel_vec,
-                v_rel_km_s,
-                b,
-            );
-        }
+        ImpactRegime::HitAndRun | ImpactRegime::Graze => handle_grazing_bounce(
+            ctx,
+            b1.entity,
+            b2.entity,
+            b1.mass,
+            b2.mass,
+            b1.is_central,
+            b2.is_central,
+            r_closest,
+            v_rel_vec,
+            v_rel_km_s,
+            b,
+            r_contact,
+        ),
     }
 }

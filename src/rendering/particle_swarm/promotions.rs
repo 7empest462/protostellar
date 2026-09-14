@@ -34,12 +34,29 @@ pub fn check_clump_promotions(
         if m > 0.0 {
             active_count += 1;
         }
-        if m >= promo_threshold && promotions.is_empty() && current_ecs_count < max_ecs_bodies {
-            let Some(&pos) = data.positions.get(i) else {
-                continue;
-            };
-            let r_sq = pos[0] * pos[0] + pos[2] * pos[2];
-            let r = r_sq.sqrt();
+
+        let Some(&pos) = data.positions.get(i) else {
+            continue;
+        };
+        let r_sq = pos[0] * pos[0] + pos[2] * pos[2];
+        let r = r_sq.sqrt();
+
+        let threshold = if is_massive_disk {
+            promo_threshold
+        } else if (2.1..=3.8).contains(&r) || r >= 15.0 {
+            // Belts: particles readily coalesce into minor bodies (asteroids and comets)
+            2.2 * b_mass
+        } else if r < 2.0 {
+            // Inner disk: suppress hundreds of tiny embryo spawns, require substantial mass
+            (24.0 * b_mass).max(0.02 * EARTH_MASS_SOLAR as f32)
+        } else {
+            12.0 * b_mass
+        };
+
+        if m >= threshold
+            && promotions.len() < 16
+            && current_ecs_count + promotions.len() < max_ecs_bodies
+        {
             let min_r = if is_massive_disk { 65.0 } else { 0.15 };
             let max_r = if is_massive_disk {
                 disk_params.outer_radius_au as f32
@@ -95,23 +112,18 @@ fn determine_promoted_body_type_and_name(
     comp: &Composition,
     is_massive_disk: bool,
 ) -> (BodyType, String) {
-    let in_feeding_zone = (0.5..=1.8).contains(&radius_au)
-        || (4.5..=7.0).contains(&radius_au)
-        || (8.0..=12.0).contains(&radius_au)
-        || (18.0..=32.0).contains(&radius_au);
-
     let body_type = if is_massive_disk {
         crate::simulation::components::classify_body_by_mass_and_comp(mass, comp, false)
-    } else if mass >= EARTH_MASS_SOLAR * 0.005
-        || (in_feeding_zone && mass >= EARTH_MASS_SOLAR * 0.0005)
-    {
-        BodyType::Protoplanet
     } else if (2.0..=3.8).contains(&radius_au) {
         BodyType::Asteroid
     } else if radius_au >= 15.0 || comp.ice_frac > 0.35 {
         BodyType::Comet
     } else if radius_au < 2.0 {
-        BodyType::Asteroid
+        if mass >= EARTH_MASS_SOLAR * 0.05 {
+            BodyType::Protoplanet
+        } else {
+            BodyType::Asteroid
+        }
     } else {
         crate::simulation::components::classify_body_by_mass_and_comp(mass, comp, false)
     };

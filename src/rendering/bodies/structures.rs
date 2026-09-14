@@ -15,7 +15,7 @@ pub struct VisualRingChild;
 /// Synchronizes 3D planetary ring system meshes, materials, and axial tilt transforms.
 pub fn sync_planetary_rings(
     mut commands: Commands,
-    config: Res<SimulationConfig>,
+    _config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut ring_materials: ResMut<Assets<RingMaterial>>,
     planets_with_rings_query: Query<(
@@ -34,8 +34,16 @@ pub fn sync_planetary_rings(
     for (planet_entity, ring_sys, radius, _body, opt_spin, opt_children) in
         planets_with_rings_query.iter()
     {
-        let planet_render_rad = config.calc_visual_radius(radius.0);
-        let ring_outer_scale = (planet_render_rad * 2.85).max(0.015);
+        let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
+            (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
+        } else {
+            2.85
+        };
+        // The parent planet mesh is a unit sphere (radius 1.0) scaled by planet_render_rad.
+        // The ring mesh is a Plane3d (size 1.0x1.0, half-width 0.5).
+        // Since child local transform scales relative to parent, a local XZ scale of ring_ratio * 2.0
+        // extends the ring mesh to exactly ring_ratio times the planet's visual radius.
+        let ring_outer_scale = ring_ratio * 2.0;
 
         let tilt_degrees = opt_spin.map_or(26.7, |s| s.axial_tilt_degrees as f32);
         let ring_rotation = Quat::from_rotation_z(tilt_degrees.to_radians());
@@ -45,7 +53,7 @@ pub fn sync_planetary_rings(
             for child in children.iter() {
                 if let Ok((mut transform, mat_handle)) = ring_children_query.get_mut(child) {
                     found_child = true;
-                    transform.scale = Vec3::splat(ring_outer_scale);
+                    transform.scale = Vec3::new(ring_outer_scale, 1.0, ring_outer_scale);
                     transform.rotation = ring_rotation;
 
                     if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
@@ -77,7 +85,7 @@ pub fn sync_planetary_rings(
                         VisualRingChild,
                         Mesh3d(visual_assets.ring_mesh.clone()),
                         MeshMaterial3d(material),
-                        Transform::from_scale(Vec3::splat(ring_outer_scale))
+                        Transform::from_scale(Vec3::new(ring_outer_scale, 1.0, ring_outer_scale))
                             .with_rotation(ring_rotation),
                         NotShadowCaster,
                     ));

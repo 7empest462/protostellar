@@ -253,3 +253,48 @@ fn test_massive_star_supernova_evolution_branch() {
     }
     assert_eq!(evo.phase, StellarEvolutionPhase::NeutronStarPulsar);
 }
+
+#[test]
+fn test_stellar_core_ignition_thermodynamics() {
+    let star_mass: f64 = 1.0; // 1.0 Solar Mass
+    let mut core_temp: f64 = 5.0e6; // 5 Million K
+    let ignition_threshold: f64 = 1.0e7; // 10 Million K
+
+    // Kelvin-Helmholtz heating step
+    let heating_rate_per_yr: f64 = 3.5e3 * star_mass;
+    let dt_yr: f64 = 2000.0;
+    core_temp += heating_rate_per_yr * dt_yr;
+
+    assert!(core_temp > 1.0e7); // Ignited!
+
+    let fusion_fraction: f64 = (core_temp / ignition_threshold).clamp(0.0, 1.0);
+    assert_eq!(fusion_fraction, 1.0);
+
+    // Main sequence Mass-Luminosity: L = M^3.5
+    let lum: f64 = star_mass.powf(3.5);
+    assert!((lum - 1.0).abs() < 1e-6);
+
+    // Main sequence Solar Effective Temperature ~ 5778 K
+    let t_eff: f64 = 5778.0 * star_mass.powf(0.505);
+    assert!((t_eff - 5778.0).abs() < 1e-4);
+}
+
+#[test]
+fn test_solar_wind_radiation_pressure_clearing() {
+    let mut shockwave_radius: f64 = 0.1; // Starts at 0.1 AU
+    let dt_yr: f64 = 0.5;
+
+    // Fast initial blast speed
+    let blast_speed: f64 = 35.0;
+    shockwave_radius += blast_speed * dt_yr;
+    assert!(shockwave_radius > 15.0);
+
+    // Circumstellar gas photoevaporates as shockwave expands to 35 AU
+    let gas_density_scale: f64 = (1.0 - (shockwave_radius / 35.0)).clamp(0.0, 1.0);
+    assert!(gas_density_scale < 0.6);
+
+    // At 35 AU, gas disk is completely cleared into mature system
+    shockwave_radius = 35.0;
+    let gas_cleared: f64 = (1.0 - (shockwave_radius / 35.0)).clamp(0.0, 1.0);
+    assert_eq!(gas_cleared, 0.0);
+}

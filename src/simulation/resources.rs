@@ -338,6 +338,8 @@ pub enum DiagnosticOverlayMode {
     Realistic,
     SpectralComposition,
     HillSpheresAndGaps,
+    /// Hide all diagnostic overlays for a clean view (no extra lines/gizmos)
+    Hidden,
 }
 
 impl DiagnosticOverlayMode {
@@ -345,7 +347,8 @@ impl DiagnosticOverlayMode {
         match self {
             Self::Realistic => Self::SpectralComposition,
             Self::SpectralComposition => Self::HillSpheresAndGaps,
-            Self::HillSpheresAndGaps => Self::Realistic,
+            Self::HillSpheresAndGaps => Self::Hidden,
+            Self::Hidden => Self::Realistic,
         }
     }
 
@@ -354,6 +357,7 @@ impl DiagnosticOverlayMode {
             Self::Realistic => "Realistic PBR",
             Self::SpectralComposition => "Spectral Composition Map",
             Self::HillSpheresAndGaps => "Hill Spheres & Annular Gaps",
+            Self::Hidden => "Hidden",
         }
     }
 }

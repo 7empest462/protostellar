@@ -642,6 +642,10 @@ pub struct InternalDifferentiation {
     pub core_temp_k: f64,
     /// Generated magnetic geodynamo field strength in Gauss.
     pub magnetic_field_gauss: f64,
+    /// Whether the mantle contains sunken iron-rich protoplanetary remnants from Theia (LLSVPs / "the blobs").
+    pub has_theia_llsvp: bool,
+    /// Density contrast anomaly of the LLSVPs relative to surrounding mantle (+1.5% to +3.5%, Nature 2023).
+    pub llsvp_density_contrast: f32,
 }
 
 impl Default for InternalDifferentiation {
@@ -655,6 +659,8 @@ impl Default for InternalDifferentiation {
             ocean_ice_thickness_au: 0.0,
             core_temp_k: 300.0,
             magnetic_field_gauss: 0.0,
+            has_theia_llsvp: false,
+            llsvp_density_contrast: 0.0,
         }
     }
 }

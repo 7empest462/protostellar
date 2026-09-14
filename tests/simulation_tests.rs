@@ -14,8 +14,12 @@ mod mechanics;
 mod orbits_and_effects;
 #[path = "simulation_tests/physics.rs"]
 mod physics;
+#[path = "simulation_tests/precision_events.rs"]
+mod precision_events;
 #[path = "simulation_tests/scenarios.rs"]
 mod scenarios;
+#[path = "simulation_tests/telemetry.rs"]
+mod telemetry;
 #[path = "simulation_tests/thermodynamics.rs"]
 mod thermodynamics;
 #[path = "simulation_tests/ui.rs"]

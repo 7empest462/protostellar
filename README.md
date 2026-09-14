@@ -12,14 +12,35 @@
 - **Heliocentric Indirect Gravity (Jacobi Correction)**: Implements the exact celestial mechanics indirect term $-\frac{G M_j}{R_j^3} \vec{R}_j$ for star-centered coordinate frames, ensuring multi-star systems and cluster companions (e.g. Kepler-16B, LBV 1806-20) exert physical tidal forces without unphysical coordinate drift.
 - **Bondi-Hoyle & Runaway Jovian Accretion**: Models gravitational capture radii, Hill sphere sweeping, and two-stage core accretion transitioning rocky cores into massive gas giants and stars without unphysical premature mass runaway.
 
-### 2. 🕳️ General Relativistic Gravitational Lensing & Spacetime Warping
+### 2. 🌕 Theia-Earth Giant Impact & Moon Formation (`[M]`)
+- **Oblique Giant Impact Regime**: Accurately simulates the canonical collision between Proto-Earth and Mars-sized embryo Theia at $T \sim 50\text{--}100\text{ yr}$ (or on-demand via `[M]`).
+- **Stable Prograde Lunar Orbit**: Silicate mantle debris coalesces into **The Moon** in a stable prograde circular orbit ($a = 0.0075\text{ AU}$, safely outside Earth's visual atmospheric halo).
+- **Planetary Spin-Up & Obliquity**: The impact imparts angular momentum, spinning Earth up to a rapid $6.0\text{-hour}$ day length with an authentic $23.4^\circ$ axial tilt.
+- **Deep Mantle LLSVP Enrichment**: Models the burial of dense Theia iron-silicate mantle fragments into the core-mantle boundary, forming Earth's primordial Large Low Shear Velocity Provinces (LLSVPs) with $+2.8\%$ density contrast.
+- **Deep-Space Recovery & Satellite Immunity**: Incorporates orbital trajectory interception that automatically catches and recovers stranded embryos, paired with unconditional parent-satellite collision exclusion to prevent newly formed moons from ever being destroyed or bounced into deep space.
+
+### 3. 📊 Interactive Scientific Telemetry Panel (`[T]`)
+- **System Conservation Auditing**: Real-time monitoring of total kinetic, potential, and mechanical energy with relative error tracking ($\Delta E / E_0$) to verify symplectic conservation.
+- **Real-Time Sparklines**: Live ASCII/graphical sparklines tracking energy fluctuations, system angular momentum, and active celestial body counts.
+- **Census & Mass Distribution**: Instantaneous breakdown of stars, terrestrial planets, gas giants, protoplanetary embryos, and minor bodies.
+- **CSV Data Export**: One-click telemetry export directly to `telemetry_export.csv` for post-simulation scientific analysis.
+
+### 4. 🔬 Interactive Celestial Inspector Panel (`[I]`)
+- **Deep Geophysical Profiling**: Select any body in the simulation to inspect its internal and atmospheric parameters in real time:
+  - Total mass ($M_\odot$ and $M_\oplus$), physical radius, mean density, and surface gravity ($g$).
+  - Surface temperature, blackbody equilibrium temperature, and radiative balance.
+  - Compositional inventory (silicate rocks, iron core, water/ice volatile fraction, and hydrogen/helium envelope).
+  - Internal differentiation (core-mantle-crust mass fractions and geodynamo magnetic shielding).
+  - Rotation period (day length) and orbital mechanics elements ($a$, $e$, $i$, $\Omega$, $\omega$, $\nu$).
+
+### 5. 🕳️ General Relativistic Gravitational Lensing & Spacetime Warping
 - **Ray-Deflection Optics**: Accurately computes Einstein deflection angles $\alpha(\theta) = \frac{\theta_E^2}{\theta}$ for massive black holes, bending background stars, cosmic web filaments, and distant nebulae into genuine **Einstein rings and gravitational arcs**.
 - **Photon Sphere Caustic Rings**: Renders the razor-sharp caustic ring at $r \approx 1.5 R_s$ where orbiting photons escape, complete with relativistic Doppler beaming asymmetry.
 - **Kerr Spacetime Geodesic Funnels**: Visualizes 12 spiraling geodesic field lines tracing frame-dragging and the spatial metric curvature funneling into the singularity.
 - **Deep-Zoom Event Horizon Exception**: Dedicated camera clearance allowing deep-zoom down to $0.001\text{ AU}$ exclusively on the JWST Little Red Dot black hole star to inspect general relativity up close, while retaining safe surface collision protection on stars and planets.
 - **Dynamic Cocoon Blowout Contraction**: When radiation pressure blows away the $60\text{ AU}$ Little Red Dot cocoon, the entire gravitational lens smoothly contracts down to $2.5\text{ AU}$ around the naked event horizon.
 
-### 3. 🧲 Extreme Stellar Remnants: Pulsars & Magnetars
+### 6. 🧲 Extreme Stellar Remnants: Pulsars & Magnetars
 - **PSR B1257+12 Millisecond Pulsar (`[F7]`)**:
   - Relativistic $161\text{ Hz}$ neutron star spin ($6.22\text{ ms}$ rotation period) with $10^9\text{ Gauss}$ magnetic field.
   - Dual sweeping conical relativistic synchrotron emission beams and equatorial light cylinder boundary.
@@ -29,58 +50,32 @@
   - Procedural 3D poloidal magnetic dipole flux ribbons spanning $5.5\text{ AU}$ and glowing incandescent equatorial plasma ring.
   - Extreme cluster system: Valkyrie (0.48 AU shattered iron core), Pyre (0.85 AU chthonian magma world), SGR Ejecta Clump $\alpha$ (1.65 AU), and luminous blue variable hypergiant companion LBV 1806-20 (18.0 AU).
 
-### 4. ⚡ 100k GPU Compute Particle Swarm Architecture
+### 7. ⚡ 100k GPU Compute Particle Swarm Architecture
 - **WebGPU Compute Pipeline**: Offloads particle orbital dynamics, flared gas drag, 32-body N-body perturbations, and shockwaves to `particle_orbit.wgsl` with workgroup size 64.
 - **Asynchronous Double-Buffered Staging**: Zero CPU stalls via a 3-state async staging state machine (`IDLE` $\to$ `MAPPING` $\to$ `MAPPED`), sustaining 100,000+ particles at locked 120 FPS on Apple Silicon Metal, Vulkan, and DirectX 12.
 - **Dynamic Toggle (`[F8]`)**: Seamless hot-swapping between GPU compute pipeline and multi-threaded CPU symplectic fallback.
 
-### 5. 🌌 Scenario-Specific Procedural Celestial Skybox
-- **Camera-Anchored 1,000,000 AU Celestial Sphere**: Zero depth clipping and zero artificial parallax at any zoom scale ($0.005\text{ AU}$ to $250,000\text{ AU}$).
-- **Modern Milky Way & Star Clusters** *(Standard Scenarios)*:
-  - Tilted galactic coordinate frame ($60.2^\circ$) with an incandescent golden-amber Sagittarius A* galactic core.
-  - Fractal **Great Rift** dark molecular absorption lanes and Bok globules.
-  - Multi-spectral starfield spanning authentic Morgan-Keenan spectral classes ($O/B$ blue supergiants, $A/F$ white stars, $G$ yellow suns, $K$ orange giants, and $M$ red dwarfs) with sub-pixel twinkle and diffraction spikes.
-  - Open star clusters (Pleiades with electric-blue reflection nebulae), high-halo globular clusters, and $H\alpha / [O\text{ III}]$ emission nebulae.
-- **Early Universe High-Redshift Cosmic Web** *(Little Red Dot, $z \sim 8.5$)*:
-  - Primeval cosmic dawn environment 600 million years after the Big Bang.
-  - 3D cellular intergalactic cosmic web filaments glowing with cosmologically redshifted Lyman-$\alpha$ emission (ruby-crimson, amber-gold, and near-infrared hues).
-  - Epoch of Reionization (EoR) Strömgren ionization bubbles with glowing shock rims.
-  - Pristine Population III hypergiant starburst knots and distant ruby mini-quasars.
+### 8. ☄️ Pebble Accretion, Streaming Instability & Asteroid Belts
+- **Sub-Millimeter Aerodynamic Pebble Drift**: Gas-drag-induced inward drift of pebbles across the protoplanetary disk, trapping volatile ices at the snow line.
+- **Streaming Instability Planetesimal Seeding**: High local dust-to-gas ratios trigger spontaneous gravitational collapse into 1,024-body Main Asteroid and Kuiper Belt swarms.
+- **Impact Cratering & Viscous Relaxation**: High-velocity impacts excavate transient impact basins, delivering volatiles and dynamically relaxing through viscoelastic mantle flow over million-year geological epochs.
 
-### 6. 🪐 Dynamic Roche Disruption & Planetary Ring Spawning
+### 9. 🪐 Dynamic Roche Disruption & Planetary Ring Spawning
 - **Fluid Roche Limit Shredding**: When a moon, comet, or planetesimal ventures inside a primary's fluid Roche limit $d_{\text{Roche}} \approx 2.44 R_p \left(\frac{\rho_p}{\rho_s}\right)^{1/3}$, tidal forces overcome self-gravity, stretching the body into an ellipsoid before shattering it.
 - **Keplerian Spiral Debris Streams**: Renders expanding, 48-fragment Keplerian debris streamers wrapping around the planet's equatorial plane, simulating the dynamic transition from fragmented rubble into a circularized ring plane over time.
 - **Composition-Dependent Ring Albedo**: Rings dynamically adopt the color and optical depth of the disrupted body:
   - Brilliant reflective silver-white (`ice >= 70%`, Saturn-like).
   - Warm sand-cream tones (`35% - 70%` ice/dust mixture).
   - Dark charcoal / anthracite (`< 35%` ice, Uranus/Jupiter-like silicate rings).
-- **Interactive Experiment**: Trigger on demand via the Planet Builder (`[P]` $\to$ `[ 💥 Insert Sub-Roche Moon ]`).
 
-### 7. 💨 Atmospheric Photoevaporation & Cometary Outflow Tails
-- **Extreme UV (EUV) Hydrodynamic Escape**: Close-in worlds ($a < 0.25\text{ AU}$, e.g. Hot Jupiter `[F4]`, TRAPPIST-1b/c `[F2]`) absorb intense high-energy radiation, driving supersonic Parker-type hydrodynamic winds.
-- **Energy-Limited Mass Stripping**: Computes mass loss rates $\dot{M}_{\text{loss}} \approx \frac{\eta \pi R_p^3 F_{\text{EUV}}}{G M_p}$, stripping volatile hydrogen/helium envelopes down to bare rocky cores over geological time (the "Hot Neptune Desert").
-- **3D Anti-Stellar Cometary Tails**:
-  - Central supersonic ion core spine extending $0.25 - 6.0\text{ AU}$ away from the host star with orbital aberration tilt.
-  - Parabolic expanding cometary bow shock sheath with 4 flaring azimuthal streamer ribs.
-  - Traveling ionization knot pulses flowing down the tail.
-  - Composition-dependent ionization glow: electric cyan for Hydrogen/Helium envelopes vs warm incandescent amber for evaporated mineral/sodium vapor.
+### 10. 💨 Atmospheric Photoevaporation & Cometary Outflow Tails
+- **Extreme UV (EUV) Hydrodynamic Escape**: Close-in worlds ($a < 0.25\text{ AU}$) absorb high-energy stellar flux, driving supersonic Parker-type hydrodynamic winds.
+- **Energy-Limited Mass Stripping**: Strips hydrogen/helium envelopes down to bare chthonian rocky cores over geological time, reproducing the observed exoplanet "Hot Neptune Desert".
+- **3D Anti-Stellar Cometary Tails**: Supersonic ion core spines and parabolic bow shocks trailing with orbital aberration, glowing in electric cyan or incandescent mineral vapor.
 
-### 8. 🌍 Planetary Geology, Atmospheres & Cometary Water Delivery
-- **Thermal Evolution & Magma Oceans**: Cooling crust plates drift over convective, pulsating lava rifts on molten protoplanets ($T > 600\text{ K}$).
-- **Core Differentiation & Geodynamo Shielding**: Iron cores differentiate to generate magnetic fields that shield volatile atmospheres from solar wind hydrodynamic stripping.
-- **Late Heavy Bombardment (`[G]`)**: Nice-model $2:1$ resonance migration perturbs outer icy comets into inner orbits. Real-time water delivery builds liquid blue oceans and cloud decks on Proto-Earth.
-- **Super-Earths & Gas Giant Variety Engine**: Procedural biomes (cratons, alpine ranges, abyssal trenches, rain forests) and mass-tiered Jovian palettes (amber, teal, sapphire, royal purple, maroon brown dwarfs) with anticyclonic storm vortices.
-- **Procedural 3D Irregular Asteroids**: Real-time non-spherical mesh generation for potato chondrites, contact binary dumbbells, and spinning-top rubble piles.
-
-### 9. 궤 Continuous Motion-Fading Orbit Ribbons & Conic Trajectory Overlays
-- **Continuous Motion-Fading Keplerian Ribbons**: Bodies trace smooth, streaming orbital ribbons trailing backwards along their true anomaly arc with progressive alpha falloff ($1.0 \to 0.0$).
-- **Faint Ambient Base Ellipses**: Clean, faint baseline orbital tracks indicate the full geometric orbit paths in space.
-- **Osculating Conic Apsides & Nodes**: High-eccentricity and selected orbits render diamond markers at periapsis ($q$, emerald) and apoapsis ($Q$, amber), connected by a dashed line of apsides, plus ascending/descending node ticks ($\Omega, \mho$).
-- **Open Hyperbolic Flyby Trajectories**: Unbound interstellar interlopers ($e \ge 1.0$, e.g. Rogue Planet `[F5]`) render electric crimson open hyperbolic curves with periapsis guidance.
-- **Satellite / Moon Orbit Anchoring**: Natural moons (`SatelliteOf`) dynamically anchor their orbital ellipses and ribbons relative to their host planet rather than the central star.
-- **Live Planet Builder Preview Conic**: Opening the Planet Builder (`[P]`) renders a pulsating neon preview conic matching active semi-major axis and eccentricity sliders, with an orbiting ghost planet indicator.
-- **Interactive Visualization Cycling (`[Y]`)**: Cycle between `All Worlds` $\to$ `Selected Target Only` $\to$ `Hidden (Cinematic)` via hotkey `[Y]` or the top HUD button.
-
+### 11. 🌌 Procedural Celestial Skybox
+- **Milky Way & Star Clusters**: Tilted galactic frame ($60.2^\circ$), glowing Sagittarius A* galactic core, Great Rift molecular dust absorption lanes, and open clusters (Pleiades).
+- **Early Universe High-Redshift Cosmic Web** *(Little Red Dot, $z \sim 8.5$)*: Primeval intergalactic filaments glowing with redshifted Lyman-$\alpha$ emissions, Strömgren ionization bubbles, and Population III hypergiant star clusters.
 
 ---
 
@@ -90,7 +85,7 @@ Switch between multi-system presets instantly via the top HUD bar or function ke
 
 | Preset | Key | Description |
 | :--- | :---: | :--- |
-| **Hayashi Solar Nebula** | `[F1]` | Canonical 4.5 Gyr Minimum Mass Solar Nebula (MMSN) with central protostar and 8–10 seeded protoplanetary niches. |
+| **Hayashi Solar Nebula** | `[F1]` | Canonical 4.5 Gyr Minimum Mass Solar Nebula (MMSN) with central protostar and seeded protoplanetary niches. |
 | **TRAPPIST-1 System** | `[F2]` | Ultracool M-dwarf with 7 resonant Earth-sized worlds in a compact Laplace chain (3 in the liquid water habitable zone). |
 | **Kepler-16 Circumbinary** | `[F3]` | "Tatooine" K/M-dwarf binary pair orbited by a Saturn-mass circumbinary giant with a habitable exomoon and outer ocean world. |
 | **Hot Jupiter Migration** | `[F4]` | Massive $1.4\text{ M}_{\text{Jup}}$ gas giant undergoing Type II disk torque inward migration from $5.2\text{ AU}$ down to $0.045\text{ AU}$. |
@@ -124,7 +119,7 @@ Open the floating Planet Builder sidebar anytime by pressing **`[P]`** or clicki
 | **Pan Camera** | `W`, `A`, `S`, `D` | Move camera focus across orbital plane |
 | **Orbit Camera** | `Right Click + Drag` | Smooth 3D spherical orbit around focus point |
 | **Zoom In / Out** | `Mouse Scroll` | Exponentially smoothed logarithmic zoom ($0.001\text{ AU}$ to $250,000\text{ AU}$) |
-| **Select / Focus** | `Left Click` | Click any celestial body or top quick bar button to lock camera focus with zero lag |
+| **Select / Focus** | `Left Click` | Click any celestial body or top quick bar button to lock camera focus |
 | **Cycle Focus** | `Tab` / `Shift+Tab` | Distance-ordered cycling across all system worlds |
 | **Reset View** | `R` / `Escape` | Reset camera focus to the central star |
 | **Toggle Quick Bar** | `H` | Collapse / expand the top celestial body switcher bar |
@@ -132,12 +127,17 @@ Open the floating Planet Builder sidebar anytime by pressing **`[P]`** or clicki
 | **Adjust Size Scale** | `.` / `,` | Exaggerate or normalize celestial body visual radii |
 | **Toggle Fullscreen** | `F11` | Toggle borderless fullscreen display |
 
-### Simulation & Time Warp
+### Simulation & Analysis
 | Action | Key | Description |
 | :--- | :---: | :--- |
 | **Pause / Resume** | `Spacebar` | Pause or resume physical integration |
 | **Time Warp Down / Up** | `←` / `→` | Step through simulation speeds: $1\times, 10\times, 100\times, 1,000\times, 10,000\times$ |
 | **Warp Presets** | `1`, `2`, `3`, `4` | Direct jump to $1\times, 10\times, 100\times$, or $1,000\times$ simulation speed |
+| **Telemetry Panel** | `T` | Open / close real-time energy conservation and orbital telemetry |
+| **Celestial Inspector** | `I` | Open / close geophysical composition and structure inspector |
+| **Trigger Theia Giant Impact** | `M` | Initiate Theia intercept to form The Moon and spin up Earth |
+| **Trigger LHB** | `G` | Trigger Late Heavy Bombardment & cometary water delivery |
+| **Planet Builder GUI** | `P` | Open / close floating Planet Builder sidebar |
 
 ### Scenarios & Astrophysics Experiments
 | Action | Key | Description |
@@ -147,14 +147,12 @@ Open the floating Planet Builder sidebar anytime by pressing **`[P]`** or clicki
 | **Load Kepler-16** | `F3` | Circumbinary binary star pair with giant & exomoon |
 | **Load Hot Jupiter** | `F4` | Inward gas giant disk migration |
 | **Load Rogue Planet** | `F5` | Hyperbolic interstellar invader flyby |
-| **Load Little Red Dot** | `F6` | $450,000\text{ M}_\odot$ Quasi-Star with Early Universe Cosmic Web & Gravitational Lensing |
-| **Load Pulsar System** | `F7` | Relativistic $161\text{ Hz}$ millisecond pulsar with synchrotron lighthouse beams |
+| **Load Little Red Dot** | `F6` | $450,000\text{ M}_\odot$ Quasi-Star with Cosmic Web & Gravitational Lensing |
+| **Load Pulsar System** | `F7` | Relativistic $161\text{ Hz}$ millisecond pulsar with lighthouse beams |
 | **Toggle GPU Compute** | `F8` | Hot-swap between 100k GPU compute particles and CPU fallback |
-| **Load Magnetar** | `F9` | $10^{15}\text{ G}$ magnetar with reconnection flares, 3D flux loops, & hypergiant companion |
-| **Planet Builder GUI** | `P` | Open / close floating Planet Builder sidebar |
-| **Trigger LHB** | `G` | Trigger Late Heavy Bombardment & cometary water delivery |
+| **Load Magnetar** | `F9` | $10^{15}\text{ G}$ magnetar with reconnection flares & 3D flux loops |
 | **Super-Eddington Toggle** | `X` | Toggle $4.5\times$ vs $0.9\times$ black hole seed accretion rate |
-| **Cocoon Blowout** | `B` | Blow away hydrogen cocoon $\to$ contract lens down to $2.5\text{ AU}$ naked black hole |
+| **Cocoon Blowout** | `B` | Blow away hydrogen cocoon $\to$ contract lens down to naked black hole |
 
 ---
 
@@ -175,10 +173,12 @@ protostellar/
 ├── src/
 │   ├── gpu/                      # WebGPU compute nodes, double-buffered async staging buffers
 │   ├── simulation/
-│   │   ├── accretion/            # Collision regimes, mergers, Roche disruption, moon capture
-│   │   ├── components/           # ECS component definitions (Mass, Velocity, Composition, etc.)
-│   │   ├── disk/                 # Protoplanetary disk structure, gas drag, particle seeding
-│   │   ├── scenarios/            # Preset system configurations (Solar Nebula, TRAPPIST-1, etc.)
+│   │   ├── accretion/            # Collision regimes, Theia giant impact, Roche disruption, moon capture
+│   │   ├── components/           # ECS component definitions (Mass, Velocity, Composition, SpinState, etc.)
+│   │   ├── disk/                 # Protoplanetary disk structure, gas drag, streaming instability, belts
+│   │   ├── scenarios/            # Preset system configurations (Solar Nebula, TRAPPIST-1, Magnetar, etc.)
+│   │   ├── pebble_accretion.rs   # Aerodynamic pebble drift and core growth
+│   │   ├── telemetry.rs          # Energy conservation, angular momentum auditing, and CSV logging
 │   │   ├── physics.rs            # Symplectic leapfrog integrator, N-body gravity
 │   │   ├── thermodynamics.rs     # Stellar evolution, climate, habitability modeling
 │   │   └── resources.rs          # Shared simulation state and configuration
@@ -190,14 +190,14 @@ protostellar/
 │   │   ├── gas_clouds.rs         # Volumetric protoplanetary disk rendering
 │   │   └── skybox.rs             # Procedural skybox (Milky Way / Cosmic Web)
 │   ├── game/
-│   │   ├── ui/                   # HUD panels, inspector, Planet Builder, telemetry
+│   │   ├── ui/                   # HUD panels, inspector, Planet Builder, telemetry panel
 │   │   ├── interaction.rs        # Selection, click-to-place, keyboard input
 │   │   ├── phases.rs             # Formation phase state machine
 │   │   └── time_control.rs       # Time warp, pause, step-once
 │   └── utils/                    # Astronomical constants, math solvers, orbital mechanics
 └── tests/
     ├── simulation_tests.rs       # Test harness entry point
-    └── simulation_tests/         # 105 rigorous automated astrophysics, climate, and stability tests
+    └── simulation_tests/         # 151 rigorous automated astrophysics, climate, and stability tests
 ```
 
 ---
@@ -220,7 +220,7 @@ cargo run --release
 > **Note:** Always compile with `--release`! Protostellar's numerical integrators, GPU compute pipeline, and 100,000-particle swarms are heavily optimized for release builds, running locked at 120+ FPS on Apple Silicon M-series chips and modern GPUs.
 
 ### Running Automated Astrophysics Tests
-To run all 105 unit and integration tests:
+To run all 151 unit and integration tests:
 
 ```bash
 cargo test --test simulation_tests

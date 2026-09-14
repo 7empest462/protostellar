@@ -19,8 +19,10 @@ impl Plugin for GamePlugin {
         app.init_state::<SystemPhase>()
             .init_resource::<PhaseManager>()
             .init_resource::<LateHeavyBombardmentState>()
+            .init_resource::<crate::simulation::accretion::TheiaImpactState>()
             .init_resource::<QuickBarState>()
             .init_resource::<PlanetBuilderState>()
+            .init_resource::<TelemetryPanelState>()
             .init_resource::<HudVisibilityState>()
             .add_systems(Startup, setup_hud)
             .add_systems(
@@ -33,6 +35,7 @@ impl Plugin for GamePlugin {
                     handle_ui_button_interactions,
                     update_quick_body_selector_bar.after(handle_ui_button_interactions),
                     update_planet_builder_ui,
+                    update_telemetry_graph_ui,
                     handle_roche_disruption_toasts,
                     update_hud_visibility,
                     update_hud,

@@ -468,6 +468,8 @@ fn test_ui_button_interactions_query_schedule_no_aliasing_conflict() {
     app.add_message::<LoadScenarioEvent>();
     app.init_resource::<QuickBarState>();
     app.init_resource::<PlanetBuilderState>();
+    app.init_resource::<TelemetryPanelState>();
+    app.init_resource::<protostellar::simulation::telemetry::SimulationTelemetryHistory>();
     app.init_resource::<HudVisibilityState>();
     app.init_resource::<SimTime>();
     app.init_resource::<SimulationConfig>();

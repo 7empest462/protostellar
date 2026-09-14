@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
+use crate::simulation::disk::belts::BeltCensus;
 use crate::simulation::resources::SimTime;
 use crate::simulation::thermodynamics::StarIgnitionEvent;
 
@@ -43,6 +44,7 @@ pub enum MilestoneId {
     StellarMetamorphosis,
 }
 
+/// A scientific discovery milestone tracking solar system emergence.
 #[derive(Debug, Clone)]
 pub struct ScientificMilestone {
     pub id: MilestoneId,
@@ -89,6 +91,7 @@ pub struct PhaseManager {
     pub planetesimal_count: usize,
     pub asteroid_count: usize,
     pub comet_count: usize,
+    pub belt_census: BeltCensus,
     pub disk_mass_remaining: f64,
     pub star_mass: f64,
     pub is_star_ignited: bool,
@@ -107,6 +110,7 @@ impl Default for PhaseManager {
             planetesimal_count: 0,
             asteroid_count: 0,
             comet_count: 0,
+            belt_census: BeltCensus::default(),
             disk_mass_remaining: 0.035,
             star_mass: 1.0,
             is_star_ignited: false,
@@ -218,6 +222,7 @@ struct SystemStats {
     planetesimals: usize,
     asteroids: usize,
     comets: usize,
+    belt_census: BeltCensus,
     has_differentiated: bool,
     has_rings: bool,
     has_dynamo: bool,
@@ -234,6 +239,7 @@ fn collect_system_statistics(
         (
             &Mass,
             &CelestialBody,
+            &SimPosition,
             Option<&InternalDifferentiation>,
             Option<&VolatileInventory>,
             Option<&PlanetaryRingSystem>,
@@ -245,16 +251,25 @@ fn collect_system_statistics(
 ) -> SystemStats {
     let mut stats = SystemStats::default();
 
-    for (mass, body, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
+    for (mass, body, pos, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
         match body.body_type {
             BodyType::TerrestrialPlanet
             | BodyType::SuperEarth
             | BodyType::GasGiant
             | BodyType::IceGiant => stats.planets += 1,
             BodyType::Protoplanet => stats.protoplanets += 1,
-            BodyType::Asteroid => stats.asteroids += 1,
-            BodyType::Comet => stats.comets += 1,
-            BodyType::Planetesimal | BodyType::DustGrain => stats.planetesimals += 1,
+            BodyType::Asteroid => {
+                stats.asteroids += 1;
+                stats.belt_census.record(pos.0.length());
+            }
+            BodyType::Comet => {
+                stats.comets += 1;
+                stats.belt_census.record(pos.0.length());
+            }
+            BodyType::Planetesimal | BodyType::DustGrain => {
+                stats.planetesimals += 1;
+                stats.belt_census.record(pos.0.length());
+            }
             _ => {}
         }
         if let Some(diff) = opt_diff {
@@ -284,6 +299,7 @@ fn collect_system_statistics(
     phase_mgr.planetesimal_count = stats.planetesimals;
     phase_mgr.asteroid_count = stats.asteroids;
     phase_mgr.comet_count = stats.comets;
+    phase_mgr.belt_census = stats.belt_census.clone();
     phase_mgr.disk_mass_remaining = stats.remaining_disk_mass;
 
     if let Ok((mass, ignition, opt_evo)) = star_query.single() {
@@ -355,6 +371,20 @@ fn evaluate_system_phase_transitions(
     next_phase: &mut NextState<SystemPhase>,
     current_sim_yr: f64,
 ) {
+    if (current_sim_yr >= 800.0 || lhb_state.resonance_crossed)
+        && matches!(
+            phase_mgr.current_phase,
+            SystemPhase::StarIgnition | SystemPhase::PlanetaryAccretion
+        )
+    {
+        lhb_state.is_active = true;
+        phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
+        phase_mgr.phase_description =
+            "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
+        next_phase.set(SystemPhase::LateHeavyBombardment);
+        return;
+    }
+
     match phase_mgr.current_phase {
         SystemPhase::StarIgnition => {
             if stats.planets + stats.protoplanets >= 1 {
@@ -365,7 +395,7 @@ fn evaluate_system_phase_transitions(
             }
         }
         SystemPhase::PlanetaryAccretion => {
-            if stats.planets >= 3 && current_sim_yr >= 800.0 {
+            if current_sim_yr >= 800.0 || lhb_state.resonance_crossed {
                 lhb_state.is_active = true;
                 phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
                 phase_mgr.phase_description =
@@ -405,6 +435,7 @@ pub fn monitor_phase_transitions(
         (
             &Mass,
             &CelestialBody,
+            &SimPosition,
             Option<&InternalDifferentiation>,
             Option<&VolatileInventory>,
             Option<&PlanetaryRingSystem>,
@@ -432,6 +463,8 @@ pub fn monitor_phase_transitions(
         lhb_state.is_active = true;
         lhb_state.manual_trigger_requested = false;
         lhb_state.resonance_crossed = true;
+        lhb_state.migration_progress = 0.0;
+        lhb_state.time_active_years = 0.0;
         phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
         phase_mgr.phase_description =
             "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";

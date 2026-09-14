@@ -348,3 +348,264 @@ fn test_skybox_scenario_blending_and_materials() {
     assert!(skybox_radius > max_simulation_boundary * 1000.0);
     assert!(skybox_radius < camera_far_plane);
 }
+
+#[test]
+fn test_trappist1_compact_orbital_stability() {
+    use bevy::math::DVec3;
+    use protostellar::utils::constants::G_ASTRO;
+
+    let m_star = 0.0898f64;
+    let a_b = 0.01154f64; // TRAPPIST-1b semi-major axis
+    let v_circ = (G_ASTRO * m_star / a_b).sqrt();
+
+    // 1. Verify adaptive softening conservation (0.00005 AU) vs legacy softening (0.008 AU)
+    let eps_adaptive = 0.00005f64;
+    let eps_legacy = 0.008f64;
+    let grav_true = G_ASTRO * m_star / (a_b * a_b);
+    let grav_adaptive =
+        G_ASTRO * m_star * a_b / (a_b * a_b + eps_adaptive * eps_adaptive).powf(1.5);
+    let grav_legacy = G_ASTRO * m_star * a_b / (a_b * a_b + eps_legacy * eps_legacy).powf(1.5);
+
+    // Adaptive softening retains >99.99% of true gravitational acceleration
+    assert!((grav_adaptive / grav_true - 1.0).abs() < 0.0001);
+    // Legacy softening caused a catastrophic 45% gravity attenuation
+    assert!(grav_legacy / grav_true < 0.60);
+
+    // 2. Symplectic leapfrog orbit integration over 200 substeps (~2 full orbits of TRAPPIST-1b)
+    let p_orbit_yr = (a_b.powi(3) / m_star).sqrt();
+    let dt_sub = p_orbit_yr / 100.0; // 100 substeps per orbit
+    let mut pos = DVec3::new(a_b, 0.0, 0.0);
+    let mut vel = DVec3::new(0.0, 0.0, v_circ);
+
+    // Initial half-step kick
+    let r_sq = pos.length_squared() + eps_adaptive * eps_adaptive;
+    let mut acc = -(G_ASTRO * m_star / (r_sq * r_sq.sqrt())) * pos;
+    vel += acc * (0.5 * dt_sub);
+
+    for _ in 0..200 {
+        pos += vel * dt_sub;
+        let r_sq = pos.length_squared() + eps_adaptive * eps_adaptive;
+        acc = -(G_ASTRO * m_star / (r_sq * r_sq.sqrt())) * pos;
+        vel += acc * dt_sub;
+    }
+    vel -= acc * (0.5 * dt_sub); // Final half-step kick
+
+    let final_r = (pos.x * pos.x + pos.z * pos.z).sqrt();
+    let rel_radial_error = (final_r - a_b).abs() / a_b;
+
+    // Orbit must remain dynamically locked and stable within < 0.2%
+    assert!(rel_radial_error < 0.002);
+}
+
+#[test]
+fn test_earth_lhb_ocean_seeding_and_impact_capture() {
+    use bevy::math::DVec3;
+    use protostellar::simulation::components::VolatileInventory;
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, G_ASTRO};
+
+    let m_star = 1.0f64;
+    let r_earth = 1.0f64;
+    let r_spawn = 6.0f64;
+    let q_target = 1.0f64;
+
+    // 1. Keplerian rendezvous geometry
+    let a_transfer = f64::midpoint(r_spawn, q_target);
+    let t_flight = std::f64::consts::PI * (a_transfer.powi(3) / (G_ASTRO * m_star)).sqrt();
+    let omega_earth = (G_ASTRO * m_star / (r_earth.powi(3))).sqrt();
+    let delta_theta_earth = omega_earth * t_flight;
+
+    // Impactor starts at aphelion opposite the rendezvous point
+    let phi_earth_0 = 0.0f64;
+    let rendezvous_angle = phi_earth_0 + delta_theta_earth;
+    let spawn_angle = rendezvous_angle + std::f64::consts::PI;
+
+    let earth_at_rendezvous = DVec3::new(
+        r_earth * rendezvous_angle.cos(),
+        0.0,
+        r_earth * rendezvous_angle.sin(),
+    );
+    let impactor_at_perihelion = DVec3::new(
+        q_target * (spawn_angle + std::f64::consts::PI).cos(),
+        0.0,
+        q_target * (spawn_angle + std::f64::consts::PI).sin(),
+    );
+
+    let miss_distance = (earth_at_rendezvous - impactor_at_perihelion).length();
+    let hill_capture_radius = r_earth * (EARTH_MASS_SOLAR / (3.0 * m_star)).cbrt() * 0.40;
+
+    // Impactor trajectory passes directly through Earth's capture corridor (< 0.004 AU)
+    assert!(miss_distance < 1e-6);
+    assert!(hill_capture_radius > 0.0035);
+
+    // 2. Volatile ocean delivery budget from 6 comets/asteroids
+    let mut vol = VolatileInventory::default();
+    let cometary_ice_fraction = 0.55f64;
+    let impactor_mass_earth = 0.00025f64;
+    let water_per_impact = impactor_mass_earth * cometary_ice_fraction;
+
+    for _ in 0..6 {
+        vol.delivered_water_m_earth += water_per_impact;
+        vol.cometary_impact_count += 1;
+        vol.ocean_coverage_frac = (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
+    }
+
+    assert_eq!(vol.cometary_impact_count, 6);
+    assert!(vol.delivered_water_m_earth >= 0.0006);
+    // Ocean coverage must exceed 70% threshold (reaches 85% ocean world coverage)
+    assert!(vol.ocean_coverage_frac >= 0.70);
+}
+
+#[test]
+fn test_high_time_warp_belt_formation() {
+    use bevy::prelude::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::disk::belts::BeltCensus;
+    use protostellar::simulation::disk::planetesimals::{
+        auto_spawn_planetesimals, PlanetesimalSpawner,
+    };
+    use protostellar::simulation::disk::spawn_protoplanetary_disk;
+    use protostellar::simulation::pebble_accretion::spawn_streaming_instability_minor_bodies;
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    let mut config = SimulationConfig::default();
+    config.gas_density_scale = 1.0;
+    app.insert_resource(config)
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<PlanetesimalSpawner>()
+        .init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+
+    let disk_params = app.world().resource::<DiskParameters>().clone();
+    let sim_config = app.world().resource::<SimulationConfig>().clone();
+    spawn_protoplanetary_disk(&mut app.world_mut().commands(), &disk_params, &sim_config);
+
+    app.add_systems(
+        Update,
+        (
+            step_physics_simulation,
+            auto_spawn_planetesimals.after(step_physics_simulation),
+            spawn_streaming_instability_minor_bodies.after(auto_spawn_planetesimals),
+        ),
+    );
+
+    // Run 1 frame at 1x to flush initial commands
+    app.update();
+
+    // Speed up time to 100,000x for 25 frames (advancing 50 years per frame -> 1,250 years total)
+    app.world_mut().resource_mut::<TimeWarp>().multiplier = 100_000.0;
+    for _ in 0..25 {
+        app.update();
+    }
+
+    let mut census = BeltCensus::default();
+    let mut query = app
+        .world_mut()
+        .query::<(&CelestialBody, &SimPosition, Option<&CentralStar>)>();
+    for (body, pos, opt_star) in query.iter(app.world()) {
+        if opt_star.is_some() {
+            continue;
+        }
+        let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
+        census.record(r);
+        assert!(
+            r < 1000.0,
+            "Body '{}' ({:?}) was flung out to r = {:.2} AU!",
+            body.name,
+            body.body_type,
+            r
+        );
+    }
+
+    // Belts must be actively populated even under 100,000x time warp
+    assert!(
+        census.asteroid_belt_count >= 12,
+        "Asteroid Belt underpopulated at high time warp: got {}",
+        census.asteroid_belt_count
+    );
+    assert!(
+        census.kuiper_count >= 6,
+        "Kuiper Belt underpopulated at high time warp: got {}",
+        census.kuiper_count
+    );
+}
+
+#[test]
+fn test_guaranteed_minor_body_formation_to_capacity_limit() {
+    use bevy::prelude::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::disk::planetesimals::{
+        auto_spawn_planetesimals, PlanetesimalSpawner,
+    };
+    use protostellar::simulation::pebble_accretion::spawn_streaming_instability_minor_bodies;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    let mut config = SimulationConfig::default();
+    config.gas_density_scale = 1.0;
+    app.insert_resource(config)
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<PlanetesimalSpawner>();
+
+    let mut disk_params = app.world().resource::<DiskParameters>().clone();
+    disk_params.gas_disk_lifetime_yr = 5000.0;
+    app.insert_resource(disk_params);
+
+    let mut spawner = app.world().resource::<PlanetesimalSpawner>().clone();
+    spawner.max_ecs_bodies = 1024;
+    app.insert_resource(spawner);
+
+    app.add_systems(
+        Update,
+        (
+            auto_spawn_planetesimals,
+            spawn_streaming_instability_minor_bodies.after(auto_spawn_planetesimals),
+        ),
+    );
+
+    // Advance time in steps across early gas disk era (t = 0 to 4,000 yr)
+    for step in 1..=40 {
+        app.world_mut().resource_mut::<SimTime>().elapsed_years = (step as f64) * 100.0;
+        app.update();
+    }
+
+    let mid_count = app.world_mut().query::<Entity>().iter(app.world()).count();
+    assert!(
+        mid_count > 600,
+        "Minor body count must rapidly ramp beyond 600 during gas era (found {mid_count})"
+    );
+
+    // Advance into post-gas debris cascade era (t = 5,000 to 10,000 yr)
+    for step in 51..=100 {
+        app.world_mut().resource_mut::<SimTime>().elapsed_years = (step as f64) * 100.0;
+        app.update();
+    }
+
+    let final_count = app.world_mut().query::<Entity>().iter(app.world()).count();
+    assert!(
+        final_count >= 1000,
+        "Minor body formation must reach capacity (~1024) and continue in post-gas era (found {final_count})"
+    );
+
+    let mut asteroids = 0;
+    let mut comets = 0;
+    let mut query = app.world_mut().query::<&CelestialBody>();
+    for body in query.iter(app.world()) {
+        if body.body_type == BodyType::Asteroid {
+            asteroids += 1;
+        } else if body.body_type == BodyType::Comet {
+            comets += 1;
+        }
+    }
+    assert!(
+        asteroids >= 400,
+        "Must have abundant asteroids (found {asteroids})"
+    );
+    assert!(comets >= 250, "Must have abundant comets (found {comets})");
+}

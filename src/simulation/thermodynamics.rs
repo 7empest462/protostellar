@@ -207,7 +207,6 @@ pub fn update_photoevaporative_escape(
     let Ok((star_pos, star_lum, _star_rad, _ignition, _star_body)) = star_query.single() else {
         return;
     };
-
     let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
     let lum_val = star_lum.0.max(0.01);
 
@@ -217,16 +216,13 @@ pub fn update_photoevaporative_escape(
         if b_body.body_type.is_star_or_remnant() {
             continue;
         }
-
         let dist_au = (p_pos.0 - star_pos.0).length().max(0.01);
-
         if dist_au < 0.25 {
             let has_gas = comp.gas_frac > 0.0001;
             let has_ice = comp.ice_frac > 0.005;
             let has_atm = opt_vol
                 .as_ref()
                 .is_some_and(|v| v.atmospheric_pressure_bar > 0.005);
-
             if has_gas || has_ice || has_atm {
                 apply_photoevaporative_escape(
                     &mut commands,
@@ -350,7 +346,7 @@ fn step_protostar_ignition_and_limits(
         let blast_speed = 0.65;
         ignition.shockwave_radius = (ignition.shockwave_radius + blast_speed * dt_yr).min(30.0);
         let time_decay = (1.0 - (elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
-        config.gas_density_scale = time_decay;
+        config.gas_density_scale = config.gas_density_scale.min(time_decay);
     } else {
         let heating_rate_per_yr = 2.0e5 * mass.0;
         ignition.core_temperature += heating_rate_per_yr * dt_yr;
@@ -769,7 +765,7 @@ fn update_body_thermodynamics(
         b_body,
         comp,
         p_temp,
-        opt_vol.as_ref(),
+        opt_vol.as_deref_mut(),
         opt_climate,
         opt_bio,
         r,
@@ -810,7 +806,7 @@ fn update_body_climate_and_biosphere(
     b_body: &CelestialBody,
     comp: &Composition,
     p_temp: &mut Temperature,
-    opt_vol: Option<&Mut<'_, VolatileInventory>>,
+    mut opt_vol: Option<&mut VolatileInventory>,
     opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
     opt_bio: &mut Option<Mut<'_, BiosphereState>>,
     r: f64,
@@ -835,8 +831,20 @@ fn update_body_climate_and_biosphere(
         0.0
     };
 
-    let atm_pressure = opt_vol.map_or(0.0, |v| v.atmospheric_pressure_bar);
-    let ocean_frac = opt_vol.map_or(0.0, |v| v.ocean_coverage_frac);
+    let has_water_volatiles = current_ice > 0.001
+        || opt_vol
+            .as_ref()
+            .is_some_and(|v| v.delivered_water_m_earth > 1e-6);
+
+    let atm_pressure = opt_vol.as_ref().map_or(0.0, |v| v.atmospheric_pressure_bar);
+    let ocean_frac = if has_water_volatiles {
+        opt_vol.as_ref().map_or(0.0, |v| v.ocean_coverage_frac)
+    } else {
+        if let Some(ref mut vol) = opt_vol {
+            vol.ocean_coverage_frac = 0.0;
+        }
+        0.0
+    };
 
     let mut greenhouse_delta = if atm_pressure > 0.01 {
         33.0 * (atm_pressure / 1.0).powf(0.28) * (1.0 + ocean_frac * 0.25)
@@ -848,8 +856,16 @@ fn update_body_climate_and_biosphere(
         greenhouse_delta = (greenhouse_delta * 3.5).min(450.0);
     }
 
-    let surface_temp =
+    let target_temp =
         (equilibrium_temp + f64::from(greenhouse_delta) + shock_boost).clamp(30.0, 5000.0);
+    let surface_temp = if p_temp.0 > target_temp + 1.0 {
+        // Radiative cooling of magma ocean / impact thermal surplus towards equilibrium
+        let cool_rate = 0.08 * (p_temp.0 / 1000.0).powi(3).clamp(0.01, 15.0);
+        let k_cool = (1.0 - (-cool_rate * dt_yr).exp()).clamp(0.0, 1.0);
+        (p_temp.0 + (target_temp - p_temp.0) * k_cool).max(target_temp)
+    } else {
+        target_temp
+    };
     p_temp.0 = surface_temp;
 
     let climate_regime = if matches!(b_body.body_type, BodyType::GasGiant | BodyType::IceGiant) {
@@ -864,15 +880,20 @@ fn update_body_climate_and_biosphere(
         ClimateRegime::TemperateHabitable
     };
 
-    let ice_coverage = match climate_regime {
-        ClimateRegime::SnowballIceAge => 1.0,
-        ClimateRegime::TemperateHabitable => {
-            ((320.0 - surface_temp as f32) / 60.0).clamp(0.05, 0.40)
+    let has_water = has_water_volatiles && (ocean_frac > 0.01 || current_ice > 0.005);
+    let ice_coverage = if has_water {
+        match climate_regime {
+            ClimateRegime::SnowballIceAge => 1.0,
+            ClimateRegime::TemperateHabitable if surface_temp < 290.0 => {
+                ((290.0 - surface_temp as f32) / 35.0 * 0.35).clamp(0.0, 0.35)
+            }
+            _ => 0.0,
         }
-        _ => 0.0,
+    } else {
+        0.0
     };
 
-    let cloud_coverage = if atm_pressure > 0.05 {
+    let cloud_coverage = if atm_pressure > 0.05 && (has_water_volatiles || comp.gas_frac > 0.02) {
         (0.35 + ocean_frac * 0.40).clamp(0.1, 0.95)
     } else {
         0.0
@@ -957,14 +978,13 @@ fn update_body_biosphere(
             bio.biomass_coverage_frac = (bio.biomass_coverage_frac
                 + (0.005 * habitability * dt_yr as f32))
                 .clamp(0.0, 0.85);
-            bio.oxygen_fraction = (bio.biomass_coverage_frac * 0.24).clamp(0.0, 0.21);
             if bio.emergence_year.is_none() && bio.biomass_coverage_frac > 0.05 {
                 bio.emergence_year = Some(elapsed_years);
             }
         } else {
             bio.biomass_coverage_frac = (bio.biomass_coverage_frac - 0.02 * dt_yr as f32).max(0.0);
-            bio.oxygen_fraction = (bio.biomass_coverage_frac * 0.24).clamp(0.0, 0.21);
         }
+        bio.oxygen_fraction = (bio.biomass_coverage_frac * 0.24).clamp(0.0, 0.21);
     } else if habitability >= 0.45 && b_mass_solar >= EARTH_MASS_SOLAR * 0.15 {
         if let Ok(mut cmd) = commands.get_entity(body_ent) {
             cmd.insert(BiosphereState {

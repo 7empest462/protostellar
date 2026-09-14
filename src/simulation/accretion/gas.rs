@@ -32,8 +32,12 @@ fn calculate_gas_capacity_limits(
             disk_params.outer_radius_au,
         );
         (ring_limit, 1.0, 5.0)
+    } else if r_au < 2.0 {
+        // Inner terrestrial zone: strictly thin secondary atmospheres (max ~1.05 M_earth total)
+        (1.05 * EARTH_MASS_SOLAR, 0.035, 100.0)
     } else if r_au < 2.7 {
-        (3.0 * EARTH_MASS_SOLAR, 0.035, 100.0)
+        // Asteroid belt: negligible gas capture, prevent runaway planet formation
+        (0.005 * EARTH_MASS_SOLAR, 0.010, 100.0)
     } else if r_au < 5.0 {
         (0.5 * EARTH_MASS_SOLAR, 0.045, 100.0)
     } else if r_au < 12.0 {
@@ -60,7 +64,7 @@ fn calculate_local_gas_density(
         0.0025 * (disk_params.outer_radius_au / r_au).powf(0.5) * gas_scale
     } else if r_au < 2.7 {
         if is_ignited {
-            1.2e-4 * (r_au / 1.0).powf(-1.50) * (gas_scale * 0.05 + 0.001)
+            1.2e-4 * (r_au / 1.0).powf(-1.50) * (gas_scale * 0.05)
         } else {
             1.2e-4 * (r_au / 1.0).powf(-1.50) * gas_scale
         }
@@ -118,7 +122,7 @@ fn calculate_gas_growth_step(
         0.05
     };
 
-    let gap_factor = (1.0 - (m / env.max_gas_mass)).clamp(0.01, 1.0);
+    let gap_factor = (1.0 - (m / env.max_gas_mass)).clamp(0.0, 1.0);
     let c_gas = if env.is_massive_disk {
         15.0 * (f64::from(env.config.accretion_rate_multiplier) / 120.0)
     } else {
@@ -141,7 +145,9 @@ fn calculate_gas_growth_step(
     let remaining_gas_capacity = if !env.is_massive_disk && r_au < 5.0 {
         let max_g = m * env.max_gas_frac;
         let current_g = m * comp_gas_frac;
-        (max_g - current_g).max(0.0)
+        let frac_remaining = (max_g - current_g).max(0.0);
+        let mass_remaining = (env.max_gas_mass - m).max(0.0);
+        frac_remaining.min(mass_remaining)
     } else {
         (env.max_gas_mass - m).max(0.0)
     };
@@ -325,7 +331,7 @@ pub fn direct_nebular_gas_accretion(
     }
 
     let is_ignited = star_query.iter().next().is_some_and(|ig| ig.is_ignited);
-    let dt_yr = config.base_dt_yr * (time_warp.multiplier / 1.0).clamp(1.0, 50.0);
+    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(0.01)).min(10.0);
     let star_mass = disk_params.central_star_mass;
     let is_massive_disk = star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 

@@ -44,8 +44,15 @@ fn draw_star_effects(
     opt_evo: Option<&StellarEvolutionState>,
     opt_quasi: Option<&BlackHoleStarState>,
     config: &SimulationConfig,
+    overlay_mode: DiagnosticOverlayMode,
     elapsed: f32,
 ) {
+    // When overlays are hidden we intentionally skip drawing any star-related
+    // gizmos (magnetospheres, jets, ignition shockwaves, nebulae, etc.) so the
+    // cinematic view remains clean.
+    if overlay_mode == DiagnosticOverlayMode::Hidden {
+        return;
+    }
     if let Some(evo) = opt_evo {
         draw_stellar_evolution_nebula(gizmos, star_vec, evo);
     }
@@ -228,6 +235,9 @@ fn draw_single_body_gizmos(
         OrbitVisualizationMode::SelectedOnly => is_selected,
         OrbitVisualizationMode::All => true,
     };
+    // Do not draw cometary tails when overlays are hidden.
+    let should_draw_tail =
+        should_draw_tail && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
 
     if should_draw_tail {
         draw_cometary_escape_tails(
@@ -244,7 +254,9 @@ fn draw_single_body_gizmos(
     }
 
     if let Some(diff) = opt_diff {
-        draw_planetary_magnetospheres(gizmos, body_vec, params.star_vec, diff, opt_spin);
+        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+            draw_planetary_magnetospheres(gizmos, body_vec, params.star_vec, diff, opt_spin);
+        }
     }
 
     let should_draw_orbit = match player_state.orbit_mode {
@@ -257,7 +269,7 @@ fn draw_single_body_gizmos(
                 || (mass.0 / EARTH_MASS_SOLAR) >= 0.05
                 || body.body_type == BodyType::Comet
         }
-    };
+    } && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
 
     if should_draw_orbit {
         draw_body_orbit(
@@ -287,7 +299,7 @@ fn draw_single_body_gizmos(
         player_state.overlay_mode,
     );
 
-    if is_selected {
+    if is_selected && player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
         draw_body_selection_and_beacons(gizmos, body_vec, body, opt_rad, config, params.cam_pos);
     }
 }
@@ -330,6 +342,17 @@ pub fn draw_orbital_effects_and_gizmos(
     parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
     opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
 ) {
+    // If orbit trails are hidden and there are no active visual events or builders,
+    // short-circuit the entire orbital gizmo pass. Also respect the diagnostic
+    // overlay `Hidden` mode as a complete hide-all shortcut.
+    if (player_state.orbit_mode == OrbitVisualizationMode::Off
+        || player_state.overlay_mode == DiagnosticOverlayMode::Hidden)
+        && shockwave_pool.shockwaves.is_empty()
+        && debris_pool.streams.is_empty()
+        && opt_builder.is_none()
+    {
+        return;
+    }
     let opt_star = star_query.iter().next();
     let (star_pos_dvec, star_mass_val, star_vec) = if let Some((s_pos, s_mass, ..)) = opt_star {
         (
@@ -355,14 +378,19 @@ pub fn draw_orbital_effects_and_gizmos(
             opt_evo,
             opt_quasi,
             &config,
+            player_state.overlay_mode,
             elapsed,
         );
     }
 
-    draw_impact_shockwaves(&mut gizmos, &shockwave_pool);
-    draw_roche_debris_streamers(&mut gizmos, &debris_pool);
+    if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+        draw_impact_shockwaves(&mut gizmos, &shockwave_pool);
+        draw_roche_debris_streamers(&mut gizmos, &debris_pool);
+    }
     // AU distance guides look like planetary orbits — hide them with orbit trails.
-    if player_state.orbit_mode != OrbitVisualizationMode::Off {
+    if player_state.orbit_mode != OrbitVisualizationMode::Off
+        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
+    {
         draw_au_guide_rings(&mut gizmos, star_vec);
     }
 
@@ -397,11 +425,15 @@ pub fn draw_orbital_effects_and_gizmos(
         );
     }
 
-    if player_state.active_tool == PlayerTool::GravitationalTractor {
+    if player_state.active_tool == PlayerTool::GravitationalTractor
+        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
+    {
         draw_tractor_beam_gizmo(&mut gizmos, &player_state);
     }
 
     if let Some(builder) = opt_builder {
-        draw_planet_builder_preview(&mut gizmos, &builder, star_vec, star_mass_val, elapsed);
+        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+            draw_planet_builder_preview(&mut gizmos, &builder, star_vec, star_mass_val, elapsed);
+        }
     }
 }

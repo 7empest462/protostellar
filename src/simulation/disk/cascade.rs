@@ -50,55 +50,82 @@ fn spawn_lhb_impactor(
     star_pos: DVec3,
     star_m: f64,
     c_idx: usize,
+    target_earth: Option<(DVec3, DVec3)>,
 ) {
-    let is_comet = (c_idx % 5) >= 3;
+    let is_comet = (c_idx % 3) != 1;
     let (r_spawn, q_target, mass_solar, rad_au, comp, body_type, name) = if is_comet {
-        let r_s = 7.0 + ((c_idx * 17) % 100) as f64 * 0.08;
-        let q_t = 0.85 + ((c_idx * 31) % 100) as f64 * 0.003;
-        let m_s = (0.000_015 + ((c_idx * 7) % 50) as f64 * 0.000_001) * EARTH_MASS_SOLAR;
+        let r_s = 6.0 + ((c_idx * 17) % 50) as f64 * 0.05;
+        let q_t = 0.98 + ((c_idx * 7) % 10) as f64 * 0.004;
+        let m_s = 0.000_25 * EARTH_MASS_SOLAR;
         let r_au = EARTH_RADIUS_AU * 0.06;
+        let mut comp = Composition::icy();
+        comp.ice_frac = 0.55;
         (
             r_s,
             q_t,
             m_s,
             r_au,
-            Composition::icy(),
+            comp,
             BodyType::Comet,
             format!("LHB-Comet C/{}", 1900 + (c_idx % 1000)),
         )
     } else {
-        let r_s = 2.3 + ((c_idx * 23) % 100) as f64 * 0.012;
-        let q_t = 0.70 + ((c_idx * 43) % 100) as f64 * 0.005;
-        let m_s = (0.000_020 + ((c_idx * 13) % 50) as f64 * 0.000_001) * EARTH_MASS_SOLAR;
+        let r_s = 2.4 + ((c_idx * 23) % 40) as f64 * 0.02;
+        let q_t = 0.98 + ((c_idx * 11) % 10) as f64 * 0.004;
+        let m_s = 0.000_25 * EARTH_MASS_SOLAR;
         let r_au = EARTH_RADIUS_AU * 0.08;
+        let mut comp = Composition::carbonaceous();
+        comp.ice_frac = 0.30;
         (
             r_s,
             q_t,
             m_s,
             r_au,
-            Composition::carbonaceous(),
+            comp,
             BodyType::Asteroid,
             format!("LHB-Asteroid ({})", 10000 + (c_idx % 90000)),
         )
     };
 
-    let v_tangential =
-        (G_ASTRO * star_m * (2.0 * q_target) / (r_spawn * (r_spawn + q_target))).sqrt();
-    let v_inward = -v_tangential * 0.15;
+    let (pos, vel) = if let Some((e_pos, _e_vel)) = target_earth {
+        let r_e = (e_pos.x * e_pos.x + e_pos.z * e_pos.z).sqrt().max(0.5);
+        let phi_e = e_pos.z.atan2(e_pos.x);
+        let omega_e = (G_ASTRO * star_m / (r_e * r_e * r_e)).sqrt();
+        let q = q_target.min(r_e * 1.005).max(r_e * 0.995);
+        let a = f64::midpoint(r_spawn, q);
+        let t_flight = std::f64::consts::PI * (a * a * a / (G_ASTRO * star_m)).sqrt();
+        let delta_theta = omega_e * t_flight;
+        let target_theta = phi_e + delta_theta;
+        let spawn_angle = target_theta + std::f64::consts::PI;
+        let inc_y = (((c_idx * 13) % 7) as f64 - 3.0) * 0.0003;
 
-    let angle = ((c_idx * 137) % 360) as f64 * std::f64::consts::PI / 180.0;
-    let inc_angle = (((c_idx * 29) % 20) as f64 - 10.0) * 0.005;
-
-    let pos = star_pos
-        + DVec3::new(
-            r_spawn * angle.cos(),
-            r_spawn * inc_angle,
-            r_spawn * angle.sin(),
-        );
-
-    let u_tan = DVec3::new(-angle.sin(), 0.0, angle.cos());
-    let u_rad = DVec3::new(angle.cos(), inc_angle, angle.sin()).normalize_or_zero();
-    let vel = u_tan * v_tangential + u_rad * v_inward;
+        let p = star_pos
+            + DVec3::new(
+                r_spawn * spawn_angle.cos(),
+                inc_y,
+                r_spawn * spawn_angle.sin(),
+            );
+        let v_apo = (G_ASTRO * star_m * (2.0 * q) / (r_spawn * (r_spawn + q))).sqrt();
+        let u_tan = DVec3::new(-spawn_angle.sin(), 0.0, spawn_angle.cos());
+        let v = u_tan * v_apo;
+        (p, v)
+    } else {
+        let angle = ((c_idx * 137) % 360) as f64 * std::f64::consts::PI / 180.0;
+        let inc_angle = (((c_idx * 29) % 20) as f64 - 10.0) * 0.005;
+        let p = star_pos
+            + DVec3::new(
+                r_spawn * angle.cos(),
+                r_spawn * inc_angle,
+                r_spawn * angle.sin(),
+            );
+        let v_tangential =
+            (G_ASTRO * star_m * (2.0 * q_target) / (r_spawn * (r_spawn + q_target))).sqrt();
+        let v_inward = -v_tangential * 0.15;
+        let u_tan = DVec3::new(-angle.sin(), 0.0, angle.cos());
+        let u_rad = DVec3::new(angle.cos(), inc_angle, angle.sin()).normalize_or_zero();
+        let v = u_tan * v_tangential + u_rad * v_inward;
+        (p, v)
+    };
 
     let mut diff = InternalDifferentiation::default();
     diff.recalculate(mass_solar, rad_au, &comp);
@@ -153,20 +180,32 @@ pub fn update_late_heavy_bombardment_cascade(
     *cascade_timer -= dt;
 
     let star_m = star_mass.0.max(0.1);
-    let (active_crossers, total_bodies) = count_active_crossers(&query, star_pos.0, star_m);
+    let (active_crossers, _) = count_active_crossers(&query, star_pos.0, star_m);
 
-    if total_bodies >= 64 {
-        return;
-    }
+    let target_earth = query
+        .iter()
+        .find(|(_, pos, _, body, _)| {
+            body.name.contains("Earth")
+                || (body.body_type.is_planet()
+                    && ((pos.0 - star_pos.0).length() - 1.0).abs() < 0.35)
+        })
+        .map(|(_, pos, vel, _, _)| (pos.0 - star_pos.0, vel.0));
 
     let target_crossers = 12;
     if active_crossers < target_crossers && *cascade_timer <= 0.0 {
         *cascade_counter += 1;
         let c_idx = *cascade_counter;
 
-        *cascade_timer = if active_crossers < 5 { 0.4 } else { 2.5 };
+        *cascade_timer = if active_crossers < 5 { 0.35 } else { 2.0 };
 
-        spawn_lhb_impactor(&mut commands, &disk_params, star_pos.0, star_m, c_idx);
+        spawn_lhb_impactor(
+            &mut commands,
+            &disk_params,
+            star_pos.0,
+            star_m,
+            c_idx,
+            target_earth,
+        );
         lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
     }
 }

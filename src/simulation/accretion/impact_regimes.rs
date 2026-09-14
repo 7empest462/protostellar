@@ -75,53 +75,100 @@ pub fn radius_from_mass_density(mass: f64, density: f64) -> f64 {
 
 /// Classify the encounter.
 ///
-/// Rules of thumb (planet-formation literature, simplified for real-time):
-/// - Inside ~2.5× visual radius of the primary → **EmbeddedMerge** (no stuck moons).
-/// - \(v_\mathrm{imp}/v_\mathrm{esc} \lesssim 1\) and \(b \lesssim 0.7\) → Merger.
-/// - High \(b\) + high speed → HitAndRun / Graze.
-/// - Deep in Roche lobe + small secondary → Disrupt.
-/// - Near-equal mass, glancing, moderate speed → GiantImpactMoon.
+/// Rules of thumb (Stewart & Leinhardt 2012, Kokubo & Genda 2010):
+/// - Small secondary within the fluid Roche limit (outside the core) → **Disrupt** (shreds into planetary rings).
+/// - Secondary inside the drawn planet surface (< 1.10x visual radius or core overlap) → **EmbeddedMerge**.
+/// - Outer giants with small secondaries outside Roche limit → **GiantImpactMoon** (circumplanetary moon capture).
+/// - Large secondary at glancing angle and moderate speed → **GiantImpactMoon** (Theia-style giant impact).
+/// - High relative speed (u = v_imp / v_esc > 1.10) with oblique angle (b > 0.35) → **HitAndRun** / **Graze**.
+/// - Low speed or head-on encounter → **Merger**.
 pub fn classify_impact(p: ImpactParams, roche_limit_au: f64) -> ImpactRegime {
-    let visual_r = estimate_visual_radius_au(p.primary_radius_au);
+    // Stars and stellar remnants swallow and vaporize all impacting bodies into their convective envelope.
+    if p.primary_type.is_star_or_remnant() {
+        return ImpactRegime::Merger;
+    }
+
     let gamma = p.mass_ratio();
     let u = p.v_imp_over_vesc();
 
-    // 1. Cannot sit inside the drawn planet.
-    if p.min_dist < visual_r * 2.5 {
-        return ImpactRegime::EmbeddedMerge;
-    }
+    // 1. Roche disruption: small minor body or low-mass secondary (gamma <= 0.05)
+    // torn apart by tidal shear into planetary rings when within the fluid Roche limit.
+    let is_minor_disruptor = matches!(
+        p.secondary_type,
+        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+    ) || gamma <= 0.05;
 
-    // 2. Roche disruption (small secondary inside fluid Roche limit).
-    let can_disrupt = !p.primary_type.is_star_or_remnant()
-        && !p.secondary_type.is_star_or_remnant()
+    let can_disrupt = !p.secondary_type.is_star_or_remnant()
         && p.primary_mass >= EARTH_MASS_SOLAR * 0.05
-        && gamma <= 0.20
+        && is_minor_disruptor
         && p.min_dist <= roche_limit_au
-        && p.b >= 0.15;
+        && p.min_dist >= p.primary_radius_au * 0.5
+        && p.b >= 0.08;
     if can_disrupt {
         return ImpactRegime::Disrupt;
     }
 
-    // 3. Giant-impact moon (rare, needs substantial secondary + glancing geometry).
-    let can_moon = !p.primary_type.is_star_or_remnant()
+    // 2. Moon Formation:
+    // a) Outer Gas / Ice Giant Circumplanetary Moon Capture:
+    // When a small icy or rocky body approaches a giant planet OUTSIDE its Roche limit
+    // and outside its visible surface (min_dist > max(roche, R_primary * 1.15)) with moderate speed (u < 2.5),
+    // the giant's deep gravitational well captures it into a stable circumplanetary moon orbit.
+    let is_giant_primary = p.primary_type == BodyType::GasGiant
+        || p.primary_type == BodyType::IceGiant
+        || p.primary_mass >= EARTH_MASS_SOLAR * 2.5;
+    let can_giant_capture_moon = is_giant_primary
         && !p.secondary_type.is_star_or_remnant()
-        && p.primary_mass >= EARTH_MASS_SOLAR * 0.05
-        && (0.05..=0.45).contains(&gamma)
-        && p.b >= 0.55
+        && gamma <= 0.08
+        && p.min_dist > roche_limit_au.max(p.primary_radius_au * 1.15)
         && u < 2.5;
-    if can_moon {
+    if can_giant_capture_moon {
         return ImpactRegime::GiantImpactMoon;
     }
 
-    // 4. Hit-and-run / graze (high angle, energetic).
-    if p.b > 0.80 && u > 1.5 {
-        return if u > 2.5 {
-            ImpactRegime::HitAndRun
-        } else {
-            ImpactRegime::Graze
-        };
+    // b) Theia-style Giant Impact Moon (near-equal terrestrial embryo mass ratio,
+    // low-angle sideswipe to glancing geometry b >= 0.15, encounter velocity u <= 1.35):
+    // Recent geochemical/geophysical models (Nature 2023) show a low-angle direct collision
+    // thoroughly fuses the planetary mantles while ejecting a silicate debris disk that accretes into the Moon.
+    let can_giant_impact_moon = !p.secondary_type.is_star_or_remnant()
+        && p.primary_mass >= EARTH_MASS_SOLAR * 0.05
+        && (0.05..=0.45).contains(&gamma)
+        && p.b >= 0.15
+        && u <= 1.35;
+    if can_giant_impact_moon {
+        return ImpactRegime::GiantImpactMoon;
     }
 
-    // 5. Default: merge (accretion).
+    // 3. Interpenetration / Deep core plunge:
+    // When non-moon encounters penetrate deeply into the primary's interior
+    // (min_dist well below physical contact distance) or impact at extreme velocities (u > 1.35),
+    // hydrodynamic shear and mutual shock dissipation unconditionally force coalescence into a merged body.
+    let physical_contact_dist = p.primary_radius_au + p.secondary_radius_au;
+    if p.min_dist < physical_contact_dist * 0.85 || p.min_dist < p.primary_radius_au * 0.95 {
+        return ImpactRegime::EmbeddedMerge;
+    }
+
+    // 4. Hit-and-run / Graze (Stewart & Leinhardt 2012):
+    // Energetic collisions between planetary embryos (similar-sized bodies gamma >= 0.01)
+    // with oblique impact angles bounce off without merging, preventing runaway super-Earth formation.
+    // Minor bodies (asteroids, comets, gamma < 0.01) cannot bounce off planets; they explosively impact and merge.
+    let is_minor_impactor = matches!(
+        p.secondary_type,
+        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+    ) || gamma < 0.01;
+
+    if !is_minor_impactor {
+        if u > 1.10 && p.b > 0.35 {
+            return if u > 2.0 || p.b > 0.65 {
+                ImpactRegime::HitAndRun
+            } else {
+                ImpactRegime::Graze
+            };
+        }
+        if p.b > 0.75 && u > 0.85 {
+            return ImpactRegime::Graze;
+        }
+    }
+
+    // 5. Default: inelastic merger (head-on or low-velocity accretion, and all minor body impacts).
     ImpactRegime::Merger
 }

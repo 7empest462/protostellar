@@ -19,6 +19,8 @@ use super::spawner::sample_disk_radius;
 pub struct PlanetesimalSpawner {
     /// Simulation time (in years) when the last planetesimal was spawned.
     pub last_spawn_yr: f64,
+    /// Simulation time (in years) when the last minor body streaming instability burst occurred.
+    pub last_minor_body_spawn_yr: f64,
     /// Total number of planetesimals auto-spawned so far.
     pub total_spawned: u32,
     /// Counter for generating unique names.
@@ -31,6 +33,7 @@ impl Default for PlanetesimalSpawner {
     fn default() -> Self {
         Self {
             last_spawn_yr: 0.0,
+            last_minor_body_spawn_yr: 0.0,
             total_spawned: 0,
             name_counter: 0,
             max_ecs_bodies: 1024,
@@ -69,28 +72,29 @@ fn sample_standard_belt_or_feeding_zone(
     rng: &mut impl Rng,
 ) -> (f64, Composition, bool) {
     let roll: f64 = rng.random_range(0.0..1.0);
-    if roll < 0.15 {
+    if roll < 0.08 {
+        // Outer giant core feeding zones only (Jupiter/Saturn/Ice Giants)
         let zone_roll: f64 = rng.random_range(0.0..1.0);
-        let (r_zone, comp_zone) = if zone_roll < 0.35 {
-            (rng.random_range(0.7..1.8), Composition::rocky())
-        } else if zone_roll < 0.65 {
+        let (r_zone, comp_zone) = if zone_roll < 0.45 {
             (rng.random_range(4.5..6.5), Composition::icy())
-        } else if zone_roll < 0.85 {
+        } else if zone_roll < 0.75 {
             (rng.random_range(8.5..11.5), Composition::icy())
         } else {
             (rng.random_range(18.0..32.0), Composition::icy())
         };
         (r_zone, comp_zone, true)
-    } else if roll < 0.60 {
+    } else if roll < 0.62 {
+        // Main Asteroid Belt (2.15 - 3.45 AU)
         let r_belt = rng.random_range(2.15..3.45);
-        let comp_belt = if rng.random_bool(0.7) {
+        let comp_belt = if rng.random_bool(0.75) {
             Composition::carbonaceous()
         } else {
             Composition::rocky()
         };
         (r_belt, comp_belt, false)
     } else if roll < 0.95 {
-        let r_kuiper = rng.random_range(16.0..42.0);
+        // Kuiper Belt / Scattered Disk (16.0 - 45.0 AU)
+        let r_kuiper = rng.random_range(16.0..45.0);
         (r_kuiper, Composition::icy(), false)
     } else {
         let (r_samp, comp_samp) = sample_disk_radius(rng, disk_params);
@@ -140,11 +144,7 @@ fn spawn_single_planetesimal(
     let v_mag = v_k * ecc_kick;
     let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
 
-    let is_protoplanet: bool = if (spawner.total_spawned as usize) < 8 || is_feeding_zone {
-        true
-    } else {
-        rng.random_bool(0.35)
-    };
+    let is_protoplanet: bool = (spawner.total_spawned as usize) < 8 && is_feeding_zone;
     let log_mass_earth: f64 = if is_protoplanet {
         if is_massive_disk {
             rng.random_range(0.0..1.7)
@@ -154,7 +154,8 @@ fn spawn_single_planetesimal(
             rng.random_range(-1.7..-1.0)
         }
     } else {
-        rng.random_range(-3.5..-2.1)
+        // True minor bodies in belts have asteroid/comet masses
+        rng.random_range(-5.5..-3.8)
     };
     let mass = EARTH_MASS_SOLAR * 10.0_f64.powf(log_mass_earth);
 
@@ -166,7 +167,7 @@ fn spawn_single_planetesimal(
 
     let temp = disk_params.reference_temp_1au * (r / 1.0).powf(-0.5);
 
-    let body_type = if mass >= EARTH_MASS_SOLAR * 0.005 || is_feeding_zone {
+    let body_type = if is_protoplanet {
         BodyType::Protoplanet
     } else if (2.0..=3.8).contains(&r) {
         BodyType::Asteroid
@@ -224,48 +225,72 @@ pub fn auto_spawn_planetesimals(
     }
 
     let t = sim_time.elapsed_years;
-    if t > disk_params.gas_disk_lifetime_yr {
-        return;
-    }
-
     let current_body_count = body_count.iter().count() as u32;
     if current_body_count >= spawner.max_ecs_bodies {
         return;
     }
+    let deficit = spawner.max_ecs_bodies.saturating_sub(current_body_count);
 
-    let base_interval_yr = 350.0;
-    let tau_depletion = disk_params.gas_disk_lifetime_yr / 4.0;
-    let spawn_interval = base_interval_yr * (t / tau_depletion).exp();
+    let is_gas_era = t <= disk_params.gas_disk_lifetime_yr;
+    let (spawn_interval, cluster_size, max_batch) = if is_gas_era {
+        if deficit > 500 {
+            (25.0, 4usize, 24usize)
+        } else if deficit > 100 {
+            (40.0, 2usize, 16usize)
+        } else {
+            (80.0, 1usize, 8usize)
+        }
+    } else if deficit > 200 {
+        (30.0, 3usize, 20usize)
+    } else if deficit > 50 {
+        (50.0, 2usize, 12usize)
+    } else {
+        (80.0, 1usize, 6usize)
+    };
 
     let time_since_last = t - spawner.last_spawn_yr;
     if time_since_last < spawn_interval {
         return;
     }
 
+    let intervals = (time_since_last / spawn_interval).floor() as usize;
+    let num_spawns = (intervals * cluster_size).clamp(1, max_batch.min(deficit as usize));
     let mut rng = rand::rng();
     let is_massive_disk =
         disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 
-    let (r, comp, is_feeding_zone) = sample_planetesimal_location(
-        spawner.total_spawned,
-        is_massive_disk,
-        &disk_params,
-        &mut rng,
-    );
+    let mut spawned_now = 0u32;
+    for _ in 0..num_spawns {
+        if current_body_count + spawned_now >= spawner.max_ecs_bodies {
+            break;
+        }
 
-    spawn_single_planetesimal(
-        &mut commands,
-        &disk_params,
-        &mut spawner,
-        r,
-        comp,
-        is_feeding_zone,
-        is_massive_disk,
-        &mut rng,
-    );
+        let (r, comp, is_feeding_zone) = sample_planetesimal_location(
+            spawner.total_spawned,
+            is_massive_disk,
+            &disk_params,
+            &mut rng,
+        );
 
-    spawner.last_spawn_yr = (spawner.last_spawn_yr + spawn_interval).min(t);
-    spawner.total_spawned += 1;
+        spawn_single_planetesimal(
+            &mut commands,
+            &disk_params,
+            &mut spawner,
+            r,
+            comp,
+            is_feeding_zone,
+            is_massive_disk,
+            &mut rng,
+        );
+
+        spawned_now += 1;
+        spawner.total_spawned += 1;
+    }
+
+    if spawned_now > 0 {
+        spawner.last_spawn_yr =
+            (spawner.last_spawn_yr + (num_spawns as f64) * spawn_interval).min(t);
+    }
 }
 
 /// Gradually dissipates the protoplanetary gas disk and dust particles as the
@@ -283,7 +308,7 @@ pub fn dissipate_gas_disk(
     let t = sim_time.elapsed_years;
     let lifetime = disk_params.gas_disk_lifetime_yr;
 
-    if t >= lifetime {
+    if lifetime <= 0.0 || t >= lifetime || disk_params.disk_mass <= 0.0 {
         config.gas_density_scale = 0.0;
         config.active_particles = 0;
         return;
@@ -364,9 +389,9 @@ pub fn auto_spawn_delayed_proto_earth(
             body_type: BodyType::Protoplanet,
         },
         VolatileInventory {
-            delivered_water_m_earth: 0.00005,
+            delivered_water_m_earth: 0.0,
             cometary_impact_count: 0,
-            ocean_coverage_frac: 0.05,
+            ocean_coverage_frac: 0.0,
             atmospheric_pressure_bar: 0.20,
         },
         SpinState {

@@ -67,7 +67,7 @@ pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> S
     } else if lower.contains("proto-mars") {
         "Mars".to_string()
     } else if lower.contains("theia") {
-        "Theia".to_string()
+        "🌑 Theia".to_string()
     } else if lower.contains("proto-saturn") {
         "Saturn".to_string()
     } else if lower.contains("proto-uranus") {
@@ -160,6 +160,11 @@ pub fn body_to_button_colors(name: &str, body_type: BodyType, is_star: bool) -> 
         (
             Color::srgba(0.04, 0.12, 0.25, 0.9),
             Color::srgb(0.2, 0.75, 0.9),
+        )
+    } else if lower.contains("theia") {
+        (
+            Color::srgba(0.24, 0.12, 0.10, 0.95),
+            Color::srgb(1.0, 0.65, 0.45),
         )
     } else if is_embryo_body(name, body_type) {
         (
@@ -261,14 +266,14 @@ fn populate_minimized_quick_bar(
         parts.push(format!("☄️ Minor ({minor_count})"));
     }
     let label = format!("{} ▼ Expand [H]", parts.join(" | "));
-    create_button(
+    create_compact_button(
         btn_row,
         UiButtonAction::ToggleMinimizeQuickBar,
         &label,
         Color::srgba(0.08, 0.14, 0.24, 0.90),
         Color::srgb(0.4, 0.8, 1.0),
     );
-    create_button(
+    create_compact_button(
         btn_row,
         UiButtonAction::CycleTarget,
         "Cycle [Tab]",
@@ -285,7 +290,7 @@ fn populate_expanded_quick_bar(
     selected_entity: Option<Entity>,
     quick_bar_state: &QuickBarState,
 ) {
-    create_button(
+    create_compact_button(
         btn_row,
         UiButtonAction::ToggleMinimizeQuickBar,
         "🗕 [H]",
@@ -315,7 +320,7 @@ fn populate_expanded_quick_bar(
             base_border
         };
 
-        create_button(
+        create_compact_button(
             btn_row,
             UiButtonAction::SelectEntity(world.entity),
             &button_label,
@@ -340,7 +345,7 @@ fn populate_expanded_quick_bar(
                 } else {
                     base_border
                 };
-                create_button(
+                create_compact_button(
                     btn_row,
                     UiButtonAction::SelectEntity(*ent),
                     &raw_label,
@@ -348,16 +353,16 @@ fn populate_expanded_quick_bar(
                     border_color,
                 );
             }
-            create_button(
+            create_compact_button(
                 btn_row,
                 UiButtonAction::ToggleEmbryos,
-                "🌱 Hide Embryos",
+                "🌱 Hide",
                 Color::srgba(0.12, 0.08, 0.16, 0.85),
                 Color::srgb(0.8, 0.5, 0.9),
             );
         } else {
-            let label = format!("🌱 +{} Embryos", embryo_bodies.len());
-            create_button(
+            let label = format!("🌱 +{}", embryo_bodies.len());
+            create_compact_button(
                 btn_row,
                 UiButtonAction::ToggleEmbryos,
                 &label,
@@ -367,50 +372,9 @@ fn populate_expanded_quick_bar(
         }
     }
 
-    if !minor_bodies.is_empty() {
-        if quick_bar_state.show_minor_bodies {
-            for (ent, name, b_type, is_star, _) in minor_bodies {
-                let (raw_label, base_bg, base_border) =
-                    body_to_button_label_and_colors(name, *b_type, *is_star);
-                let is_selected = selected_entity == Some(*ent);
-                let bg_color = if is_selected {
-                    Color::srgba(0.20, 0.45, 0.85, 0.95)
-                } else {
-                    base_bg
-                };
-                let border_color = if is_selected {
-                    Color::srgb(1.0, 1.0, 1.0)
-                } else {
-                    base_border
-                };
-                create_button(
-                    btn_row,
-                    UiButtonAction::SelectEntity(*ent),
-                    &raw_label,
-                    bg_color,
-                    border_color,
-                );
-            }
-            create_button(
-                btn_row,
-                UiButtonAction::ToggleMinorBodies,
-                "☄️ Hide Minor",
-                Color::srgba(0.12, 0.08, 0.16, 0.85),
-                Color::srgb(0.8, 0.5, 0.9),
-            );
-        } else {
-            let label = format!("☄️ +{} Minor Bodies", minor_bodies.len());
-            create_button(
-                btn_row,
-                UiButtonAction::ToggleMinorBodies,
-                &label,
-                Color::srgba(0.10, 0.08, 0.14, 0.85),
-                Color::srgb(0.65, 0.5, 0.85),
-            );
-        }
-    }
+    populate_minor_body_belts(btn_row, minor_bodies, selected_entity, quick_bar_state);
 
-    create_button(
+    create_compact_button(
         btn_row,
         UiButtonAction::CycleTarget,
         "Cycle [Tab]",
@@ -419,6 +383,136 @@ fn populate_expanded_quick_bar(
     );
 }
 
+fn populate_minor_body_belts(
+    btn_row: &mut ChildSpawnerCommands,
+    minor_bodies: &[(Entity, String, BodyType, bool, f64)],
+    selected_entity: Option<Entity>,
+    quick_bar_state: &QuickBarState,
+) {
+    if minor_bodies.is_empty() {
+        return;
+    }
+
+    if !quick_bar_state.show_minor_bodies {
+        let label = format!("☄️ Belts +{}", minor_bodies.len());
+        create_compact_button(
+            btn_row,
+            UiButtonAction::ToggleMinorBodies,
+            &label,
+            Color::srgba(0.10, 0.08, 0.14, 0.85),
+            Color::srgb(0.65, 0.5, 0.85),
+        );
+        return;
+    }
+
+    create_compact_button(
+        btn_row,
+        UiButtonAction::ToggleMinorBodies,
+        "☄️ Belts Hide",
+        Color::srgba(0.12, 0.08, 0.16, 0.85),
+        Color::srgb(0.8, 0.5, 0.9),
+    );
+
+    let all_expanded = BeltZone::all()
+        .iter()
+        .all(|z| quick_bar_state.expanded_belts.contains(z));
+    if all_expanded {
+        create_compact_button(
+            btn_row,
+            UiButtonAction::CollapseAllBelts,
+            "⇱ All",
+            Color::srgba(0.10, 0.08, 0.14, 0.80),
+            Color::srgb(0.70, 0.60, 0.85),
+        );
+    } else {
+        create_compact_button(
+            btn_row,
+            UiButtonAction::ExpandAllBelts,
+            "⇲ All",
+            Color::srgba(0.10, 0.08, 0.14, 0.80),
+            Color::srgb(0.70, 0.60, 0.85),
+        );
+    }
+
+    for zone in BeltZone::all() {
+        let zone_members: Vec<_> = minor_bodies
+            .iter()
+            .filter(|b| BeltZone::from_distance_au(b.4) == *zone)
+            .collect();
+        if zone_members.is_empty() {
+            continue;
+        }
+
+        let is_expanded = quick_bar_state.expanded_belts.contains(zone);
+        let (base_bg, base_border) = zone.button_colors();
+
+        if is_expanded {
+            let label = format!(
+                "▼ {} {}: {}",
+                zone.icon(),
+                zone.short_name(),
+                zone_members.len()
+            );
+            create_compact_button(
+                btn_row,
+                UiButtonAction::ToggleBelt(*zone),
+                &label,
+                Color::srgba(0.18, 0.22, 0.30, 0.95),
+                Color::srgb(1.0, 1.0, 1.0),
+            );
+
+            for (ent, name, b_type, is_star, _) in zone_members {
+                let (raw_label, b_bg, b_border) =
+                    body_to_button_label_and_colors(name, *b_type, *is_star);
+                let is_selected = selected_entity == Some(*ent);
+                let bg = if is_selected {
+                    Color::srgba(0.20, 0.45, 0.85, 0.95)
+                } else {
+                    b_bg
+                };
+                let border = if is_selected {
+                    Color::srgb(1.0, 1.0, 1.0)
+                } else {
+                    b_border
+                };
+                create_compact_button(
+                    btn_row,
+                    UiButtonAction::SelectEntity(*ent),
+                    &raw_label,
+                    bg,
+                    border,
+                );
+            }
+        } else {
+            let label = format!(
+                "▶ {} {}: {}",
+                zone.icon(),
+                zone.short_name(),
+                zone_members.len()
+            );
+            create_compact_button(
+                btn_row,
+                UiButtonAction::ToggleBelt(*zone),
+                &label,
+                base_bg,
+                base_border,
+            );
+        }
+    }
+}
+
+type QuickBarCacheState = (
+    Vec<Entity>,
+    usize,
+    usize,
+    Option<Entity>,
+    bool,
+    bool,
+    bool,
+    Vec<BeltZone>,
+);
+
+#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn update_quick_body_selector_bar(
     mut commands: Commands,
     bar_query: Query<Entity, With<QuickBodySelectorBar>>,
@@ -436,7 +530,7 @@ pub fn update_quick_body_selector_bar(
     mut quick_bar_state: ResMut<QuickBarState>,
     player_state: Res<PlayerInteractionState>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut last_state: Local<(Vec<Entity>, usize, usize, Option<Entity>, bool, bool, bool)>,
+    mut last_state: Local<QuickBarCacheState>,
 ) {
     let Ok(bar_ent) = bar_query.single() else {
         return;
@@ -468,6 +562,11 @@ pub fn update_quick_body_selector_bar(
         quick_bar_state.is_minimized,
         quick_bar_state.show_embryos,
         quick_bar_state.show_minor_bodies,
+        quick_bar_state
+            .expanded_belts
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
     );
 
     if *last_state == current_state && !major_worlds.is_empty() {
@@ -587,6 +686,8 @@ pub fn spawn_custom_builder_world(
                 } else {
                     0.05
                 },
+                has_theia_llsvp: false,
+                llsvp_density_contrast: 0.0,
             },
             SpinState {
                 spin_vector: DVec3::new(0.0, 1e-12, 0.0),

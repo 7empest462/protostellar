@@ -1,6 +1,6 @@
 //! 3D Orbital Camera with logarithmic zoom, focus-lock, and smooth interpolation.
 
-use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
@@ -48,7 +48,7 @@ impl Default for PanOrbitCamera {
             min_radius: 0.005,
             max_radius: 250_000.0,
             orbit_sensitivity: 0.005,
-            zoom_sensitivity: 0.15,
+            zoom_sensitivity: 0.055,
             pan_sensitivity: 0.02,
         }
     }
@@ -284,6 +284,7 @@ fn handle_camera_mouse_controls(
     mouse_wheel_events: &mut MessageReader<MouseWheel>,
     camera: &mut PanOrbitCamera,
     transform: &Transform,
+    cursor_over_ui: bool,
 ) {
     let mut delta_yaw = 0.0;
     let mut delta_pitch = 0.0;
@@ -308,10 +309,38 @@ fn handle_camera_mouse_controls(
 
     let mut scroll = 0.0;
     for ev in mouse_wheel_events.read() {
-        scroll += ev.y;
+        if cursor_over_ui {
+            continue;
+        }
+        let delta = match ev.unit {
+            MouseScrollUnit::Line => ev.y,
+            MouseScrollUnit::Pixel => ev.y / 24.0,
+        };
+        scroll += delta;
     }
+
+    // Keyboard zoom shortcuts (+ / -)
+    if keyboard_input.pressed(KeyCode::Equal) || keyboard_input.pressed(KeyCode::NumpadAdd) {
+        scroll += 0.6;
+    }
+    if keyboard_input.pressed(KeyCode::Minus) || keyboard_input.pressed(KeyCode::NumpadSubtract) {
+        scroll -= 0.6;
+    }
+
     if scroll.abs() > 0.0 {
-        let zoom_factor = (-scroll * camera.zoom_sensitivity).exp();
+        let sensitivity = if keyboard_input.pressed(KeyCode::ShiftLeft)
+            || keyboard_input.pressed(KeyCode::ShiftRight)
+        {
+            camera.zoom_sensitivity * 0.35 // Micro-zoom precision mode
+        } else if keyboard_input.pressed(KeyCode::ControlLeft)
+            || keyboard_input.pressed(KeyCode::ControlRight)
+        {
+            camera.zoom_sensitivity * 2.2 // Rapid macro-zoom mode
+        } else {
+            camera.zoom_sensitivity
+        };
+
+        let zoom_factor = (-scroll * sensitivity).exp();
         camera.target_radius =
             (camera.target_radius * zoom_factor).clamp(camera.min_radius, camera.max_radius);
     }
@@ -357,6 +386,10 @@ pub fn update_pan_orbit_camera(
 
     update_camera_min_zoom_bounds(&mut camera, &config, &targets_query);
 
+    let cursor_over_ui = ui_interaction_query
+        .iter()
+        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+
     handle_camera_target_picking(
         window,
         camera_comp,
@@ -385,11 +418,12 @@ pub fn update_pan_orbit_camera(
         &mut mouse_wheel_events,
         &mut camera,
         &transform,
+        cursor_over_ui,
     );
 
     camera.yaw += (camera.target_yaw - camera.yaw) * 0.22;
     camera.pitch += (camera.target_pitch - camera.pitch) * 0.22;
-    camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.18)
+    camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.28)
         .clamp(camera.min_radius, camera.max_radius);
 
     if camera.target_entity.is_some() {

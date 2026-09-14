@@ -100,7 +100,12 @@ pub const DENSITY_SUN_ASTRO: f64 =
 /// Converts a Blackbody Temperature (in Kelvin) to an sRGB color tuple `(r, g, b)`
 /// using Planck's law / Tanner Helland's empirical curve for blackbody radiation.
 pub fn blackbody_to_srgb(temp_kelvin: f64) -> (f32, f32, f32) {
-    let t = (temp_kelvin / 100.0).clamp(10.0, 400.0);
+    let safe_temp = if temp_kelvin.is_finite() {
+        temp_kelvin
+    } else {
+        1000.0
+    };
+    let t = (safe_temp / 100.0).clamp(10.0, 400.0);
 
     // Red component
     let r = if t <= 66.0 {

@@ -194,7 +194,29 @@ fn update_body_material_properties(
     opt_spin: Option<&SpinState>,
     opt_em: Option<&ElectromagneticFieldState>,
     opt_bhs: Option<&BlackHoleStarState>,
+    opt_basins: Option<&PlanetaryBasins>,
 ) {
+    let mut basins_pos = [Vec4::ZERO; 4];
+    let mut basins_data = [Vec4::ZERO; 4];
+
+    if let Some(pb) = opt_basins {
+        for (i, basin) in pb.basins.iter().rev().take(4).enumerate() {
+            if let Some(pos) = basins_pos.get_mut(i) {
+                *pos = Vec4::new(
+                    basin.surface_normal.x,
+                    basin.surface_normal.y,
+                    basin.surface_normal.z,
+                    basin.angular_radius,
+                );
+            }
+            if let Some(data) = basins_data.get_mut(i) {
+                *data = Vec4::new(basin.melt_glow_fraction, basin.elongation, 0.0, 1.0);
+            }
+        }
+    }
+    mat.extension.uniforms.impact_basins_pos = basins_pos;
+    mat.extension.uniforms.impact_basins_data = basins_data;
+
     let (br, bg, bb) = blackbody_to_srgb(temp.0);
     let (cr, cg, cb) = comp.visual_color_tint();
 
@@ -212,10 +234,28 @@ fn update_body_material_properties(
         )
     };
     let norm_comp = comp.normalized();
-    let ocean_frac = opt_vol.map_or(norm_comp.ice_frac as f32, |v| v.ocean_coverage_frac);
-    let ice_frac = opt_climate.map_or(0.0, |c| c.ice_coverage_frac);
-    let biomass_frac = opt_bio.map_or(0.0, |b| b.biomass_coverage_frac);
-    let cloud_density = opt_climate.map_or(norm_comp.gas_frac as f32, |c| c.cloud_coverage_frac);
+    let has_water_volatiles =
+        norm_comp.ice_frac > 0.001 || opt_vol.is_some_and(|v| v.delivered_water_m_earth > 1e-6);
+    let ocean_frac = if has_water_volatiles {
+        opt_vol.map_or(norm_comp.ice_frac as f32, |v| v.ocean_coverage_frac)
+    } else {
+        0.0
+    };
+    let ice_frac = if has_water_volatiles {
+        opt_climate.map_or(0.0, |c| c.ice_coverage_frac)
+    } else {
+        0.0
+    };
+    let biomass_frac = if has_water_volatiles && ocean_frac > 0.01 {
+        opt_bio.map_or(0.0, |b| b.biomass_coverage_frac)
+    } else {
+        0.0
+    };
+    let cloud_density = if has_water_volatiles || norm_comp.gas_frac > 0.02 {
+        opt_climate.map_or(norm_comp.gas_frac as f32, |c| c.cloud_coverage_frac)
+    } else {
+        0.0
+    };
 
     let spin_rate = opt_spin.map_or(0.15, |s| {
         (24.0 / s.rotation_period_hours.max(0.1)) as f32 * 0.15
@@ -249,6 +289,18 @@ fn update_body_material_properties(
     mat.extension.uniforms.atmosphere_params =
         Vec4::new(pressure_bar, scale_height, haze_density, greenhouse);
     mat.extension.uniforms.dynamics_and_mag = Vec4::new(mag_gauss, lava_frac, mass_jup, axial_tilt);
+    let spin_axis = if let Some(spin) = opt_spin {
+        if spin.spin_vector.length_squared() > 1e-16 {
+            let n = spin.spin_vector.normalize();
+            Vec4::new(n.x as f32, n.y as f32, n.z as f32, 0.0)
+        } else {
+            let tilt = (spin.axial_tilt_degrees as f32).to_radians();
+            Vec4::new(tilt.sin(), tilt.cos(), 0.0, 0.0)
+        }
+    } else {
+        Vec4::new(0.0, 1.0, 0.0, 0.0)
+    };
+    mat.extension.uniforms.spin_axis = spin_axis;
 
     if is_star_like {
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
@@ -294,6 +346,7 @@ pub fn sync_celestial_transforms(
             Option<&ElectromagneticFieldState>,
             Option<&BlackHoleStarState>,
             Option<&Children>,
+            Option<&PlanetaryBasins>,
         ),
     )>,
 ) {
@@ -308,7 +361,7 @@ pub fn sync_celestial_transforms(
         mat_handle,
         mut mesh,
         (opt_climate, opt_bio, opt_vol),
-        (opt_spin, opt_em, opt_bhs, opt_children),
+        (opt_spin, opt_em, opt_bhs, opt_children, opt_basins),
     ) in query.iter_mut()
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
@@ -323,6 +376,16 @@ pub fn sync_celestial_transforms(
 
         let visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
         transform.scale = Vec3::splat(visual_radius);
+
+        if let Some(spin) = opt_spin {
+            if spin.spin_vector.length_squared() > 1e-12 {
+                let spin_dir = spin.spin_vector.normalize().as_vec3();
+                transform.rotation = Quat::from_rotation_arc(Vec3::Y, spin_dir);
+            } else {
+                let tilt_rad = (spin.axial_tilt_degrees as f32).to_radians();
+                transform.rotation = Quat::from_rotation_z(tilt_rad);
+            }
+        }
 
         let target_mesh = select_body_mesh(body, &visual_assets);
         if mesh.0 != target_mesh {
@@ -343,6 +406,7 @@ pub fn sync_celestial_transforms(
                 opt_spin,
                 opt_em,
                 opt_bhs,
+                opt_basins,
             );
         }
     }

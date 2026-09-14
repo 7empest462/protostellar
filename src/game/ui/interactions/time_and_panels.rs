@@ -99,6 +99,11 @@ pub fn handle_instrument_action(
     match action {
         UiButtonAction::ToggleOrbitMode => {
             player_state.orbit_mode = player_state.orbit_mode.cycle();
+            // When toggling to cinematic/Hidden, also hide diagnostic overlays
+            if player_state.orbit_mode == OrbitVisualizationMode::Off {
+                player_state.overlay_mode = DiagnosticOverlayMode::Hidden;
+            }
+
             toast.message = match player_state.orbit_mode {
                 OrbitVisualizationMode::All => "궤 Orbit Visualization: All Worlds [Y]".to_string(),
                 OrbitVisualizationMode::SelectedOnly => {

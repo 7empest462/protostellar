@@ -53,6 +53,7 @@ fn spawn_star_visual(
                 climate_and_bio: Vec4::ZERO,
                 atmosphere_params: Vec4::new(0.60, 0.85, 0.08, 0.0),
                 dynamics_and_mag: Vec4::new(100.0, 1.0, mass.0 as f32, 0.0),
+                ..default()
             },
         },
     });
@@ -155,6 +156,7 @@ fn spawn_planet_visual(
                     1.0,
                 ),
                 dynamics_and_mag: Vec4::new(0.0, 0.0, (mass.0 / JUPITER_MASS_SOLAR) as f32, 0.08),
+                ..default()
             },
         },
     });

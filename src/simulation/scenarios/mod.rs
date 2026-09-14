@@ -141,7 +141,19 @@ pub fn handle_load_scenario_events(
         scenario_state.current_preset = preset;
         scenario_state.scenario_time_years = 0.0;
         scenario_state.migration_active = false;
-        scenario_state.rogue_planet_entity = None;
+        match preset {
+            ScenarioPreset::Trappist1System
+            | ScenarioPreset::PulsarSystem
+            | ScenarioPreset::MagnetarOutburst => {
+                config.gas_density_scale = 0.0;
+                disk_params.gas_disk_lifetime_yr = 0.0;
+            }
+            ScenarioPreset::SolarNebulaMmsn => {
+                config.gas_density_scale = 1.0;
+                disk_params.gas_disk_lifetime_yr = 5.0e6;
+            }
+            _ => {}
+        }
 
         let central_star_ent = match preset {
             ScenarioPreset::SolarNebulaMmsn => {

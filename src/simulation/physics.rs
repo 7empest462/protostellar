@@ -6,6 +6,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
+use crate::simulation::disk_migration::apply_type_i_torque_acc;
 use crate::simulation::resources::*;
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
@@ -23,44 +24,182 @@ struct PhysicsBodyEntry {
     name: String,
 }
 
-fn advance_symplectic_leapfrog_drift(body_data: &mut [PhysicsBodyEntry], sub_dt: f64) {
+fn is_body_bound_to_star(pos: DVec3, vel: DVec3, star_pos: DVec3, star_mass: f64) -> bool {
+    if star_mass <= 1e-6 {
+        return false;
+    }
+    let r_rel = pos - star_pos;
+    let r = r_rel.length();
+    if r < 1e-5 || r > 50_000.0 {
+        return false;
+    }
+    let mu = G_ASTRO * star_mass;
+    let specific_energy = 0.5 * vel.length_squared() - mu / r;
+    if specific_energy >= -1e-9 {
+        return false;
+    }
+    let h_vec = r_rel.cross(vel);
+    let h = h_vec.length();
+    if h < 1e-8 || !h.is_finite() {
+        return false;
+    }
+    let a = -mu / (2.0 * specific_energy);
+    if a <= 1e-5 || !a.is_finite() {
+        return false;
+    }
+    let e_vec = vel.cross(h_vec) / mu - r_rel / r;
+    let e = e_vec.length();
+    e.is_finite() && e < 1.02
+}
+
+fn kepler_drift_body(pos: &mut DVec3, vel: &mut DVec3, star_pos: DVec3, star_mass: f64, dt: f64) {
+    if star_mass <= 1e-6 || dt.abs() < 1e-12 {
+        *pos += *vel * dt;
+        return;
+    }
+
+    let r_rel = *pos - star_pos;
+    let r = r_rel.length();
+    if r < 1e-5 || r > 10_000.0 {
+        *pos += *vel * dt;
+        return;
+    }
+
+    let mu = G_ASTRO * star_mass;
+    let v_sq = vel.length_squared();
+    let specific_energy = 0.5 * v_sq - mu / r;
+
+    if specific_energy >= -1e-9 {
+        *pos += *vel * dt;
+        return;
+    }
+
+    let a = -mu / (2.0 * specific_energy);
+    if a <= 1e-5 || !a.is_finite() {
+        *pos += *vel * dt;
+        return;
+    }
+
+    let h_vec = r_rel.cross(*vel);
+    let h = h_vec.length();
+    if h < 1e-8 || !h.is_finite() {
+        *pos += *vel * dt;
+        return;
+    }
+
+    let e_vec = vel.cross(h_vec) / mu - r_rel / r;
+    let mut e = e_vec.length();
+    if !e.is_finite() {
+        *pos += *vel * dt;
+        return;
+    }
+    if e >= 0.999 {
+        e = 0.985;
+    }
+
+    let p_hat = if e > 1e-6 { e_vec / e } else { r_rel / r };
+    let w_hat = h_vec / h;
+    let q_hat = w_hat.cross(p_hat);
+
+    let x0 = r_rel.dot(p_hat);
+    let y0 = r_rel.dot(q_hat);
+    let sqrt_1_minus_e2 = (1.0 - e * e).max(1e-12).sqrt();
+
+    let cos_e0 = ((x0 / a) + e).clamp(-1.0, 1.0);
+    let sin_e0 = (y0 / (a * sqrt_1_minus_e2)).clamp(-1.0, 1.0);
+    let e0 = sin_e0.atan2(cos_e0);
+    let m0 = e0 - e * sin_e0;
+
+    let n = (mu / (a * a * a)).sqrt();
+    let m1 = m0 + n * dt;
+    let m1_norm =
+        (m1 + std::f64::consts::PI).rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+
+    let mut e1 = m1_norm + e * m1_norm.sin();
+    for _ in 0..5 {
+        let f = e1 - e * e1.sin() - m1_norm;
+        let f_prime = 1.0 - e * e1.cos();
+        let delta = f / f_prime;
+        e1 -= delta;
+        if delta.abs() < 1e-12 {
+            break;
+        }
+    }
+
+    let (sin_e1, cos_e1) = e1.sin_cos();
+    let r1 = a * (1.0 - e * cos_e1);
+    if r1 < 1e-5 || !r1.is_finite() {
+        *pos += *vel * dt;
+        return;
+    }
+
+    let x1 = a * (cos_e1 - e);
+    let y1 = a * sqrt_1_minus_e2 * sin_e1;
+    let new_pos = star_pos + x1 * p_hat + y1 * q_hat;
+
+    let v_factor = (mu * a).sqrt() / r1;
+    let vx1 = -v_factor * sin_e1;
+    let vy1 = v_factor * sqrt_1_minus_e2 * cos_e1;
+    let new_vel = vx1 * p_hat + vy1 * q_hat;
+
+    if new_pos.is_finite() && new_vel.is_finite() {
+        *pos = new_pos;
+        *vel = new_vel;
+    } else {
+        *pos += *vel * dt;
+    }
+}
+
+fn advance_symplectic_leapfrog_drift(
+    body_data: &mut [PhysicsBodyEntry],
+    sub_dt: f64,
+    star_pos: DVec3,
+    star_mass: f64,
+) {
     for body in body_data.iter_mut() {
         if body.satellite.is_none() {
             if body.is_central_star {
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
+            } else if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass) {
+                kepler_drift_body(&mut body.pos, &mut body.vel, star_pos, star_mass, sub_dt);
             } else {
                 body.pos += body.vel * sub_dt;
             }
         }
     }
 
-    let snapshot_positions: Vec<(Entity, DVec3, DVec3, f64)> = body_data
+    let snapshot_positions: Vec<(Entity, DVec3, DVec3, f64, f64)> = body_data
         .iter()
-        .map(|b| (b.entity, b.pos, b.vel, b.mass))
+        .map(|b| (b.entity, b.pos, b.vel, b.mass, b.radius))
         .collect();
 
     for body in body_data.iter_mut() {
         if let Some(ref mut sat) = body.satellite {
-            if let Some(&(_, parent_pos, parent_vel, parent_mass)) =
+            if let Some(&(_, parent_pos, parent_vel, parent_mass, parent_radius)) =
                 snapshot_positions.iter().find(|(e, ..)| *e == sat.parent)
             {
                 let r_orbit = sat.semi_major_axis_au.max(1e-5);
-                let omega_moon = if sat.orbital_period_years > 1e-8 {
-                    2.0 * std::f64::consts::PI / sat.orbital_period_years
+                if r_orbit < parent_radius * 1.05 {
+                    body.satellite = None;
+                    body.pos += body.vel * sub_dt;
                 } else {
-                    (G_ASTRO * parent_mass / (r_orbit * r_orbit * r_orbit)).sqrt()
-                };
+                    let omega_moon = if sat.orbital_period_years > 1e-8 {
+                        2.0 * std::f64::consts::PI / sat.orbital_period_years
+                    } else {
+                        (G_ASTRO * parent_mass / (r_orbit * r_orbit * r_orbit)).sqrt()
+                    };
 
-                sat.true_anomaly =
-                    (sat.true_anomaly + omega_moon * sub_dt).rem_euclid(2.0 * std::f64::consts::PI);
-                let cos_a = sat.true_anomaly.cos();
-                let sin_a = sat.true_anomaly.sin();
-                let v_orb_mag = (G_ASTRO * parent_mass / r_orbit).sqrt();
+                    sat.true_anomaly = (sat.true_anomaly + omega_moon * sub_dt)
+                        .rem_euclid(2.0 * std::f64::consts::PI);
+                    let cos_a = sat.true_anomaly.cos();
+                    let sin_a = sat.true_anomaly.sin();
+                    let v_orb_mag = (G_ASTRO * parent_mass / r_orbit).sqrt();
 
-                body.pos = parent_pos + DVec3::new(r_orbit * cos_a, 0.0, r_orbit * sin_a);
-                body.vel = parent_vel + DVec3::new(-v_orb_mag * sin_a, 0.0, v_orb_mag * cos_a);
+                    body.pos = parent_pos + DVec3::new(r_orbit * cos_a, 0.0, r_orbit * sin_a);
+                    body.vel = parent_vel + DVec3::new(-v_orb_mag * sin_a, 0.0, v_orb_mag * cos_a);
+                }
             } else {
                 body.satellite = None;
                 body.pos += body.vel * sub_dt;
@@ -80,7 +219,8 @@ fn compute_single_body_acc(
     tractor: Option<(DVec3, f64)>,
     is_little_red_dot: bool,
 ) -> DVec3 {
-    let mut acc = DVec3::ZERO;
+    let mut pert_acc = DVec3::ZERO;
+    let mut star_acc = DVec3::ZERO;
     let pos = body.pos;
     let vel = body.vel;
     let b_mass = body.mass;
@@ -102,25 +242,22 @@ fn compute_single_body_acc(
             let m_earth = b_mass / EARTH_MASS_SOLAR;
             let inertia_suppression = (1.0 / (1.0 + m_earth * 150.0)).clamp(0.0, 1.0);
             let drag_coeff = 0.025 * gas_density * inertia_suppression;
-            acc -= drag_coeff * rel_speed * rel_v;
+            pert_acc -= drag_coeff * rel_speed * rel_v;
 
             let r_unit = DVec3::new(pos.x / r_cyl, 0.0, pos.z / r_cyl);
             let v_radial = vel.dot(r_unit);
             let damp_rate = 0.08 * gas_density * inertia_suppression;
-            acc -= r_unit * (v_radial * damp_rate);
-            acc.y -= vel.y * damp_rate * 2.0;
+            pert_acc -= r_unit * (v_radial * damp_rate);
+            pert_acc.y -= vel.y * damp_rate * 2.0;
         }
 
-        if matches!(
-            b_type,
-            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
-        ) {
+        if matches!(b_type, BodyType::DustGrain) {
             let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.005);
             if r_cyl < 2.0 && config.gas_density_scale < 0.95 {
                 let r_unit = DVec3::new(pos.x / r_cyl, 0.0, pos.z / r_cyl);
                 let push_mag = 0.35 * (1.0 - (r_cyl / 2.0)).max(0.0)
                     / (1.0 + b_mass / (EARTH_MASS_SOLAR * 0.001));
-                acc += r_unit * push_mag;
+                pert_acc += r_unit * push_mag;
             }
         }
     }
@@ -132,14 +269,21 @@ fn compute_single_body_acc(
         let r_vec = pos - m_pos;
         let dist_sq = r_vec.length_squared() + softening_sq;
         let dist = dist_sq.sqrt();
-        acc -= (G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
+        let pull = -(G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
 
         if let Some(s_idx) = star_index {
-            if m_idx != s_idx && i != s_idx {
-                let m_r_sq = m_pos.length_squared() + softening_sq;
-                let m_dist = m_r_sq.sqrt();
-                acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_pos;
+            if m_idx == s_idx {
+                star_acc += pull;
+            } else {
+                pert_acc += pull;
+                if i != s_idx {
+                    let m_r_sq = m_pos.length_squared() + softening_sq;
+                    let m_dist = m_r_sq.sqrt();
+                    pert_acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_pos;
+                }
             }
+        } else {
+            pert_acc += pull;
         }
     }
 
@@ -147,8 +291,24 @@ fn compute_single_body_acc(
         let r_vec = pos - t_pos;
         let dist_sq = r_vec.length_squared() + softening_sq;
         let dist = dist_sq.sqrt();
-        acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
+        pert_acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
     }
+
+    let star_pos = if let Some(s_idx) = star_index {
+        massive_data
+            .iter()
+            .find(|(.., idx)| *idx == s_idx)
+            .map_or(DVec3::ZERO, |(p, ..)| *p)
+    } else {
+        DVec3::ZERO
+    };
+
+    let is_bound = is_body_bound_to_star(pos, vel, star_pos, star_mass);
+    let mut acc = if is_bound {
+        pert_acc
+    } else {
+        pert_acc + star_acc
+    };
 
     let acc_mag = acc.length();
     let max_acc = if is_little_red_dot {
@@ -271,6 +431,45 @@ fn apply_planetary_migration_and_lhb(
     }
 }
 
+fn apply_pert_kick(body: &mut PhysicsBodyEntry, half_dt: f64, star_mass: f64) {
+    let r = body.pos.length().max(0.01);
+    let v_k = (G_ASTRO * star_mass / r).sqrt();
+    let t_orbit = 2.0 * std::f64::consts::PI * r / v_k.max(1e-6);
+    let eff_dt = half_dt.min(t_orbit * 0.05);
+    let kick = body.acc * eff_dt;
+    let kick_mag = kick.length();
+
+    let is_major_planet = matches!(
+        body.body_type,
+        BodyType::GasGiant
+            | BodyType::IceGiant
+            | BodyType::TerrestrialPlanet
+            | BodyType::SuperEarth
+            | BodyType::Protoplanet
+    );
+
+    let max_kick = if is_major_planet {
+        0.0002 * v_k
+    } else {
+        0.001 * v_k
+    };
+
+    if kick_mag > max_kick && max_kick > 0.0 {
+        body.vel += kick * (max_kick / kick_mag);
+    } else {
+        body.vel += kick;
+    }
+
+    if is_major_planet {
+        let v_esc = (2.0 * G_ASTRO * star_mass / r).sqrt();
+        let max_bound_speed = 0.92 * v_esc;
+        let speed = body.vel.length();
+        if speed > max_bound_speed && max_bound_speed > 0.0 {
+            body.vel *= max_bound_speed / speed;
+        }
+    }
+}
+
 fn apply_velocity_kick_and_limits(
     body_data: &mut [PhysicsBodyEntry],
     sub_dt: f64,
@@ -283,7 +482,7 @@ fn apply_velocity_kick_and_limits(
             body.vel = DVec3::ZERO;
             body.acc = DVec3::ZERO;
         } else {
-            body.vel += body.acc * (sub_dt * 0.5);
+            apply_pert_kick(body, sub_dt * 0.5, star_mass);
 
             if !body.pos.is_finite() || !body.vel.is_finite() {
                 let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };
@@ -456,6 +655,7 @@ fn run_physics_substeps(
     massive_indices: &[usize],
     config: &SimulationConfig,
     star_mass: f64,
+    star_pos: DVec3,
     star_index: Option<usize>,
     softening_sq: f64,
     tractor: Option<(DVec3, f64)>,
@@ -472,11 +672,11 @@ fn run_physics_substeps(
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
             } else {
-                body.vel += body.acc * (sub_dt * 0.5);
+                apply_pert_kick(body, sub_dt * 0.5, star_mass);
             }
         }
 
-        advance_symplectic_leapfrog_drift(body_data, sub_dt);
+        advance_symplectic_leapfrog_drift(body_data, sub_dt, star_pos, star_mass);
 
         let massive_data: Vec<(DVec3, f64, f64, usize)> = massive_indices
             .iter()
@@ -509,6 +709,26 @@ fn run_physics_substeps(
                 body.acc = DVec3::ZERO;
             } else {
                 body.acc = new_acc;
+            }
+        }
+
+        // Type-I / II migration while nebular gas remains
+        if config.gas_density_scale > 0.001 {
+            for body in body_data.iter_mut() {
+                if body.is_central_star {
+                    continue;
+                }
+                apply_type_i_torque_acc(
+                    body.pos,
+                    body.vel,
+                    body.mass,
+                    body.body_type,
+                    body.is_central_star,
+                    body.satellite.is_some(),
+                    star_mass,
+                    config.gas_density_scale,
+                    &mut body.acc,
+                );
             }
         }
 
@@ -560,16 +780,15 @@ fn analyze_physics_system(
         || is_central_quasi
         || star_mass > 10_000.0;
 
-    let is_compact_system = star_mass < 0.25 && disk_params.outer_radius_au < 1.0;
-    let max_substeps = if is_little_red_dot {
+    let is_compact_system = (star_mass < 0.25 && disk_params.outer_radius_au < 1.0)
+        || scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System);
+    let max_substeps = if is_little_red_dot || is_compact_system {
         config.max_substeps_per_frame.max(128)
-    } else if is_compact_system {
-        config.max_substeps_per_frame.max(64)
     } else {
         config.max_substeps_per_frame
     };
     let eff_dt = if is_compact_system {
-        dt.min(0.00008)
+        dt.min(0.00004)
     } else {
         dt
     };
@@ -600,7 +819,11 @@ fn analyze_physics_system(
             let r_vec = body.pos - star_pos;
             let dist_sq = r_vec.length_squared() + softening_sq;
             let dist = dist_sq.sqrt();
-            body.acc = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
+            if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass) {
+                body.acc = DVec3::ZERO;
+            } else {
+                body.acc = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
+            }
         }
     }
 
@@ -645,7 +868,16 @@ pub fn step_physics_simulation(
 
     let dt = config.base_dt_yr;
     let target_dt = dt * time_warp.multiplier.max(0.01);
-    let softening_sq = config.softening_au * config.softening_au;
+    let is_compact_system = scenario_state
+        .as_deref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System)
+        || (disk_params.central_star_mass < 0.25 && disk_params.outer_radius_au < 1.0);
+    let eff_softening_au = if is_compact_system {
+        0.00005
+    } else {
+        config.softening_au
+    };
+    let softening_sq = eff_softening_au * eff_softening_au;
 
     let mut body_data: Vec<PhysicsBodyEntry> = bodies_query
         .iter()
@@ -702,6 +934,7 @@ pub fn step_physics_simulation(
         &ctx.massive_indices,
         &config,
         ctx.star_mass,
+        ctx.star_pos,
         ctx.star_index,
         softening_sq,
         tractor,
@@ -734,7 +967,7 @@ pub fn step_physics_simulation(
         ctx.star_index,
         ctx.star_pos,
         ctx.star_mass,
-        config.softening_au,
+        eff_softening_au,
     );
 
     sim_time.elapsed_years += target_dt;

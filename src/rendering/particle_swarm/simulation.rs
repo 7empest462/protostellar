@@ -29,6 +29,66 @@ pub struct ParticleIntegrationParams<'a> {
     pub massive_bodies: &'a [(Entity, DVec3, f64, BodyType)],
 }
 
+#[inline]
+fn compute_body_accretion_radius(
+    p_m: f64,
+    p_dist_au: f32,
+    is_major_body: bool,
+    star_m: f32,
+    speed_mult: f32,
+) -> f32 {
+    let p_dist_au = if p_dist_au.is_finite() && p_dist_au >= 0.0 {
+        p_dist_au
+    } else {
+        1.0
+    };
+    let is_inner_terrestrial = p_dist_au < 2.7;
+    let safe_speed = if speed_mult.is_finite() && speed_mult > 0.0 {
+        speed_mult
+    } else {
+        1.0
+    };
+    let warp_sweep = (1.0 + safe_speed.log10().max(0.0) * 0.30).min(2.2);
+    let is_massive_disk = star_m > 10.0;
+    let safe_star_m = f64::from(star_m).max(1e-4);
+    let safe_p_m = if p_m.is_finite() && p_m > 0.0 {
+        p_m
+    } else {
+        0.0
+    };
+
+    let hill_r = p_dist_au * ((safe_p_m / (3.0 * safe_star_m)).cbrt() as f32);
+    let bondi_r = if is_massive_disk {
+        (0.04 * (safe_p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.02, 1.2)
+    } else {
+        0.0
+    };
+    let effective_grav_r = hill_r.max(bondi_r);
+    let physical_r = if safe_p_m >= 0.08 {
+        (0.00465 * (safe_p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
+    } else {
+        (0.005 * (safe_p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
+    };
+
+    if is_major_body {
+        let (factor, base_cap) = if is_inner_terrestrial && !is_massive_disk {
+            (0.50 * hill_r, 0.150)
+        } else if is_massive_disk {
+            (0.35 * effective_grav_r, 0.850)
+        } else {
+            (0.60 * hill_r, 0.350)
+        };
+        let max_cap = physical_r.max(base_cap);
+        let raw = (physical_r + factor) * warp_sweep;
+        let safe_raw = if raw.is_finite() { raw } else { physical_r };
+        safe_raw.clamp(physical_r, max_cap)
+    } else {
+        let raw = (physical_r * 1.5) * warp_sweep;
+        let safe_raw = if raw.is_finite() { raw } else { 0.0001 };
+        safe_raw.clamp(0.00005, 0.0015)
+    }
+}
+
 fn step_particle_gpu_mode(
     pos: [f32; 3],
     m: f32,
@@ -48,33 +108,13 @@ fn step_particle_gpu_mode(
         let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
 
         let p_dist_au = p_pos.length() as f32;
-        let is_inner_terrestrial = p_dist_au < 2.7;
-        let warp_sweep = (1.0 + params.speed_mult.log10().max(0.0) * 0.30).min(2.2);
-        let is_massive_disk = params.star_m > 10.0;
-        let hill_r = p_dist_au * ((p_m / (3.0 * f64::from(params.star_m))).cbrt() as f32);
-        let bondi_r = if is_massive_disk {
-            (0.04 * (p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.02, 1.2)
-        } else {
-            0.0
-        };
-        let effective_grav_r = hill_r.max(bondi_r);
-        let physical_r = if p_m >= 0.08 {
-            (0.00465 * (p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
-        } else {
-            (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
-        };
-
-        let acc_r = if is_major_body {
-            if is_inner_terrestrial && !is_massive_disk {
-                ((physical_r + 0.50 * hill_r) * warp_sweep).clamp(physical_r, 0.150)
-            } else if is_massive_disk {
-                ((physical_r + 0.35 * effective_grav_r) * warp_sweep).clamp(physical_r, 0.850)
-            } else {
-                ((physical_r + 0.60 * hill_r) * warp_sweep).clamp(physical_r, 0.350)
-            }
-        } else {
-            ((physical_r * 1.5) * warp_sweep).clamp(0.00005, 0.0015)
-        };
+        let acc_r = compute_body_accretion_radius(
+            p_m,
+            p_dist_au,
+            is_major_body,
+            params.star_m,
+            params.speed_mult,
+        );
 
         if p_dist < acc_r {
             chunk_accretions.push((p_ent, f64::from(m)));
@@ -145,35 +185,14 @@ fn step_particle_cpu_mode(
         let pdx = pos[0] - p_pos.x as f32;
         let pdz = pos[2] - p_pos.z as f32;
         let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
-
         let p_dist_au = p_pos.length() as f32;
-        let is_inner_terrestrial = p_dist_au < 2.7;
-        let warp_sweep = (1.0 + params.speed_mult.log10().max(0.0) * 0.30).min(2.2);
-        let is_massive_disk = params.star_m > 10.0;
-        let hill_r = p_dist_au * ((p_m / (3.0 * f64::from(params.star_m))).cbrt() as f32);
-        let bondi_r = if is_massive_disk {
-            (0.04 * (p_m / JUPITER_MASS_SOLAR).sqrt() as f32).clamp(0.02, 1.2)
-        } else {
-            0.0
-        };
-        let effective_grav_r = hill_r.max(bondi_r);
-        let physical_r = if p_m >= 0.08 {
-            (0.00465 * (p_m / 1.0).powf(0.8) as f32).clamp(0.004, 0.20)
-        } else {
-            (0.005 * (p_m / EARTH_MASS_SOLAR).cbrt() as f32).clamp(0.003, 0.040)
-        };
-
-        let acc_r = if is_major_body {
-            if is_inner_terrestrial && !is_massive_disk {
-                ((physical_r + 0.50 * hill_r) * warp_sweep).clamp(physical_r, 0.150)
-            } else if is_massive_disk {
-                ((physical_r + 0.35 * effective_grav_r) * warp_sweep).clamp(physical_r, 0.850)
-            } else {
-                ((physical_r + 0.60 * hill_r) * warp_sweep).clamp(physical_r, 0.350)
-            }
-        } else {
-            ((physical_r * 1.5) * warp_sweep).clamp(0.00005, 0.0015)
-        };
+        let acc_r = compute_body_accretion_radius(
+            p_m,
+            p_dist_au,
+            is_major_body,
+            params.star_m,
+            params.speed_mult,
+        );
 
         if p_dist < acc_r {
             chunk_accretions.push((p_ent, f64::from(m)));
@@ -547,16 +566,36 @@ pub fn process_particle_collisions_and_sticking(
                                 } else {
                                     1.0
                                 };
-                                let zone_boost = (r_body / 1.0).powf(0.55).clamp(1.0, 4.5);
-                                let mass_factor = (m_a / b_mass).cbrt().clamp(1.0, 6.0);
+                                let r_body_safe = if r_body.is_finite() && r_body > 0.0 {
+                                    r_body
+                                } else {
+                                    1.0
+                                };
+                                let zone_boost = (r_body_safe / 1.0).powf(0.55).clamp(1.0, 4.5);
+                                let m_a_safe = if m_a.is_finite() && m_a > 0.0 {
+                                    m_a
+                                } else {
+                                    b_mass
+                                };
+                                let mass_factor = (m_a_safe / b_mass).cbrt().clamp(1.0, 6.0);
+                                let speed_mult_safe = if speed_mult.is_finite() && speed_mult > 0.0
+                                {
+                                    speed_mult
+                                } else {
+                                    1.0
+                                };
                                 let warp_stick_boost =
-                                    (1.0 + speed_mult.log10().max(0.0) * 0.22).min(1.8);
-                                let r_acc = (0.012
+                                    (1.0 + speed_mult_safe.log10().max(0.0) * 0.22).min(1.8);
+                                let raw_acc = 0.012
                                     * sticky_boost
                                     * zone_boost
                                     * mass_factor
-                                    * warp_stick_boost)
-                                    .clamp(0.005, 0.080);
+                                    * warp_stick_boost;
+                                let r_acc = if raw_acc.is_finite() {
+                                    raw_acc.clamp(0.005, 0.080)
+                                } else {
+                                    0.012
+                                };
 
                                 if dist_sq < r_acc * r_acc {
                                     try_merge_particles(

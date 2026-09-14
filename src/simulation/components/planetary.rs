@@ -38,7 +38,11 @@ pub struct VolatileInventory {
     pub cometary_impact_count: u32,
 }
 
-/// A dynamic impact basin formed by a major cometary / asteroidal impact.
+fn default_elongation() -> f32 {
+    1.0
+}
+
+/// A dynamic impact basin formed by a major cometary / asteroidal impact or grazing flyby.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ImpactBasin {
     /// Normal vector on the unit sphere
@@ -49,6 +53,9 @@ pub struct ImpactBasin {
     pub formation_time_yr: f64,
     /// Current cooling state: 1.0 = glowing magma melt pool, 0.0 = solidified dark basalt mare
     pub melt_glow_fraction: f32,
+    /// Impact elongation (1.0 = circular crater, >1.0 = elongated grazing trench)
+    #[serde(default = "default_elongation")]
+    pub elongation: f32,
 }
 
 /// Tracks recent impact basins on a planetary surface.

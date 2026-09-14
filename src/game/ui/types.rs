@@ -2,8 +2,10 @@
 
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
+pub use crate::simulation::disk::belts::BeltZone;
 use crate::utils::constants::*;
 use bevy::prelude::*;
+use std::collections::BTreeSet;
 
 pub type SelectedWorldQuery<'w, 's> = Query<
     'w,
@@ -25,27 +27,27 @@ pub type SelectedWorldQuery<'w, 's> = Query<
     Without<PanOrbitCamera>,
 >;
 
-/// Marker for the top-left simulation statistics text.
-#[derive(Component)]
-pub struct HudHeaderStatsText;
-
-/// Marker for the top-right time warp / speed controls text.
+/// Marker for the live HUD simulation time and year counter.
 #[derive(Component)]
 pub struct HudTimeWarpText;
 
-/// Marker for the bottom-left body inspector telemetry text.
+/// Marker for the selected body telemetry details in the bottom-left panel.
 #[derive(Component)]
 pub struct HudInspectorText;
+
+/// Marker for the top-left simulation phase & statistics readout.
+#[derive(Component)]
+pub struct HudHeaderStatsText;
 
 /// Marker for the dynamic action button tooltip explanation text.
 #[derive(Component)]
 pub struct HudActionTooltipText;
 
-/// Marker for the notification toast banner text.
+/// Marker for temporary floating status toasts.
 #[derive(Component)]
 pub struct HudToastText;
 
-/// Marker for the bottom elapsed time timer text.
+/// Marker for the fixed bottom-right persistent simulation clock.
 #[derive(Component)]
 pub struct HudBottomTimerText;
 
@@ -59,6 +61,8 @@ pub struct QuickBarState {
     pub is_minimized: bool,
     pub show_minor_bodies: bool,
     pub show_embryos: bool,
+    /// Active astronomical belts expanded to reveal individual member buttons.
+    pub expanded_belts: BTreeSet<BeltZone>,
 }
 
 /// Global visibility and panel collapse states for the HUD overlay.
@@ -88,6 +92,7 @@ pub enum HudPanelElement {
     InspectorChip,
     ScenarioPresets,
     OrbitModeBadge,
+    OverlayModeBadge,
 }
 
 /// Discriminant component for dynamic text elements within the HUD overlay.
@@ -96,6 +101,7 @@ pub enum HudDynamicText {
     InspectorChip,
     FullScreenBadge,
     OrbitModeBadge,
+    OverlayModeBadge,
 }
 
 /// Marker for the bottom-center live telemetry and toast container.
@@ -294,6 +300,48 @@ pub struct PlanetBuilderPanel;
 #[derive(Component)]
 pub struct PlanetBuilderInfoText;
 
+/// State configuration for the Telemetry & Climate Graphing Panel (`[F10]`).
+#[derive(Resource, Debug, Clone)]
+pub struct TelemetryPanelState {
+    pub is_open: bool,
+    pub selected_metric: crate::simulation::telemetry::TelemetryMetric,
+    pub last_export_status: Option<String>,
+}
+
+impl Default for TelemetryPanelState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            selected_metric: crate::simulation::telemetry::TelemetryMetric::Habitability,
+            last_export_status: None,
+        }
+    }
+}
+
+/// Marker component for the floating Telemetry & Climate Graphing Panel.
+#[derive(Component)]
+pub struct TelemetryGraphPanel;
+
+/// Marker for the tracked body title in the Telemetry HUD.
+#[derive(Component)]
+pub struct TelemetryGraphBodyTitleText;
+
+/// Marker for the live numeric readouts in the Telemetry HUD.
+#[derive(Component)]
+pub struct TelemetryGraphReadoutText;
+
+/// Marker for the live sparkline graph text in the Telemetry HUD.
+#[derive(Component)]
+pub struct TelemetryGraphSparklineText;
+
+/// Marker for the CSV export status feedback text in the Telemetry HUD.
+#[derive(Component)]
+pub struct TelemetryExportStatusText;
+
+/// Marker for the metric switcher button pill in the Telemetry HUD.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TelemetryMetricButton(pub crate::simulation::telemetry::TelemetryMetric);
+
 /// On-screen notification toast resource.
 #[derive(Resource, Debug, Clone)]
 pub struct NotificationToast {
@@ -330,6 +378,9 @@ pub enum UiButtonAction {
     CycleTarget,
     ToggleMinimizeQuickBar,
     ToggleMinorBodies,
+    ToggleBelt(BeltZone),
+    ExpandAllBelts,
+    CollapseAllBelts,
     ToggleEmbryos,
     // Planet Builder Actions
     TogglePlanetBuilder,
@@ -341,6 +392,10 @@ pub enum UiButtonAction {
     BuilderToggleClickSpawn,
     BuilderExecuteSpawn,
     SpawnSubRocheMoon,
+    // Telemetry & Climate Graphing Actions
+    ToggleTelemetryPanel,
+    SelectTelemetryMetric(crate::simulation::telemetry::TelemetryMetric),
+    ExportTelemetryCsv,
     // Scientific Instruments & Overlays
     ToggleOrbitMode,
     CycleOverlayMode,
@@ -402,6 +457,9 @@ impl UiButtonAction {
             UiButtonAction::CycleTarget => "[Tab]: Cycle camera focus through all active celestial bodies.",
             UiButtonAction::ToggleMinimizeQuickBar => "[H]: Minimize or expand the top celestial body shortcut bar.",
             UiButtonAction::ToggleMinorBodies => "Toggle visibility of minor asteroids and planetesimals.",
+            UiButtonAction::ToggleBelt(zone) => zone.title(),
+            UiButtonAction::ExpandAllBelts => "Expand all astronomical belt groups in the quick selector.",
+            UiButtonAction::CollapseAllBelts => "Contract all astronomical belt groups into compact summary counts.",
             UiButtonAction::ToggleEmbryos => "Toggle visibility of protoplanetary embryos.",
             UiButtonAction::TogglePlanetBuilder => "[P]: Open or close the interactive Planet Builder & Spawner panel.",
             UiButtonAction::BuilderSelectPreset(_) => "Load this physical planetary archetype preset into the Planet Builder.",
@@ -412,6 +470,9 @@ impl UiButtonAction {
             UiButtonAction::BuilderToggleClickSpawn => "Toggle 3D plane click-to-place mode (click disk to place world).",
             UiButtonAction::BuilderExecuteSpawn => "Spawn the configured celestial world into orbit immediately!",
             UiButtonAction::SpawnSubRocheMoon => "Spawn a volatile-rich moon directly inside the selected planet's fluid Roche limit to trigger tidal shredding and ring creation!",
+            UiButtonAction::ToggleTelemetryPanel => "[F10]: Open or close the planetary climate & habitability telemetry graphing panel.",
+            UiButtonAction::SelectTelemetryMetric(_) => "Switch active telemetry graph metric (Habitability, Temperature, Ocean, Pressure, Orbit).",
+            UiButtonAction::ExportTelemetryCsv => "Export current planetary telemetry history to a standard CSV file in ./exports/.",
             UiButtonAction::ToggleOrbitMode => "[Y]: Cycle orbit trails (All -> Selected Target Only -> Hidden).",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
@@ -422,7 +483,9 @@ impl UiButtonAction {
             UiButtonAction::CycleComposition => "[C]: Cycle composition between Rocky, Metallic, Icy, and Volatile.",
             UiButtonAction::BoostDeltaV => "[=]: Prograde orbital velocity acceleration boost.",
             UiButtonAction::BrakeDeltaV => "[-]: Retrograde orbital velocity braking burn.",
-            UiButtonAction::InjectEmbryo => "[M]: Spawn and inject a new planetary embryo / moon.",
+            UiButtonAction::InjectEmbryo => {
+                "[M]: Trigger Theia-Earth Moon-forming giant impact / intercept trajectory."
+            }
             UiButtonAction::VaporizeBody => "[Del]: Shatter selected celestial body into dust & fragments.",
             UiButtonAction::FocusLock => "[F]: Focus & track camera onto selected celestial body.",
             UiButtonAction::ResetView => "[R]: Reset camera to overview orientation.",
@@ -564,11 +627,14 @@ pub fn is_canonical_major_planet(name: &str) -> bool {
 /// Determines if a celestial body is a protoplanetary embryo (e.g. Theia, Callisto Embryo, Titan Embryo,
 /// or procedural protoplanets coalesced in planetary feeding zones to seed moons and planetary accretion).
 pub fn is_embryo_body(name: &str, body_type: BodyType) -> bool {
+    let lower = name.to_lowercase();
+    if lower.contains("theia") {
+        return false;
+    }
     if is_canonical_major_planet(name) {
         return false;
     }
-    let lower = name.to_lowercase();
-    if lower.contains("embryo") || lower.starts_with("theia") {
+    if lower.contains("embryo") {
         return true;
     }
     body_type == BodyType::Protoplanet
@@ -578,6 +644,10 @@ pub fn is_embryo_body(name: &str, body_type: BodyType) -> bool {
 /// or a generic procedural minor planetesimal / asteroid / embryo.
 pub fn is_major_body(name: &str, body_type: BodyType, is_star: bool, mass_solar: f64) -> bool {
     if is_star || body_type.is_star_or_remnant() {
+        return true;
+    }
+    let lower = name.to_lowercase();
+    if lower.contains("theia") {
         return true;
     }
     if is_canonical_major_planet(name) {
@@ -593,7 +663,6 @@ pub fn is_major_body(name: &str, body_type: BodyType, is_star: bool, mass_solar:
     ) {
         return false;
     }
-    let lower = name.to_lowercase();
     if lower.starts_with("asteroid-")
         || lower.starts_with("dust-")
         || lower.starts_with("debris-")
