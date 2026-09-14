@@ -382,7 +382,7 @@ pub fn sync_pulsar_beams(
     let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.38);
 
     let current_visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
-    let pole_start = (current_visual_radius * 0.90).max(0.002);
+    let pole_start = (current_visual_radius * 0.92).max(0.0005);
 
     if let Some((_, mut root_trans)) = root_query.iter_mut().next() {
         root_trans.translation = world_pos;

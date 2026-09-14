@@ -111,7 +111,7 @@ pub fn generate_irregular_asteroid_mesh(
 pub fn generate_pulsar_beam_mesh() -> Mesh {
     let rings = 32;
     let sectors = 48;
-    let base_radius = 0.04;
+    let base_radius = 0.0004;
     let max_radius = 6.5;
     let total_length = 50.0;
 
@@ -124,12 +124,12 @@ pub fn generate_pulsar_beam_mesh() -> Mesh {
     for i in 0..=rings {
         let t = i as f32 / rings as f32;
         let y = t * total_length;
-        let r = base_radius + (max_radius - base_radius) * t.powf(1.35);
+        let r = base_radius + (max_radius - base_radius) * t.powf(1.10);
 
-        let axial_fade = if t < 0.08 {
-            t / 0.08
+        let axial_fade = if t < 0.04 {
+            0.65 + (t / 0.04) * 0.35
         } else {
-            ((1.0 - t) / 0.92).powf(1.4)
+            ((1.0 - t) / 0.96).powf(1.4)
         };
 
         for j in 0..=sectors {
@@ -169,7 +169,7 @@ pub fn generate_pulsar_beam_mesh() -> Mesh {
     for i in 0..=core_steps {
         let t = i as f32 / core_steps as f32;
         let y = t * total_length * 0.85;
-        let r = 0.02 + 0.18 * t;
+        let r = 0.00015 + 0.14 * t;
         let alpha = (1.0 - t).powi(2) * 0.95;
 
         for j in 0..=core_subdivisions {
@@ -295,8 +295,11 @@ pub fn generate_magnetar_ring_mesh() -> Mesh {
 }
 
 /// Procedurally generates a 3D magnetic field loop mesh (poloidal magnetic flux tube bundle).
+/// Constructed as an axisymmetric dipole field with multiple concentric radial L-shell tiers
+/// evenly distributed around all azimuths, ensuring balanced magnetic symmetry in all directions.
 pub fn generate_magnetar_field_loops_mesh() -> Mesh {
-    let num_loops = 16;
+    let tiers: [f32; 4] = [1.2, 2.4, 3.8, 5.5];
+    let num_azimuths = 8;
     let points_per_loop = 64;
     let ribbon_width = 0.012;
 
@@ -306,62 +309,65 @@ pub fn generate_magnetar_field_loops_mesh() -> Mesh {
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    for l in 0..num_loops {
-        let phi = (l as f32 / num_loops as f32) * 2.0 * PI;
-        let cos_phi = phi.cos();
-        let sin_phi = phi.sin();
+    for (tier_idx, &l_max) in tiers.iter().enumerate() {
+        let tier_fraction = tier_idx as f32 / (tiers.len() - 1) as f32;
+        let loop_fade = (1.0 - tier_fraction * 0.45).clamp(0.4, 1.0);
 
-        let l_max = 0.60 + 4.80 * (l as f32 / num_loops as f32).powf(0.85);
-        let loop_start_idx = positions.len() as u32;
+        for a in 0..num_azimuths {
+            let phi = (a as f32 / num_azimuths as f32) * 2.0 * PI;
+            let cos_phi = phi.cos();
+            let sin_phi = phi.sin();
 
-        for p in 0..=points_per_loop {
-            let t = p as f32 / points_per_loop as f32;
-            let theta = t * PI;
+            let loop_start_idx = positions.len() as u32;
 
-            let sin_t = theta.sin();
-            let cos_t = theta.cos();
+            for p in 0..=points_per_loop {
+                let t = p as f32 / points_per_loop as f32;
+                let theta = t * PI;
 
-            let r = (l_max * sin_t.powi(2)).max(0.015);
-            let y = r * cos_t;
-            let rho = r * sin_t;
+                let sin_t = theta.sin();
+                let cos_t = theta.cos();
 
-            let x = rho * cos_phi;
-            let z = rho * sin_phi;
+                let r = (l_max * sin_t.powi(2)).max(0.015);
+                let y = r * cos_t;
+                let rho = r * sin_t;
 
-            let binormal_x = -sin_phi * ribbon_width;
-            let binormal_z = cos_phi * ribbon_width;
+                let x = rho * cos_phi;
+                let z = rho * sin_phi;
 
-            positions.push([x - binormal_x, y, z - binormal_z]);
-            positions.push([x + binormal_x, y, z + binormal_z]);
+                let binormal_x = -sin_phi * ribbon_width;
+                let binormal_z = cos_phi * ribbon_width;
 
-            normals.push([cos_phi * sin_t, cos_t, sin_phi * sin_t]);
-            normals.push([cos_phi * sin_t, cos_t, sin_phi * sin_t]);
+                positions.push([x - binormal_x, y, z - binormal_z]);
+                positions.push([x + binormal_x, y, z + binormal_z]);
 
-            uvs.push([0.0, t]);
-            uvs.push([1.0, t]);
+                normals.push([cos_phi * sin_t, cos_t, sin_phi * sin_t]);
+                normals.push([cos_phi * sin_t, cos_t, sin_phi * sin_t]);
 
-            let footpoint_bright = if t < 0.15 {
-                1.0 + (1.0 - t / 0.15) * 2.5
-            } else if t > 0.85 {
-                1.0 + ((t - 0.85) / 0.15) * 2.5
-            } else {
-                1.0
-            };
+                uvs.push([0.0, t]);
+                uvs.push([1.0, t]);
 
-            let loop_fade = (1.0 - (l as f32 / num_loops as f32) * 0.6).clamp(0.2, 1.0);
-            let alpha = (0.75 * footpoint_bright * loop_fade).clamp(0.05, 1.0);
-            colors.push([1.0, 1.0, 1.0, alpha]);
-            colors.push([1.0, 1.0, 1.0, alpha]);
+                let footpoint_bright = if t < 0.15 {
+                    1.0 + (1.0 - t / 0.15) * 2.5
+                } else if t > 0.85 {
+                    1.0 + ((t - 0.85) / 0.15) * 2.5
+                } else {
+                    1.0
+                };
 
-            if p < points_per_loop {
-                let base = loop_start_idx + (p * 2) as u32;
-                indices.push(base);
-                indices.push(base + 1);
-                indices.push(base + 2);
+                let alpha = (0.75 * footpoint_bright * loop_fade).clamp(0.05, 1.0);
+                colors.push([1.0, 1.0, 1.0, alpha]);
+                colors.push([1.0, 1.0, 1.0, alpha]);
 
-                indices.push(base + 1);
-                indices.push(base + 3);
-                indices.push(base + 2);
+                if p < points_per_loop {
+                    let base = loop_start_idx + (p * 2) as u32;
+                    indices.push(base);
+                    indices.push(base + 1);
+                    indices.push(base + 2);
+
+                    indices.push(base + 1);
+                    indices.push(base + 3);
+                    indices.push(base + 2);
+                }
             }
         }
     }

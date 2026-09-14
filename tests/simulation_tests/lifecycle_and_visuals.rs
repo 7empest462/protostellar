@@ -934,3 +934,108 @@ fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
         "Camera target_entity must NOT bounce back to the star!"
     );
 }
+
+#[test]
+fn test_pulsar_beam_polar_taper_and_magnetar_field_symmetry() {
+    use bevy::render::mesh::VertexAttributeValues;
+    use protostellar::rendering::bodies::meshes::{
+        generate_magnetar_field_loops_mesh, generate_pulsar_beam_mesh,
+    };
+
+    // 1. Verify Pulsar Beam Polar Taper
+    let pulsar_mesh = generate_pulsar_beam_mesh();
+    let pulsar_positions = match pulsar_mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(VertexAttributeValues::Float32x3(pos)) => pos,
+        _ => panic!("Expected Float32x3 position attributes in pulsar mesh"),
+    };
+
+    // Find base vertices (y close to 0) and tip vertices (y close to 50)
+    let mut base_radii = Vec::new();
+    let mut tip_radii = Vec::new();
+    for pos in pulsar_positions {
+        let y = pos[1];
+        let r = (pos[0] * pos[0] + pos[2] * pos[2]).sqrt();
+        if y.abs() < 1e-4 {
+            base_radii.push(r);
+        } else if (y - 50.0).abs() < 1e-2 {
+            tip_radii.push(r);
+        }
+    }
+
+    assert!(
+        !base_radii.is_empty(),
+        "Pulsar beam mesh must have base vertices at y = 0"
+    );
+    let max_base_r = base_radii
+        .iter()
+        .copied()
+        .fold(0.0f32, |acc, val| acc.max(val));
+    // The base radius should be tightly tapered (~0.0004 AU), well below typical star visual radius (0.0016 AU)
+    assert!(
+        max_base_r <= 0.0010,
+        "Pulsar beam base radius must be tightly tapered at the pole (< 0.0010 AU), found {}",
+        max_base_r
+    );
+
+    let max_tip_r = tip_radii
+        .iter()
+        .copied()
+        .fold(0.0f32, |acc, val| acc.max(val));
+    assert!(
+        max_tip_r >= 6.0,
+        "Pulsar beam must flare outward to >= 6.0 AU at tip, found {}",
+        max_tip_r
+    );
+
+    // 2. Verify Magnetar Field Symmetry
+    let magnetar_mesh = generate_magnetar_field_loops_mesh();
+    let magnetar_positions = match magnetar_mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(VertexAttributeValues::Float32x3(pos)) => pos,
+        _ => panic!("Expected Float32x3 position attributes in magnetar mesh"),
+    };
+
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_z = f32::MAX;
+    let mut max_z = f32::MIN;
+
+    for pos in magnetar_positions {
+        min_x = min_x.min(pos[0]);
+        max_x = max_x.max(pos[0]);
+        min_z = min_z.min(pos[2]);
+        max_z = max_z.max(pos[2]);
+    }
+
+    // Symmetry check: max_x and -min_x should match within 0.05 AU (uniform ribbon width / discretization)
+    let x_asymmetry = (max_x.abs() - min_x.abs()).abs();
+    let z_asymmetry = (max_z.abs() - min_z.abs()).abs();
+    assert!(
+        x_asymmetry < 0.05,
+        "Magnetar magnetic field must be symmetric across X axis (+X: {}, -X: {}, diff: {})",
+        max_x,
+        min_x,
+        x_asymmetry
+    );
+    assert!(
+        z_asymmetry < 0.05,
+        "Magnetar magnetic field must be symmetric across Z axis (+Z: {}, -Z: {}, diff: {})",
+        max_z,
+        min_z,
+        z_asymmetry
+    );
+
+    // Both sides must reach the outer tier (~5.5 AU), rather than being 0.60 AU on one side and 5.4 AU on the other
+    assert!(
+        max_x >= 5.0 && min_x <= -5.0,
+        "Magnetar field loops must extend to outer tier in both +X and -X directions (+X: {}, -X: {})",
+        max_x,
+        min_x
+    );
+    assert!(
+        max_z >= 5.0 && min_z <= -5.0,
+        "Magnetar field loops must extend to outer tier in both +Z and -Z directions (+Z: {}, -Z: {})",
+        max_z,
+        min_z
+    );
+}
+

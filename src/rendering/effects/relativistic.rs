@@ -170,22 +170,22 @@ pub fn draw_pulsar_lighthouse_gizmos(gizmos: &mut Gizmos, star_vec: Vec3, elapse
 }
 
 pub fn draw_magnetar_reconnection_gizmos(gizmos: &mut Gizmos, star_vec: Vec3, elapsed: f32) {
-    let spin_rate = 1.5;
+    let spin_rate = 1.2;
     let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.26);
 
     let loop_tiers: [(f32, Color); 4] = [
-        (1.3, Color::srgba(0.20, 0.95, 1.0, 0.85)),
+        (1.2, Color::srgba(0.20, 0.95, 1.0, 0.85)),
         (2.4, Color::srgba(0.60, 0.35, 1.0, 0.80)),
-        (4.0, Color::srgba(0.95, 0.20, 0.75, 0.75)),
-        (6.2, Color::srgba(1.00, 0.15, 0.45, 0.70)),
+        (3.8, Color::srgba(0.95, 0.20, 0.75, 0.75)),
+        (5.5, Color::srgba(1.00, 0.15, 0.45, 0.70)),
     ];
 
-    let num_quadrants = 4;
+    let num_quadrants = 8;
     let num_segments = 24;
 
     for &(r_0, loop_color) in &loop_tiers {
         for q in 0..num_quadrants {
-            let azimuth = (q as f32) * (std::f32::consts::PI * 0.5);
+            let azimuth = (q as f32) * (std::f32::consts::PI * 0.25);
             let loop_rot = beam_rot * Quat::from_rotation_y(azimuth);
 
             let mut prev_pt: Option<Vec3> = None;
