@@ -65,13 +65,17 @@ pub fn process_accretion_and_collisions(
 
     let n = snapshots.len();
     for i in 0..n {
-        let e1 = snapshots[i].entity;
+        let Some(e1) = snapshots.get(i).map(|s| s.entity) else {
+            continue;
+        };
         if merged_away.contains(&e1) || newly_formed_moons.contains(&e1) {
             continue;
         }
 
         for j in (i + 1)..n {
-            let e2 = snapshots[j].entity;
+            let Some(e2) = snapshots.get(j).map(|s| s.entity) else {
+                continue;
+            };
             if merged_away.contains(&e2)
                 || merged_away.contains(&e1)
                 || newly_formed_moons.contains(&e2)
@@ -80,8 +84,12 @@ pub fn process_accretion_and_collisions(
                 continue;
             }
 
-            let b2 = snapshots[j].clone();
-            let b1 = &mut snapshots[i];
+            let Some(b2) = snapshots.get(j).cloned() else {
+                continue;
+            };
+            let Some(b1) = snapshots.get_mut(i) else {
+                continue;
+            };
 
             let mut ctx = CollisionContext {
                 commands: &mut commands,
