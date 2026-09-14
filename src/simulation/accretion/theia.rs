@@ -104,13 +104,18 @@ pub fn update_theia_rendezvous(
     let earth_opt = bodies_query
         .iter()
         .find(|(_, pos, _, _, _, body, ..)| {
-            !body.name.contains("Theia")
-                && !body.name.contains("Moon")
-                && (body.name == "Earth"
-                    || body.name == "Proto-Earth"
-                    || body.name.contains("Earth")
-                    || (body.body_type.is_planet()
-                        && ((pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt() - 1.0).abs() < 0.35))
+            let name = body.name.as_str();
+            let is_earth_name = name == "Earth"
+                || name == "Proto-Earth"
+                || name.starts_with("Proto-Earth")
+                || name.starts_with("Earth (");
+            let r_xy = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt();
+            let near_1au = (r_xy - 1.0).abs() < 0.35;
+            !name.contains("Theia")
+                && !name.contains("Moon")
+                && !name.contains("Planet Nine")
+                && (is_earth_name
+                    || (body.body_type.is_planet() && near_1au && !name.contains("Super-Earth")))
         })
         .map(|(e, ..)| e);
 
@@ -232,14 +237,11 @@ pub fn update_theia_rendezvous(
 
     theia_state.intercept_steps += 1;
     let start_yr = theia_state.intercept_start_year.unwrap_or(elapsed);
-    let time_in_intercept = elapsed - start_yr;
+    let _time_in_intercept = elapsed - start_yr;
 
     // Trigger condition: within contact envelope or swept past in a large time-step
-    let is_impact_imminent = dist <= r_contact * 1.5
-        || (dist <= 0.45 && time_in_intercept >= 0.10)
-        || (dist <= 0.60 && theia_state.intercept_steps >= 4)
-        || theia_state.intercept_steps >= 12
-        || (v_rel * dt >= dist && dist <= 0.25);
+    let is_impact_imminent =
+        dist <= r_contact * 2.0 || (v_rel * dt >= dist * 0.9 && dist <= r_contact * 4.0);
 
     if is_impact_imminent {
         // Execute Giant Impact resolution:
@@ -337,28 +339,25 @@ pub fn update_theia_rendezvous(
         return;
     }
 
-    let t_flight = (dist / 1.5).clamp(0.03, 0.45);
-    let r_e = (p_pos - star_pos.0).length().max(0.1);
-    let omega_e = (G_ASTRO * star_m / (r_e * r_e * r_e)).sqrt();
-    let delta_theta = omega_e * t_flight;
-
-    // Projected Earth position after t_flight
+    // Oblique sideswipe offset b ~ 0.35 relative to Earth's orbital plane
     let phi_e = (p_pos.z - star_pos.0.z).atan2(p_pos.x - star_pos.0.x);
-    let target_phi = phi_e + delta_theta;
-    let target_earth_pos =
-        star_pos.0 + DVec3::new(r_e * target_phi.cos(), 0.0, r_e * target_phi.sin());
+    let b_offset = DVec3::new(-phi_e.sin(), 0.0, phi_e.cos()) * (r_contact * 0.35);
+    let aim_pos = p_pos + b_offset;
 
-    // Oblique sideswipe offset b ~ 0.35
-    let b_offset = DVec3::new(-target_phi.sin(), 0.0, target_phi.cos()) * (r_contact * 0.35);
-    let aim_pos = target_earth_pos + b_offset;
-
-    // Inward transfer velocity
-    let v_desired = (aim_pos - s_pos) / t_flight;
-    let blend = (dt / 0.08).clamp(0.08, 0.95);
-    theia.2 .0 = theia.2 .0.lerp(v_desired, blend);
+    let to_aim = aim_pos - s_pos;
+    let to_aim_dir = to_aim.normalize_or_zero();
 
     // Active rendezvous trajectory closing step
-    let closing_speed = (dist / t_flight).clamp(0.5, 12.0);
-    let step_dist = (closing_speed * dt.max(0.01)).min(dist * 0.45);
-    theia.1 .0 += (aim_pos - s_pos).normalize_or_zero() * step_dist;
+    let closing_speed = (dist / 0.15).clamp(0.5, 6.0);
+    let step_dist = (closing_speed * dt.max(0.01)).min(dist * 0.50);
+    theia.1 .0 += to_aim_dir * step_dist;
+
+    // Inward transfer velocity matching Earth's orbital motion plus closing speed
+    let mut v_desired = p_vel + to_aim_dir * closing_speed;
+    let v_esc_local = (2.0 * G_ASTRO * star_m / s_pos.length().max(0.5)).sqrt();
+    if v_desired.length() > v_esc_local * 1.1 {
+        v_desired = v_desired.normalize_or_zero() * (v_esc_local * 1.1);
+    }
+    let blend = (dt / 0.08).clamp(0.1, 0.95);
+    theia.2 .0 = theia.2 .0.lerp(v_desired, blend);
 }

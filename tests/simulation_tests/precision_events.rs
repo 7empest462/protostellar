@@ -725,3 +725,178 @@ fn test_theia_rendezvous_integrated_with_physics_and_collisions() {
         "Theia and Earth must never bounce into deep space"
     );
 }
+
+#[test]
+fn test_theia_intercept_with_planet_nine_at_380_au_selects_earth_and_forms_moon() {
+    let mut app = App::new();
+    app.init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<TheiaImpactState>()
+        .add_systems(Update, update_theia_rendezvous);
+
+    // 1. Central Star
+    let star_pos = DVec3::ZERO;
+    let star_mass = 1.0;
+    app.world_mut().spawn((
+        SimPosition(star_pos),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+        Mass(star_mass),
+        Radius(0.00465),
+        CentralStar,
+    ));
+
+    // 2. Planet Nine at 380 AU with "(Super-Earth / Ice Giant)" in its name!
+    let planet_nine_pos = DVec3::new(380.0, 0.0, 0.0);
+    let v_p9 = (G_ASTRO * star_mass / 380.0).sqrt();
+    let planet_nine_vel = DVec3::new(0.0, 0.0, v_p9);
+    let planet_nine_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(planet_nine_pos),
+            SimVelocity(planet_nine_vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(10.0 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 3.5),
+            Temperature(40.0),
+            Composition::icy(),
+            InternalDifferentiation::default(),
+            CelestialBody {
+                name: "Planet Nine (Super-Earth / Ice Giant)".to_string(),
+                body_type: BodyType::IceGiant,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 3. Proto-Earth at 1.00 AU
+    let earth_pos = DVec3::new(1.0, 0.0, 0.0);
+    let v_c = (G_ASTRO * star_mass / 1.0).sqrt();
+    let earth_vel = DVec3::new(0.0, 0.0, v_c);
+    let earth_mass = 0.88 * EARTH_MASS_SOLAR;
+    let earth_rad = EARTH_RADIUS_AU * 0.94;
+    let comp = Composition::rocky();
+    let mut diff = InternalDifferentiation::default();
+    diff.recalculate(earth_mass, earth_rad, &comp);
+
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(earth_pos),
+            SimVelocity(earth_vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(earth_mass),
+            Radius(earth_rad),
+            Temperature(288.0),
+            comp,
+            diff,
+            CelestialBody {
+                name: "Proto-Earth".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // 4. Theia at 1.04 AU near Earth
+    let theia_pos = DVec3::new(1.03, 0.0, 0.02);
+    let theia_vel = DVec3::new(0.0, 0.0, v_c * 0.98);
+    let theia_mass = 0.12 * EARTH_MASS_SOLAR;
+    let theia_rad = EARTH_RADIUS_AU * 0.53;
+    let mut theia_diff = InternalDifferentiation::default();
+    theia_diff.recalculate(theia_mass, theia_rad, &Composition::rocky());
+
+    let theia_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(theia_pos),
+            SimVelocity(theia_vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(theia_mass),
+            Radius(theia_rad),
+            Temperature(270.0),
+            Composition::rocky(),
+            theia_diff,
+            CelestialBody {
+                name: "Theia".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // Trigger manual Moon-forming intercept
+    app.world_mut()
+        .resource_mut::<TheiaImpactState>()
+        .manual_trigger_requested = true;
+
+    // Advance 15 steps
+    for _ in 0..15 {
+        app.update();
+    }
+
+    // Verify Planet Nine was NOT targeted or modified
+    let world = app.world();
+    let p9_body = world
+        .get::<CelestialBody>(planet_nine_ent)
+        .expect("Planet Nine must exist");
+    let p9_pos = world
+        .get::<SimPosition>(planet_nine_ent)
+        .expect("Planet Nine must have position")
+        .0;
+    let p9_sat = world.get::<SatelliteOf>(planet_nine_ent);
+    assert_eq!(p9_body.name, "Planet Nine (Super-Earth / Ice Giant)");
+    assert!(
+        p9_pos.length() > 300.0,
+        "Planet Nine must remain at ~380 AU, found at {}",
+        p9_pos.length()
+    );
+    assert!(
+        p9_sat.is_none(),
+        "Planet Nine must not have acquired Theia as a satellite!"
+    );
+
+    // Verify Earth successfully formed at 1.0 AU
+    let earth_body = world
+        .get::<CelestialBody>(earth_ent)
+        .expect("Earth entity must exist");
+    let earth_pos = world
+        .get::<SimPosition>(earth_ent)
+        .expect("Earth must have position")
+        .0;
+    let earth_diff = world
+        .get::<InternalDifferentiation>(earth_ent)
+        .expect("Earth must have differentiation");
+    assert_eq!(earth_body.name, "Earth");
+    assert_eq!(earth_body.body_type, BodyType::TerrestrialPlanet);
+    assert!(
+        (earth_pos.length() - 1.0).abs() < 0.2,
+        "Earth must remain at ~1.0 AU, found at {}",
+        earth_pos.length()
+    );
+    assert!(earth_diff.has_theia_llsvp);
+
+    // Verify The Moon formed and is bound to Earth (NOT out at 380 AU!)
+    let moon_body = world
+        .get::<CelestialBody>(theia_ent)
+        .expect("The Moon entity must exist");
+    let moon_pos = world
+        .get::<SimPosition>(theia_ent)
+        .expect("The Moon must have position")
+        .0;
+    let moon_sat = world.get::<SatelliteOf>(theia_ent);
+    assert_eq!(moon_body.name, "The Moon");
+    assert_eq!(moon_body.body_type, BodyType::Moon);
+    let sat = moon_sat.expect("The Moon must be bound to Earth with SatelliteOf");
+    assert_eq!(sat.parent, earth_ent);
+    let moon_dist_to_earth = (moon_pos - earth_pos).length();
+    assert!(
+        moon_dist_to_earth < 0.05,
+        "The Moon must orbit close to Earth (< 0.05 AU), found dist: {} AU",
+        moon_dist_to_earth
+    );
+}

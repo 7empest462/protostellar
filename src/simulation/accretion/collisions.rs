@@ -457,8 +457,24 @@ pub fn handle_grazing_bounce(
                 .map(|q| q.8.name.clone())
                 .unwrap_or_default(),
         );
-        let is_theia_or_earth = |n: &str| n.contains("Earth") || n.contains("Theia");
-        let is_earth_or_moon = |n: &str| n.contains("Earth") || n.contains("Moon");
+        let is_theia_or_earth = |n: &str| {
+            (n == "Earth"
+                || n == "Proto-Earth"
+                || n.starts_with("Proto-Earth")
+                || n.starts_with("Earth (")
+                || n.contains("Theia"))
+                && !n.contains("Planet Nine")
+                && !n.contains("Super-Earth")
+        };
+        let is_earth_or_moon = |n: &str| {
+            (n == "Earth"
+                || n == "Proto-Earth"
+                || n.starts_with("Proto-Earth")
+                || n.starts_with("Earth (")
+                || n.contains("Moon"))
+                && !n.contains("Planet Nine")
+                && !n.contains("Super-Earth")
+        };
         if (is_theia_or_earth(&name1) && is_theia_or_earth(&name2))
             || (is_earth_or_moon(&name1) && is_earth_or_moon(&name2))
         {
@@ -515,8 +531,16 @@ pub fn handle_inelastic_merger(
     v_rel: f64,
     b1: &mut BodySnapshot,
 ) {
-    if (pair.p_name.contains("Earth") && pair.s_name.contains("Moon"))
-        || (pair.s_name.contains("Earth") && pair.p_name.contains("Moon"))
+    let is_earth_name = |n: &str| {
+        (n == "Earth"
+            || n == "Proto-Earth"
+            || n.starts_with("Earth")
+            || n.starts_with("Proto-Earth"))
+            && !n.contains("Planet Nine")
+            && !n.contains("Super-Earth")
+    };
+    if (is_earth_name(&pair.p_name) && pair.s_name.contains("Moon"))
+        || (is_earth_name(&pair.s_name) && pair.p_name.contains("Moon"))
     {
         return;
     }
@@ -882,8 +906,16 @@ fn process_body_pair(
 
     let is_parent_satellite =
         b1.satellite_parent == Some(b2.entity) || b2.satellite_parent == Some(b1.entity);
-    let is_earth_moon = (b1.name.contains("Earth") && b2.name.contains("Moon"))
-        || (b2.name.contains("Earth") && b1.name.contains("Moon"));
+    let is_earth_name = |n: &str| {
+        (n == "Earth"
+            || n == "Proto-Earth"
+            || n.starts_with("Earth")
+            || n.starts_with("Proto-Earth"))
+            && !n.contains("Planet Nine")
+            && !n.contains("Super-Earth")
+    };
+    let is_earth_moon = (is_earth_name(&b1.name) && b2.name.contains("Moon"))
+        || (is_earth_name(&b2.name) && b1.name.contains("Moon"));
     if is_parent_satellite || is_earth_moon {
         return;
     }
@@ -954,11 +986,20 @@ fn process_body_pair(
             (0.05..=0.45).contains(&gamma) && m_max >= EARTH_MASS_SOLAR * 0.05
         };
 
-    let is_theia_earth = (b1.name.contains("Theia") || b2.name.contains("Theia"))
-        && (b1.name.contains("Earth")
-            || b2.name.contains("Earth")
-            || (b1.pos.length() > 0.7 && b1.pos.length() < 1.3 && b1.body_type.is_planet())
-            || (b2.pos.length() > 0.7 && b2.pos.length() < 1.3 && b2.body_type.is_planet()));
+    let is_earth = |b: &BodySnapshot| {
+        let n = b.name.as_str();
+        (n == "Earth"
+            || n == "Proto-Earth"
+            || n.starts_with("Proto-Earth")
+            || n.starts_with("Earth (")
+            || (b.pos.length() > 0.65 && b.pos.length() < 1.35 && b.body_type.is_planet()))
+            && !n.contains("Planet Nine")
+            && !n.contains("Super-Earth")
+            && !n.contains("Theia")
+            && !n.contains("Moon")
+    };
+    let is_theia = |b: &BodySnapshot| b.name.contains("Theia");
+    let is_theia_earth = (is_theia(b1) && is_earth(b2)) || (is_theia(b2) && is_earth(b1));
 
     let interpenetrating =
         is_physically_interpenetrating(dist, min_dist, b1.radius, b2.radius, r_contact);
@@ -1026,11 +1067,20 @@ fn execute_collision_regimes(
         v_esc,
     };
 
-    let is_theia_earth = (pair.p_name.contains("Theia") || pair.s_name.contains("Theia"))
-        && (pair.p_name.contains("Earth")
-            || pair.s_name.contains("Earth")
-            || (pair.p_pos.length() > 0.7 && pair.p_pos.length() < 1.3 && pair.p_type.is_planet())
-            || (pair.s_pos.length() > 0.7 && pair.s_pos.length() < 1.3 && pair.s_type.is_planet()));
+    let is_earth_cand = |n: &str, pos: DVec3, b_type: BodyType| {
+        (n == "Earth"
+            || n == "Proto-Earth"
+            || n.starts_with("Proto-Earth")
+            || n.starts_with("Earth (")
+            || (pos.length() > 0.65 && pos.length() < 1.35 && b_type.is_planet()))
+            && !n.contains("Planet Nine")
+            && !n.contains("Super-Earth")
+            && !n.contains("Theia")
+            && !n.contains("Moon")
+    };
+    let is_theia_earth = (pair.p_name.contains("Theia")
+        && is_earth_cand(&pair.s_name, pair.s_pos, pair.s_type))
+        || (pair.s_name.contains("Theia") && is_earth_cand(&pair.p_name, pair.p_pos, pair.p_type));
 
     let regime = if is_theia_earth {
         ImpactRegime::GiantImpactMoon
