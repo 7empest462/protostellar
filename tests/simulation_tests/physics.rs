@@ -1,7 +1,9 @@
 //! Test module generated from simulation_tests.
 
 use bevy::math::DVec3;
+use bevy::prelude::*;
 use protostellar::simulation::components::*;
+use protostellar::simulation::resources::*;
 use protostellar::utils::constants::*;
 use protostellar::utils::math::*;
 
@@ -378,8 +380,16 @@ fn test_giant_impact_moon_formation_mechanics() {
     assert!(orbit_dist >= 2.5 * p_rad);
 }
 
-#[test]
-fn test_high_time_warp_orbital_stability() {
+struct StabilitySystem {
+    app: App,
+    sched: Schedule,
+    merc_ent: Entity,
+    earth_ent: Entity,
+    ceres_ent: Entity,
+    jup_ent: Entity,
+}
+
+fn setup_high_time_warp_solar_system() -> StabilitySystem {
     use bevy::prelude::*;
     use protostellar::simulation::physics::step_physics_simulation;
     use protostellar::simulation::resources::*;
@@ -481,26 +491,54 @@ fn test_high_time_warp_orbital_stability() {
     let mut sched = Schedule::default();
     sched.add_systems(step_physics_simulation);
 
+    StabilitySystem {
+        app,
+        sched,
+        merc_ent,
+        earth_ent,
+        ceres_ent,
+        jup_ent,
+    }
+}
+
+#[test]
+fn test_high_time_warp_orbital_stability() {
+    let mut s = setup_high_time_warp_solar_system();
+
     // Test 1: Run at 10,000x time warp for 50 frames (target_dt = 5.0 yr/frame -> 250 years total)
-    app.world_mut().resource_mut::<TimeWarp>().multiplier = 10_000.0;
+    s.app.world_mut().resource_mut::<TimeWarp>().multiplier = 10_000.0;
     for _ in 0..50 {
-        sched.run(app.world_mut());
+        s.sched.run(s.app.world_mut());
     }
 
-    let p_merc = app.world().get::<SimPosition>(merc_ent).unwrap().0.length();
-    let p_earth = app
+    let p_merc = s
+        .app
         .world()
-        .get::<SimPosition>(earth_ent)
+        .get::<SimPosition>(s.merc_ent)
         .unwrap()
         .0
         .length();
-    let p_ceres = app
+    let p_earth = s
+        .app
         .world()
-        .get::<SimPosition>(ceres_ent)
+        .get::<SimPosition>(s.earth_ent)
         .unwrap()
         .0
         .length();
-    let p_jup = app.world().get::<SimPosition>(jup_ent).unwrap().0.length();
+    let p_ceres = s
+        .app
+        .world()
+        .get::<SimPosition>(s.ceres_ent)
+        .unwrap()
+        .0
+        .length();
+    let p_jup = s
+        .app
+        .world()
+        .get::<SimPosition>(s.jup_ent)
+        .unwrap()
+        .0
+        .length();
 
     assert!(
         (p_merc - 0.387).abs() < 0.01,
@@ -524,24 +562,32 @@ fn test_high_time_warp_orbital_stability() {
     );
 
     // Test 2: Run at 1,000,000x time warp for 10 frames (target_dt = 500 yr/frame -> 5,000 years total!)
-    app.world_mut().resource_mut::<TimeWarp>().multiplier = 1_000_000.0;
+    s.app.world_mut().resource_mut::<TimeWarp>().multiplier = 1_000_000.0;
     for _ in 0..10 {
-        sched.run(app.world_mut());
+        s.sched.run(s.app.world_mut());
     }
 
-    let p_earth_warp = app
+    let p_earth_warp = s
+        .app
         .world()
-        .get::<SimPosition>(earth_ent)
+        .get::<SimPosition>(s.earth_ent)
         .unwrap()
         .0
         .length();
-    let p_ceres_warp = app
+    let p_ceres_warp = s
+        .app
         .world()
-        .get::<SimPosition>(ceres_ent)
+        .get::<SimPosition>(s.ceres_ent)
         .unwrap()
         .0
         .length();
-    let p_jup_warp = app.world().get::<SimPosition>(jup_ent).unwrap().0.length();
+    let p_jup_warp = s
+        .app
+        .world()
+        .get::<SimPosition>(s.jup_ent)
+        .unwrap()
+        .0
+        .length();
 
     // After 5,250 years of simulated time at up to 1,000,000x speed, orbits must stay stable!
     assert!(
