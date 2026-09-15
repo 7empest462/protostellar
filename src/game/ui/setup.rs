@@ -290,6 +290,13 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
         Color::srgba(0.05, 0.18, 0.15, 0.90),
         Color::srgb(0.35, 0.95, 0.70),
     );
+    create_compact_button(
+        col,
+        UiButtonAction::ToggleSlingshotMode,
+        "🎯 Slingshot [K]",
+        Color::srgba(0.20, 0.10, 0.04, 0.90),
+        Color::srgb(1.0, 0.75, 0.30),
+    );
 }
 
 fn spawn_view_mode_badges(col: &mut ChildSpawnerCommands) {

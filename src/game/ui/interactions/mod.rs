@@ -66,6 +66,7 @@ pub fn handle_ui_button_interactions(
     sim_time: Res<SimTime>,
     mut commands: Commands,
     mut quasi_star_query: Query<&mut BlackHoleStarState>,
+    mut opt_slingshot: Option<ResMut<SlingshotState>>,
 ) {
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
@@ -99,7 +100,12 @@ pub fn handle_ui_button_interactions(
                 ) {
                     continue;
                 }
-                if handle_instrument_action(action, &mut player_state, &mut toast) {
+                if handle_instrument_action(
+                    action,
+                    &mut player_state,
+                    &mut toast,
+                    opt_slingshot.as_deref_mut(),
+                ) {
                     continue;
                 }
                 if handle_selection_action(

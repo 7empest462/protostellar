@@ -406,6 +406,8 @@ pub struct RocheDebrisPool {
 pub enum PlayerTool {
     #[default]
     Inspect,
+    /// Interactive orbital slingshot launcher with real-time trajectory forecast
+    Slingshot,
     /// Apply a velocity impulse ($\Delta \vec{v}$) vector to a selected body
     GravitationalImpulse,
     /// Position a virtual gravitational tractor to gently redirect bodies
@@ -414,6 +416,82 @@ pub enum PlayerTool {
     MassInjection,
     /// Trigger a spiral density wave perturbation
     DensityWave,
+}
+
+/// Archetypes for launching new celestial bodies via the Interactive Slingshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SlingshotArchetype {
+    #[default]
+    Asteroid,
+    Comet,
+    TerrestrialPlanet,
+    WaterWorld,
+    GasGiant,
+    RoguePlanet,
+}
+
+impl SlingshotArchetype {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Asteroid => Self::Comet,
+            Self::Comet => Self::TerrestrialPlanet,
+            Self::TerrestrialPlanet => Self::WaterWorld,
+            Self::WaterWorld => Self::GasGiant,
+            Self::GasGiant => Self::RoguePlanet,
+            Self::RoguePlanet => Self::Asteroid,
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Asteroid => "Asteroid",
+            Self::Comet => "Comet",
+            Self::TerrestrialPlanet => "Terrestrial Planet",
+            Self::WaterWorld => "Water World",
+            Self::GasGiant => "Gas Giant",
+            Self::RoguePlanet => "Rogue Planet",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Asteroid => "🪨",
+            Self::Comet => "☄️",
+            Self::TerrestrialPlanet => "🌍",
+            Self::WaterWorld => "🌊",
+            Self::GasGiant => "🪐",
+            Self::RoguePlanet => "🚀",
+        }
+    }
+}
+
+/// Global resource tracking interactive orbital slingshot state.
+#[derive(Resource, Debug, Clone)]
+pub struct SlingshotState {
+    pub is_active: bool,
+    /// Launch origin point on the orbital plane ($Y = 0$) or locked entity position
+    pub drag_origin: Option<DVec3>,
+    /// Current mouse drag position on the orbital plane ($Y = 0$)
+    pub drag_current: Option<DVec3>,
+    /// Optional target entity if applying a gravitational slingshot kick to an existing body
+    pub target_entity: Option<Entity>,
+    /// Archetype of body to spawn when releasing
+    pub archetype: SlingshotArchetype,
+    /// Velocity scaling factor: converts drag distance in AU into launch speed in AU/yr
+    pub velocity_scale: f64,
+}
+
+impl Default for SlingshotState {
+    fn default() -> Self {
+        Self {
+            is_active: false,
+            drag_origin: None,
+            drag_current: None,
+            target_entity: None,
+            archetype: SlingshotArchetype::Asteroid,
+            velocity_scale: 8.0,
+        }
+    }
 }
 
 /// Controls which orbital trails and conic overlays are drawn in the viewport.

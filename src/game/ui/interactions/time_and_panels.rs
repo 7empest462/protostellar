@@ -95,6 +95,7 @@ pub fn handle_instrument_action(
     action: &UiButtonAction,
     player_state: &mut PlayerInteractionState,
     toast: &mut NotificationToast,
+    mut slingshot: Option<&mut SlingshotState>,
 ) -> bool {
     match action {
         UiButtonAction::ToggleOrbitMode => {
@@ -139,6 +140,39 @@ pub fn handle_instrument_action(
                     "🧲 Gravitational Tractor Active [Drag to redirect bodies]".to_string();
             }
             toast.timer = 3.5;
+            true
+        }
+        UiButtonAction::ToggleSlingshotMode => {
+            if let Some(ref mut sl) = slingshot {
+                sl.is_active = !sl.is_active;
+                player_state.active_tool = if sl.is_active {
+                    PlayerTool::Slingshot
+                } else {
+                    PlayerTool::Inspect
+                };
+                toast.message = if sl.is_active {
+                    format!(
+                        "🎯 Slingshot Launcher Active [{} {}] [Click & Drag to Aim]",
+                        sl.archetype.icon(),
+                        sl.archetype.display_name()
+                    )
+                } else {
+                    "🎯 Slingshot Launcher Closed".to_string()
+                };
+                toast.timer = 3.5;
+            }
+            true
+        }
+        UiButtonAction::CycleSlingshotArchetype => {
+            if let Some(ref mut sl) = slingshot {
+                sl.archetype = sl.archetype.cycle();
+                toast.message = format!(
+                    "🎯 Slingshot Archetype: {} {}",
+                    sl.archetype.icon(),
+                    sl.archetype.display_name()
+                );
+                toast.timer = 2.5;
+            }
             true
         }
         _ => false,

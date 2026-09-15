@@ -239,6 +239,7 @@ fn update_time_warp_diagnostics(
     let speed_str = time_warp.human_readable_speed();
     let tool_str = match player_state.active_tool {
         PlayerTool::Inspect => "INSPECT & LIVE-EDIT",
+        PlayerTool::Slingshot => "ORBITAL SLINGSHOT [K]",
         PlayerTool::GravitationalTractor => "GRAVITATIONAL TRACTOR",
         PlayerTool::GravitationalImpulse => "DELTA-V IMPULSE",
         PlayerTool::MassInjection => "MASS INJECTION",

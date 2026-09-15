@@ -22,6 +22,8 @@ mod precision_events;
 mod pulsar_magnetar;
 #[path = "simulation_tests/scenarios.rs"]
 mod scenarios;
+#[path = "simulation_tests/slingshot.rs"]
+mod slingshot;
 #[path = "simulation_tests/telemetry.rs"]
 mod telemetry;
 #[path = "simulation_tests/theia_moon.rs"]

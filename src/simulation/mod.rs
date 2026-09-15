@@ -35,6 +35,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<EnergyMonitor>()
             .init_resource::<DiskParameters>()
             .init_resource::<PlayerInteractionState>()
+            .init_resource::<SlingshotState>()
             .init_resource::<PlanetesimalSpawner>()
             .init_resource::<ActiveScenarioState>()
             .init_resource::<SimulationTelemetryHistory>()

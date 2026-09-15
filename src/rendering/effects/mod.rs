@@ -32,7 +32,7 @@ pub use shockwaves::{
     draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
     update_impact_shockwaves, update_roche_debris_streams,
 };
-pub use tools::{draw_planet_builder_preview, draw_tractor_beam_gizmo};
+pub use tools::{draw_planet_builder_preview, draw_slingshot_preview, draw_tractor_beam_gizmo};
 
 fn draw_star_effects(
     gizmos: &mut Gizmos,
@@ -341,15 +341,18 @@ pub fn draw_orbital_effects_and_gizmos(
     )>,
     parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
     opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
+    opt_slingshot: Option<Res<crate::simulation::resources::SlingshotState>>,
 ) {
-    // If orbit trails are hidden and there are no active visual events or builders,
+    // If orbit trails are hidden and there are no active visual events, builders, or slingshot,
     // short-circuit the entire orbital gizmo pass. Also respect the diagnostic
     // overlay `Hidden` mode as a complete hide-all shortcut.
+    let slingshot_dragging = opt_slingshot.as_ref().is_some_and(|s| s.is_active && s.drag_origin.is_some());
     if (player_state.orbit_mode == OrbitVisualizationMode::Off
         || player_state.overlay_mode == DiagnosticOverlayMode::Hidden)
         && shockwave_pool.shockwaves.is_empty()
         && debris_pool.streams.is_empty()
         && opt_builder.is_none()
+        && !slingshot_dragging
     {
         return;
     }
@@ -434,6 +437,12 @@ pub fn draw_orbital_effects_and_gizmos(
     if let Some(builder) = opt_builder {
         if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
             draw_planet_builder_preview(&mut gizmos, &builder, star_vec, star_mass_val, elapsed);
+        }
+    }
+
+    if let Some(slingshot) = opt_slingshot {
+        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+            draw_slingshot_preview(&mut gizmos, &slingshot, star_vec, star_mass_val, elapsed);
         }
     }
 }

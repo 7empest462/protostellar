@@ -138,6 +138,8 @@ Open the floating Planet Builder sidebar anytime by pressing **`[P]`** or clicki
 | **Trigger Theia Giant Impact** | `M` | Initiate Theia intercept to form The Moon and spin up Earth |
 | **Trigger LHB** | `G` | Trigger Late Heavy Bombardment & cometary water delivery |
 | **Planet Builder GUI** | `P` | Open / close floating Planet Builder sidebar |
+| **Slingshot Launcher** | `K` | Toggle Interactive Orbital Slingshot Launcher (click & drag to aim & launch) |
+| **Cycle Slingshot Body** | `C` | Cycle slingshot archetype (Asteroid, Comet, Terrestrial, Ocean, Gas Giant, Rogue) |
 
 ### Scenarios & Astrophysics Experiments
 | Action | Key | Description |
@@ -197,7 +199,7 @@ protostellar/
 │   └── utils/                    # Astronomical constants, math solvers, orbital mechanics
 └── tests/
     ├── simulation_tests.rs       # Test harness entry point
-    └── simulation_tests/         # 151 rigorous automated astrophysics, climate, and stability tests
+    └── simulation_tests/         # 160 rigorous automated astrophysics, climate, and stability tests
 ```
 
 ---
@@ -220,7 +222,7 @@ cargo run --release
 > **Note:** Always compile with `--release`! Protostellar's numerical integrators, GPU compute pipeline, and 100,000-particle swarms are heavily optimized for release builds, running locked at 120+ FPS on Apple Silicon M-series chips and modern GPUs.
 
 ### Running Automated Astrophysics Tests
-To run all 151 unit and integration tests:
+To run all 160 unit and integration tests:
 
 ```bash
 cargo test --test simulation_tests

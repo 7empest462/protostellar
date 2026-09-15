@@ -438,6 +438,9 @@ pub enum UiButtonAction {
     ToggleTopRightPanel,
     ToggleInspectorPanel,
     ToggleScenariosPanel,
+    // Interactive Orbital Slingshot Launcher
+    ToggleSlingshotMode,
+    CycleSlingshotArchetype,
 }
 
 impl UiButtonAction {
@@ -512,6 +515,8 @@ impl UiButtonAction {
             UiButtonAction::ToggleTopRightPanel => "Minimize or expand top-right diagnostics and time controls.",
             UiButtonAction::ToggleInspectorPanel => "Minimize or expand celestial body inspector & action toolbar.",
             UiButtonAction::ToggleScenariosPanel => "Minimize or expand sandbox scenario presets bar.",
+            UiButtonAction::ToggleSlingshotMode => "[K]: Toggle Interactive Orbital Slingshot Launcher (click-and-drag to aim & launch).",
+            UiButtonAction::CycleSlingshotArchetype => "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue).",
         }
     }
 }
