@@ -3,10 +3,12 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
-use protostellar::game::ui::scroll::{handle_inspector_scroll, reset_inspector_scroll_on_target_change};
+use protostellar::game::ui::scroll::{
+    handle_inspector_scroll, reset_inspector_scroll_on_target_change,
+};
 use protostellar::game::ui::types::{
-    HudPanelElement, HudVisibilityState,
-    PlanetBuilderState, ScrollableInspector, TelemetryPanelState,
+    HudPanelElement, HudVisibilityState, PlanetBuilderState, ScrollableInspector,
+    TelemetryPanelState,
 };
 use protostellar::game::ui::visibility::update_hud_visibility;
 use protostellar::simulation::resources::PlayerInteractionState;
@@ -45,11 +47,7 @@ fn test_inspector_scrolling_clamping_and_reset() {
     // Spawn a child button inside scroll_ent that is currently hovered
     let _child_btn = app
         .world_mut()
-        .spawn((
-            Node::default(),
-            Interaction::Hovered,
-            ChildOf(scroll_ent),
-        ))
+        .spawn((Node::default(), Interaction::Hovered, ChildOf(scroll_ent)))
         .id();
 
     let dummy_target1 = app.world_mut().spawn_empty().id();
@@ -101,8 +99,20 @@ fn test_inspector_scrolling_clamping_and_reset() {
     );
 }
 
-#[test]
-fn test_universal_hud_panel_minimization_states() {
+struct TestHudEntities {
+    top_controls_panel: Entity,
+    top_controls_pill: Entity,
+    bottom_right_panel: Entity,
+    bottom_right_pill: Entity,
+    bottom_center_panel: Entity,
+    bottom_center_pill: Entity,
+    scenarios_panel: Entity,
+    scenarios_pill: Entity,
+    builder_pill: Entity,
+    telemetry_pill: Entity,
+}
+
+fn setup_test_hud_app() -> (App, TestHudEntities) {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.init_resource::<HudVisibilityState>();
@@ -112,33 +122,76 @@ fn test_universal_hud_panel_minimization_states() {
 
     app.add_systems(Update, update_hud_visibility);
 
-    // Spawn panels and pills
-    let top_controls_panel = app.world_mut().spawn((Node::default(), HudPanelElement::TopControlsPanel)).id();
-    let top_controls_pill = app.world_mut().spawn((Node::default(), HudPanelElement::TopControlsPill)).id();
-    let bottom_right_panel = app.world_mut().spawn((Node::default(), HudPanelElement::BottomRightPanel)).id();
-    let bottom_right_pill = app.world_mut().spawn((Node::default(), HudPanelElement::BottomRightPill)).id();
-    let bottom_center_panel = app.world_mut().spawn((Node::default(), HudPanelElement::BottomCenterPanel)).id();
-    let bottom_center_pill = app.world_mut().spawn((Node::default(), HudPanelElement::BottomCenterPill)).id();
-    let scenarios_panel = app.world_mut().spawn((Node::default(), HudPanelElement::ScenarioPresets)).id();
-    let scenarios_pill = app.world_mut().spawn((Node::default(), HudPanelElement::ScenarioPresetsPill)).id();
-    let builder_pill = app.world_mut().spawn((Node::default(), HudPanelElement::PlanetBuilderPill)).id();
-    let telemetry_pill = app.world_mut().spawn((Node::default(), HudPanelElement::TelemetryPanelPill)).id();
+    let entities = TestHudEntities {
+        top_controls_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TopControlsPanel))
+            .id(),
+        top_controls_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TopControlsPill))
+            .id(),
+        bottom_right_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::BottomRightPanel))
+            .id(),
+        bottom_right_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::BottomRightPill))
+            .id(),
+        bottom_center_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::BottomCenterPanel))
+            .id(),
+        bottom_center_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::BottomCenterPill))
+            .id(),
+        scenarios_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::ScenarioPresets))
+            .id(),
+        scenarios_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::ScenarioPresetsPill))
+            .id(),
+        builder_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::PlanetBuilderPill))
+            .id(),
+        telemetry_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TelemetryPanelPill))
+            .id(),
+    };
 
-    // 1. Initial default state: panels visible, pills hidden
+    (app, entities)
+}
+
+#[test]
+fn test_hud_panel_initial_default_visibility() {
+    let (mut app, e) = setup_test_hud_app();
+
+    // Initial default state: panels visible, pills hidden
     app.update();
 
-    assert_eq!(app.world().get::<Node>(top_controls_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(top_controls_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(bottom_right_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(bottom_right_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(bottom_center_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(bottom_center_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(scenarios_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(scenarios_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(builder_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(telemetry_pill).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.top_controls_panel).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.top_controls_pill).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.bottom_right_panel).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.bottom_right_pill).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.bottom_center_panel).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.bottom_center_pill).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.scenarios_panel).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.scenarios_pill).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.builder_pill).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.telemetry_pill).unwrap().display, Display::None);
+}
 
-    // 2. Minimize all panels
+#[test]
+fn test_hud_panel_minimized_visibility() {
+    let (mut app, e) = setup_test_hud_app();
+
+    // Minimize all panels
     {
         let mut hud = app.world_mut().resource_mut::<HudVisibilityState>();
         hud.top_controls_minimized = true;
@@ -158,14 +211,14 @@ fn test_universal_hud_panel_minimization_states() {
     app.update();
 
     // Panels should now be hidden, pills displayed
-    assert_eq!(app.world().get::<Node>(top_controls_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(top_controls_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(bottom_right_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(bottom_right_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(bottom_center_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(bottom_center_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(scenarios_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(scenarios_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(builder_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(telemetry_pill).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.top_controls_panel).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.top_controls_pill).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.bottom_right_panel).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.bottom_right_pill).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.bottom_center_panel).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.bottom_center_pill).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.scenarios_panel).unwrap().display, Display::None);
+    assert_eq!(app.world().get::<Node>(e.scenarios_pill).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.builder_pill).unwrap().display, Display::Flex);
+    assert_eq!(app.world().get::<Node>(e.telemetry_pill).unwrap().display, Display::Flex);
 }

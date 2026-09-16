@@ -10,11 +10,15 @@ use super::types::ScrollableInspector;
 /// Handles mouse wheel scrolling for the bottom-left Target Inspector panel.
 pub fn handle_inspector_scroll(
     mut mouse_wheel: MessageReader<MouseWheel>,
-    mut scroll_query: Query<(Entity, &mut ScrollPosition, &Node, &ComputedNode), With<ScrollableInspector>>,
+    mut scroll_query: Query<
+        (Entity, &mut ScrollPosition, &Node, &ComputedNode),
+        With<ScrollableInspector>,
+    >,
     interaction_query: Query<(Entity, &Interaction)>,
     parent_query: Query<&ChildOf>,
 ) {
-    let Ok((scroll_entity, mut scroll_position, _node, computed)) = scroll_query.single_mut() else {
+    let Ok((scroll_entity, mut scroll_position, _node, computed)) = scroll_query.single_mut()
+    else {
         return;
     };
 
@@ -23,7 +27,8 @@ pub fn handle_inspector_scroll(
         return;
     }
 
-    let max_offset_y = ((computed.content_size().y - computed.size().y) * computed.inverse_scale_factor).max(0.0);
+    let max_offset_y =
+        ((computed.content_size().y - computed.size().y) * computed.inverse_scale_factor).max(0.0);
 
     for ev in mouse_wheel.read() {
         let delta_y = match ev.unit {

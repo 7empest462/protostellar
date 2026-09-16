@@ -318,32 +318,32 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
                     );
                 });
 
-            card.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(3.0),
-                align_items: AlignItems::FlexStart,
-                ..default()
-            })
-            .with_children(|grid| {
-                grid.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(2.0),
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(3.0),
+                    align_items: AlignItems::FlexStart,
                     ..default()
                 })
-                .with_children(|col1| {
-                    spawn_main_tool_shortcuts(col1);
-                });
+                .with_children(|grid| {
+                    grid.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    })
+                    .with_children(|col1| {
+                        spawn_main_tool_shortcuts(col1);
+                    });
 
-                grid.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(2.0),
-                    ..default()
-                })
-                .with_children(|col2| {
-                    spawn_view_mode_badges(col2);
+                    grid.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    })
+                    .with_children(|col2| {
+                        spawn_view_mode_badges(col2);
+                    });
                 });
             });
-        });
         });
 }
 
@@ -588,149 +588,159 @@ fn spawn_bottom_center_toast_panel(bottom_row: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|center_dock| {
-            center_dock
-                .spawn((
-                    HudToastContainer,
-                    Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(3.5)),
-                        margin: UiRect::bottom(Val::Px(4.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        max_width: Val::Px(520.0),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.01, 0.04, 0.09, 0.90)),
-                    BorderColor::all(Color::srgba(0.25, 0.60, 0.95, 0.65)),
-                ))
-                .with_children(|toast_box| {
-                    toast_box.spawn((
-                        Text::new(">> PROTOSTELLAR LIVE"),
+            spawn_toast_banner(center_dock);
+            spawn_bottom_center_pill(center_dock);
+            spawn_time_controls_dock(center_dock);
+        });
+}
+
+fn spawn_toast_banner(center_dock: &mut ChildSpawnerCommands) {
+    center_dock
+        .spawn((
+            HudToastContainer,
+            Node {
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(3.5)),
+                margin: UiRect::bottom(Val::Px(4.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                max_width: Val::Px(520.0),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.01, 0.04, 0.09, 0.90)),
+            BorderColor::all(Color::srgba(0.25, 0.60, 0.95, 0.65)),
+        ))
+        .with_children(|toast_box| {
+            toast_box.spawn((
+                Text::new(">> PROTOSTELLAR LIVE"),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.4, 0.9, 1.0)),
+                HudToastText,
+            ));
+        });
+}
+
+fn spawn_bottom_center_pill(center_dock: &mut ChildSpawnerCommands) {
+    center_dock
+        .spawn((
+            Button,
+            UiButtonAction::ToggleBottomCenterPanel,
+            HudPanelElement::BottomCenterPill,
+            Node {
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                display: Display::None,
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                margin: UiRect::bottom(Val::Px(2.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.88)),
+            BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
+        ))
+        .with_children(|pill| {
+            pill.spawn((
+                Text::new("⏱️ Time Controls ▲"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.85, 0.4)),
+                Pickable::IGNORE,
+            ));
+        });
+}
+
+fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
+    center_dock
+        .spawn((
+            HudPanelElement::BottomCenterPanel,
+            Node {
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                min_width: Val::Px(320.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.92)),
+            BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.7)),
+        ))
+        .with_children(|time_box| {
+            time_box
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    width: Val::Percent(100.0),
+                    margin: UiRect::bottom(Val::Px(2.0)),
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new("T+ 0.00 yr | PAUSED"),
                         TextFont {
-                            font_size: FontSize::Px(11.0),
+                            font_size: FontSize::Px(12.5),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.4, 0.9, 1.0)),
-                        HudToastText,
+                        TextColor(Color::srgb(1.0, 0.92, 0.4)),
+                        HudBottomTimerText,
                     ));
+                    create_compact_button(
+                        hdr,
+                        UiButtonAction::ToggleBottomCenterPanel,
+                        "🗕",
+                        Color::srgba(0.14, 0.08, 0.16, 0.85),
+                        Color::srgb(0.9, 0.4, 0.6),
+                    );
                 });
 
-            center_dock
-                .spawn((
-                    Button,
-                    UiButtonAction::ToggleBottomCenterPanel,
-                    HudPanelElement::BottomCenterPill,
-                    Node {
-                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
-                        display: Display::None,
-                        border: UiRect::all(Val::Px(1.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        margin: UiRect::bottom(Val::Px(2.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.88)),
-                    BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
-                ))
-                .with_children(|pill| {
-                    pill.spawn((
-                        Text::new("⏱️ Time Controls ▲"),
-                        TextFont {
-                            font_size: FontSize::Px(10.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.9, 0.85, 0.4)),
-                        Pickable::IGNORE,
-                    ));
-                });
-
-            center_dock
-                .spawn((
-                    HudPanelElement::BottomCenterPanel,
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        border: UiRect::all(Val::Px(1.0)),
-                        min_width: Val::Px(320.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.92)),
-                    BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.7)),
-                ))
-                .with_children(|time_box| {
-                    time_box
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            width: Val::Percent(100.0),
-                            margin: UiRect::bottom(Val::Px(2.0)),
-                            ..default()
-                        })
-                        .with_children(|hdr| {
-                            hdr.spawn((
-                                Text::new("T+ 0.00 yr | PAUSED"),
-                                TextFont {
-                                    font_size: FontSize::Px(12.5),
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(1.0, 0.92, 0.4)),
-                                HudBottomTimerText,
-                            ));
-                            create_compact_button(
-                                hdr,
-                                UiButtonAction::ToggleBottomCenterPanel,
-                                "🗕",
-                                Color::srgba(0.14, 0.08, 0.16, 0.85),
-                                Color::srgb(0.9, 0.4, 0.6),
-                            );
-                        });
-
-                    time_box
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            margin: UiRect::top(Val::Px(3.0)),
-                            ..default()
-                        })
-                        .with_children(|speed_row| {
-                            create_compact_button(
-                                speed_row,
-                                UiButtonAction::TimePause,
-                                "Pause [Space]",
-                                Color::srgba(0.24, 0.08, 0.08, 0.9),
-                                Color::srgb(1.0, 0.4, 0.4),
-                            );
-                            create_compact_button(
-                                speed_row,
-                                UiButtonAction::TimeSpeed1,
-                                "1x [1]",
-                                Color::srgba(0.08, 0.16, 0.24, 0.9),
-                                Color::srgb(0.4, 0.8, 1.0),
-                            );
-                            create_compact_button(
-                                speed_row,
-                                UiButtonAction::TimeSpeed100,
-                                "100x [2]",
-                                Color::srgba(0.08, 0.16, 0.24, 0.9),
-                                Color::srgb(0.4, 0.8, 1.0),
-                            );
-                            create_compact_button(
-                                speed_row,
-                                UiButtonAction::TimeSpeed10k,
-                                "10k [3]",
-                                Color::srgba(0.12, 0.18, 0.28, 0.9),
-                                Color::srgb(0.5, 0.85, 1.0),
-                            );
-                            create_compact_button(
-                                speed_row,
-                                UiButtonAction::TimeSpeed1M,
-                                "1M [4]",
-                                Color::srgba(0.18, 0.14, 0.32, 0.9),
-                                Color::srgb(0.7, 0.6, 1.0),
-                            );
-                        });
+            time_box
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    margin: UiRect::top(Val::Px(3.0)),
+                    ..default()
+                })
+                .with_children(|speed_row| {
+                    create_compact_button(
+                        speed_row,
+                        UiButtonAction::TimePause,
+                        "Pause [Space]",
+                        Color::srgba(0.24, 0.08, 0.08, 0.9),
+                        Color::srgb(1.0, 0.4, 0.4),
+                    );
+                    create_compact_button(
+                        speed_row,
+                        UiButtonAction::TimeSpeed1,
+                        "1x [1]",
+                        Color::srgba(0.08, 0.16, 0.24, 0.9),
+                        Color::srgb(0.4, 0.8, 1.0),
+                    );
+                    create_compact_button(
+                        speed_row,
+                        UiButtonAction::TimeSpeed100,
+                        "100x [2]",
+                        Color::srgba(0.08, 0.16, 0.24, 0.9),
+                        Color::srgb(0.4, 0.8, 1.0),
+                    );
+                    create_compact_button(
+                        speed_row,
+                        UiButtonAction::TimeSpeed10k,
+                        "10k [3]",
+                        Color::srgba(0.12, 0.18, 0.28, 0.9),
+                        Color::srgb(0.5, 0.85, 1.0),
+                    );
+                    create_compact_button(
+                        speed_row,
+                        UiButtonAction::TimeSpeed1M,
+                        "1M [4]",
+                        Color::srgba(0.18, 0.14, 0.32, 0.9),
+                        Color::srgb(0.7, 0.6, 1.0),
+                    );
                 });
         });
 }

@@ -29,140 +29,151 @@ pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) 
                 BorderColor::all(Color::srgba(0.25, 0.55, 0.95, 0.75)),
             ))
             .with_children(|panel| {
-                panel
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        align_items: AlignItems::Center,
-                        margin: UiRect::bottom(Val::Px(4.0)),
-                        ..default()
-                    })
-                    .with_children(|hdr| {
-                        hdr.spawn((
-                            Text::new("🔍 TARGET INSPECTOR & ACTIONS"),
-                            TextFont {
-                                font_size: FontSize::Px(10.5),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.4, 0.8, 1.0)),
-                        ));
-                        hdr.spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(5.0),
-                            ..default()
-                        })
-                        .with_children(|right_hdr| {
-                            right_hdr.spawn((
-                                Text::new("↕ Scroll"),
-                                TextFont {
-                                    font_size: FontSize::Px(8.5),
-                                    ..default()
-                                },
-                                TextColor(Color::srgba(0.4, 0.75, 1.0, 0.8)),
-                            ));
-                            create_compact_button(
-                                right_hdr,
-                                UiButtonAction::ToggleInspectorPanel,
-                                "🗕",
-                                Color::srgba(0.16, 0.08, 0.12, 0.85),
-                                Color::srgb(0.9, 0.4, 0.6),
-                            );
-                        });
-                    });
-
-                panel
-                    .spawn((
-                        ScrollableInspector,
-                        ScrollPosition::default(),
-                        Interaction::default(),
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            overflow: Overflow::scroll_y(),
-                            flex_grow: 1.0,
-                            flex_shrink: 1.0,
-                            width: Val::Percent(100.0),
-                            padding: UiRect::right(Val::Px(3.0)),
-                            ..default()
-                        },
-                    ))
-                    .with_children(|scroll_box| {
-                        scroll_box.spawn((
-                            Text::new(
-                                "No celestial body selected. Click on the Star or Planets to inspect & edit.",
-                            ),
-                            TextFont {
-                                font_size: FontSize::Px(11.0),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.90, 0.94, 1.0)),
-                            HudInspectorText,
-                        ));
-
-                        scroll_box
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Column,
-                                margin: UiRect::top(Val::Px(4.0)),
-                                ..default()
-                            })
-                            .with_children(|actions| {
-                                spawn_inspector_toolbar_rows(actions);
-
-                                actions
-                                    .spawn((
-                                        Node {
-                                            padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
-                                            margin: UiRect::top(Val::Px(2.0)),
-                                            border: UiRect::all(Val::Px(1.0)),
-                                            width: Val::Percent(100.0),
-                                            ..default()
-                                        },
-                                        BackgroundColor(Color::srgba(0.01, 0.02, 0.05, 0.95)),
-                                        BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.4)),
-                                    ))
-                                    .with_children(|tip_box| {
-                                        tip_box.spawn((
-                                            Text::new("Hover over buttons for descriptions."),
-                                            TextFont {
-                                                font_size: FontSize::Px(9.5),
-                                                ..default()
-                                            },
-                                            TextColor(Color::srgb(0.75, 0.90, 1.0)),
-                                            HudActionTooltipText,
-                                        ));
-                                    });
-                            });
-                    });
+                spawn_inspector_header(panel);
+                spawn_inspector_scrollable_body(panel);
             });
 
-            col.spawn((
-                Button,
-                UiButtonAction::ToggleInspectorPanel,
-                HudPanelElement::InspectorChip,
-                Node {
-                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                    display: Display::None,
-                    border: UiRect::all(Val::Px(1.5)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
+            spawn_inspector_chip(col);
+        });
+}
+
+fn spawn_inspector_header(panel: &mut ChildSpawnerCommands) {
+    panel
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            margin: UiRect::bottom(Val::Px(4.0)),
+            ..default()
+        })
+        .with_children(|hdr| {
+            hdr.spawn((
+                Text::new("🔍 TARGET INSPECTOR & ACTIONS"),
+                TextFont {
+                    font_size: FontSize::Px(10.5),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.02, 0.04, 0.09, 0.92)),
-                BorderColor::all(Color::srgba(0.25, 0.55, 0.95, 0.75)),
-            ))
-            .with_children(|chip| {
-                chip.spawn((
-                    Text::new("🔍 Inspector ▲ Expand"),
+                TextColor(Color::srgb(0.4, 0.8, 1.0)),
+            ));
+            hdr.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(5.0),
+                ..default()
+            })
+            .with_children(|right_hdr| {
+                right_hdr.spawn((
+                    Text::new("↕ Scroll"),
                     TextFont {
-                        font_size: FontSize::Px(10.5),
+                        font_size: FontSize::Px(8.5),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.4, 0.85, 1.0)),
-                    HudDynamicText::InspectorChip,
-                    Pickable::IGNORE,
+                    TextColor(Color::srgba(0.4, 0.75, 1.0, 0.8)),
                 ));
+                create_compact_button(
+                    right_hdr,
+                    UiButtonAction::ToggleInspectorPanel,
+                    "🗕",
+                    Color::srgba(0.16, 0.08, 0.12, 0.85),
+                    Color::srgb(0.9, 0.4, 0.6),
+                );
             });
         });
+}
+
+fn spawn_inspector_scrollable_body(panel: &mut ChildSpawnerCommands) {
+    panel
+        .spawn((
+            ScrollableInspector,
+            ScrollPosition::default(),
+            Interaction::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::scroll_y(),
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                width: Val::Percent(100.0),
+                padding: UiRect::right(Val::Px(3.0)),
+                ..default()
+            },
+        ))
+        .with_children(|scroll_box| {
+            scroll_box.spawn((
+                Text::new(
+                    "No celestial body selected. Click on the Star or Planets to inspect & edit.",
+                ),
+                TextFont {
+                    font_size: FontSize::Px(11.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.90, 0.94, 1.0)),
+                HudInspectorText,
+            ));
+
+            scroll_box
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    margin: UiRect::top(Val::Px(4.0)),
+                    ..default()
+                })
+                .with_children(|actions| {
+                    spawn_inspector_toolbar_rows(actions);
+
+                    actions
+                        .spawn((
+                            Node {
+                                padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+                                margin: UiRect::top(Val::Px(2.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                width: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.01, 0.02, 0.05, 0.95)),
+                            BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.4)),
+                        ))
+                        .with_children(|tip_box| {
+                            tip_box.spawn((
+                                Text::new("Hover over buttons for descriptions."),
+                                TextFont {
+                                    font_size: FontSize::Px(9.5),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.75, 0.90, 1.0)),
+                                HudActionTooltipText,
+                            ));
+                        });
+                });
+        });
+}
+
+fn spawn_inspector_chip(col: &mut ChildSpawnerCommands) {
+    col.spawn((
+        Button,
+        UiButtonAction::ToggleInspectorPanel,
+        HudPanelElement::InspectorChip,
+        Node {
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+            display: Display::None,
+            border: UiRect::all(Val::Px(1.5)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.09, 0.92)),
+        BorderColor::all(Color::srgba(0.25, 0.55, 0.95, 0.75)),
+    ))
+    .with_children(|chip| {
+        chip.spawn((
+            Text::new("🔍 Inspector ▲ Expand"),
+            TextFont {
+                font_size: FontSize::Px(10.5),
+                ..default()
+            },
+            TextColor(Color::srgb(0.4, 0.85, 1.0)),
+            HudDynamicText::InspectorChip,
+            Pickable::IGNORE,
+        ));
+    });
 }
 
 fn spawn_inspector_toolbar_rows(actions: &mut ChildSpawnerCommands) {

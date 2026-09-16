@@ -6,12 +6,12 @@ use crate::simulation::components::CelestialBody;
 use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
-    HudDynamicText, HudPanelElement, HudVisibilityState, PlanetBuilderPanel,
-    PlanetBuilderState, TelemetryGraphPanel, TelemetryPanelState,
+    HudDynamicText, HudPanelElement, HudVisibilityState, PlanetBuilderPanel, PlanetBuilderState,
+    TelemetryGraphPanel, TelemetryPanelState,
 };
 
 /// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, reason = "Many overlapping queries, each with specific element types")]
 pub fn update_hud_visibility(
     hud_visibility: Res<HudVisibilityState>,
     player_state: Res<PlayerInteractionState>,
@@ -25,10 +25,20 @@ pub fn update_hud_visibility(
     mut text_query: Query<(&mut Text, &HudDynamicText)>,
     names_query: Query<&CelestialBody>,
 ) {
-    update_panel_nodes(&mut panel_nodes.p0(), &hud_visibility, &builder_state, &telemetry_state);
+    update_panel_nodes(
+        &mut panel_nodes.p0(),
+        &hud_visibility,
+        &builder_state,
+        &telemetry_state,
+    );
     update_builder_drawer(&mut panel_nodes.p1(), &builder_state);
     update_telemetry_drawer(&mut panel_nodes.p2(), &telemetry_state, &hud_visibility);
-    update_dynamic_badges(&mut text_query, &hud_visibility, &player_state, &names_query);
+    update_dynamic_badges(
+        &mut text_query,
+        &hud_visibility,
+        &player_state,
+        &names_query,
+    );
 }
 
 fn update_panel_nodes(
@@ -41,7 +51,9 @@ fn update_panel_nodes(
         node.display = match element {
             HudPanelElement::RootContainer
             | HudPanelElement::OrbitModeBadge
-            | HudPanelElement::OverlayModeBadge => flex_or_none(!hud_visibility.is_full_screen_clean),
+            | HudPanelElement::OverlayModeBadge => {
+                flex_or_none(!hud_visibility.is_full_screen_clean)
+            }
             HudPanelElement::TopLeftPanel => flex_or_none(!hud_visibility.top_left_minimized),
             HudPanelElement::TopLeftPill => flex_or_none(hud_visibility.top_left_minimized),
             HudPanelElement::TopRightPanel => flex_or_none(!hud_visibility.top_right_minimized),
@@ -49,15 +61,29 @@ fn update_panel_nodes(
             HudPanelElement::InspectorPanel => flex_or_none(!hud_visibility.inspector_minimized),
             HudPanelElement::InspectorChip => flex_or_none(hud_visibility.inspector_minimized),
             HudPanelElement::ScenarioPresets => flex_or_none(!hud_visibility.scenarios_minimized),
-            HudPanelElement::ScenarioPresetsPill => flex_or_none(hud_visibility.scenarios_minimized),
-            HudPanelElement::TopControlsPanel => flex_or_none(!hud_visibility.top_controls_minimized),
+            HudPanelElement::ScenarioPresetsPill => {
+                flex_or_none(hud_visibility.scenarios_minimized)
+            }
+            HudPanelElement::TopControlsPanel => {
+                flex_or_none(!hud_visibility.top_controls_minimized)
+            }
             HudPanelElement::TopControlsPill => flex_or_none(hud_visibility.top_controls_minimized),
-            HudPanelElement::BottomRightPanel => flex_or_none(!hud_visibility.bottom_right_minimized),
+            HudPanelElement::BottomRightPanel => {
+                flex_or_none(!hud_visibility.bottom_right_minimized)
+            }
             HudPanelElement::BottomRightPill => flex_or_none(hud_visibility.bottom_right_minimized),
-            HudPanelElement::BottomCenterPanel => flex_or_none(!hud_visibility.bottom_center_minimized),
-            HudPanelElement::BottomCenterPill => flex_or_none(hud_visibility.bottom_center_minimized),
-            HudPanelElement::PlanetBuilderPill => flex_or_none(builder_state.is_open && builder_state.is_minimized),
-            HudPanelElement::TelemetryPanelPill => flex_or_none(telemetry_state.is_open && hud_visibility.telemetry_minimized),
+            HudPanelElement::BottomCenterPanel => {
+                flex_or_none(!hud_visibility.bottom_center_minimized)
+            }
+            HudPanelElement::BottomCenterPill => {
+                flex_or_none(hud_visibility.bottom_center_minimized)
+            }
+            HudPanelElement::PlanetBuilderPill => {
+                flex_or_none(builder_state.is_open && builder_state.is_minimized)
+            }
+            HudPanelElement::TelemetryPanelPill => {
+                flex_or_none(telemetry_state.is_open && hud_visibility.telemetry_minimized)
+            }
         };
     }
 }
