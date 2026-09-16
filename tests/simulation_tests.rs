@@ -6,6 +6,8 @@ mod accretion;
 mod camera;
 #[path = "simulation_tests/gpu_and_particles.rs"]
 mod gpu_and_particles;
+#[path = "simulation_tests/inspector_and_minimization.rs"]
+mod inspector_and_minimization;
 #[path = "simulation_tests/late_heavy_bombardment.rs"]
 mod late_heavy_bombardment;
 #[path = "simulation_tests/lifecycle_and_visuals.rs"]
@@ -34,5 +36,3 @@ mod theia_moon;
 mod thermodynamics;
 #[path = "simulation_tests/ui.rs"]
 mod ui;
-#[path = "simulation_tests/inspector_and_minimization.rs"]
-mod inspector_and_minimization;
