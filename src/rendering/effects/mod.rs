@@ -346,7 +346,9 @@ pub fn draw_orbital_effects_and_gizmos(
     // If orbit trails are hidden and there are no active visual events, builders, or slingshot,
     // short-circuit the entire orbital gizmo pass. Also respect the diagnostic
     // overlay `Hidden` mode as a complete hide-all shortcut.
-    let slingshot_dragging = opt_slingshot.as_ref().is_some_and(|s| s.is_active && s.drag_origin.is_some());
+    let slingshot_dragging = opt_slingshot
+        .as_ref()
+        .is_some_and(|s| s.is_active && s.drag_origin.is_some());
     if (player_state.orbit_mode == OrbitVisualizationMode::Off
         || player_state.overlay_mode == DiagnosticOverlayMode::Hidden)
         && shockwave_pool.shockwaves.is_empty()

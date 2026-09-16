@@ -268,7 +268,7 @@ fn test_distant_theia_at_156_au_recovers_and_forms_moon() {
         .world_mut()
         .spawn((
             SimPosition(DVec3::new(1.0, 0.0, 0.0)),
-            SimVelocity(DVec3::new(0.0, 0.0, 6.28)),
+            SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
             SimAcceleration(DVec3::ZERO),
             Mass(earth_mass),
             Radius(earth_rad),
@@ -371,7 +371,7 @@ fn test_theia_earth_collision_in_accretion_never_bounces() {
 
     app.world_mut().spawn((
         SimPosition(DVec3::new(1.0, 0.0, 0.0)),
-        SimVelocity(DVec3::new(0.0, 0.0, 6.28)),
+        SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
         SimAcceleration(DVec3::ZERO),
         Mass(earth_mass),
         Radius(earth_rad),

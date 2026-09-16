@@ -112,11 +112,16 @@ pub fn draw_slingshot_preview(
         return;
     }
 
-    let (Some(origin_dvec), Some(curr_dvec)) = (slingshot.drag_origin, slingshot.drag_current) else {
+    let (Some(origin_dvec), Some(curr_dvec)) = (slingshot.drag_origin, slingshot.drag_current)
+    else {
         return;
     };
 
-    let p_orig = Vec3::new(origin_dvec.x as f32, origin_dvec.y as f32, origin_dvec.z as f32);
+    let p_orig = Vec3::new(
+        origin_dvec.x as f32,
+        origin_dvec.y as f32,
+        origin_dvec.z as f32,
+    );
     let p_curr = Vec3::new(curr_dvec.x as f32, curr_dvec.y as f32, curr_dvec.z as f32);
     let delta = curr_dvec - origin_dvec;
     let dist = delta.length();
@@ -125,10 +130,7 @@ pub fn draw_slingshot_preview(
 
     // 1. Launch origin circle marker
     gizmos.circle(
-        Isometry3d::new(
-            p_orig,
-            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-        ),
+        Isometry3d::new(p_orig, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
         0.18 * pulse,
         Color::srgba(1.0, 0.75, 0.20, 0.90),
     );
@@ -156,12 +158,8 @@ pub fn draw_slingshot_preview(
 
         // 3. Real-Time Keplerian Orbit Forecast
         let launch_vel = delta * slingshot.velocity_scale;
-        let elements_opt = state_vectors_to_orbital_elements(
-            origin_dvec,
-            launch_vel,
-            star_mass_val,
-            1e-6,
-        );
+        let elements_opt =
+            state_vectors_to_orbital_elements(origin_dvec, launch_vel, star_mass_val, 1e-6);
 
         if let Some(el) = elements_opt {
             if el.eccentricity < 1.0 && el.semi_major_axis > 0.0 {

@@ -8,6 +8,7 @@ pub mod pebble_accretion;
 pub mod physics;
 pub mod resources;
 pub mod scenarios;
+pub mod serialization;
 pub mod telemetry;
 pub mod thermodynamics;
 
@@ -22,6 +23,7 @@ use crate::simulation::pebble_accretion::{
 use crate::simulation::physics::*;
 use crate::simulation::resources::*;
 use crate::simulation::scenarios::*;
+use crate::simulation::serialization::*;
 use crate::simulation::telemetry::*;
 use crate::simulation::thermodynamics::*;
 
@@ -48,11 +50,15 @@ impl Plugin for SimulationPlugin {
             .add_message::<PlanetaryEngulfmentEvent>()
             .add_message::<SupernovaEvent>()
             .add_message::<LoadScenarioEvent>()
+            .add_message::<SaveSystemEvent>()
+            .add_message::<LoadSystemEvent>()
             .add_systems(Startup, setup_simulation)
             .add_systems(
                 Update,
                 (
                     handle_load_scenario_events,
+                    handle_save_system_events,
+                    handle_load_system_events,
                     update_active_scenarios,
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),

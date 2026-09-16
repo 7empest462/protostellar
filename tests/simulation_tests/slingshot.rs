@@ -79,7 +79,11 @@ fn test_slingshot_world_spawning_all_archetypes() {
     let archetypes = [
         (SlingshotArchetype::Asteroid, BodyType::Asteroid, false),
         (SlingshotArchetype::Comet, BodyType::Comet, true),
-        (SlingshotArchetype::TerrestrialPlanet, BodyType::TerrestrialPlanet, false),
+        (
+            SlingshotArchetype::TerrestrialPlanet,
+            BodyType::TerrestrialPlanet,
+            false,
+        ),
         (SlingshotArchetype::WaterWorld, BodyType::SuperEarth, false),
         (SlingshotArchetype::GasGiant, BodyType::GasGiant, false),
         (SlingshotArchetype::RoguePlanet, BodyType::GasGiant, false),
@@ -128,17 +132,20 @@ fn test_slingshot_impulse_application_to_existing_body() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
 
-    let target_ent = app.world_mut().spawn((
-        SimPosition(DVec3::new(1.0, 0.0, 0.0)),
-        SimVelocity(DVec3::new(0.0, 0.0, 6.0)),
-        SimAcceleration(DVec3::ZERO),
-        Mass(EARTH_MASS_SOLAR),
-        Radius(EARTH_RADIUS_AU),
-        CelestialBody {
-            name: "Target Planet".to_string(),
-            body_type: BodyType::TerrestrialPlanet,
-        },
-    )).id();
+    let target_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 6.0)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            CelestialBody {
+                name: "Target Planet".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+        ))
+        .id();
 
     // Verify initial velocity
     let initial_vel = app.world().get::<SimVelocity>(target_ent).unwrap().0;

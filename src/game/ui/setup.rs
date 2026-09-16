@@ -297,6 +297,20 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
         Color::srgba(0.20, 0.10, 0.04, 0.90),
         Color::srgb(1.0, 0.75, 0.30),
     );
+    create_compact_button(
+        col,
+        UiButtonAction::QuickSave,
+        "💾 Save [F12]",
+        Color::srgba(0.08, 0.14, 0.22, 0.90),
+        Color::srgb(0.50, 0.85, 1.0),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::QuickLoad,
+        "📂 Load [S-F12]",
+        Color::srgba(0.12, 0.12, 0.20, 0.90),
+        Color::srgb(0.70, 0.80, 1.0),
+    );
 }
 
 fn spawn_view_mode_badges(col: &mut ChildSpawnerCommands) {

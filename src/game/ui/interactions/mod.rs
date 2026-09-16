@@ -63,6 +63,8 @@ pub fn handle_ui_button_interactions(
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    mut save_events: Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+    mut load_events: Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
     sim_time: Res<SimTime>,
     mut commands: Commands,
     mut quasi_star_query: Query<&mut BlackHoleStarState>,
@@ -85,6 +87,29 @@ pub fn handle_ui_button_interactions(
             Interaction::Pressed => {
                 *bg_color = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
                 *border_color = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
+
+                if *action == UiButtonAction::QuickSave {
+                    if let Some(ref mut writer) = save_events {
+                        writer.write(crate::simulation::serialization::SaveSystemEvent {
+                            filename: "saves/quicksave.json".to_string(),
+                        });
+                    }
+                    toast.message =
+                        "💾 Quick Saved solar system state [saves/quicksave.json]".to_string();
+                    toast.timer = 4.0;
+                    continue;
+                }
+                if *action == UiButtonAction::QuickLoad {
+                    if let Some(ref mut writer) = load_events {
+                        writer.write(crate::simulation::serialization::LoadSystemEvent {
+                            filename: "saves/quicksave.json".to_string(),
+                        });
+                    }
+                    toast.message =
+                        "📂 Quick Loading solar system state [saves/quicksave.json]...".to_string();
+                    toast.timer = 4.0;
+                    continue;
+                }
 
                 if handle_time_action(action, &mut time_warp, &mut toast) {
                     continue;

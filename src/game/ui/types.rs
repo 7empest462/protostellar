@@ -441,6 +441,9 @@ pub enum UiButtonAction {
     // Interactive Orbital Slingshot Launcher
     ToggleSlingshotMode,
     CycleSlingshotArchetype,
+    // System Save / Load & Scenario Serializer
+    QuickSave,
+    QuickLoad,
 }
 
 impl UiButtonAction {
@@ -517,6 +520,8 @@ impl UiButtonAction {
             UiButtonAction::ToggleScenariosPanel => "Minimize or expand sandbox scenario presets bar.",
             UiButtonAction::ToggleSlingshotMode => "[K]: Toggle Interactive Orbital Slingshot Launcher (click-and-drag to aim & launch).",
             UiButtonAction::CycleSlingshotArchetype => "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue).",
+            UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",
+            UiButtonAction::QuickLoad => "[Shift+F12]: Quick Load saved solar system state from disk.",
         }
     }
 }

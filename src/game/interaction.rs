@@ -400,6 +400,8 @@ fn handle_scenario_and_system_hotkeys(
     config: &mut SimulationConfig,
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    mut save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+    mut load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
     if keyboard.just_pressed(KeyCode::KeyG) {
@@ -463,6 +465,26 @@ fn handle_scenario_and_system_hotkeys(
         toast.message = status.to_string();
         toast.timer = 4.0;
     }
+    if keyboard.just_pressed(KeyCode::F12) {
+        if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
+            if let Some(ref mut events) = load_events {
+                events.write(crate::simulation::serialization::LoadSystemEvent {
+                    filename: "saves/quicksave.json".to_string(),
+                });
+            }
+            toast.message =
+                "📂 Quick Loading solar system state [saves/quicksave.json]...".to_string();
+            toast.timer = 4.0;
+        } else {
+            if let Some(ref mut events) = save_events {
+                events.write(crate::simulation::serialization::SaveSystemEvent {
+                    filename: "saves/quicksave.json".to_string(),
+                });
+            }
+            toast.message = "💾 Quick Saved solar system state [saves/quicksave.json]".to_string();
+            toast.timer = 4.0;
+        }
+    }
 }
 
 /// Handles player tool activation and direct live editing of celestial bodies.
@@ -476,6 +498,8 @@ pub fn handle_player_tools(
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
     mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    mut save_events: Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+    mut load_events: Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
     mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
     mut telemetry_state: ResMut<crate::game::ui::TelemetryPanelState>,
     mut toast: ResMut<crate::game::ui::NotificationToast>,
@@ -583,6 +607,8 @@ pub fn handle_player_tools(
         &mut config,
         &mut lhb_state,
         &mut scenario_events,
+        save_events.as_mut(),
+        load_events.as_mut(),
         &mut toast,
     );
 }

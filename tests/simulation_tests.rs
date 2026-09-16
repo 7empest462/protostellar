@@ -20,6 +20,8 @@ mod physics;
 mod precision_events;
 #[path = "simulation_tests/pulsar_magnetar.rs"]
 mod pulsar_magnetar;
+#[path = "simulation_tests/save_load.rs"]
+mod save_load;
 #[path = "simulation_tests/scenarios.rs"]
 mod scenarios;
 #[path = "simulation_tests/slingshot.rs"]

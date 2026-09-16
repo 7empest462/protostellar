@@ -1,8 +1,8 @@
 //! Interactive Orbital Slingshot Launcher system and world spawning.
 
-use std::f64::consts::PI;
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use std::f64::consts::PI;
 
 use crate::game::ui::NotificationToast;
 use crate::rendering::camera::PanOrbitCamera;
@@ -58,7 +58,9 @@ fn compute_cursor_plane_coords(
     camera_transform: &GlobalTransform,
 ) -> Option<DVec3> {
     let cursor_pos = window.cursor_position()?;
-    let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
+    let ray = camera
+        .viewport_to_world(camera_transform, cursor_pos)
+        .ok()?;
     if ray.direction.y.abs() > 1e-5 {
         let t = -ray.origin.y / ray.direction.y;
         if t > 0.0 {
@@ -75,13 +77,21 @@ fn compute_cursor_plane_coords(
 fn execute_slingshot_release(
     commands: &mut Commands,
     slingshot_state: &mut SlingshotState,
-    bodies_query: &mut Query<(Entity, &SimPosition, &Radius, &mut SimVelocity, &CelestialBody)>,
+    bodies_query: &mut Query<(
+        Entity,
+        &SimPosition,
+        &Radius,
+        &mut SimVelocity,
+        &CelestialBody,
+    )>,
     pan_orbit_query: &mut Query<&mut PanOrbitCamera>,
     player_state: &mut PlayerInteractionState,
     star_mass: f64,
     toast: &mut NotificationToast,
 ) {
-    if let (Some(origin), Some(current)) = (slingshot_state.drag_origin, slingshot_state.drag_current) {
+    if let (Some(origin), Some(current)) =
+        (slingshot_state.drag_origin, slingshot_state.drag_current)
+    {
         let delta = current - origin;
         let dist = delta.length();
 
@@ -112,7 +122,8 @@ fn execute_slingshot_release(
                     cam.target_entity = Some(new_ent);
                 }
 
-                let elements = state_vectors_to_orbital_elements(origin, launch_velocity, star_mass, 1e-6);
+                let elements =
+                    state_vectors_to_orbital_elements(origin, launch_velocity, star_mass, 1e-6);
                 if let Some(el) = elements {
                     toast.message = format!(
                         "🚀 Launched {}! v={:.1} km/s | a={:.2} AU | e={:.2}",
@@ -156,9 +167,20 @@ pub fn handle_slingshot_input(
     disk_params: Res<DiskParameters>,
     mut toast: ResMut<NotificationToast>,
     ui_interaction_query: Query<&Interaction, With<Button>>,
-    mut bodies_query: Query<(Entity, &SimPosition, &Radius, &mut SimVelocity, &CelestialBody)>,
+    mut bodies_query: Query<(
+        Entity,
+        &SimPosition,
+        &Radius,
+        &mut SimVelocity,
+        &CelestialBody,
+    )>,
 ) {
-    handle_slingshot_hotkeys(&keyboard, &mut slingshot_state, &mut player_state, &mut toast);
+    handle_slingshot_hotkeys(
+        &keyboard,
+        &mut slingshot_state,
+        &mut player_state,
+        &mut toast,
+    );
 
     if !slingshot_state.is_active {
         return;
@@ -338,10 +360,7 @@ pub fn spawn_slingshot_world(
         Radius(radius_au),
         Temperature(temp_k),
         comp,
-        CelestialBody {
-            body_type,
-            name,
-        },
+        CelestialBody { body_type, name },
         InternalDifferentiation {
             is_differentiated: mass_solar >= 0.01 * EARTH_MASS_SOLAR,
             differentiation_fraction: 0.85,
