@@ -87,6 +87,22 @@ pub fn handle_panel_toggle_action(
             hud_visibility.scenarios_minimized = !hud_visibility.scenarios_minimized;
             true
         }
+        UiButtonAction::ToggleTopControlsPanel => {
+            hud_visibility.top_controls_minimized = !hud_visibility.top_controls_minimized;
+            true
+        }
+        UiButtonAction::ToggleBottomRightPanel => {
+            hud_visibility.bottom_right_minimized = !hud_visibility.bottom_right_minimized;
+            true
+        }
+        UiButtonAction::ToggleBottomCenterPanel => {
+            hud_visibility.bottom_center_minimized = !hud_visibility.bottom_center_minimized;
+            true
+        }
+        UiButtonAction::ToggleMinimizeTelemetryPanel => {
+            hud_visibility.telemetry_minimized = !hud_visibility.telemetry_minimized;
+            true
+        }
         _ => false,
     }
 }

@@ -40,6 +40,13 @@ impl Plugin for GamePlugin {
                     update_planet_builder_ui,
                     update_telemetry_graph_ui,
                     handle_roche_disruption_toasts,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
+                    handle_inspector_scroll,
+                    reset_inspector_scroll_on_target_change,
                     update_hud_visibility,
                     update_hud,
                 ),

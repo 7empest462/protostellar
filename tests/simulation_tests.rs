@@ -34,3 +34,5 @@ mod theia_moon;
 mod thermodynamics;
 #[path = "simulation_tests/ui.rs"]
 mod ui;
+#[path = "simulation_tests/inspector_and_minimization.rs"]
+mod inspector_and_minimization;

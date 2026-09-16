@@ -78,6 +78,14 @@ pub struct HudVisibilityState {
     pub inspector_minimized: bool,
     /// Whether the scenario presets bar is collapsed.
     pub scenarios_minimized: bool,
+    /// Whether the top-right view and tool controls card is collapsed.
+    pub top_controls_minimized: bool,
+    /// Whether the bottom-right navigation and shortcuts panel is collapsed.
+    pub bottom_right_minimized: bool,
+    /// Whether the bottom-center simulation timer and speed dock is collapsed.
+    pub bottom_center_minimized: bool,
+    /// Whether the floating telemetry & climate graphing panel is collapsed.
+    pub telemetry_minimized: bool,
 }
 
 /// Discriminant component for HUD panel containers whose visibility is toggled dynamically.
@@ -91,9 +99,22 @@ pub enum HudPanelElement {
     InspectorPanel,
     InspectorChip,
     ScenarioPresets,
+    ScenarioPresetsPill,
+    TopControlsPanel,
+    TopControlsPill,
+    BottomRightPanel,
+    BottomRightPill,
+    BottomCenterPanel,
+    BottomCenterPill,
+    PlanetBuilderPill,
+    TelemetryPanelPill,
     OrbitModeBadge,
     OverlayModeBadge,
 }
+
+/// Marker for the scrollable container inside the Target Inspector panel.
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollableInspector;
 
 /// Discriminant component for dynamic text elements within the HUD overlay.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +177,7 @@ pub struct PlanetBuilderState {
     pub metal_frac: f32,
     pub gas_frac: f32,
     pub click_to_spawn_mode: bool,
+    pub is_minimized: bool,
 }
 
 impl Default for PlanetBuilderState {
@@ -172,6 +194,7 @@ impl Default for PlanetBuilderState {
             metal_frac: 0.30,
             gas_frac: 0.0,
             click_to_spawn_mode: false,
+            is_minimized: false,
         }
     }
 }
@@ -438,6 +461,11 @@ pub enum UiButtonAction {
     ToggleTopRightPanel,
     ToggleInspectorPanel,
     ToggleScenariosPanel,
+    ToggleTopControlsPanel,
+    ToggleBottomRightPanel,
+    ToggleBottomCenterPanel,
+    ToggleMinimizePlanetBuilder,
+    ToggleMinimizeTelemetryPanel,
     // Interactive Orbital Slingshot Launcher
     ToggleSlingshotMode,
     CycleSlingshotArchetype,
@@ -518,6 +546,11 @@ impl UiButtonAction {
             UiButtonAction::ToggleTopRightPanel => "Minimize or expand top-right diagnostics and time controls.",
             UiButtonAction::ToggleInspectorPanel => "Minimize or expand celestial body inspector & action toolbar.",
             UiButtonAction::ToggleScenariosPanel => "Minimize or expand sandbox scenario presets bar.",
+            UiButtonAction::ToggleTopControlsPanel => "Minimize or expand top-right view & tool controls card.",
+            UiButtonAction::ToggleBottomRightPanel => "Minimize or expand bottom-right navigation and keyboard shortcuts panel.",
+            UiButtonAction::ToggleBottomCenterPanel => "Minimize or expand bottom-center simulation timer and speed controls.",
+            UiButtonAction::ToggleMinimizePlanetBuilder => "Minimize or expand the interactive Planet Builder drawer.",
+            UiButtonAction::ToggleMinimizeTelemetryPanel => "Minimize or expand the planetary telemetry & climate graph drawer.",
             UiButtonAction::ToggleSlingshotMode => "[K]: Toggle Interactive Orbital Slingshot Launcher (click-and-drag to aim & launch).",
             UiButtonAction::CycleSlingshotArchetype => "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue).",
             UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",

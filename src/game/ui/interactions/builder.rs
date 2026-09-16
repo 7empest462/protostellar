@@ -126,12 +126,19 @@ pub fn handle_builder_action(
     match action {
         UiButtonAction::TogglePlanetBuilder => {
             builder_state.is_open = !builder_state.is_open;
+            if builder_state.is_open {
+                builder_state.is_minimized = false;
+            }
             toast.message = if builder_state.is_open {
                 "🛠️ Planet Builder & Spawner Opened".to_string()
             } else {
                 "🛠️ Planet Builder Closed".to_string()
             };
             toast.timer = 2.5;
+            true
+        }
+        UiButtonAction::ToggleMinimizePlanetBuilder => {
+            builder_state.is_minimized = !builder_state.is_minimized;
             true
         }
         UiButtonAction::BuilderSelectPreset(preset) => {

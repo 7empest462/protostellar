@@ -34,7 +34,7 @@ pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) 
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::SpaceBetween,
                         align_items: AlignItems::Center,
-                        margin: UiRect::bottom(Val::Px(3.0)),
+                        margin: UiRect::bottom(Val::Px(4.0)),
                         ..default()
                     })
                     .with_children(|hdr| {
@@ -46,58 +46,91 @@ pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) 
                             },
                             TextColor(Color::srgb(0.4, 0.8, 1.0)),
                         ));
-                        create_compact_button(
-                            hdr,
-                            UiButtonAction::ToggleInspectorPanel,
-                            "🗕",
-                            Color::srgba(0.16, 0.08, 0.12, 0.85),
-                            Color::srgb(0.9, 0.4, 0.6),
-                        );
-                    });
-
-                panel.spawn((
-                    Text::new(
-                        "No celestial body selected. Click on the Star or Planets to inspect & edit.",
-                    ),
-                    TextFont {
-                        font_size: FontSize::Px(11.0),
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.90, 0.94, 1.0)),
-                    HudInspectorText,
-                ));
-
-                panel
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    })
-                    .with_children(|actions| {
-                        spawn_inspector_toolbar_rows(actions);
-
-                        actions
-                            .spawn((
-                                Node {
-                                    padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
-                                    margin: UiRect::top(Val::Px(2.0)),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    width: Val::Percent(100.0),
+                        hdr.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(5.0),
+                            ..default()
+                        })
+                        .with_children(|right_hdr| {
+                            right_hdr.spawn((
+                                Text::new("↕ Scroll"),
+                                TextFont {
+                                    font_size: FontSize::Px(8.5),
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgba(0.01, 0.02, 0.05, 0.95)),
-                                BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.4)),
-                            ))
-                            .with_children(|tip_box| {
-                                tip_box.spawn((
-                                    Text::new("Hover over buttons for descriptions."),
-                                    TextFont {
-                                        font_size: FontSize::Px(9.5),
-                                        ..default()
-                                    },
-                                    TextColor(Color::srgb(0.75, 0.90, 1.0)),
-                                    HudActionTooltipText,
-                                ));
+                                TextColor(Color::srgba(0.4, 0.75, 1.0, 0.8)),
+                            ));
+                            create_compact_button(
+                                right_hdr,
+                                UiButtonAction::ToggleInspectorPanel,
+                                "🗕",
+                                Color::srgba(0.16, 0.08, 0.12, 0.85),
+                                Color::srgb(0.9, 0.4, 0.6),
+                            );
+                        });
+                    });
+
+                panel
+                    .spawn((
+                        ScrollableInspector,
+                        ScrollPosition::default(),
+                        Interaction::default(),
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            overflow: Overflow::scroll_y(),
+                            flex_grow: 1.0,
+                            flex_shrink: 1.0,
+                            width: Val::Percent(100.0),
+                            padding: UiRect::right(Val::Px(3.0)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|scroll_box| {
+                        scroll_box.spawn((
+                            Text::new(
+                                "No celestial body selected. Click on the Star or Planets to inspect & edit.",
+                            ),
+                            TextFont {
+                                font_size: FontSize::Px(11.0),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.90, 0.94, 1.0)),
+                            HudInspectorText,
+                        ));
+
+                        scroll_box
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                margin: UiRect::top(Val::Px(4.0)),
+                                ..default()
+                            })
+                            .with_children(|actions| {
+                                spawn_inspector_toolbar_rows(actions);
+
+                                actions
+                                    .spawn((
+                                        Node {
+                                            padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+                                            margin: UiRect::top(Val::Px(2.0)),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            width: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.01, 0.02, 0.05, 0.95)),
+                                        BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.4)),
+                                    ))
+                                    .with_children(|tip_box| {
+                                        tip_box.spawn((
+                                            Text::new("Hover over buttons for descriptions."),
+                                            TextFont {
+                                                font_size: FontSize::Px(9.5),
+                                                ..default()
+                                            },
+                                            TextColor(Color::srgb(0.75, 0.90, 1.0)),
+                                            HudActionTooltipText,
+                                        ));
+                                    });
                             });
                     });
             });

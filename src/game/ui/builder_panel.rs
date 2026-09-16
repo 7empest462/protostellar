@@ -7,6 +7,36 @@ use super::types::*;
 /// Spawns the complete floating Planet Builder & Spawner drawer modal.
 pub fn spawn_planet_builder_panel(root: &mut ChildSpawnerCommands) {
     root.spawn((
+        Button,
+        UiButtonAction::ToggleMinimizePlanetBuilder,
+        HudPanelElement::PlanetBuilderPill,
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(16.0),
+            top: Val::Px(52.0),
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+            border: UiRect::all(Val::Px(1.5)),
+            display: Display::None,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.012, 0.028, 0.065, 0.92)),
+        BorderColor::all(Color::srgba(0.35, 0.75, 1.0, 0.85)),
+    ))
+    .with_children(|pill| {
+        pill.spawn((
+            Text::new("🛠️ Builder [P] ◀"),
+            TextFont {
+                font_size: FontSize::Px(10.5),
+                ..default()
+            },
+            TextColor(Color::srgb(0.4, 0.85, 1.0)),
+            Pickable::IGNORE,
+        ));
+    });
+
+    root.spawn((
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(16.0),
@@ -50,13 +80,28 @@ fn spawn_builder_header(panel: &mut ChildSpawnerCommands) {
                 },
                 TextColor(Color::srgb(0.9, 0.95, 1.0)),
             ));
-            create_compact_button(
-                hdr,
-                UiButtonAction::TogglePlanetBuilder,
-                "✕ Close [P]",
-                Color::srgba(0.24, 0.08, 0.08, 0.9),
-                Color::srgb(1.0, 0.4, 0.4),
-            );
+            hdr.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(4.0),
+                ..default()
+            })
+            .with_children(|btns| {
+                create_compact_button(
+                    btns,
+                    UiButtonAction::ToggleMinimizePlanetBuilder,
+                    "🗕",
+                    Color::srgba(0.14, 0.08, 0.16, 0.85),
+                    Color::srgb(0.9, 0.4, 0.6),
+                );
+                create_compact_button(
+                    btns,
+                    UiButtonAction::TogglePlanetBuilder,
+                    "✕ Close [P]",
+                    Color::srgba(0.24, 0.08, 0.08, 0.9),
+                    Color::srgb(1.0, 0.4, 0.4),
+                );
+            });
         });
 }
 

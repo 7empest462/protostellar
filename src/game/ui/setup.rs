@@ -190,6 +190,42 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                     for (action, label, bg, border) in SCENARIO_BUTTONS {
                         create_compact_button(scenario_row, action, label, bg, border);
                     }
+                    create_compact_button(
+                        scenario_row,
+                        UiButtonAction::ToggleScenariosPanel,
+                        "🗕",
+                        Color::srgba(0.16, 0.08, 0.12, 0.85),
+                        Color::srgb(0.9, 0.4, 0.6),
+                    );
+                });
+
+            center_col
+                .spawn((
+                    Button,
+                    UiButtonAction::ToggleScenariosPanel,
+                    HudPanelElement::ScenarioPresetsPill,
+                    Node {
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                        display: Display::None,
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        margin: UiRect::bottom(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.88)),
+                    BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
+                ))
+                .with_children(|pill| {
+                    pill.spawn((
+                        Text::new("🎬 Scenarios [F1-F9] ▼"),
+                        TextFont {
+                            font_size: FontSize::Px(10.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.85, 0.65, 1.0)),
+                        Pickable::IGNORE,
+                    ));
                 });
         });
 }
@@ -210,35 +246,77 @@ fn spawn_top_right_controls_panel(top_row: &mut ChildSpawnerCommands) {
 
 fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
     right_row
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(6.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
-            BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
-        ))
-        .with_children(|card| {
-            card.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                width: Val::Percent(100.0),
-                margin: UiRect::bottom(Val::Px(4.0)),
-                ..default()
-            })
-            .with_children(|hdr| {
-                hdr.spawn((
-                    Text::new("CONTROLS & VIEWS"),
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexEnd,
+            ..default()
+        })
+        .with_children(|col| {
+            col.spawn((
+                Button,
+                UiButtonAction::ToggleTopControlsPanel,
+                HudPanelElement::TopControlsPill,
+                Node {
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(2.5)),
+                    margin: UiRect::all(Val::Px(1.5)),
+                    display: Display::None,
+                    border: UiRect::all(Val::Px(1.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                BorderColor::all(Color::srgba(0.25, 0.5, 0.8, 0.6)),
+            ))
+            .with_children(|pill| {
+                pill.spawn((
+                    Text::new("🎮 Controls ▼"),
                     TextFont {
                         font_size: FontSize::Px(10.5),
                         ..default()
                     },
-                    TextColor(Color::srgb(0.4, 0.75, 1.0)),
+                    TextColor(Color::srgb(0.5, 0.85, 1.0)),
+                    Pickable::IGNORE,
                 ));
             });
+
+            col.spawn((
+                HudPanelElement::TopControlsPanel,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
+                BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
+            ))
+            .with_children(|card| {
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    width: Val::Percent(100.0),
+                    margin: UiRect::bottom(Val::Px(4.0)),
+                    ..default()
+                })
+                .with_children(|hdr| {
+                    hdr.spawn((
+                        Text::new("CONTROLS & VIEWS"),
+                        TextFont {
+                            font_size: FontSize::Px(10.5),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.4, 0.75, 1.0)),
+                    ));
+                    create_compact_button(
+                        hdr,
+                        UiButtonAction::ToggleTopControlsPanel,
+                        "🗕",
+                        Color::srgba(0.14, 0.08, 0.16, 0.85),
+                        Color::srgb(0.9, 0.4, 0.6),
+                    );
+                });
 
             card.spawn(Node {
                 flex_direction: FlexDirection::Row,
@@ -265,6 +343,7 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
                     spawn_view_mode_badges(col2);
                 });
             });
+        });
         });
 }
 
@@ -538,6 +617,36 @@ fn spawn_bottom_center_toast_panel(bottom_row: &mut ChildSpawnerCommands) {
 
             center_dock
                 .spawn((
+                    Button,
+                    UiButtonAction::ToggleBottomCenterPanel,
+                    HudPanelElement::BottomCenterPill,
+                    Node {
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                        display: Display::None,
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        margin: UiRect::bottom(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.015, 0.035, 0.075, 0.88)),
+                    BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
+                ))
+                .with_children(|pill| {
+                    pill.spawn((
+                        Text::new("⏱️ Time Controls ▲"),
+                        TextFont {
+                            font_size: FontSize::Px(10.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.9, 0.85, 0.4)),
+                        Pickable::IGNORE,
+                    ));
+                });
+
+            center_dock
+                .spawn((
+                    HudPanelElement::BottomCenterPanel,
                     Node {
                         flex_direction: FlexDirection::Column,
                         padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
@@ -551,15 +660,33 @@ fn spawn_bottom_center_toast_panel(bottom_row: &mut ChildSpawnerCommands) {
                     BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.7)),
                 ))
                 .with_children(|time_box| {
-                    time_box.spawn((
-                        Text::new("T+ 0.00 yr | PAUSED"),
-                        TextFont {
-                            font_size: FontSize::Px(12.5),
+                    time_box
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            width: Val::Percent(100.0),
+                            margin: UiRect::bottom(Val::Px(2.0)),
                             ..default()
-                        },
-                        TextColor(Color::srgb(1.0, 0.92, 0.4)),
-                        HudBottomTimerText,
-                    ));
+                        })
+                        .with_children(|hdr| {
+                            hdr.spawn((
+                                Text::new("T+ 0.00 yr | PAUSED"),
+                                TextFont {
+                                    font_size: FontSize::Px(12.5),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(1.0, 0.92, 0.4)),
+                                HudBottomTimerText,
+                            ));
+                            create_compact_button(
+                                hdr,
+                                UiButtonAction::ToggleBottomCenterPanel,
+                                "🗕",
+                                Color::srgba(0.14, 0.08, 0.16, 0.85),
+                                Color::srgb(0.9, 0.4, 0.6),
+                            );
+                        });
 
                     time_box
                         .spawn(Node {
@@ -610,26 +737,89 @@ fn spawn_bottom_center_toast_panel(bottom_row: &mut ChildSpawnerCommands) {
 
 fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) {
     bottom_row
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(6.0)),
-                max_width: Val::Px(240.0),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
-            BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
-        ))
-        .with_children(|panel| {
-            panel.spawn((
-                Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Space] Pause | [1..4] Speed | [F11] Fullscreen"),
-                TextFont {
-                    font_size: FontSize::Px(9.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.75, 0.82, 0.95)),
-            ));
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexEnd,
+            ..default()
+        })
+        .with_children(|right_col| {
+            right_col
+                .spawn((
+                    Button,
+                    UiButtonAction::ToggleBottomRightPanel,
+                    HudPanelElement::BottomRightPill,
+                    Node {
+                        padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                        display: Display::None,
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                    BorderColor::all(Color::srgba(0.25, 0.5, 0.8, 0.6)),
+                ))
+                .with_children(|pill| {
+                    pill.spawn((
+                        Text::new("⌨ Shortcuts [?] ▲"),
+                        TextFont {
+                            font_size: FontSize::Px(9.5),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.5, 0.85, 1.0)),
+                        Pickable::IGNORE,
+                    ));
+                });
+
+            right_col
+                .spawn((
+                    HudPanelElement::BottomRightPanel,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(6.0)),
+                        max_width: Val::Px(240.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
+                    BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
+                ))
+                .with_children(|panel| {
+                    panel
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            margin: UiRect::bottom(Val::Px(3.0)),
+                            ..default()
+                        })
+                        .with_children(|hdr| {
+                            hdr.spawn((
+                                Text::new("⌨ SHORTCUTS & HELP"),
+                                TextFont {
+                                    font_size: FontSize::Px(9.5),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.4, 0.75, 1.0)),
+                            ));
+                            create_compact_button(
+                                hdr,
+                                UiButtonAction::ToggleBottomRightPanel,
+                                "🗕",
+                                Color::srgba(0.14, 0.08, 0.16, 0.85),
+                                Color::srgb(0.9, 0.4, 0.6),
+                            );
+                        });
+
+                    panel.spawn((
+                        Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Space] Pause | [1..4] Speed | [F11] Fullscreen"),
+                        TextFont {
+                            font_size: FontSize::Px(9.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.75, 0.82, 0.95)),
+                    ));
+                });
         });
 }
 
