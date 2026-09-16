@@ -252,6 +252,128 @@ pub fn handle_slingshot_input(
     }
 }
 
+struct SlingshotWorldConfig {
+    name: String,
+    body_type: BodyType,
+    mass_solar: f64,
+    comp: Composition,
+    temp_k: f64,
+    has_tail: bool,
+}
+
+fn archetype_preset(archetype: SlingshotArchetype) -> SlingshotWorldConfig {
+    match archetype {
+        SlingshotArchetype::Asteroid => SlingshotWorldConfig {
+            name: "Slingshot Asteroid".to_string(),
+            body_type: BodyType::Asteroid,
+            mass_solar: 1.5e-8 * EARTH_MASS_SOLAR,
+            comp: Composition {
+                silicate_frac: 0.70,
+                ice_frac: 0.10,
+                metal_frac: 0.20,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            temp_k: 180.0,
+            has_tail: false,
+        },
+        SlingshotArchetype::Comet => SlingshotWorldConfig {
+            name: "Slingshot Comet".to_string(),
+            body_type: BodyType::Comet,
+            mass_solar: 2.0e-9 * EARTH_MASS_SOLAR,
+            comp: Composition {
+                silicate_frac: 0.15,
+                ice_frac: 0.80,
+                metal_frac: 0.05,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            temp_k: 120.0,
+            has_tail: true,
+        },
+        SlingshotArchetype::TerrestrialPlanet => SlingshotWorldConfig {
+            name: "Slingshot Terrestrial World".to_string(),
+            body_type: BodyType::TerrestrialPlanet,
+            mass_solar: 1.0 * EARTH_MASS_SOLAR,
+            comp: Composition {
+                silicate_frac: 0.67,
+                ice_frac: 0.01,
+                metal_frac: 0.32,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            temp_k: 288.0,
+            has_tail: false,
+        },
+        SlingshotArchetype::WaterWorld => SlingshotWorldConfig {
+            name: "Slingshot Ocean World".to_string(),
+            body_type: BodyType::SuperEarth,
+            mass_solar: 2.2 * EARTH_MASS_SOLAR,
+            comp: Composition {
+                silicate_frac: 0.25,
+                ice_frac: 0.70,
+                metal_frac: 0.05,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            temp_k: 275.0,
+            has_tail: false,
+        },
+        SlingshotArchetype::GasGiant => SlingshotWorldConfig {
+            name: "Slingshot Gas Giant".to_string(),
+            body_type: BodyType::GasGiant,
+            mass_solar: 1.0 * JUPITER_MASS_SOLAR,
+            comp: Composition {
+                silicate_frac: 0.03,
+                ice_frac: 0.02,
+                metal_frac: 0.01,
+                organics_frac: 0.0,
+                gas_frac: 0.94,
+            },
+            temp_k: 165.0,
+            has_tail: false,
+        },
+        SlingshotArchetype::RoguePlanet => SlingshotWorldConfig {
+            name: "Slingshot Rogue Invader".to_string(),
+            body_type: BodyType::GasGiant,
+            mass_solar: 3.0 * JUPITER_MASS_SOLAR,
+            comp: Composition {
+                silicate_frac: 0.02,
+                ice_frac: 0.02,
+                metal_frac: 0.01,
+                organics_frac: 0.0,
+                gas_frac: 0.95,
+            },
+            temp_k: 95.0,
+            has_tail: false,
+        },
+    }
+}
+
+fn create_slingshot_differentiation(
+    mass_solar: f64,
+    radius_au: f64,
+    temp_k: f64,
+    comp: &Composition,
+) -> InternalDifferentiation {
+    InternalDifferentiation {
+        is_differentiated: mass_solar >= 0.01 * EARTH_MASS_SOLAR,
+        differentiation_fraction: 0.85,
+        core_radius_au: radius_au * 0.40,
+        mantle_radius_au: radius_au * 0.88,
+        crust_thickness_au: radius_au * 0.08,
+        ocean_ice_thickness_au: if comp.ice_frac > 0.2 {
+            radius_au * 0.05
+        } else {
+            0.0
+        },
+        core_temp_k: temp_k * 3.5,
+        magnetic_field_gauss: if comp.metal_frac > 0.15 { 0.4 } else { 0.02 },
+        has_theia_llsvp: false,
+        llsvp_density_contrast: 0.0,
+    }
+}
+
 /// Spawns a new celestial body according to the chosen Slingshot archetype.
 pub fn spawn_slingshot_world(
     commands: &mut Commands,
@@ -260,144 +382,48 @@ pub fn spawn_slingshot_world(
     vel: DVec3,
     _star_mass: f64,
 ) -> Entity {
-    let (name, body_type, mass_solar, comp, temp_k, has_tail) = match archetype {
-        SlingshotArchetype::Asteroid => (
-            "Slingshot Asteroid".to_string(),
-            BodyType::Asteroid,
-            1.5e-8 * EARTH_MASS_SOLAR,
-            Composition {
-                silicate_frac: 0.70,
-                ice_frac: 0.10,
-                metal_frac: 0.20,
-                organics_frac: 0.0,
-                gas_frac: 0.0,
-            },
-            180.0,
-            false,
-        ),
-        SlingshotArchetype::Comet => (
-            "Slingshot Comet".to_string(),
-            BodyType::Comet,
-            2.0e-9 * EARTH_MASS_SOLAR,
-            Composition {
-                silicate_frac: 0.15,
-                ice_frac: 0.80,
-                metal_frac: 0.05,
-                organics_frac: 0.0,
-                gas_frac: 0.0,
-            },
-            120.0,
-            true,
-        ),
-        SlingshotArchetype::TerrestrialPlanet => (
-            "Slingshot Terrestrial World".to_string(),
-            BodyType::TerrestrialPlanet,
-            1.0 * EARTH_MASS_SOLAR,
-            Composition {
-                silicate_frac: 0.67,
-                ice_frac: 0.01,
-                metal_frac: 0.32,
-                organics_frac: 0.0,
-                gas_frac: 0.0,
-            },
-            288.0,
-            false,
-        ),
-        SlingshotArchetype::WaterWorld => (
-            "Slingshot Ocean World".to_string(),
-            BodyType::SuperEarth,
-            2.2 * EARTH_MASS_SOLAR,
-            Composition {
-                silicate_frac: 0.25,
-                ice_frac: 0.70,
-                metal_frac: 0.05,
-                organics_frac: 0.0,
-                gas_frac: 0.0,
-            },
-            275.0,
-            false,
-        ),
-        SlingshotArchetype::GasGiant => (
-            "Slingshot Gas Giant".to_string(),
-            BodyType::GasGiant,
-            1.0 * JUPITER_MASS_SOLAR,
-            Composition {
-                silicate_frac: 0.03,
-                ice_frac: 0.02,
-                metal_frac: 0.01,
-                organics_frac: 0.0,
-                gas_frac: 0.94,
-            },
-            165.0,
-            false,
-        ),
-        SlingshotArchetype::RoguePlanet => (
-            "Slingshot Rogue Invader".to_string(),
-            BodyType::GasGiant,
-            3.0 * JUPITER_MASS_SOLAR,
-            Composition {
-                silicate_frac: 0.02,
-                ice_frac: 0.02,
-                metal_frac: 0.01,
-                organics_frac: 0.0,
-                gas_frac: 0.95,
-            },
-            95.0,
-            false,
-        ),
-    };
-
-    let avg_density = comp.average_density();
-    let radius_au = ((3.0 * mass_solar / avg_density) / (4.0 * PI))
+    let cfg = archetype_preset(archetype);
+    let avg_density = cfg.comp.average_density();
+    let radius_au = ((3.0 * cfg.mass_solar / avg_density) / (4.0 * PI))
         .cbrt()
         .max(EARTH_RADIUS_AU * 0.15);
+
+    let diff = create_slingshot_differentiation(cfg.mass_solar, radius_au, cfg.temp_k, &cfg.comp);
 
     let mut entity_cmds = commands.spawn((
         SimPosition(pos),
         SimVelocity(vel),
         SimAcceleration(DVec3::ZERO),
-        Mass(mass_solar),
+        Mass(cfg.mass_solar),
         Radius(radius_au),
-        Temperature(temp_k),
-        comp,
-        CelestialBody { body_type, name },
-        InternalDifferentiation {
-            is_differentiated: mass_solar >= 0.01 * EARTH_MASS_SOLAR,
-            differentiation_fraction: 0.85,
-            core_radius_au: radius_au * 0.40,
-            mantle_radius_au: radius_au * 0.88,
-            crust_thickness_au: radius_au * 0.08,
-            ocean_ice_thickness_au: if comp.ice_frac > 0.2 {
-                radius_au * 0.05
-            } else {
-                0.0
-            },
-            core_temp_k: temp_k * 3.5,
-            magnetic_field_gauss: if comp.metal_frac > 0.15 { 0.4 } else { 0.02 },
-            has_theia_llsvp: false,
-            llsvp_density_contrast: 0.0,
+        Temperature(cfg.temp_k),
+        cfg.comp,
+        CelestialBody {
+            body_type: cfg.body_type,
+            name: cfg.name,
         },
+        diff,
         SpinState {
             spin_vector: DVec3::new(0.0, 1e-12, 0.0),
             rotation_period_hours: 24.0,
             axial_tilt_degrees: 15.0,
         },
         VolatileInventory {
-            delivered_water_m_earth: if comp.ice_frac > 0.1 { 1.0 } else { 0.0 },
-            ocean_coverage_frac: if comp.ice_frac > 0.3 { 0.85 } else { 0.0 },
-            atmospheric_pressure_bar: if comp.gas_frac > 0.1 { 50.0 } else { 1.0 },
-            cometary_impact_count: u32::from(has_tail),
+            delivered_water_m_earth: if cfg.comp.ice_frac > 0.1 { 1.0 } else { 0.0 },
+            ocean_coverage_frac: if cfg.comp.ice_frac > 0.3 { 0.85 } else { 0.0 },
+            atmospheric_pressure_bar: if cfg.comp.gas_frac > 0.1 { 50.0 } else { 1.0 },
+            cometary_impact_count: u32::from(cfg.has_tail),
         },
         PlanetaryClimate {
-            surface_temperature_k: temp_k as f32,
-            equilibrium_temperature_k: temp_k as f32,
+            surface_temperature_k: cfg.temp_k as f32,
+            equilibrium_temperature_k: cfg.temp_k as f32,
             greenhouse_delta_k: 20.0,
             albedo: 0.30,
-            ice_coverage_frac: if temp_k < 260.0 { 0.6 } else { 0.1 },
+            ice_coverage_frac: if cfg.temp_k < 260.0 { 0.6 } else { 0.1 },
             cloud_coverage_frac: 0.4,
-            climate_regime: if comp.gas_frac > 0.4 {
+            climate_regime: if cfg.comp.gas_frac > 0.4 {
                 ClimateRegime::GasGiantEnvelope
-            } else if temp_k < 260.0 {
+            } else if cfg.temp_k < 260.0 {
                 ClimateRegime::SnowballIceAge
             } else {
                 ClimateRegime::TemperateHabitable
@@ -405,7 +431,11 @@ pub fn spawn_slingshot_world(
         },
         BiosphereState::default(),
         ElectromagneticFieldState {
-            magnetic_field_gauss: if comp.metal_frac > 0.15 { 0.5 } else { 0.05 },
+            magnetic_field_gauss: if cfg.comp.metal_frac > 0.15 {
+                0.5
+            } else {
+                0.05
+            },
             rotation_period_sec: 24.0 * 3600.0,
             magnetic_inclination_rad: 0.15,
             jet_length_au: 0.0,
@@ -413,7 +443,7 @@ pub fn spawn_slingshot_world(
         },
     ));
 
-    if has_tail {
+    if cfg.has_tail {
         entity_cmds.insert(AtmosphericEscapeTail {
             loss_rate_m_earth_per_myr: 0.05,
             tail_length_au: 0.35,
