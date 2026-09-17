@@ -165,166 +165,6 @@ pub fn update_thermodynamics(
     }
 }
 
-/// Updates photoevaporative hydrodynamic atmospheric escape for close-in planets (a < 0.25 AU).
-/// High-energy extreme ultraviolet (EUV / XUV) flux from the host star heats the upper planetary envelope
-/// beyond the gravitational escape velocity, driving supersonic hydrodynamic mass loss (Parker-type wind).
-/// This physically strips volatile hydrogen/helium envelopes, sculpting mini-Neptunes into bare rocky cores
-/// (the "Hot Neptune Desert") and feeding prominent 3D cometary outflow tails.
-#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
-pub fn update_photoevaporative_escape(
-    mut commands: Commands,
-    config: Res<SimulationConfig>,
-    time_warp: Res<TimeWarp>,
-    sim_time: Res<SimTime>,
-    star_query: Query<
-        (
-            &SimPosition,
-            &Luminosity,
-            &Radius,
-            &IgnitionState,
-            &CelestialBody,
-        ),
-        With<CentralStar>,
-    >,
-    mut planets_query: Query<
-        (
-            Entity,
-            &mut Mass,
-            &SimPosition,
-            &Radius,
-            &mut Composition,
-            &CelestialBody,
-            Option<&mut AtmosphericEscapeTail>,
-            Option<&mut VolatileInventory>,
-        ),
-        Without<CentralStar>,
-    >,
-) {
-    if (!config.enable_thermodynamics || time_warp.is_paused) && !time_warp.step_once {
-        return;
-    }
-
-    let Ok((star_pos, star_lum, _star_rad, _ignition, _star_body)) = star_query.single() else {
-        return;
-    };
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
-    let lum_val = star_lum.0.max(0.01);
-
-    for (planet_ent, mut p_mass, p_pos, p_rad, mut comp, b_body, mut opt_tail, mut opt_vol) in
-        planets_query.iter_mut()
-    {
-        if b_body.body_type.is_star_or_remnant() {
-            continue;
-        }
-        let dist_au = (p_pos.0 - star_pos.0).length().max(0.01);
-        if dist_au < 0.25 {
-            let has_gas = comp.gas_frac > 0.0001;
-            let has_ice = comp.ice_frac > 0.005;
-            let has_atm = opt_vol
-                .as_ref()
-                .is_some_and(|v| v.atmospheric_pressure_bar > 0.005);
-            if has_gas || has_ice || has_atm {
-                apply_photoevaporative_escape(
-                    &mut commands,
-                    planet_ent,
-                    &mut p_mass,
-                    p_rad,
-                    &mut comp,
-                    &mut opt_tail,
-                    &mut opt_vol,
-                    dist_au,
-                    lum_val,
-                    dt_yr,
-                );
-            } else if let Some(ref mut tail) = opt_tail {
-                tail.is_active = false;
-                tail.loss_rate_m_earth_per_myr = 0.0;
-                tail.tail_length_au = 0.0;
-            }
-        } else if let Some(ref mut tail) = opt_tail {
-            tail.is_active = false;
-            tail.loss_rate_m_earth_per_myr = 0.0;
-            tail.tail_length_au = 0.0;
-        }
-    }
-}
-
-fn apply_photoevaporative_escape(
-    commands: &mut Commands,
-    planet_ent: Entity,
-    p_mass: &mut Mass,
-    p_rad: &Radius,
-    comp: &mut Composition,
-    opt_tail: &mut Option<Mut<'_, AtmosphericEscapeTail>>,
-    opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
-    dist_au: f64,
-    lum_val: f64,
-    dt_yr: f64,
-) {
-    let m_earth = (p_mass.0 / EARTH_MASS_SOLAR).max(0.01);
-    let r_earth = (p_rad.0 / EARTH_RADIUS_AU).max(0.1);
-
-    let flux_factor = (lum_val / (dist_au * dist_au)).powf(0.85);
-    let loss_rate_m_earth_per_myr =
-        ((0.15 * r_earth.powi(3) / m_earth) * flux_factor).clamp(0.01, 100.0) as f32;
-
-    let tail_length_au =
-        (((0.25 / dist_au).powf(1.1) * 0.75 * lum_val.min(5.0).powf(0.25)).clamp(0.25, 6.0)) as f32;
-
-    let ion_color = if comp.gas_frac > 0.15 {
-        Color::srgba(0.25, 0.85, 1.0, 0.85)
-    } else if comp.ice_frac > 0.10 {
-        Color::srgba(0.60, 0.85, 1.0, 0.80)
-    } else {
-        Color::srgba(1.0, 0.65, 0.20, 0.85)
-    };
-
-    let delta_m_earth = f64::from(loss_rate_m_earth_per_myr) * (dt_yr / 1.0e6);
-    let delta_m_solar = delta_m_earth * EARTH_MASS_SOLAR;
-
-    if comp.gas_frac > 0.0 {
-        let cur_gas_m = p_mass.0 * comp.gas_frac;
-        let stripped = delta_m_solar.min(cur_gas_m * 0.999);
-        p_mass.0 = (p_mass.0 - stripped).max(EARTH_MASS_SOLAR * 0.001);
-
-        let new_gas_m = (cur_gas_m - stripped).max(0.0);
-        comp.gas_frac = (new_gas_m / p_mass.0).clamp(0.0, 1.0);
-
-        let sum = comp.silicate_frac
-            + comp.metal_frac
-            + comp.ice_frac
-            + comp.organics_frac
-            + comp.gas_frac;
-        if sum > 0.0 {
-            comp.silicate_frac /= sum;
-            comp.metal_frac /= sum;
-            comp.ice_frac /= sum;
-            comp.organics_frac /= sum;
-            comp.gas_frac /= sum;
-        }
-    }
-
-    if let Some(ref mut vol) = opt_vol {
-        let pressure_loss =
-            (loss_rate_m_earth_per_myr * 0.02 * dt_yr as f32).min(vol.atmospheric_pressure_bar);
-        vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - pressure_loss).max(0.0);
-    }
-
-    if let Some(ref mut tail) = opt_tail {
-        tail.loss_rate_m_earth_per_myr = loss_rate_m_earth_per_myr;
-        tail.tail_length_au = tail_length_au;
-        tail.ion_color = ion_color;
-        tail.is_active = true;
-    } else {
-        commands.entity(planet_ent).insert(AtmosphericEscapeTail {
-            loss_rate_m_earth_per_myr,
-            tail_length_au,
-            ion_color,
-            is_active: true,
-        });
-    }
-}
-
 fn step_protostar_ignition_and_limits(
     entity: Entity,
     mass: &mut Mass,
@@ -799,26 +639,26 @@ fn update_body_thermodynamics(
     }
 }
 
-fn update_body_climate_and_biosphere(
-    commands: &mut Commands,
-    body_ent: Entity,
-    b_mass_solar: f64,
-    b_body: &CelestialBody,
-    comp: &Composition,
-    p_temp: &mut Temperature,
-    mut opt_vol: Option<&mut VolatileInventory>,
-    opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
-    opt_bio: &mut Option<Mut<'_, BiosphereState>>,
+struct SurfaceTemperatureResult {
+    surface_temp: f64,
+    equilibrium_temp: f64,
+    greenhouse_delta: f32,
+    albedo: f32,
+}
+
+#[allow(clippy::too_many_arguments, reason = "Thermal calculation helper")]
+fn compute_surface_temperature(
     r: f64,
     star_lum: f64,
     star_temp: f64,
     star_r: f64,
     shockwave_r: f64,
-    magnetic_field_gauss: f32,
+    current_ice: f32,
+    current_temp: f64,
+    ocean_frac: f32,
+    atm_pressure: f32,
     dt_yr: f64,
-    elapsed_years: f64,
-) {
-    let current_ice = comp.ice_frac as f32;
+) -> SurfaceTemperatureResult {
     let albedo = (0.28 * (1.0 - current_ice) + 0.65 * current_ice).clamp(0.15, 0.75);
 
     let equilibrium_temp =
@@ -828,21 +668,6 @@ fn update_body_climate_and_biosphere(
     let shock_boost = if shockwave_r > 0.0 && (r - shockwave_r).abs() < 2.5 {
         800.0 * (1.0 - (r - shockwave_r).abs() / 2.5)
     } else {
-        0.0
-    };
-
-    let has_water_volatiles = current_ice > 0.001
-        || opt_vol
-            .as_ref()
-            .is_some_and(|v| v.delivered_water_m_earth > 1e-6);
-
-    let atm_pressure = opt_vol.as_ref().map_or(0.0, |v| v.atmospheric_pressure_bar);
-    let ocean_frac = if has_water_volatiles {
-        opt_vol.as_ref().map_or(0.0, |v| v.ocean_coverage_frac)
-    } else {
-        if let Some(ref mut vol) = opt_vol {
-            vol.ocean_coverage_frac = 0.0;
-        }
         0.0
     };
 
@@ -858,17 +683,70 @@ fn update_body_climate_and_biosphere(
 
     let target_temp =
         (equilibrium_temp + f64::from(greenhouse_delta) + shock_boost).clamp(30.0, 5000.0);
-    let surface_temp = if p_temp.0 > target_temp + 1.0 {
+    let surface_temp = if current_temp > target_temp + 1.0 {
         // Radiative cooling of magma ocean / impact thermal surplus towards equilibrium
-        let cool_rate = 0.08 * (p_temp.0 / 1000.0).powi(3).clamp(0.01, 15.0);
+        let cool_rate = 0.08 * (current_temp / 1000.0).powi(3).clamp(0.01, 15.0);
         let k_cool = (1.0 - (-cool_rate * dt_yr).exp()).clamp(0.0, 1.0);
-        (p_temp.0 + (target_temp - p_temp.0) * k_cool).max(target_temp)
+        (current_temp + (target_temp - current_temp) * k_cool).max(target_temp)
     } else {
         target_temp
     };
-    p_temp.0 = surface_temp;
 
-    let climate_regime = if matches!(b_body.body_type, BodyType::GasGiant | BodyType::IceGiant) {
+    SurfaceTemperatureResult {
+        surface_temp,
+        equilibrium_temp,
+        greenhouse_delta,
+        albedo,
+    }
+}
+
+fn update_volatile_condensation(
+    opt_vol: &mut Option<&mut VolatileInventory>,
+    has_water_volatiles: bool,
+    current_ice: f32,
+    surface_temp: f64,
+) -> (f32, f32) {
+    let mut ocean_frac = 0.0;
+    let mut atm_pressure = 0.0;
+    if let Some(ref mut vol) = opt_vol {
+        if has_water_volatiles {
+            let max_ocean = if vol.delivered_water_m_earth > 1e-6 {
+                (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32
+            } else {
+                vol.ocean_coverage_frac
+                    .max((current_ice * 3.0).clamp(0.0, 0.85))
+            };
+
+            let condensation_frac = if surface_temp > 380.0 {
+                0.0
+            } else if surface_temp < 340.0 {
+                1.0
+            } else {
+                ((380.0 - surface_temp as f32) / 40.0).clamp(0.0, 1.0)
+            };
+
+            vol.ocean_coverage_frac = max_ocean * condensation_frac;
+            ocean_frac = vol.ocean_coverage_frac;
+
+            let steam_pressure = max_ocean * (1.0 - condensation_frac) * 12.0;
+            atm_pressure = vol.atmospheric_pressure_bar.max(steam_pressure);
+        } else {
+            vol.ocean_coverage_frac = 0.0;
+        }
+    }
+    (ocean_frac, atm_pressure)
+}
+
+fn determine_climate_coverage(
+    body_type: BodyType,
+    atm_pressure: f32,
+    surface_temp: f64,
+    has_water_volatiles: bool,
+    ocean_frac: f32,
+    current_ice: f32,
+    comp_gas_frac: f32,
+) -> (ClimateRegime, f32, f32) {
+    let climate_regime = if matches!(body_type, BodyType::GasGiant | BodyType::IceGiant) {
         ClimateRegime::GasGiantEnvelope
     } else if atm_pressure < 0.02 {
         ClimateRegime::AirlessVacuum
@@ -893,17 +771,86 @@ fn update_body_climate_and_biosphere(
         0.0
     };
 
-    let cloud_coverage = if atm_pressure > 0.05 && (has_water_volatiles || comp.gas_frac > 0.02) {
+    let cloud_coverage = if atm_pressure > 0.05 && (has_water_volatiles || comp_gas_frac > 0.02) {
         (0.35 + ocean_frac * 0.40).clamp(0.1, 0.95)
     } else {
         0.0
     };
 
+    (climate_regime, ice_coverage, cloud_coverage)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Planetary climate & biosphere update system"
+)]
+fn update_body_climate_and_biosphere(
+    commands: &mut Commands,
+    body_ent: Entity,
+    b_mass_solar: f64,
+    b_body: &CelestialBody,
+    comp: &Composition,
+    p_temp: &mut Temperature,
+    mut opt_vol: Option<&mut VolatileInventory>,
+    opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
+    opt_bio: &mut Option<Mut<'_, BiosphereState>>,
+    r: f64,
+    star_lum: f64,
+    star_temp: f64,
+    star_r: f64,
+    shockwave_r: f64,
+    magnetic_field_gauss: f32,
+    dt_yr: f64,
+    elapsed_years: f64,
+) {
+    let current_ice = comp.ice_frac as f32;
+    let (initial_ocean_frac, initial_atm_pressure) = if let Some(ref vol) = opt_vol {
+        (vol.ocean_coverage_frac, vol.atmospheric_pressure_bar)
+    } else {
+        (0.0, 0.0)
+    };
+
+    let thermal = compute_surface_temperature(
+        r,
+        star_lum,
+        star_temp,
+        star_r,
+        shockwave_r,
+        current_ice,
+        p_temp.0,
+        initial_ocean_frac,
+        initial_atm_pressure,
+        dt_yr,
+    );
+    p_temp.0 = thermal.surface_temp;
+
+    let has_water_volatiles = current_ice > 0.001
+        || opt_vol
+            .as_ref()
+            .is_some_and(|v| v.delivered_water_m_earth > 1e-6);
+
+    let (ocean_frac, atm_pressure) = update_volatile_condensation(
+        &mut opt_vol,
+        has_water_volatiles,
+        current_ice,
+        thermal.surface_temp,
+    );
+
+    let (climate_regime, ice_coverage, cloud_coverage) = determine_climate_coverage(
+        b_body.body_type,
+        atm_pressure,
+        thermal.surface_temp,
+        has_water_volatiles,
+        ocean_frac,
+        current_ice,
+        comp.gas_frac as f32,
+    );
+
     if let Some(ref mut climate) = opt_climate {
-        climate.surface_temperature_k = surface_temp as f32;
-        climate.equilibrium_temperature_k = equilibrium_temp as f32;
-        climate.greenhouse_delta_k = greenhouse_delta;
-        climate.albedo = albedo;
+        climate.surface_temperature_k = thermal.surface_temp as f32;
+        climate.equilibrium_temperature_k = thermal.equilibrium_temp as f32;
+        climate.greenhouse_delta_k = thermal.greenhouse_delta;
+        climate.albedo = thermal.albedo;
         climate.ice_coverage_frac = ice_coverage;
         climate.cloud_coverage_frac = cloud_coverage;
         climate.climate_regime = climate_regime;
@@ -913,10 +860,10 @@ fn update_body_climate_and_biosphere(
     ) {
         if let Ok(mut cmd) = commands.get_entity(body_ent) {
             cmd.insert(PlanetaryClimate {
-                surface_temperature_k: surface_temp as f32,
-                equilibrium_temperature_k: equilibrium_temp as f32,
-                greenhouse_delta_k: greenhouse_delta,
-                albedo,
+                surface_temperature_k: thermal.surface_temp as f32,
+                equilibrium_temperature_k: thermal.equilibrium_temp as f32,
+                greenhouse_delta_k: thermal.greenhouse_delta,
+                albedo: thermal.albedo,
                 ice_coverage_frac: ice_coverage,
                 cloud_coverage_frac: cloud_coverage,
                 climate_regime,
@@ -932,7 +879,7 @@ fn update_body_climate_and_biosphere(
             commands,
             body_ent,
             b_mass_solar,
-            surface_temp,
+            thermal.surface_temp,
             ocean_frac,
             magnetic_field_gauss,
             atm_pressure,

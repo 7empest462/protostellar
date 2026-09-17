@@ -223,3 +223,185 @@ pub fn draw_slingshot_preview(
         }
     }
 }
+
+/// Renders real-time predicted trajectory spline, close encounter reticles, and impact warning targets.
+pub fn draw_trajectory_prediction_gizmos(
+    gizmos: &mut Gizmos,
+    predictor: &crate::simulation::predictor::TrajectoryPredictorState,
+    star_vec: Vec3,
+    elapsed: f32,
+) {
+    if !predictor.is_enabled || predictor.trajectory_points.len() < 2 {
+        return;
+    }
+
+    let pulse = 0.70 + 0.30 * (elapsed * 4.0).sin().abs();
+
+    // 1. Determine spline color based on active encounter severity
+    let spline_color = if let Some(enc) = &predictor.active_encounter {
+        match enc.encounter_type {
+            crate::simulation::predictor::EncounterType::DirectImpact => {
+                Color::srgba(1.0, 0.15, 0.20, 0.95 * pulse)
+            }
+            crate::simulation::predictor::EncounterType::RocheLobeCrossing => {
+                Color::srgba(1.0, 0.50, 0.15, 0.90 * pulse)
+            }
+            crate::simulation::predictor::EncounterType::HillSpherePenetration => {
+                Color::srgba(1.0, 0.85, 0.25, 0.85 * pulse)
+            }
+            crate::simulation::predictor::EncounterType::SafeFlyby => {
+                Color::srgba(0.20, 0.90, 0.65, 0.80)
+            }
+        }
+    } else {
+        Color::srgba(0.35, 0.75, 1.0, 0.65)
+    };
+
+    // 2. Draw forward trajectory spline
+    for window in predictor.trajectory_points.windows(2) {
+        if let [p0, p1] = window {
+            gizmos.line(*p0 + star_vec, *p1 + star_vec, spline_color);
+        }
+    }
+
+    // 3. Render Close Encounter / Impact Reticle
+    if let Some(enc) = &predictor.active_encounter {
+        let enc_world = Vec3::new(
+            enc.encounter_pos_au.x as f32,
+            enc.encounter_pos_au.y as f32,
+            enc.encounter_pos_au.z as f32,
+        ) + star_vec;
+
+        let tgt_world = Vec3::new(
+            enc.target_pos_at_encounter_au.x as f32,
+            enc.target_pos_at_encounter_au.y as f32,
+            enc.target_pos_at_encounter_au.z as f32,
+        ) + star_vec;
+
+        let badge_color = enc.encounter_type.badge_color();
+        let badge_rgba = badge_color.to_srgba();
+
+        // Baseline connector between projectile/body and target center at closest approach
+        gizmos.line(
+            enc_world,
+            tgt_world,
+            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.55),
+        );
+
+        // Reticle radius based on encounter type
+        let reticle_r = match enc.encounter_type {
+            crate::simulation::predictor::EncounterType::DirectImpact => 0.12 * pulse,
+            crate::simulation::predictor::EncounterType::RocheLobeCrossing => 0.16 * pulse,
+            crate::simulation::predictor::EncounterType::HillSpherePenetration => 0.20,
+            crate::simulation::predictor::EncounterType::SafeFlyby => 0.15,
+        };
+
+        gizmos.circle(
+            Isometry3d::new(
+                enc_world,
+                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            ),
+            reticle_r,
+            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.90),
+        );
+
+        // Crosshairs at encounter point
+        let cross_len = reticle_r * 1.6;
+        gizmos.line(
+            enc_world - Vec3::X * cross_len,
+            enc_world + Vec3::X * cross_len,
+            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.85),
+        );
+        gizmos.line(
+            enc_world - Vec3::Z * cross_len,
+            enc_world + Vec3::Z * cross_len,
+            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.85),
+        );
+
+        // Center beacon sphere
+        gizmos.sphere(
+            Isometry3d::from_translation(enc_world),
+            0.04 * pulse,
+            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.95),
+        );
+
+        // If penetrating Hill sphere or crossing Roche, visualize target boundary
+        if enc.encounter_type != crate::simulation::predictor::EncounterType::SafeFlyby {
+            let hill_r = (enc.target_hill_radius_au as f32).clamp(0.08, 2.5);
+            gizmos.circle(
+                Isometry3d::new(
+                    tgt_world,
+                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                ),
+                hill_r,
+                Color::srgba(1.0, 0.85, 0.20, 0.35 * pulse),
+            );
+        }
+    }
+}
+
+pub fn draw_bombardment_projectiles_gizmo(
+    gizmos: &mut Gizmos,
+    projectiles_query: &Query<(
+        &crate::simulation::components::SimPosition,
+        &crate::simulation::terraforming::BombardmentProjectile,
+    )>,
+    targets_query: &Query<(
+        &crate::simulation::components::SimPosition,
+        &crate::simulation::components::Radius,
+    )>,
+    elapsed: f32,
+) {
+    let pulse = 0.65 + 0.35 * (elapsed * 8.0).sin().abs();
+
+    for (p_pos, proj) in projectiles_query.iter() {
+        if proj.is_detonated {
+            continue;
+        }
+
+        let Ok((t_pos, t_rad)) = targets_query.get(proj.target_entity) else {
+            continue;
+        };
+
+        let p_vec = Vec3::new(p_pos.0.x as f32, p_pos.0.y as f32, p_pos.0.z as f32);
+        let t_vec = Vec3::new(t_pos.0.x as f32, t_pos.0.y as f32, t_pos.0.z as f32);
+        let trail_rgba = proj.trail_color.to_srgba();
+
+        // 1. Inbound trajectory intercept spline
+        let line_col = Color::srgba(
+            trail_rgba.red,
+            trail_rgba.green,
+            trail_rgba.blue,
+            0.85 * pulse,
+        );
+        gizmos.line(p_vec, t_vec, line_col);
+
+        // 2. Projectile leading beacon sphere
+        gizmos.sphere(
+            Isometry3d::from_translation(p_vec),
+            0.05 * pulse,
+            Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.95),
+        );
+
+        // 3. Targeting corridor rings around the planet's atmospheric boundary
+        let target_reticle_r = (t_rad.0 as f32 * 1.5).clamp(0.06, 1.2);
+        gizmos.circle(
+            Isometry3d::new(t_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            target_reticle_r * pulse,
+            Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.70),
+        );
+
+        // Ground target crosshairs
+        let cross_len = target_reticle_r * 1.4;
+        gizmos.line(
+            t_vec - Vec3::X * cross_len,
+            t_vec + Vec3::X * cross_len,
+            Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.65),
+        );
+        gizmos.line(
+            t_vec - Vec3::Z * cross_len,
+            t_vec + Vec3::Z * cross_len,
+            Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.65),
+        );
+    }
+}

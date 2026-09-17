@@ -39,6 +39,7 @@ impl Plugin for GamePlugin {
                     update_quick_body_selector_bar.after(handle_ui_button_interactions),
                     update_planet_builder_ui,
                     update_telemetry_graph_ui,
+                    update_epoch_scrubber_ui,
                     handle_roche_disruption_toasts,
                 ),
             )

@@ -6,6 +6,7 @@ use std::f64::consts::PI;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::tides::TidalState;
 use crate::utils::constants::*;
 
 type TrappistPlanet = (
@@ -120,7 +121,7 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
     let p_yr = a_au.powf(1.5) / m_star.sqrt();
     let p_hours = p_yr * YEAR_SECONDS / 3600.0;
 
-    commands.spawn((
+    let mut cmd = commands.spawn((
         CelestialBody {
             body_type: BodyType::TerrestrialPlanet,
             name: name.to_string(),
@@ -166,11 +167,26 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
             cloud_coverage_frac: 0.50,
             climate_regime: regime,
         },
+    ));
+    cmd.insert((
         BiosphereState {
             habitability_score: if is_hab { 0.92 } else { 0.05 },
             biomass_coverage_frac: if is_hab { 0.65 } else { 0.0 },
             oxygen_fraction: if is_hab { 0.18 } else { 0.001 },
             emergence_year: if is_hab { Some(100.0) } else { None },
+        },
+        TidalState {
+            host_entity: None,
+            love_number_k2: 0.30,
+            tidal_q: 100.0,
+            is_tidally_locked: true,
+            locking_progress: 1.0,
+            resonance_ratio: 1.0,
+            tidal_heating_power_watts: 8.5e13,
+            tidal_heating_flux_w_m2: 0.15,
+            circularization_rate_per_myr: -0.005,
+            circularization_timescale_yr: 2e6,
+            sync_timescale_yr: 1e4,
         },
     ));
 }

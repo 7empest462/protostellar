@@ -56,6 +56,10 @@ fn test_system_save_data_serialization_round_trip() {
         stellar_evolution: None,
         black_hole_state: None,
         satellite: None,
+        tidal_state: None,
+        relativistic_state: None,
+        atmospheric_escape: None,
+        kozai_lidov: None,
     };
 
     let moon_save = CelestialBodySave {
@@ -86,6 +90,10 @@ fn test_system_save_data_serialization_round_trip() {
             orbital_period_years: 0.0748,
             true_anomaly: 1.25,
         }),
+        tidal_state: None,
+        relativistic_state: None,
+        atmospheric_escape: None,
+        kozai_lidov: None,
     };
 
     let save_data = SystemSaveData {
@@ -160,6 +168,10 @@ fn test_save_and_load_file_io() {
         stellar_evolution: None,
         black_hole_state: None,
         satellite: None,
+        tidal_state: None,
+        relativistic_state: None,
+        atmospheric_escape: None,
+        kozai_lidov: None,
     };
 
     let save_data = SystemSaveData {
@@ -279,6 +291,10 @@ fn test_bevy_load_system_event_satellite_resolution() {
         stellar_evolution: None,
         black_hole_state: None,
         satellite: None,
+        tidal_state: None,
+        relativistic_state: None,
+        atmospheric_escape: None,
+        kozai_lidov: None,
     };
 
     let moon_save = CelestialBodySave {
@@ -309,6 +325,10 @@ fn test_bevy_load_system_event_satellite_resolution() {
             orbital_period_years: 0.0748,
             true_anomaly: 0.5,
         }),
+        tidal_state: None,
+        relativistic_state: None,
+        atmospheric_escape: None,
+        kozai_lidov: None,
     };
 
     let test_save = SystemSaveData {

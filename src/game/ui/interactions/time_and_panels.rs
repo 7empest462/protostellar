@@ -112,6 +112,7 @@ pub fn handle_instrument_action(
     player_state: &mut PlayerInteractionState,
     toast: &mut NotificationToast,
     mut slingshot: Option<&mut SlingshotState>,
+    mut opt_predictor: Option<&mut crate::simulation::predictor::TrajectoryPredictorState>,
 ) -> bool {
     match action {
         UiButtonAction::ToggleOrbitMode => {
@@ -156,6 +157,18 @@ pub fn handle_instrument_action(
                     "🧲 Gravitational Tractor Active [Drag to redirect bodies]".to_string();
             }
             toast.timer = 3.5;
+            true
+        }
+        UiButtonAction::ToggleTrajectoryPredictor => {
+            if let Some(ref mut predictor) = opt_predictor {
+                predictor.is_enabled = !predictor.is_enabled;
+                toast.message = if predictor.is_enabled {
+                    "🎯 Trajectory & Encounter Forecast: Active [N]".to_string()
+                } else {
+                    "🎯 Trajectory & Encounter Forecast: Disabled [N]".to_string()
+                };
+                toast.timer = 2.5;
+            }
             true
         }
         UiButtonAction::ToggleSlingshotMode => {

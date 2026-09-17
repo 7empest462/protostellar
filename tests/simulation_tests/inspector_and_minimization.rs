@@ -175,16 +175,64 @@ fn test_hud_panel_initial_default_visibility() {
     // Initial default state: panels visible, pills hidden
     app.update();
 
-    assert_eq!(app.world().get::<Node>(e.top_controls_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.top_controls_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.bottom_right_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.bottom_right_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.bottom_center_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.bottom_center_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.scenarios_panel).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.scenarios_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.builder_pill).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.telemetry_pill).unwrap().display, Display::None);
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.top_controls_panel)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.top_controls_pill)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_right_panel)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_right_pill)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_center_panel)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_center_pill)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_panel).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_pill).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.builder_pill).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.telemetry_pill).unwrap().display,
+        Display::None
+    );
 }
 
 #[test]
@@ -211,14 +259,62 @@ fn test_hud_panel_minimized_visibility() {
     app.update();
 
     // Panels should now be hidden, pills displayed
-    assert_eq!(app.world().get::<Node>(e.top_controls_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.top_controls_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.bottom_right_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.bottom_right_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.bottom_center_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.bottom_center_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.scenarios_panel).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(e.scenarios_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.builder_pill).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(e.telemetry_pill).unwrap().display, Display::Flex);
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.top_controls_panel)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.top_controls_pill)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_right_panel)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_right_pill)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_center_panel)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_center_pill)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_pill).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.builder_pill).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.telemetry_pill).unwrap().display,
+        Display::Flex
+    );
 }

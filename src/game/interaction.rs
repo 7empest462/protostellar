@@ -113,9 +113,23 @@ fn handle_viewport_and_tool_hotkeys(
     player_state: &mut PlayerInteractionState,
     builder_state: &mut crate::game::ui::PlanetBuilderState,
     telemetry_state: &mut crate::game::ui::TelemetryPanelState,
+    mut opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     toast: &mut crate::game::ui::NotificationToast,
     camera_query: &Query<(&Transform, &mut PanOrbitCamera)>,
+    mut opt_predictor: Option<&mut crate::simulation::predictor::TrajectoryPredictorState>,
+    is_star_selected: bool,
 ) {
+    if keyboard.just_pressed(KeyCode::KeyN) && !is_star_selected {
+        if let Some(ref mut predictor) = opt_predictor {
+            predictor.is_enabled = !predictor.is_enabled;
+            toast.message = if predictor.is_enabled {
+                "🎯 Trajectory & Encounter Forecast: Active [N]".to_string()
+            } else {
+                "🎯 Trajectory & Encounter Forecast: Disabled [N]".to_string()
+            };
+            toast.timer = 2.5;
+        }
+    }
     if keyboard.just_pressed(KeyCode::KeyP) {
         builder_state.is_open = !builder_state.is_open;
         toast.message = if builder_state.is_open {
@@ -133,6 +147,17 @@ fn handle_viewport_and_tool_hotkeys(
             "📈 Telemetry Graph Closed [F10]".to_string()
         };
         toast.timer = 2.5;
+    }
+    if keyboard.just_pressed(KeyCode::F11) {
+        if let Some(ref mut scrubber) = opt_scrubber {
+            scrubber.is_open = !scrubber.is_open;
+            toast.message = if scrubber.is_open {
+                "⏳ Geological Epoch Scrubber Opened [F11]".to_string()
+            } else {
+                "⏳ Geological Epoch Scrubber Closed [F11]".to_string()
+            };
+            toast.timer = 2.5;
+        }
     }
     if keyboard.just_pressed(KeyCode::Comma) {
         config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
@@ -497,13 +522,17 @@ pub fn handle_player_tools(
     mut player_state: ResMut<PlayerInteractionState>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
-    mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
-    mut save_events: Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-    mut load_events: Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    (mut scenario_events, mut save_events, mut load_events): (
+        MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+        Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+        Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    ),
     mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
     mut telemetry_state: ResMut<crate::game::ui::TelemetryPanelState>,
+    mut opt_scrubber: Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
     mut toast: ResMut<crate::game::ui::NotificationToast>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
+    mut opt_predictor: Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
     mut selected_query: Query<
         (
             Entity,
@@ -524,6 +553,13 @@ pub fn handle_player_tools(
     >,
 ) {
     let star_mass = disk_params.central_star_mass;
+    let is_star_selected = player_state.selected_entity.is_some_and(|e| {
+        selected_query
+            .get(e)
+            .is_ok_and(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star)| {
+                opt_star.is_some() || body.body_type.is_star_or_remnant()
+            })
+    });
 
     handle_viewport_and_tool_hotkeys(
         &keyboard,
@@ -531,8 +567,11 @@ pub fn handle_player_tools(
         &mut player_state,
         &mut builder_state,
         &mut telemetry_state,
+        opt_scrubber.as_deref_mut(),
         &mut toast,
         &camera_query,
+        opt_predictor.as_deref_mut(),
+        is_star_selected,
     );
 
     handle_tab_selection(

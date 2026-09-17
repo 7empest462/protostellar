@@ -410,8 +410,20 @@ pub fn spawn_slingshot_world(
         },
         VolatileInventory {
             delivered_water_m_earth: if cfg.comp.ice_frac > 0.1 { 1.0 } else { 0.0 },
-            ocean_coverage_frac: if cfg.comp.ice_frac > 0.3 { 0.85 } else { 0.0 },
-            atmospheric_pressure_bar: if cfg.comp.gas_frac > 0.1 { 50.0 } else { 1.0 },
+            ocean_coverage_frac: if cfg.body_type == BodyType::Comet {
+                0.0
+            } else if cfg.comp.ice_frac > 0.3 {
+                0.85
+            } else {
+                0.0
+            },
+            atmospheric_pressure_bar: if cfg.body_type == BodyType::Comet {
+                0.0
+            } else if cfg.comp.gas_frac > 0.1 {
+                50.0
+            } else {
+                1.0
+            },
             cometary_impact_count: u32::from(cfg.has_tail),
         },
         PlanetaryClimate {
@@ -420,7 +432,11 @@ pub fn spawn_slingshot_world(
             greenhouse_delta_k: 20.0,
             albedo: 0.30,
             ice_coverage_frac: if cfg.temp_k < 260.0 { 0.6 } else { 0.1 },
-            cloud_coverage_frac: 0.4,
+            cloud_coverage_frac: if cfg.body_type == BodyType::Comet {
+                0.0
+            } else {
+                0.4
+            },
             climate_regime: if cfg.comp.gas_frac > 0.4 {
                 ClimateRegime::GasGiantEnvelope
             } else if cfg.temp_k < 260.0 {

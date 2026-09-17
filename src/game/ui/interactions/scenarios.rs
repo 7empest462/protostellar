@@ -19,6 +19,24 @@ pub fn handle_scenario_action(
     player_state: &mut PlayerInteractionState,
     camera_query: &mut Query<&mut PanOrbitCamera>,
 ) -> bool {
+    if handle_scenario_preset_load(action, scenario_events, toast) {
+        return true;
+    }
+    handle_little_red_dot_action(
+        action,
+        quasi_star_query,
+        toast,
+        commands,
+        player_state,
+        camera_query,
+    )
+}
+
+fn handle_scenario_preset_load(
+    action: &UiButtonAction,
+    scenario_events: &mut MessageWriter<LoadScenarioEvent>,
+    toast: &mut NotificationToast,
+) -> bool {
     match action {
         UiButtonAction::LoadScenarioSolar => {
             scenario_events.write(LoadScenarioEvent(ScenarioPreset::SolarNebulaMmsn));
@@ -74,6 +92,35 @@ pub fn handle_scenario_action(
             toast.timer = 5.0;
             true
         }
+        UiButtonAction::LoadScenarioRelativisticBinary => {
+            scenario_events.write(LoadScenarioEvent(ScenarioPreset::RelativisticBinary));
+            toast.message =
+                "⚡ Loaded Scenario: PSR B1913+16 (Relativistic Binary & Gravitational Waves)"
+                    .to_string();
+            toast.timer = 5.0;
+            true
+        }
+        UiButtonAction::LoadScenarioKozaiTriple => {
+            scenario_events.write(LoadScenarioEvent(ScenarioPreset::KozaiLidovTriple));
+            toast.message =
+                "🪐 Loaded Scenario: HD 80606 (Kozai-Lidov Resonance & Secular Migration)"
+                    .to_string();
+            toast.timer = 5.0;
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_little_red_dot_action(
+    action: &UiButtonAction,
+    quasi_star_query: &mut Query<&mut BlackHoleStarState>,
+    toast: &mut NotificationToast,
+    commands: &mut Commands,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+) -> bool {
+    match action {
         UiButtonAction::ToggleSuperEddington => {
             let mut toggled = false;
             for mut state in quasi_star_query.iter_mut() {

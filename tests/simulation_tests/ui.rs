@@ -826,7 +826,7 @@ fn test_quick_bar_belt_expand_and_contract_interactions() {
 fn test_inspector_composition_water_ice_formatting() {
     use protostellar::game::ui::format_composition_water_ice;
 
-    // 1. Warm Earth-like planet with 81% ocean coverage and 0% bulk ice
+    // 1. Warm Earth-like planet with 81% ocean coverage and trace (<1%) bulk water mass
     let comp_earth = Composition::rocky();
     let vol_earth = VolatileInventory {
         ocean_coverage_frac: 0.81,
@@ -834,9 +834,9 @@ fn test_inspector_composition_water_ice_formatting() {
         ..default()
     };
     let s1 = format_composition_water_ice(&comp_earth, Some(&vol_earth), None, 343.0, false);
-    assert_eq!(s1, "81% Ocean Water");
+    assert_eq!(s1, "<1% Water");
 
-    // 2. Warm water world with 25% bulk water and 95% ocean coverage
+    // 2. Warm water world with 25% bulk water mass and 95% ocean coverage
     let comp_waterworld = Composition {
         silicate_frac: 0.50,
         ice_frac: 0.25,
@@ -851,7 +851,7 @@ fn test_inspector_composition_water_ice_formatting() {
     };
     let s2 =
         format_composition_water_ice(&comp_waterworld, Some(&vol_waterworld), None, 300.0, false);
-    assert_eq!(s2, "95% Ocean (25% Water)");
+    assert_eq!(s2, "25% Water");
 
     // 3. Dry warm planet (Venus 737 K, no volatiles)
     let s3 = format_composition_water_ice(&comp_earth, None, None, 737.0, false);
@@ -866,16 +866,16 @@ fn test_inspector_composition_water_ice_formatting() {
     let s4 = format_composition_water_ice(&comp_earth, Some(&vol_trace), None, 290.0, false);
     assert_eq!(s4, "<1% Water");
 
-    // 5. Cold snowball world with 90% surface ice coverage
+    // 5. Cold snowball world with 90% surface ice coverage but 0% bulk ice mass
     let climate_snowball = PlanetaryClimate {
         ice_coverage_frac: 0.90,
         surface_temperature_k: 210.0,
         ..default()
     };
     let s5 = format_composition_water_ice(&comp_earth, None, Some(&climate_snowball), 210.0, false);
-    assert_eq!(s5, "90% Surface Ice");
+    assert_eq!(s5, "0% Ice");
 
-    // 6. Cold icy world / comet (55% bulk ice)
+    // 6. Cold icy world / comet (55% bulk ice mass)
     let comp_icy = Composition::icy();
     let s6 = format_composition_water_ice(&comp_icy, None, None, 100.0, false);
     assert_eq!(s6, "55% Ice");

@@ -4,6 +4,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
+use crate::simulation::relativity::RelativisticState;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
@@ -663,4 +664,224 @@ pub fn spawn_magnetar_outburst_scenario(
     disk_params: &mut DiskParameters,
 ) -> Entity {
     spawn_compact_remnant_scenario(commands, disk_params, CompactRemnantPreset::Magnetar)
+}
+
+/// Spawns the PSR B1913+16 Hulse-Taylor Relativistic Binary Pulsar scenario exhibiting 4.22°/yr periastron advance and GW inspiral.
+pub fn spawn_relativistic_binary_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> (Entity, Entity) {
+    disk_params.central_star_mass = 1.44;
+    disk_params.inner_radius_au = 0.005;
+    disk_params.outer_radius_au = 0.050;
+    disk_params.disk_mass = 0.0;
+
+    let m1 = 1.44; // Pulsar mass in Solar Masses
+    let m2 = 1.38; // Companion neutron star mass
+    let a_au = 0.013; // Semi-major axis in AU (~1.95 million km)
+    let ecc = 0.617; // Famous Hulse-Taylor eccentricity
+
+    let ns_radius = 10.0 * 1000.0 / AU_TO_METERS; // ~10 km radius in AU (~6.68e-8 AU)
+    let r_periastron = a_au * (1.0 - ecc);
+
+    // Vis-viva equation at periastron: v_p = sqrt(G * (m1 + m2) * (2/r_p - 1/a))
+    let mu = G_ASTRO * (m1 + m2);
+    let v_p = (mu * (2.0 / r_periastron - 1.0 / a_au)).sqrt();
+
+    let pulsar_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "PSR B1913+16 (Pulsar Primary)".to_string(),
+                body_type: BodyType::Pulsar,
+            },
+            CentralStar,
+            Mass(m1),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration::default(),
+            Radius(ns_radius),
+            Temperature(1_000_000.0),
+            Luminosity(0.05),
+            AngularMomentum(DVec3::ZERO),
+            Composition::metal_rich(),
+            SpinState {
+                rotation_period_hours: 0.059 / 3600.0, // 59 milliseconds
+                axial_tilt_degrees: 15.0,
+                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+            },
+            ElectromagneticFieldState {
+                magnetic_field_gauss: 1e12,
+                rotation_period_sec: 0.059,
+                magnetic_inclination_rad: 0.25,
+                jet_length_au: 0.005,
+                synchrotron_intensity: 1.0,
+            },
+            RelativisticState::compact_binary(m1, m2, a_au, ecc),
+        ))
+        .id();
+
+    let companion_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "PSR B1913+16 Companion (Neutron Star)".to_string(),
+                body_type: BodyType::NeutronStar,
+            },
+            Mass(m2),
+            SimPosition(DVec3::new(r_periastron, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_p)),
+            SimAcceleration::default(),
+            Radius(ns_radius),
+            Temperature(500_000.0),
+            Luminosity(0.01),
+            AngularMomentum(DVec3::new(0.0, r_periastron * v_p * m2, 0.0)),
+            Composition::metal_rich(),
+            SpinState {
+                rotation_period_hours: 1.2,
+                axial_tilt_degrees: 5.0,
+                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+            },
+            RelativisticState::compact_binary(m1, m2, a_au, ecc),
+        ))
+        .id();
+
+    (pulsar_ent, companion_ent)
+}
+
+/// Spawns the Kozai-Lidov Hierarchical Triple Scenario (Secular Resonance & Hot Jupiter Migration).
+pub fn spawn_kozai_triple_scenario(
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+) -> (Entity, Entity, Entity) {
+    disk_params.central_star_mass = 1.0;
+    disk_params.inner_radius_au = 0.5;
+    disk_params.outer_radius_au = 120.0;
+    disk_params.disk_mass = 0.0001;
+
+    let m_star = 1.0;
+    let m_planet = 1.2 * JUPITER_MASS_SOLAR;
+    let m_companion = 0.35; // M-dwarf companion star
+
+    let a_inner = 3.0; // Inner gas giant semi-major axis in AU
+    let inc_deg: f64 = 68.0;
+    let inc_rad = inc_deg.to_radians();
+
+    let a_outer = 90.0; // Distant binary companion in AU
+
+    // Circular Keplerian velocity at a_inner: v = sqrt(G * M / a)
+    let v_inner_mag = (G_ASTRO * m_star / a_inner).sqrt();
+    let r_inner = DVec3::new(a_inner, 0.0, 0.0);
+    let v_inner = DVec3::new(
+        0.0,
+        v_inner_mag * inc_rad.sin(),
+        v_inner_mag * inc_rad.cos(),
+    );
+
+    // Outer companion in the XZ plane (i = 0)
+    let v_outer_mag = (G_ASTRO * (m_star + m_companion) / a_outer).sqrt();
+    let r_outer = DVec3::new(a_outer, 0.0, 0.0);
+    let v_outer = DVec3::new(0.0, 0.0, v_outer_mag);
+
+    let star_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "HD 80606 Analog Primary (G-Dwarf)".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            CentralStar,
+            Mass(m_star),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration::default(),
+            Radius(SOLAR_RADIUS_AU),
+            Temperature(5600.0),
+            Luminosity(0.95),
+            AngularMomentum(DVec3::ZERO),
+            Composition::solar_gas(),
+            IgnitionState {
+                core_temperature: 1.4e7,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState::default(),
+        ))
+        .id();
+
+    let companion_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "HD 80606B Perturber (M-Dwarf)".to_string(),
+                body_type: BodyType::RedDwarf,
+            },
+            Mass(m_companion),
+            SimPosition(r_outer),
+            SimVelocity(v_outer),
+            SimAcceleration::default(),
+            Radius(SOLAR_RADIUS_AU * 0.45),
+            Temperature(3300.0),
+            Luminosity(0.015),
+            AngularMomentum(r_outer.cross(v_outer) * m_companion),
+            Composition::solar_gas(),
+            IgnitionState {
+                core_temperature: 8.0e6,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState::default(),
+        ))
+        .id();
+
+    let h_inner = r_inner.cross(v_inner);
+    let h_outer = r_outer.cross(v_outer);
+    let mut_inc_rad = crate::simulation::kozai_lidov::compute_mutual_inclination(h_inner, h_outer);
+    let e_max = crate::simulation::kozai_lidov::compute_max_eccentricity(0.01, mut_inc_rad);
+    let q_min = crate::simulation::kozai_lidov::compute_min_periastron(a_inner, e_max);
+    let tau_kl = crate::simulation::kozai_lidov::compute_kozai_timescale(
+        a_inner,
+        a_outer,
+        m_star,
+        m_companion,
+        0.0,
+    );
+
+    let planet_ent = commands
+        .spawn((
+            CelestialBody {
+                name: "HD 80606b Inner Giant (Kozai)".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            Mass(m_planet),
+            SimPosition(r_inner),
+            SimVelocity(v_inner),
+            SimAcceleration::default(),
+            Radius(EARTH_RADIUS_AU * 11.2),
+            Temperature(280.0),
+            Luminosity(0.0),
+            AngularMomentum(r_inner.cross(v_inner) * m_planet),
+            Composition::solar_gas(),
+            SpinState {
+                rotation_period_hours: 14.0,
+                axial_tilt_degrees: 68.0,
+                spin_vector: DVec3::new(0.0, inc_rad.cos(), inc_rad.sin()).normalize(),
+            },
+            crate::simulation::kozai_lidov::KozaiLidovState {
+                perturber_entity: Some(companion_ent),
+                perturber_name: "HD 80606B Perturber (M-Dwarf)".to_string(),
+                mutual_inclination_deg: mut_inc_rad.to_degrees(),
+                critical_inclination_deg: crate::simulation::kozai_lidov::KOZAI_CRITICAL_ANGLE_DEG,
+                is_in_resonance: true,
+                max_eccentricity_forecast: e_max,
+                min_periastron_au: q_min,
+                kozai_period_years: tau_kl,
+                gr_precession_ratio: 0.0,
+                is_gr_suppressed: false,
+                regime: crate::simulation::kozai_lidov::KozaiRegime::Circulation,
+                cycle_phase: 0.0,
+            },
+            crate::simulation::tides::TidalState::new_gas_giant(),
+        ))
+        .id();
+
+    (star_ent, planet_ent, companion_ent)
 }

@@ -11,7 +11,10 @@ use super::types::{
 };
 
 /// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
-#[allow(clippy::type_complexity, reason = "Many overlapping queries, each with specific element types")]
+#[allow(
+    clippy::type_complexity,
+    reason = "Many overlapping queries, each with specific element types"
+)]
 pub fn update_hud_visibility(
     hud_visibility: Res<HudVisibilityState>,
     player_state: Res<PlayerInteractionState>,
@@ -24,6 +27,7 @@ pub fn update_hud_visibility(
     )>,
     mut text_query: Query<(&mut Text, &HudDynamicText)>,
     names_query: Query<&CelestialBody>,
+    opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
     update_panel_nodes(
         &mut panel_nodes.p0(),
@@ -38,6 +42,7 @@ pub fn update_hud_visibility(
         &hud_visibility,
         &player_state,
         &names_query,
+        opt_predictor.as_deref(),
     );
 }
 
@@ -51,7 +56,8 @@ fn update_panel_nodes(
         node.display = match element {
             HudPanelElement::RootContainer
             | HudPanelElement::OrbitModeBadge
-            | HudPanelElement::OverlayModeBadge => {
+            | HudPanelElement::OverlayModeBadge
+            | HudPanelElement::TrajectoryPredictorBadge => {
                 flex_or_none(!hud_visibility.is_full_screen_clean)
             }
             HudPanelElement::TopLeftPanel => flex_or_none(!hud_visibility.top_left_minimized),
@@ -112,14 +118,15 @@ fn update_dynamic_badges(
     hud_visibility: &HudVisibilityState,
     player_state: &PlayerInteractionState,
     names_query: &Query<&CelestialBody>,
+    opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
 ) {
     for (mut text, dynamic_text) in text_query.iter_mut() {
         match dynamic_text {
             HudDynamicText::FullScreenBadge => {
                 text.0 = if hud_visibility.is_full_screen_clean {
-                    "👁️ Show HUD [F11]".to_string()
+                    "👁️ Show HUD".to_string()
                 } else {
-                    "⛶ Fullscreen [F11]".to_string()
+                    "⛶ Fullscreen".to_string()
                 };
             }
             HudDynamicText::OrbitModeBadge => {
@@ -127,6 +134,14 @@ fn update_dynamic_badges(
             }
             HudDynamicText::OverlayModeBadge => {
                 text.0 = format!("OVERLAY: {} [V]", player_state.overlay_mode.display_name());
+            }
+            HudDynamicText::TrajectoryPredictorBadge => {
+                let is_on = opt_predictor.is_none_or(|p| p.is_enabled);
+                text.0 = if is_on {
+                    "🎯 Forecast: ON [N]".to_string()
+                } else {
+                    "🎯 Forecast: OFF [N]".to_string()
+                };
             }
             HudDynamicText::InspectorChip => {
                 if let Some(target) = player_state.selected_entity {

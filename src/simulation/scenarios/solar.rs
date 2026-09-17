@@ -5,7 +5,9 @@ use bevy::prelude::*;
 use std::f64::consts::PI;
 
 use crate::simulation::components::*;
+use crate::simulation::relativity::RelativisticState;
 use crate::simulation::resources::*;
+use crate::simulation::tides::TidalState;
 use crate::utils::constants::*;
 
 type MmsnSeed = (f64, f64, f64, &'static str, Composition, BodyType, f64);
@@ -383,6 +385,23 @@ pub fn spawn_solar_nebula_mmsn(
                 ice_fraction: 0.96,
                 silicate_fraction: 0.04,
             });
+        }
+
+        if name.contains("Mercury") {
+            entity_cmds.insert(TidalState {
+                host_entity: None,
+                love_number_k2: 0.30,
+                tidal_q: 80.0,
+                is_tidally_locked: true,
+                locking_progress: 1.0,
+                resonance_ratio: 1.50,
+                tidal_heating_power_watts: 2.2e12,
+                tidal_heating_flux_w_m2: 0.03,
+                circularization_rate_per_myr: -0.001,
+                circularization_timescale_yr: 1e8,
+                sync_timescale_yr: 1e5,
+            });
+            entity_cmds.insert(RelativisticState::mercury_like());
         }
     }
 

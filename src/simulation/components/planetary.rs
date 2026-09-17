@@ -42,6 +42,10 @@ fn default_elongation() -> f32 {
     1.0
 }
 
+fn default_scar_intensity() -> f32 {
+    1.0
+}
+
 /// A dynamic impact basin formed by a major cometary / asteroidal impact or grazing flyby.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ImpactBasin {
@@ -56,6 +60,9 @@ pub struct ImpactBasin {
     /// Impact elongation (1.0 = circular crater, >1.0 = elongated grazing trench)
     #[serde(default = "default_elongation")]
     pub elongation: f32,
+    /// Scar intensity: 1.0 = fresh crater rim and basalt mare, fading to 0.0 as the crust weathers and heals
+    #[serde(default = "default_scar_intensity")]
+    pub scar_intensity: f32,
 }
 
 /// Tracks recent impact basins on a planetary surface.
@@ -245,6 +252,123 @@ impl Default for ElectromagneticFieldState {
             magnetic_inclination_rad: 0.15,
             jet_length_au: 0.0,
             synchrotron_intensity: 0.0,
+        }
+    }
+}
+
+/// Relativistic polar jet and synchrotron emission state for compact astrophysical remnants
+/// (Pulsars, Magnetars, Kerr Black Holes, Microquasars, Quasi-Stars).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RelativisticJetState {
+    /// Lorentz factor gamma (\Gamma = (1 - \beta^2)^{-1/2}), typically 2.0 to 30.0
+    pub lorentz_factor: f32,
+    /// Half-opening collimation angle in radians (e.g. 0.05 to 0.15 rad ~ 3 to 9 degrees)
+    pub opening_angle_rad: f32,
+    /// Total visual jet length in AU
+    pub jet_length_au: f32,
+    /// Precession period in seconds (0.0 = static / no precession)
+    pub precession_period_s: f32,
+    /// Precession cone half-angle in radians (e.g. 0.05 to 0.4 rad)
+    pub precession_angle_rad: f32,
+    /// Base synchrotron emission radiance intensity
+    pub synchrotron_luminosity: f32,
+    /// Power-law electron energy distribution spectral index p (~2.2 - 2.5)
+    pub spectral_index: f32,
+    /// Relativistic shock knot propagation velocity as fraction of c (e.g. 0.90 - 0.98 c)
+    pub knot_speed_c: f32,
+    /// Spatial frequency of internal shock knots (Mach disks)
+    pub knot_frequency: f32,
+    /// Pitch angle / twist frequency of braided magnetic field streamlines
+    pub helical_pitch: f32,
+    /// Whether relativistic Doppler beaming is calculated relative to camera
+    pub doppler_boosting_enabled: bool,
+    /// Core emission color RGBA (normalized 0.0 to 1.0)
+    pub core_color: Vec4,
+    /// Outer lobe / sheath emission color RGBA (normalized 0.0 to 1.0)
+    pub lobe_color: Vec4,
+}
+
+impl Default for RelativisticJetState {
+    fn default() -> Self {
+        Self::pulsar(0.00622)
+    }
+}
+
+impl RelativisticJetState {
+    /// Preset calibrated for high-frequency millisecond pulsars (e.g. PSR B1257+12 "Lich").
+    pub fn pulsar(period_s: f32) -> Self {
+        Self {
+            lorentz_factor: 8.5,
+            opening_angle_rad: 0.075, // ~4.3 degrees
+            jet_length_au: 3.2,
+            precession_period_s: (period_s * 480.0).max(1.0),
+            precession_angle_rad: 0.12,
+            synchrotron_luminosity: 4.5,
+            spectral_index: 2.35,
+            knot_speed_c: 0.94,
+            knot_frequency: 3.5,
+            helical_pitch: 5.0,
+            doppler_boosting_enabled: true,
+            core_color: Vec4::new(0.85, 0.95, 1.0, 1.0), // Violet-white incandescence
+            lobe_color: Vec4::new(0.30, 0.65, 1.0, 0.85), // Electric cobalt blue
+        }
+    }
+
+    /// Preset calibrated for ultra-magnetized magnetars (e.g. SGR 1806-20).
+    pub fn magnetar() -> Self {
+        Self {
+            lorentz_factor: 12.0,
+            opening_angle_rad: 0.055, // ~3.1 degrees
+            jet_length_au: 5.5,
+            precession_period_s: 60.0,
+            precession_angle_rad: 0.22,
+            synchrotron_luminosity: 8.0,
+            spectral_index: 2.15,
+            knot_speed_c: 0.98,
+            knot_frequency: 5.0,
+            helical_pitch: 8.0,
+            doppler_boosting_enabled: true,
+            core_color: Vec4::new(1.0, 0.85, 0.95, 1.0), // Magenta-white starquake
+            lobe_color: Vec4::new(0.70, 0.20, 0.90, 0.90), // Deep ultraviolet/purple
+        }
+    }
+
+    /// Preset calibrated for stellar-mass or supermassive black holes / microquasars.
+    pub fn black_hole(mass_solar: f64) -> Self {
+        let length = if mass_solar > 100.0 { 35.0 } else { 8.0 };
+        Self {
+            lorentz_factor: 15.0,
+            opening_angle_rad: 0.045, // ~2.6 degrees
+            jet_length_au: length,
+            precession_period_s: 18.0,
+            precession_angle_rad: 0.26,
+            synchrotron_luminosity: 10.0,
+            spectral_index: 2.45,
+            knot_speed_c: 0.96,
+            knot_frequency: 2.5,
+            helical_pitch: 4.0,
+            doppler_boosting_enabled: true,
+            core_color: Vec4::new(0.95, 0.90, 1.0, 1.0), // Brilliant blazar core
+            lobe_color: Vec4::new(0.20, 0.45, 0.95, 0.85), // Synchrotron jet sheath
+        }
+    }
+
+    /// Preset calibrated for JWST Little Red Dot / primordial quasi-stars.
+    pub fn quasi_star() -> Self {
+        Self {
+            lorentz_factor: 18.0,
+            opening_angle_rad: 0.065,
+            jet_length_au: 45.0,
+            precession_period_s: 35.0,
+            precession_angle_rad: 0.18,
+            synchrotron_luminosity: 14.0,
+            spectral_index: 2.25,
+            knot_speed_c: 0.97,
+            knot_frequency: 4.0,
+            helical_pitch: 6.0,
+            doppler_boosting_enabled: true,
+            core_color: Vec4::new(1.0, 0.80, 0.40, 1.0), // Incandescent gold/amber
+            lobe_color: Vec4::new(0.85, 0.35, 0.15, 0.80), // Deep infrared/crimson cocoon
         }
     }
 }

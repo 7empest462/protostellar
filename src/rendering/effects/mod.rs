@@ -32,7 +32,10 @@ pub use shockwaves::{
     draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
     update_impact_shockwaves, update_roche_debris_streams,
 };
-pub use tools::{draw_planet_builder_preview, draw_slingshot_preview, draw_tractor_beam_gizmo};
+pub use tools::{
+    draw_bombardment_projectiles_gizmo, draw_planet_builder_preview, draw_slingshot_preview,
+    draw_tractor_beam_gizmo, draw_trajectory_prediction_gizmos,
+};
 
 fn draw_star_effects(
     gizmos: &mut Gizmos,
@@ -342,20 +345,16 @@ pub fn draw_orbital_effects_and_gizmos(
     parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
     opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
     opt_slingshot: Option<Res<crate::simulation::resources::SlingshotState>>,
+    opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
-    // If orbit trails are hidden and there are no active visual events, builders, or slingshot,
-    // short-circuit the entire orbital gizmo pass. Also respect the diagnostic
-    // overlay `Hidden` mode as a complete hide-all shortcut.
-    let slingshot_dragging = opt_slingshot
-        .as_ref()
-        .is_some_and(|s| s.is_active && s.drag_origin.is_some());
-    if (player_state.orbit_mode == OrbitVisualizationMode::Off
-        || player_state.overlay_mode == DiagnosticOverlayMode::Hidden)
-        && shockwave_pool.shockwaves.is_empty()
-        && debris_pool.streams.is_empty()
-        && opt_builder.is_none()
-        && !slingshot_dragging
-    {
+    if should_skip_orbital_gizmos(
+        &player_state,
+        &shockwave_pool,
+        &debris_pool,
+        opt_builder.as_deref(),
+        opt_slingshot.as_deref(),
+        opt_predictor.as_deref(),
+    ) {
         return;
     }
     let opt_star = star_query.iter().next();
@@ -430,21 +429,88 @@ pub fn draw_orbital_effects_and_gizmos(
         );
     }
 
-    if player_state.active_tool == PlayerTool::GravitationalTractor
-        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
-    {
-        draw_tractor_beam_gizmo(&mut gizmos, &player_state);
+    draw_interactive_tool_gizmos(
+        &mut gizmos,
+        &player_state,
+        opt_builder.as_deref(),
+        opt_slingshot.as_deref(),
+        opt_predictor.as_deref(),
+        star_vec,
+        star_mass_val,
+        elapsed,
+    );
+}
+
+fn should_skip_orbital_gizmos(
+    player_state: &PlayerInteractionState,
+    shockwave_pool: &ImpactShockwavePool,
+    debris_pool: &RocheDebrisPool,
+    opt_builder: Option<&crate::game::ui::PlanetBuilderState>,
+    opt_slingshot: Option<&crate::simulation::resources::SlingshotState>,
+    opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
+) -> bool {
+    let slingshot_dragging = opt_slingshot.is_some_and(|s| s.is_active && s.drag_origin.is_some());
+    let has_predictor = opt_predictor.is_some_and(|p| {
+        p.is_enabled && (!p.trajectory_points.is_empty() || p.active_encounter.is_some())
+    });
+
+    (player_state.orbit_mode == OrbitVisualizationMode::Off
+        || player_state.overlay_mode == DiagnosticOverlayMode::Hidden)
+        && shockwave_pool.shockwaves.is_empty()
+        && debris_pool.streams.is_empty()
+        && opt_builder.is_none()
+        && !slingshot_dragging
+        && !has_predictor
+}
+
+fn draw_interactive_tool_gizmos(
+    gizmos: &mut Gizmos,
+    player_state: &PlayerInteractionState,
+    opt_builder: Option<&crate::game::ui::PlanetBuilderState>,
+    opt_slingshot: Option<&crate::simulation::resources::SlingshotState>,
+    opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
+    star_vec: Vec3,
+    star_mass_val: f64,
+    elapsed: f32,
+) {
+    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
+        return;
+    }
+
+    if player_state.active_tool == PlayerTool::GravitationalTractor {
+        draw_tractor_beam_gizmo(gizmos, player_state);
     }
 
     if let Some(builder) = opt_builder {
-        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
-            draw_planet_builder_preview(&mut gizmos, &builder, star_vec, star_mass_val, elapsed);
-        }
+        draw_planet_builder_preview(gizmos, builder, star_vec, star_mass_val, elapsed);
     }
 
     if let Some(slingshot) = opt_slingshot {
-        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
-            draw_slingshot_preview(&mut gizmos, &slingshot, star_vec, star_mass_val, elapsed);
-        }
+        draw_slingshot_preview(gizmos, slingshot, star_vec, star_mass_val, elapsed);
     }
+
+    if let Some(predictor) = opt_predictor {
+        draw_trajectory_prediction_gizmos(gizmos, predictor, star_vec, elapsed);
+    }
+}
+
+pub fn draw_bombardment_gizmos(
+    mut gizmos: Gizmos,
+    projectiles_query: Query<(
+        &SimPosition,
+        &crate::simulation::terraforming::BombardmentProjectile,
+    )>,
+    targets_query: Query<(&SimPosition, &Radius)>,
+    time: Res<Time>,
+    player_state: Res<PlayerInteractionState>,
+) {
+    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
+        return;
+    }
+    draw_bombardment_projectiles_gizmo(
+        &mut gizmos,
+        &projectiles_query,
+        &targets_query,
+        time.elapsed_secs(),
+    );
 }

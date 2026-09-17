@@ -318,7 +318,10 @@ pub fn direct_nebular_gas_accretion(
             Option<&mut VolatileInventory>,
             Option<&mut Temperature>,
         ),
-        Without<CentralStar>,
+        (
+            Without<CentralStar>,
+            Without<crate::simulation::terraforming::BombardmentProjectile>,
+        ),
     >,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {

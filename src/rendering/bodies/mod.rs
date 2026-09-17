@@ -1,5 +1,7 @@
 //! Visual mesh generation, PBR materials, and real-time transform synchronization.
 
+pub mod atmospheres;
+pub mod jets;
 pub mod meshes;
 pub mod palettes;
 pub mod spawner;
@@ -8,6 +10,8 @@ pub mod transforms;
 
 use bevy::prelude::*;
 
+pub use atmospheres::{sync_planetary_atmospheres, VisualAtmosphereChild};
+pub use jets::{sync_relativistic_jets, RelativisticJetPart, RelativisticJetRoot};
 pub use meshes::{
     generate_irregular_asteroid_mesh, generate_magnetar_field_loops_mesh,
     generate_magnetar_ring_mesh, generate_pulsar_beam_mesh, recompute_mesh_normals,
@@ -23,7 +27,10 @@ pub use structures::{
     MagnetarStructurePart, MagnetarStructureRoot, PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart,
     QuasarBeamRoot, VisualRingChild,
 };
-pub use transforms::sync_celestial_transforms;
+pub use transforms::{
+    compute_magma_incandescence, compute_magma_ocean_crust_fraction, compute_moon_eclipse_shadow,
+    compute_planetary_ring_shadow, compute_ring_shadow_on_planet, sync_celestial_transforms,
+};
 
 /// Marker for an entity that has its visual mesh and material spawned.
 #[derive(Component, Debug, Clone, Copy, Default)]
@@ -34,6 +41,7 @@ pub struct VisualBody;
 pub struct VisualAssets {
     pub star_mesh: Handle<Mesh>,
     pub planet_mesh: Handle<Mesh>,
+    pub atmosphere_mesh: Handle<Mesh>,
     pub asteroid_potato_mesh: Handle<Mesh>,
     pub asteroid_rubble_mesh: Handle<Mesh>,
     pub comet_bilobate_mesh: Handle<Mesh>,

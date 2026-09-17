@@ -1,0 +1,10 @@
+# rust-doctor configuration for Protostellar
+# See https://rust-doctor.com/docs/configuration for reference.
+
+blocking = "error"
+
+[rules]
+# Upstream Bevy 0.19 and winit 0.30 transitive dependencies have multiple major versions
+# across different sub-frameworks (e.g. rustix 0.38/1.1, downcast-rs 1.2/2.0, syn 2/3, thiserror 1/2).
+# These are internal implementation details with no type leakage into application code.
+"rust_doctor::cargo::duplicate_major_versions" = "off"

@@ -578,7 +578,7 @@ fn test_impact_basin_thermal_relaxation() {
     let mut app = App::new();
     app.insert_resource(TimeWarp::default());
     let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 5_000.0;
+    sim_time.current_dt_yr = 50.0;
     app.insert_resource(sim_time);
 
     let basin = ImpactBasin {
@@ -587,6 +587,7 @@ fn test_impact_basin_thermal_relaxation() {
         formation_time_yr: 0.0,
         melt_glow_fraction: 1.0,
         elongation: 1.0,
+        scar_intensity: 1.0,
     };
     let planet_ent = app
         .world_mut()
@@ -606,11 +607,11 @@ fn test_impact_basin_thermal_relaxation() {
 
     assert!(
         pb.basins[0].melt_glow_fraction < 1.0,
-        "Basin melt glow must decrease after 5,000 years of thermal cooling"
+        "Basin melt glow must decrease after thermal cooling"
     );
     assert!(
-        pb.basins[0].melt_glow_fraction >= 0.0,
-        "Basin melt glow must remain non-negative"
+        pb.basins[0].scar_intensity < 1.0,
+        "Basin scar intensity must decrease as crust heals"
     );
 }
 

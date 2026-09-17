@@ -5,8 +5,12 @@ use std::fmt::Write;
 
 use crate::game::phases::PhaseManager;
 use crate::simulation::accretion::RocheDisruptionEvent;
+use crate::simulation::atmosphere_escape::{AtmosphericEscapeRegime, AtmosphericEscapeState};
 use crate::simulation::components::*;
+use crate::simulation::kozai_lidov::KozaiLidovState;
+use crate::simulation::relativity::RelativisticState;
 use crate::simulation::resources::*;
+use crate::simulation::tides::TidalState;
 use crate::utils::constants::*;
 
 use super::types::*;
@@ -30,28 +34,7 @@ fn update_toast_text(
     phase_mgr: &PhaseManager,
     toast: &NotificationToast,
     player_state: &PlayerInteractionState,
-    bodies_query: &Query<(
-        (
-            &SimPosition,
-            &SimVelocity,
-            &Mass,
-            &Radius,
-            &Temperature,
-            &Composition,
-            &CelestialBody,
-        ),
-        (
-            Option<&InternalDifferentiation>,
-            Option<&SpinState>,
-            Option<&IgnitionState>,
-            Option<&VolatileInventory>,
-            Option<&PlanetaryRingSystem>,
-            Option<&AtmosphericEscapeTail>,
-            Option<&PlanetaryClimate>,
-            Option<&BiosphereState>,
-            Option<&StellarEvolutionState>,
-        ),
-    )>,
+    bodies_query: &HudBodiesQuery,
 ) {
     if phase_mgr.milestone_toast_timer > 0.0 {
         if let Some(ref m_title) = phase_mgr.latest_unlocked_milestone {
@@ -425,22 +408,10 @@ fn format_stellar_extra_telemetry(
     format!("\nStellar Core Temp: {core_temp_mk:.2} MK | Fusion: {fusion_pct:.1}%\nStellar State: {status}")
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Formatted telemetry display incorporates all astrophysical state components into a cohesive readout"
-)]
-fn format_body_environment_telemetry(
+fn format_geology_and_volatiles_telemetry(
     opt_diff: Option<&InternalDifferentiation>,
     opt_vol: Option<&VolatileInventory>,
     opt_rings: Option<&PlanetaryRingSystem>,
-    opt_tail: Option<&AtmosphericEscapeTail>,
-    opt_climate: Option<&PlanetaryClimate>,
-    opt_bio: Option<&BiosphereState>,
-    opt_ignition: Option<&IgnitionState>,
-    opt_evo: Option<&StellarEvolutionState>,
-    rad: &Radius,
-    temp: &Temperature,
-    config: &SimulationConfig,
 ) -> String {
     let mut out = String::new();
 
@@ -490,7 +461,35 @@ fn format_body_environment_telemetry(
         );
     }
 
-    if let Some(tail) = opt_tail {
+    out
+}
+
+fn format_atmospheric_escape_telemetry(
+    opt_escape: Option<&AtmosphericEscapeState>,
+    opt_tail: Option<&AtmosphericEscapeTail>,
+) -> String {
+    let mut out = String::new();
+    if let Some(esc) = opt_escape {
+        if esc.total_loss_rate_m_earth_per_myr > 0.0001
+            || esc.escape_regime != AtmosphericEscapeRegime::None
+        {
+            let tail_str = opt_tail.map_or(String::new(), |t| {
+                if t.is_active && t.tail_length_au > 0.01 {
+                    format!(" | Tail: {:.2} AU", t.tail_length_au)
+                } else {
+                    String::new()
+                }
+            });
+            let _ = write!(
+                out,
+                "\nAtmosphere: {} ({:.2} M_earth/Myr{}) | Shielding: {:.0}%",
+                esc.escape_regime.label(),
+                esc.total_loss_rate_m_earth_per_myr,
+                tail_str,
+                esc.magnetic_shielding_factor * 100.0,
+            );
+        }
+    } else if let Some(tail) = opt_tail {
         if tail.is_active && tail.tail_length_au > 0.01 {
             let _ = write!(
                 out,
@@ -499,6 +498,15 @@ fn format_body_environment_telemetry(
             );
         }
     }
+    out
+}
+
+fn format_climate_biosphere_telemetry(
+    opt_climate: Option<&PlanetaryClimate>,
+    opt_bio: Option<&BiosphereState>,
+    opt_tide: Option<&TidalState>,
+) -> String {
+    let mut out = String::new();
 
     if let Some(climate) = opt_climate {
         let regime_name = match climate.climate_regime {
@@ -535,6 +543,94 @@ fn format_body_environment_telemetry(
         );
     }
 
+    if let Some(tide) = opt_tide {
+        let lock_label = if tide.is_tidally_locked {
+            if (tide.resonance_ratio - 1.0).abs() < 0.05 {
+                "Synchronous (1:1)".to_string()
+            } else {
+                format!("Resonant ({:.1}:1)", tide.resonance_ratio)
+            }
+        } else {
+            format!("Locking ({:.0}%)", tide.locking_progress * 100.0)
+        };
+        let flux_mw = tide.tidal_heating_flux_w_m2 * 1000.0;
+        let _ = write!(
+            out,
+            "\nTidal State: {} (Flux: {:.1} mW/m² | de/dt: {:.2e}/Myr)",
+            lock_label, flux_mw, tide.circularization_rate_per_myr
+        );
+    }
+
+    out
+}
+
+fn format_relativistic_telemetry(opt_rel: Option<&RelativisticState>) -> String {
+    let mut out = String::new();
+
+    if let Some(rel) = opt_rel {
+        if rel.precession_rate_arcsec_century > 0.01 || rel.gw_luminosity_watts > 1.0 {
+            let _ = write!(
+                out,
+                "\n1PN Precession: +{:.1}″/cy (+{:.3}° total) | Status: {}",
+                rel.precession_rate_arcsec_century,
+                rel.accumulated_precession_rad.to_degrees(),
+                if rel.is_coalescing {
+                    "COALESCING"
+                } else {
+                    "Stable"
+                }
+            );
+            if rel.gw_luminosity_watts > 10.0 {
+                let _ = write!(
+                    out,
+                    "\nGravitational Waves: {:.2e} W (f_GW: {:.2e} Hz | h: {:.1e}) | Inspiral: {:.2e} yr",
+                    rel.gw_luminosity_watts,
+                    rel.gw_frequency_hz,
+                    rel.gw_strain,
+                    rel.inspiral_timescale_yr
+                );
+            }
+        }
+    }
+
+    out
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Formatted telemetry display incorporates all astrophysical state components into a cohesive readout"
+)]
+fn format_body_environment_telemetry(
+    opt_diff: Option<&InternalDifferentiation>,
+    opt_vol: Option<&VolatileInventory>,
+    opt_rings: Option<&PlanetaryRingSystem>,
+    opt_tail: Option<&AtmosphericEscapeTail>,
+    opt_climate: Option<&PlanetaryClimate>,
+    opt_bio: Option<&BiosphereState>,
+    opt_ignition: Option<&IgnitionState>,
+    opt_evo: Option<&StellarEvolutionState>,
+    opt_tide: Option<&TidalState>,
+    opt_rel: Option<&RelativisticState>,
+    opt_escape: Option<&AtmosphericEscapeState>,
+    opt_kozai: Option<&KozaiLidovState>,
+    rad: &Radius,
+    temp: &Temperature,
+    config: &SimulationConfig,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format_geology_and_volatiles_telemetry(
+        opt_diff, opt_vol, opt_rings,
+    ));
+    out.push_str(&format_climate_biosphere_telemetry(
+        opt_climate,
+        opt_bio,
+        opt_tide,
+    ));
+    out.push_str(&format_relativistic_telemetry(opt_rel));
+    out.push_str(&format_atmospheric_escape_telemetry(opt_escape, opt_tail));
+    out.push_str(&super::inspector_panel::format_kozai_lidov_telemetry(
+        opt_kozai,
+    ));
     out.push_str(&format_stellar_extra_telemetry(
         opt_ignition,
         opt_evo,
@@ -545,37 +641,38 @@ fn format_body_environment_telemetry(
     out
 }
 
+fn format_composition_line(
+    comp: &Composition,
+    opt_vol: Option<&VolatileInventory>,
+    opt_climate: Option<&PlanetaryClimate>,
+    temp_k: f64,
+    is_star: bool,
+) -> String {
+    let norm = comp.normalized();
+    let rock_pct = ((norm.silicate_frac + norm.organics_frac) * 100.0).round();
+    let ice_pct = (norm.ice_frac * 100.0).round();
+    let metal_pct = (norm.metal_frac * 100.0).round();
+    let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
+    let water_ice_str = super::inspector_panel::format_composition_water_ice(
+        comp,
+        opt_vol,
+        opt_climate,
+        temp_k,
+        is_star,
+    );
+    format!("{rock_pct:.0}% Rock | {water_ice_str} | {metal_pct:.0}% Metal | {gas_pct:.0}% Gas")
+}
+
 #[allow(
-    clippy::type_complexity,
     clippy::too_many_arguments,
     reason = "Telemetry inspector requires full access to celestial body components and configuration state"
 )]
 fn update_inspector_body_telemetry(
     text: &mut Text,
     selected_entity: Entity,
-    bodies_query: &Query<(
-        (
-            &SimPosition,
-            &SimVelocity,
-            &Mass,
-            &Radius,
-            &Temperature,
-            &Composition,
-            &CelestialBody,
-        ),
-        (
-            Option<&InternalDifferentiation>,
-            Option<&SpinState>,
-            Option<&IgnitionState>,
-            Option<&VolatileInventory>,
-            Option<&PlanetaryRingSystem>,
-            Option<&AtmosphericEscapeTail>,
-            Option<&PlanetaryClimate>,
-            Option<&BiosphereState>,
-            Option<&StellarEvolutionState>,
-        ),
-    )>,
+    bodies_query: &HudBodiesQuery,
     quasi_hud_query: &Query<&BlackHoleStarState>,
+    jet_hud_query: &Query<&RelativisticJetState>,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
 ) {
@@ -591,6 +688,10 @@ fn update_inspector_body_telemetry(
             opt_climate,
             opt_bio,
             opt_evo,
+            opt_tide,
+            opt_rel,
+            opt_escape,
+            opt_kozai,
         ),
     )) = bodies_query.get(selected_entity)
     else {
@@ -634,17 +735,16 @@ fn update_inspector_body_telemetry(
         opt_bio,
         opt_ignition,
         opt_evo,
+        opt_tide,
+        opt_rel,
+        opt_escape,
+        opt_kozai,
         rad,
         temp,
         config,
     );
 
-    let norm = comp.normalized();
-    let rock_pct = ((norm.silicate_frac + norm.organics_frac) * 100.0).round();
-    let ice_pct = (norm.ice_frac * 100.0).round();
-    let metal_pct = (norm.metal_frac * 100.0).round();
-    let gas_pct = (100.0f64 - rock_pct - ice_pct - metal_pct).max(0.0);
-    let water_ice_str = super::inspector_panel::format_composition_water_ice(
+    let comp_str = format_composition_line(
         comp,
         opt_vol,
         opt_climate,
@@ -663,7 +763,7 @@ fn update_inspector_body_telemetry(
     };
 
     text.0 = format!(
-        ">> {} [{}]\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {:.0}% Rock | {} | {:.0}% Metal | {:.0}% Gas{}",
+        ">> {} [{}]\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {}{}",
         body.name.to_uppercase(),
         format_body_inspector_type(body.body_type).to_uppercase(),
         mass_str,
@@ -676,15 +776,16 @@ fn update_inspector_body_telemetry(
         dist_au,
         belt_suffix,
         speed_km_s,
-        rock_pct,
-        water_ice_str,
-        metal_pct,
-        gas_pct,
+        comp_str,
         env_str,
     );
 
     if let Ok(qs) = quasi_hud_query.get(selected_entity) {
         append_quasi_star_telemetry(&mut text.0, qs);
+    }
+
+    if let Ok(jet) = jet_hud_query.get(selected_entity) {
+        super::inspector_panel::append_relativistic_jet_telemetry(&mut text.0, jet);
     }
 }
 
@@ -750,93 +851,27 @@ fn append_quasi_star_telemetry(out: &mut String, qs: &BlackHoleStarState) {
     reason = "HUD update requires access to a wide range of celestial body components and simulation state"
 )]
 pub fn update_hud(
-    time: Res<Time>,
-    sim_time: Res<SimTime>,
-    time_warp: Res<TimeWarp>,
-    config: Res<SimulationConfig>,
-    energy_monitor: Res<EnergyMonitor>,
-    phase_mgr: Res<PhaseManager>,
-    lhb_state: Res<crate::game::phases::LateHeavyBombardmentState>,
+    (time, sim_time, time_warp, config, energy_monitor, phase_mgr, lhb_state): (
+        Res<Time>,
+        Res<SimTime>,
+        Res<TimeWarp>,
+        Res<SimulationConfig>,
+        Res<EnergyMonitor>,
+        Res<PhaseManager>,
+        Res<crate::game::phases::LateHeavyBombardmentState>,
+    ),
     player_state: Res<PlayerInteractionState>,
     mut toast: ResMut<NotificationToast>,
-    bodies_query: Query<(
-        (
-            &SimPosition,
-            &SimVelocity,
-            &Mass,
-            &Radius,
-            &Temperature,
-            &Composition,
-            &CelestialBody,
-        ),
-        (
-            Option<&InternalDifferentiation>,
-            Option<&SpinState>,
-            Option<&IgnitionState>,
-            Option<&VolatileInventory>,
-            Option<&PlanetaryRingSystem>,
-            Option<&AtmosphericEscapeTail>,
-            Option<&PlanetaryClimate>,
-            Option<&BiosphereState>,
-            Option<&StellarEvolutionState>,
-        ),
-    )>,
+    bodies_query: HudBodiesQuery,
     quasi_hud_query: Query<&BlackHoleStarState>,
-    mut header_query: Query<
-        &mut Text,
-        (
-            With<HudHeaderStatsText>,
-            Without<HudTimeWarpText>,
-            Without<HudInspectorText>,
-            Without<HudToastText>,
-            Without<HudBottomTimerText>,
-        ),
-    >,
-    mut time_query: Query<
-        &mut Text,
-        (
-            With<HudTimeWarpText>,
-            Without<HudHeaderStatsText>,
-            Without<HudInspectorText>,
-            Without<HudToastText>,
-            Without<HudBottomTimerText>,
-        ),
-    >,
-    mut inspector_query: Query<
-        &mut Text,
-        (
-            With<HudInspectorText>,
-            Without<HudHeaderStatsText>,
-            Without<HudTimeWarpText>,
-            Without<HudToastText>,
-            Without<HudBottomTimerText>,
-        ),
-    >,
-    mut toast_query: Query<
-        &mut Text,
-        (
-            With<HudToastText>,
-            Without<HudHeaderStatsText>,
-            Without<HudTimeWarpText>,
-            Without<HudInspectorText>,
-            Without<HudBottomTimerText>,
-        ),
-    >,
-    mut bottom_timer_query: Query<
-        &mut Text,
-        (
-            With<HudBottomTimerText>,
-            Without<HudHeaderStatsText>,
-            Without<HudTimeWarpText>,
-            Without<HudInspectorText>,
-            Without<HudToastText>,
-        ),
-    >,
+    jet_hud_query: Query<&RelativisticJetState>,
+    mut text_queries: HudTextQueries,
+    opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
     if toast.timer > 0.0 {
         toast.timer -= time.delta_secs();
     }
-    if let Ok(mut toast_text) = toast_query.single_mut() {
+    if let Ok(mut toast_text) = text_queries.toast.single_mut() {
         update_toast_text(
             &mut toast_text,
             &phase_mgr,
@@ -846,11 +881,11 @@ pub fn update_hud(
         );
     }
 
-    if let Ok(mut text) = header_query.single_mut() {
+    if let Ok(mut text) = text_queries.header.single_mut() {
         update_header_stats(&mut text, &sim_time, &phase_mgr, &config, &lhb_state);
     }
 
-    if let Ok(mut text) = time_query.single_mut() {
+    if let Ok(mut text) = text_queries.time.single_mut() {
         update_time_warp_diagnostics(
             &mut text,
             &time_warp,
@@ -861,22 +896,66 @@ pub fn update_hud(
         );
     }
 
-    if let Ok(mut text) = bottom_timer_query.single_mut() {
+    if let Ok(mut text) = text_queries.bottom_timer.single_mut() {
         update_bottom_timer(&mut text, &sim_time, &time_warp);
     }
 
-    if let Ok(mut text) = inspector_query.single_mut() {
+    if let Ok(mut text) = text_queries.inspector.single_mut() {
         if let Some(selected_entity) = player_state.selected_entity {
             update_inspector_body_telemetry(
                 &mut text,
                 selected_entity,
                 &bodies_query,
                 &quasi_hud_query,
+                &jet_hud_query,
                 &phase_mgr,
                 &config,
             );
         } else {
             text.0 = "No celestial body selected.\nClick on the Star or Planets above (or in 3D) to inspect & live-edit.\n[Tab] Next Body | [F] Focus Target | [WASD] Free-Fly View".to_string();
         }
+    }
+
+    if let Ok(mut text) = text_queries.forecast.single_mut() {
+        update_encounter_forecast_text(
+            &mut text,
+            opt_predictor.as_deref(),
+            player_state.selected_entity.is_some(),
+        );
+    }
+}
+
+fn update_encounter_forecast_text(
+    text: &mut Text,
+    opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
+    has_selection: bool,
+) {
+    let Some(predictor) = opt_predictor else {
+        text.0 = "🎯 FORECAST: Initializing...".to_string();
+        return;
+    };
+
+    if !predictor.is_enabled {
+        text.0 =
+            "🎯 FORECAST: Disabled [N] to enable trajectory & encounter prediction.".to_string();
+        return;
+    }
+
+    if let Some(enc) = &predictor.active_encounter {
+        text.0 = format!(
+            "🎯 FORECAST: {} with {}\nETA: {:.1} yr | Closest: {:.4} AU ({:.0} km)\nRel Speed: {:.2} km/s (v_inf)",
+            enc.encounter_type.display_label(),
+            enc.target_name,
+            enc.time_to_encounter_yr,
+            enc.min_distance_au,
+            enc.min_distance_km,
+            enc.relative_velocity_kms,
+        );
+    } else if has_selection {
+        text.0 = "🎯 FORECAST: Safe trajectory. No close encounters detected (Horizon: 30 yr)."
+            .to_string();
+    } else {
+        text.0 =
+            "🎯 FORECAST [N]: Select a body or drag Slingshot to preview encounters.".to_string();
     }
 }

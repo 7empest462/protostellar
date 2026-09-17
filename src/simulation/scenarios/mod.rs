@@ -34,6 +34,8 @@ pub enum ScenarioPreset {
     LittleRedDot,
     PulsarSystem,
     MagnetarOutburst,
+    RelativisticBinary,
+    KozaiLidovTriple,
 }
 
 impl ScenarioPreset {
@@ -47,6 +49,8 @@ impl ScenarioPreset {
             ScenarioPreset::LittleRedDot => "JWST Little Red Dot (Black Hole Star)",
             ScenarioPreset::PulsarSystem => "PSR B1257+12 (Pulsar & Zombie Planets)",
             ScenarioPreset::MagnetarOutburst => "SGR 1806-20 (Magnetar Giant Flare)",
+            ScenarioPreset::RelativisticBinary => "PSR B1913+16 (Relativistic Binary)",
+            ScenarioPreset::KozaiLidovTriple => "HD 80606 (Kozai-Lidov Triple)",
         }
     }
 
@@ -76,6 +80,12 @@ impl ScenarioPreset {
             ScenarioPreset::MagnetarOutburst => {
                 "Ultra-magnetized 10¹⁵ Gauss magnetar (SGR 1806-20) with starquake crustal fractures, glowing magnetic arches, an LBV hypergiant companion, and relativistic ejecta."
             }
+            ScenarioPreset::RelativisticBinary => {
+                "Hulse-Taylor binary pulsar with a 1.44 M☉ pulsar and 1.38 M☉ companion neutron star in an eccentric 0.013 AU orbit, exhibiting 4.22°/yr periastron advance and GW inspiral decay."
+            }
+            ScenarioPreset::KozaiLidovTriple => {
+                "Hierarchical triple system: G-dwarf primary, inner giant inclined at 68°, and distant M-dwarf companion driving secular eccentricity pumping (e -> 0.88) and tidal migration."
+            }
         }
     }
 }
@@ -92,6 +102,55 @@ pub struct ActiveScenarioState {
     pub migration_active: bool,
     pub migration_target_au: f64,
     pub rogue_planet_entity: Option<Entity>,
+}
+
+fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
+    match preset {
+        ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
+        ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
+        ScenarioPreset::SolarNebulaMmsn => (16.0, 0.785, 0.62),
+        ScenarioPreset::HotJupiterMigration => (10.0, 0.785, 0.62),
+        ScenarioPreset::RoguePlanetFlyby => (35.0, 0.785, 0.62),
+        ScenarioPreset::LittleRedDot => (160.0, 0.785, 0.62),
+        ScenarioPreset::PulsarSystem => (1.2, 0.785, 0.65),
+        ScenarioPreset::MagnetarOutburst => (6.5, 0.785, 0.62),
+        ScenarioPreset::RelativisticBinary => (0.04, 0.785, 0.70),
+        ScenarioPreset::KozaiLidovTriple => (15.0, 0.785, 0.65),
+    }
+}
+
+fn spawn_scenario_preset(
+    preset: ScenarioPreset,
+    commands: &mut Commands,
+    disk_params: &mut DiskParameters,
+    scenario_state: &mut ActiveScenarioState,
+) -> Entity {
+    match preset {
+        ScenarioPreset::SolarNebulaMmsn => spawn_solar_nebula_mmsn(commands, disk_params),
+        ScenarioPreset::Trappist1System => spawn_trappist_1_system(commands, disk_params),
+        ScenarioPreset::Kepler16Circumbinary => spawn_kepler_16_system(commands, disk_params),
+        ScenarioPreset::HotJupiterMigration => {
+            scenario_state.migration_active = true;
+            scenario_state.migration_target_au = 0.045;
+            spawn_hot_jupiter_scenario(commands, disk_params)
+        }
+        ScenarioPreset::RoguePlanetFlyby => {
+            let (star, rogue) = spawn_rogue_planet_scenario(commands, disk_params);
+            scenario_state.rogue_planet_entity = Some(rogue);
+            star
+        }
+        ScenarioPreset::LittleRedDot => spawn_little_red_dot_scenario(commands, disk_params),
+        ScenarioPreset::PulsarSystem => spawn_pulsar_system_scenario(commands, disk_params),
+        ScenarioPreset::MagnetarOutburst => spawn_magnetar_outburst_scenario(commands, disk_params),
+        ScenarioPreset::RelativisticBinary => {
+            let (pulsar, _) = spawn_relativistic_binary_scenario(commands, disk_params);
+            pulsar
+        }
+        ScenarioPreset::KozaiLidovTriple => {
+            let (star, _, _) = spawn_kozai_triple_scenario(commands, disk_params);
+            star
+        }
+    }
 }
 
 /// System that listens for `LoadScenarioEvent` and reinitializes the entire simulation.
@@ -144,7 +203,9 @@ pub fn handle_load_scenario_events(
         match preset {
             ScenarioPreset::Trappist1System
             | ScenarioPreset::PulsarSystem
-            | ScenarioPreset::MagnetarOutburst => {
+            | ScenarioPreset::MagnetarOutburst
+            | ScenarioPreset::RelativisticBinary
+            | ScenarioPreset::KozaiLidovTriple => {
                 config.gas_density_scale = 0.0;
                 disk_params.gas_disk_lifetime_yr = 0.0;
             }
@@ -155,42 +216,17 @@ pub fn handle_load_scenario_events(
             _ => {}
         }
 
-        let central_star_ent = match preset {
-            ScenarioPreset::SolarNebulaMmsn => {
-                spawn_solar_nebula_mmsn(&mut commands, &mut disk_params)
-            }
-            ScenarioPreset::Trappist1System => {
-                spawn_trappist_1_system(&mut commands, &mut disk_params)
-            }
-            ScenarioPreset::Kepler16Circumbinary => {
-                spawn_kepler_16_system(&mut commands, &mut disk_params)
-            }
-            ScenarioPreset::HotJupiterMigration => {
-                scenario_state.migration_active = true;
-                scenario_state.migration_target_au = 0.045;
-                spawn_hot_jupiter_scenario(&mut commands, &mut disk_params)
-            }
-            ScenarioPreset::RoguePlanetFlyby => {
-                let (star, rogue) = spawn_rogue_planet_scenario(&mut commands, &mut disk_params);
-                scenario_state.rogue_planet_entity = Some(rogue);
-                star
-            }
-            ScenarioPreset::LittleRedDot => {
-                spawn_little_red_dot_scenario(&mut commands, &mut disk_params)
-            }
-            ScenarioPreset::PulsarSystem => {
-                spawn_pulsar_system_scenario(&mut commands, &mut disk_params)
-            }
-            ScenarioPreset::MagnetarOutburst => {
-                spawn_magnetar_outburst_scenario(&mut commands, &mut disk_params)
-            }
-        };
+        let central_star_ent =
+            spawn_scenario_preset(preset, &mut commands, &mut disk_params, &mut scenario_state);
 
         player_state.selected_entity = Some(central_star_ent);
 
         let is_empty_swarm = matches!(
             preset,
-            ScenarioPreset::PulsarSystem | ScenarioPreset::MagnetarOutburst
+            ScenarioPreset::PulsarSystem
+                | ScenarioPreset::MagnetarOutburst
+                | ScenarioPreset::RelativisticBinary
+                | ScenarioPreset::KozaiLidovTriple
         ) || disk_params.disk_mass <= 0.0;
 
         config.active_particles = if is_empty_swarm {
@@ -219,16 +255,7 @@ pub fn handle_load_scenario_events(
             cam.focus = Vec3::ZERO;
             cam.target_focus = Vec3::ZERO;
             cam.target_entity = Some(central_star_ent);
-            let (target_r, target_yaw, target_pitch) = match preset {
-                ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
-                ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
-                ScenarioPreset::SolarNebulaMmsn => (16.0, 0.785, 0.62),
-                ScenarioPreset::HotJupiterMigration => (10.0, 0.785, 0.62),
-                ScenarioPreset::RoguePlanetFlyby => (35.0, 0.785, 0.62),
-                ScenarioPreset::LittleRedDot => (160.0, 0.785, 0.62),
-                ScenarioPreset::PulsarSystem => (1.2, 0.785, 0.65),
-                ScenarioPreset::MagnetarOutburst => (6.5, 0.785, 0.62),
-            };
+            let (target_r, target_yaw, target_pitch) = scenario_preset_camera_pose(preset);
             cam.radius = target_r;
             cam.target_radius = target_r;
             cam.yaw = target_yaw;

@@ -3,7 +3,10 @@
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 pub use crate::simulation::disk::belts::BeltZone;
+use crate::simulation::relativity::RelativisticState;
+use crate::simulation::tides::TidalState;
 use crate::utils::constants::*;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::BTreeSet;
 
@@ -27,6 +30,37 @@ pub type SelectedWorldQuery<'w, 's> = Query<
     Without<PanOrbitCamera>,
 >;
 
+pub type HudBodiesQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        (
+            &'static SimPosition,
+            &'static SimVelocity,
+            &'static Mass,
+            &'static Radius,
+            &'static Temperature,
+            &'static Composition,
+            &'static CelestialBody,
+        ),
+        (
+            Option<&'static InternalDifferentiation>,
+            Option<&'static SpinState>,
+            Option<&'static IgnitionState>,
+            Option<&'static VolatileInventory>,
+            Option<&'static PlanetaryRingSystem>,
+            Option<&'static AtmosphericEscapeTail>,
+            Option<&'static PlanetaryClimate>,
+            Option<&'static BiosphereState>,
+            Option<&'static StellarEvolutionState>,
+            Option<&'static TidalState>,
+            Option<&'static RelativisticState>,
+            Option<&'static crate::simulation::atmosphere_escape::AtmosphericEscapeState>,
+            Option<&'static crate::simulation::kozai_lidov::KozaiLidovState>,
+        ),
+    ),
+>;
+
 /// Marker for the live HUD simulation time and year counter.
 #[derive(Component)]
 pub struct HudTimeWarpText;
@@ -34,6 +68,10 @@ pub struct HudTimeWarpText;
 /// Marker for the selected body telemetry details in the bottom-left panel.
 #[derive(Component)]
 pub struct HudInspectorText;
+
+/// Marker for the trajectory encounter & impact forecast readout in the bottom-left panel.
+#[derive(Component)]
+pub struct HudEncounterForecastText;
 
 /// Marker for the top-left simulation phase & statistics readout.
 #[derive(Component)]
@@ -50,6 +88,93 @@ pub struct HudToastText;
 /// Marker for the fixed bottom-right persistent simulation clock.
 #[derive(Component)]
 pub struct HudBottomTimerText;
+
+/// Disjoint query bundle for all live on-screen text elements in the HUD.
+#[derive(SystemParam)]
+#[allow(
+    clippy::type_complexity,
+    reason = "Disjoint HUD text component queries"
+)]
+pub struct HudTextQueries<'w, 's> {
+    pub header: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<HudHeaderStatsText>,
+            Without<HudTimeWarpText>,
+            Without<HudInspectorText>,
+            Without<HudToastText>,
+            Without<HudBottomTimerText>,
+            Without<HudEncounterForecastText>,
+        ),
+    >,
+    pub time: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<HudTimeWarpText>,
+            Without<HudHeaderStatsText>,
+            Without<HudInspectorText>,
+            Without<HudToastText>,
+            Without<HudBottomTimerText>,
+            Without<HudEncounterForecastText>,
+        ),
+    >,
+    pub inspector: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<HudInspectorText>,
+            Without<HudHeaderStatsText>,
+            Without<HudTimeWarpText>,
+            Without<HudToastText>,
+            Without<HudBottomTimerText>,
+            Without<HudEncounterForecastText>,
+        ),
+    >,
+    pub toast: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<HudToastText>,
+            Without<HudHeaderStatsText>,
+            Without<HudTimeWarpText>,
+            Without<HudInspectorText>,
+            Without<HudBottomTimerText>,
+            Without<HudEncounterForecastText>,
+        ),
+    >,
+    pub bottom_timer: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<HudBottomTimerText>,
+            Without<HudHeaderStatsText>,
+            Without<HudTimeWarpText>,
+            Without<HudInspectorText>,
+            Without<HudToastText>,
+            Without<HudEncounterForecastText>,
+        ),
+    >,
+    pub forecast: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<HudEncounterForecastText>,
+            Without<HudHeaderStatsText>,
+            Without<HudTimeWarpText>,
+            Without<HudInspectorText>,
+            Without<HudToastText>,
+            Without<HudBottomTimerText>,
+        ),
+    >,
+}
 
 /// Marker for the top-center body selector bar container.
 #[derive(Component)]
@@ -110,6 +235,7 @@ pub enum HudPanelElement {
     TelemetryPanelPill,
     OrbitModeBadge,
     OverlayModeBadge,
+    TrajectoryPredictorBadge,
 }
 
 /// Marker for the scrollable container inside the Target Inspector panel.
@@ -123,6 +249,7 @@ pub enum HudDynamicText {
     FullScreenBadge,
     OrbitModeBadge,
     OverlayModeBadge,
+    TrajectoryPredictorBadge,
 }
 
 /// Marker for the bottom-center live telemetry and toast container.
@@ -365,6 +492,26 @@ pub struct TelemetryExportStatusText;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TelemetryMetricButton(pub crate::simulation::telemetry::TelemetryMetric);
 
+/// Marker component for the deep-time geological epoch scrubber panel.
+#[derive(Component)]
+pub struct EpochScrubberPanel;
+
+/// Marker for the tracked body title in the Epoch Scrubber HUD.
+#[derive(Component)]
+pub struct EpochScrubberBodyTitleText;
+
+/// Marker for the epoch and age status readout text.
+#[derive(Component)]
+pub struct EpochScrubberStatusText;
+
+/// Marker for the geological telemetry metrics text.
+#[derive(Component)]
+pub struct EpochScrubberMetricsText;
+
+/// Marker for the quick epoch button pill.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochQuickButton(pub crate::simulation::geology::types::GeologicalEpoch);
+
 /// On-screen notification toast resource.
 #[derive(Resource, Debug, Clone)]
 pub struct NotificationToast {
@@ -419,10 +566,16 @@ pub enum UiButtonAction {
     ToggleTelemetryPanel,
     SelectTelemetryMetric(crate::simulation::telemetry::TelemetryMetric),
     ExportTelemetryCsv,
+    // Deep-Time Geological Epoch Scrubber Actions
+    ToggleEpochScrubberPanel,
+    ScrubToEpoch(crate::simulation::geology::types::GeologicalEpoch),
+    ScrubTimeStep(i32),
+    ToggleScrubAutoAdvance,
     // Scientific Instruments & Overlays
     ToggleOrbitMode,
     CycleOverlayMode,
     ToggleTractor,
+    ToggleTrajectoryPredictor,
     // Live Celestial Body Editor
     IncreaseMass,
     DecreaseMass,
@@ -442,6 +595,17 @@ pub enum UiButtonAction {
     ShatterIntoRings,
     SeedLife,
     AgeStar,
+    // Targeted Terraforming & Bombardment Suite
+    BombardComet,
+    BombardChondrite,
+    BombardSalvo,
+    BombardCore,
+    // Gravitational Tidal Actions
+    TidalLock,
+    // Relativistic Gravitational Waves & Inspiral
+    AccelerateInspiral,
+    // Atmospheric Photoevaporation & Solar Wind Stripping
+    StripAtmosphere,
     // Sandbox Scenarios & System Presets
     LoadScenarioSolar,
     LoadScenarioTrappist,
@@ -451,6 +615,8 @@ pub enum UiButtonAction {
     LoadScenarioLittleRedDot,
     LoadScenarioPulsar,
     LoadScenarioMagnetar,
+    LoadScenarioRelativisticBinary,
+    LoadScenarioKozaiTriple,
     // JWST Little Red Dot / Quasi-Star Experiments
     ToggleSuperEddington,
     TriggerBlowoutCocoon,
@@ -507,9 +673,14 @@ impl UiButtonAction {
             UiButtonAction::ToggleTelemetryPanel => "[F10]: Open or close the planetary climate & habitability telemetry graphing panel.",
             UiButtonAction::SelectTelemetryMetric(_) => "Switch active telemetry graph metric (Habitability, Temperature, Ocean, Pressure, Orbit).",
             UiButtonAction::ExportTelemetryCsv => "Export current planetary telemetry history to a standard CSV file in ./exports/.",
+            UiButtonAction::ToggleEpochScrubberPanel => "[F11]: Open or close the deep geological epoch scrubber and continental drift timeline.",
+            UiButtonAction::ScrubToEpoch(epoch) => epoch.supercontinent_name(),
+            UiButtonAction::ScrubTimeStep(myr) => if *myr > 0 { "Advance geological timeline into the future." } else { "Step geological timeline backwards in deep time." },
+            UiButtonAction::ToggleScrubAutoAdvance => "Toggle continuous simulation time auto-advance for the geological clock.",
             UiButtonAction::ToggleOrbitMode => "[Y]: Cycle orbit trails (All -> Selected Target Only -> Hidden).",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
+            UiButtonAction::ToggleTrajectoryPredictor => "[N]: Toggle real-time trajectory prediction and close-encounter / impact warning reticles.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
             UiButtonAction::DecreaseMass => "[J]: Strip -20% outer envelope mass from selected planet.",
             UiButtonAction::ExpandOrbit => "[O]: Boost orbital energy to expand orbital radius +10%.",
@@ -530,6 +701,13 @@ impl UiButtonAction {
             UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupt selected moon/body into glowing planetary rings.",
             UiButtonAction::SeedLife => "[E]: Seed primordial water oceans, atmosphere, and photosynthetic biosphere.",
             UiButtonAction::AgeStar => "[N]: Step central star forward through far-future lifecycle (Red Giant -> Nebula -> White Dwarf).",
+            UiButtonAction::BombardComet => "Launch guided water-rich comet to deliver H2O volatiles & create oceans.",
+            UiButtonAction::BombardChondrite => "Launch carbonaceous chondrite to deliver N2 and CO2, boosting atmospheric pressure.",
+            UiButtonAction::BombardSalvo => "Launch aerobraking volatile salvo for gentle atmospheric influx without cratering.",
+            UiButtonAction::BombardCore => "Launch dense iron-nickel impactor to stimulate core temperature and magnetic dynamo.",
+            UiButtonAction::TidalLock => "Synchronize planetary rotation with orbital period (1:1 lock) and align spin axis.",
+            UiButtonAction::AccelerateInspiral => "Accelerate gravitational wave inspiral decay for selected compact binary pair.",
+            UiButtonAction::StripAtmosphere => "Trigger extreme photoevaporative XUV burst to strip volatile envelope down to bare rocky core.",
             UiButtonAction::LoadScenarioSolar => "[F1]: Reset to standard 4.5 Gyr Hayashi Solar Nebula MMSN with central protostar and 10 embryos.",
             UiButtonAction::LoadScenarioTrappist => "[F2]: Load TRAPPIST-1 ultracool red dwarf system with 7 resonant Earths (3 in Habitable Zone).",
             UiButtonAction::LoadScenarioKepler16 => "[F3]: Load Kepler-16 'Tatooine' circumbinary system with K/M binary star pair and giant planet.",
@@ -538,6 +716,8 @@ impl UiButtonAction {
             UiButtonAction::LoadScenarioLittleRedDot => "[F6]: Load JWST Little Red Dot (100,000 M☉ Black Hole Star encased in 60 AU hydrogen cocoon).",
             UiButtonAction::LoadScenarioPulsar => "[F7]: Load PSR B1257+12 (Millisecond pulsar Lich with 3 confirmed zombie exoplanets).",
             UiButtonAction::LoadScenarioMagnetar => "[F9]: Load SGR 1806-20 (Ultra-magnetized 10¹⁵ G magnetar with starquake flares & companion).",
+            UiButtonAction::LoadScenarioRelativisticBinary => "[F10]: Load PSR B1913+16 Hulse-Taylor relativistic binary pulsar and gravitational waves.",
+            UiButtonAction::LoadScenarioKozaiTriple => "[F11]: Load HD 80606 Kozai-Lidov hierarchical triple secular resonance and tidal migration.",
             UiButtonAction::ToggleSuperEddington => "[X]: Toggle Super-Eddington hyper-accretion onto the central black hole seed.",
             UiButtonAction::TriggerBlowoutCocoon => "[B]: Trigger radiation envelope blowout to unveil the naked Supermassive Quasar.",
             UiButtonAction::SpawnInfallPop3Star => "[T]: Spawn an infalling Population III hypergiant star to observe a Tidal Disruption Event (TDE).",
@@ -650,187 +830,4 @@ pub struct SystemWorld {
     pub index: usize,
 }
 
-/// Returns true if a celestial body name corresponds to one of the canonical major planets
-/// (Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Planet Nine).
-pub fn is_canonical_major_planet(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("mercury")
-        || lower.contains("venus")
-        || lower.contains("earth")
-        || lower.contains("mars")
-        || lower.contains("jupiter")
-        || lower.contains("saturn")
-        || lower.contains("uranus")
-        || lower.contains("neptune")
-        || lower.contains("pluto")
-        || lower.contains("planet nine")
-        || lower.contains("planet 9")
-}
-
-/// Determines if a celestial body is a protoplanetary embryo (e.g. Theia, Callisto Embryo, Titan Embryo,
-/// or procedural protoplanets coalesced in planetary feeding zones to seed moons and planetary accretion).
-pub fn is_embryo_body(name: &str, body_type: BodyType) -> bool {
-    let lower = name.to_lowercase();
-    if lower.contains("theia") {
-        return false;
-    }
-    if is_canonical_major_planet(name) {
-        return false;
-    }
-    if lower.contains("embryo") {
-        return true;
-    }
-    body_type == BodyType::Protoplanet
-}
-
-/// Determines if a celestial body is a major world (Star, Canonical Planet, Mature Planet, Named Moon)
-/// or a generic procedural minor planetesimal / asteroid / embryo.
-pub fn is_major_body(name: &str, body_type: BodyType, is_star: bool, mass_solar: f64) -> bool {
-    if is_star || body_type.is_star_or_remnant() {
-        return true;
-    }
-    let lower = name.to_lowercase();
-    if lower.contains("theia") {
-        return true;
-    }
-    if is_canonical_major_planet(name) {
-        return true;
-    }
-    if matches!(
-        body_type,
-        BodyType::Asteroid
-            | BodyType::Comet
-            | BodyType::Planetesimal
-            | BodyType::DustGrain
-            | BodyType::DebrisRing
-    ) {
-        return false;
-    }
-    if lower.starts_with("asteroid-")
-        || lower.starts_with("dust-")
-        || lower.starts_with("debris-")
-        || lower.starts_with("comet-")
-    {
-        return false;
-    }
-    if is_embryo_body(name, body_type) {
-        return false;
-    }
-    if body_type == BodyType::GasGiant
-        || body_type == BodyType::IceGiant
-        || body_type == BodyType::SuperEarth
-        || body_type == BodyType::TerrestrialPlanet
-        || body_type == BodyType::Moon
-        || body_type == BodyType::QuasiStar
-    {
-        return true;
-    }
-    if lower.contains("trappist")
-        || lower.contains("kepler")
-        || lower.contains("nemesis")
-        || lower.contains("rogue")
-        || lower.contains("host star")
-    {
-        return true;
-    }
-    mass_solar >= (EARTH_MASS_SOLAR * 0.0001)
-}
-
-/// Collects and deterministically sorts all active celestial bodies into a continuous 0..N numerical sequence:
-/// - [0] is ALWAYS the Central Star.
-/// - [1..N] are all orbiting worlds (companions, black holes, super-earths, gas giants, embryos),
-///   sorted strictly from innermost to outermost by distance from the star.
-pub fn collect_sorted_system_worlds<'a, I>(items: I) -> Vec<SystemWorld>
-where
-    I: IntoIterator<
-        Item = (
-            Entity,
-            &'a CelestialBody,
-            &'a SimPosition,
-            &'a Mass,
-            &'a Radius,
-            Option<&'a CentralStar>,
-        ),
-    >,
-{
-    let mut central_star: Option<SystemWorld> = None;
-    let mut other_worlds: Vec<SystemWorld> = Vec::new();
-
-    for (ent, body, pos, mass, radius, opt_star) in items {
-        let dist = if pos.0.is_finite() {
-            pos.0.length()
-        } else {
-            0.0
-        };
-        let is_star_component = opt_star.is_some();
-
-        if is_star_component {
-            central_star = Some(SystemWorld {
-                entity: ent,
-                name: body.name.clone(),
-                body_type: body.body_type,
-                is_central_star: true,
-                distance_au: dist,
-                mass_solar: mass.0,
-                radius_au: radius.0,
-                index: 0,
-            });
-            continue;
-        }
-
-        if is_major_body(
-            &body.name,
-            body.body_type,
-            body.body_type.is_star_or_remnant(),
-            mass.0,
-        ) {
-            other_worlds.push(SystemWorld {
-                entity: ent,
-                name: body.name.clone(),
-                body_type: body.body_type,
-                is_central_star: false,
-                distance_au: dist,
-                mass_solar: mass.0,
-                radius_au: radius.0,
-                index: 0,
-            });
-        }
-    }
-
-    if central_star.is_none() && !other_worlds.is_empty() {
-        let mut best_idx = 0;
-        let mut best_dist = f64::MAX;
-        for (i, w) in other_worlds.iter().enumerate() {
-            let score = if w.body_type.is_star_or_remnant() {
-                w.distance_au
-            } else {
-                w.distance_au + 1000.0
-            };
-            if score < best_dist {
-                best_dist = score;
-                best_idx = i;
-            }
-        }
-        let mut cs = other_worlds.remove(best_idx);
-        cs.is_central_star = true;
-        central_star = Some(cs);
-    }
-
-    other_worlds.sort_by(|a, b| {
-        a.distance_au
-            .partial_cmp(&b.distance_au)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let mut result = Vec::with_capacity(1 + other_worlds.len());
-    if let Some(mut cs) = central_star {
-        cs.index = 0;
-        result.push(cs);
-    }
-    for (i, mut w) in other_worlds.into_iter().enumerate() {
-        w.index = i + 1;
-        result.push(w);
-    }
-
-    result
-}
+pub use super::world_list::*;

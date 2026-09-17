@@ -72,6 +72,45 @@ fn handle_save_load_action(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "UI button interaction system dispatches across all active simulation controls, cameras, and states"
+)]
+fn dispatch_system_and_tool_actions(
+    action: &UiButtonAction,
+    save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+    load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    time_warp: &mut TimeWarp,
+    hud_visibility: &mut HudVisibilityState,
+    telemetry_panel_state: &mut TelemetryPanelState,
+    telemetry_history: &mut crate::simulation::telemetry::SimulationTelemetryHistory,
+    opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
+    player_state: &mut PlayerInteractionState,
+    opt_slingshot: Option<&mut SlingshotState>,
+    opt_predictor: Option<&mut crate::simulation::predictor::TrajectoryPredictorState>,
+    toast: &mut NotificationToast,
+) -> bool {
+    if handle_save_load_action(action, save_events, load_events, toast) {
+        return true;
+    }
+    if handle_time_action(action, time_warp, toast) {
+        return true;
+    }
+    if handle_panel_toggle_action(action, hud_visibility, toast) {
+        return true;
+    }
+    if handle_telemetry_action(action, telemetry_panel_state, telemetry_history, toast) {
+        return true;
+    }
+    if super::epoch_scrubber::handle_epoch_scrubber_action(action, opt_scrubber, toast) {
+        return true;
+    }
+    if handle_instrument_action(action, player_state, toast, opt_slingshot, opt_predictor) {
+        return true;
+    }
+    false
+}
+
 /// Handles interactive mouse clicks and hover highlights on all on-screen HUD buttons.
 #[allow(
     clippy::too_many_arguments,
@@ -114,13 +153,19 @@ pub fn handle_ui_button_interactions(
     mut camera_query: Query<&mut PanOrbitCamera>,
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
-    mut scenario_events: MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
-    mut save_events: Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-    mut load_events: Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    (mut scenario_events, mut save_events, mut load_events): (
+        MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+        Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+        Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    ),
     sim_time: Res<SimTime>,
     mut commands: Commands,
     mut quasi_star_query: Query<&mut BlackHoleStarState>,
-    mut opt_slingshot: Option<ResMut<SlingshotState>>,
+    (mut opt_slingshot, mut opt_predictor, mut opt_scrubber): (
+        Option<ResMut<SlingshotState>>,
+        Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
+        Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
+    ),
 ) {
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
@@ -132,34 +177,19 @@ pub fn handle_ui_button_interactions(
             *bg_color = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
             *border_color = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
 
-            if handle_save_load_action(
+            if dispatch_system_and_tool_actions(
                 action,
                 save_events.as_mut(),
                 load_events.as_mut(),
-                &mut toast,
-            ) {
-                continue;
-            }
-
-            if handle_time_action(action, &mut time_warp, &mut toast) {
-                continue;
-            }
-            if handle_panel_toggle_action(action, &mut hud_visibility, &mut toast) {
-                continue;
-            }
-            if handle_telemetry_action(
-                action,
+                &mut time_warp,
+                &mut hud_visibility,
                 &mut telemetry_panel_state,
                 &mut telemetry_history,
-                &mut toast,
-            ) {
-                continue;
-            }
-            if handle_instrument_action(
-                action,
+                opt_scrubber.as_deref_mut(),
                 &mut player_state,
-                &mut toast,
                 opt_slingshot.as_deref_mut(),
+                opt_predictor.as_deref_mut(),
+                &mut toast,
             ) {
                 continue;
             }

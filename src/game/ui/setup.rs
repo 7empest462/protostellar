@@ -137,7 +137,7 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                     BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
                 ))
                 .with_children(|scenario_row| {
-                    const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 8] = [
+                    const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 9] = [
                         (
                             UiButtonAction::LoadScenarioSolar,
                             "Solar [F1]",
@@ -185,6 +185,12 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                             "Magnetar [F9]",
                             Color::srgba(0.20, 0.05, 0.28, 0.9),
                             Color::srgb(0.90, 0.45, 1.0),
+                        ),
+                        (
+                            UiButtonAction::LoadScenarioKozaiTriple,
+                            "Kozai [F11]",
+                            Color::srgba(0.08, 0.18, 0.14, 0.9),
+                            Color::srgb(0.4, 0.95, 0.65),
                         ),
                     ];
                     for (action, label, bg, border) in SCENARIO_BUTTONS {
@@ -371,6 +377,13 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
     );
     create_compact_button(
         col,
+        UiButtonAction::ToggleEpochScrubberPanel,
+        "⏳ Epochs [F11]",
+        Color::srgba(0.18, 0.14, 0.05, 0.90),
+        Color::srgb(1.0, 0.85, 0.40),
+    );
+    create_compact_button(
+        col,
         UiButtonAction::ToggleSlingshotMode,
         "🎯 Slingshot [K]",
         Color::srgba(0.20, 0.10, 0.04, 0.90),
@@ -468,13 +481,42 @@ fn spawn_view_mode_badges(col: &mut ChildSpawnerCommands) {
     ))
     .with_children(|badge| {
         badge.spawn((
-            Text::new("⛶ Fullscreen [F11]"),
+            Text::new("⛶ Fullscreen"),
             TextFont {
                 font_size: FontSize::Px(10.5),
                 ..default()
             },
             TextColor(Color::srgb(0.5, 0.85, 1.0)),
             HudDynamicText::FullScreenBadge,
+            Pickable::IGNORE,
+        ));
+    });
+
+    // Trajectory Predictor / Forecast badge
+    col.spawn((
+        Button,
+        UiButtonAction::ToggleTrajectoryPredictor,
+        HudPanelElement::TrajectoryPredictorBadge,
+        Node {
+            padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+            margin: UiRect::all(Val::Px(1.5)),
+            border: UiRect::all(Val::Px(1.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.05, 0.12, 0.88)),
+        BorderColor::all(Color::srgba(0.3, 0.7, 1.0, 0.65)),
+    ))
+    .with_children(|badge| {
+        badge.spawn((
+            Text::new("🎯 Forecast: ON [N]"),
+            TextFont {
+                font_size: FontSize::Px(10.5),
+                ..default()
+            },
+            TextColor(Color::srgb(0.45, 0.90, 1.0)),
+            HudDynamicText::TrajectoryPredictorBadge,
             Pickable::IGNORE,
         ));
     });
@@ -822,7 +864,7 @@ fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) {
                         });
 
                     panel.spawn((
-                        Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Space] Pause | [1..4] Speed | [F11] Fullscreen"),
+                        Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Space] Pause | [1..4] Speed | [F10] Telemetry | [F11] Epochs"),
                         TextFont {
                             font_size: FontSize::Px(9.0),
                             ..default()
@@ -887,5 +929,8 @@ pub fn setup_hud(mut commands: Commands) {
 
             // TELEMETRY & CLIMATE GRAPHING DRAWER
             super::telemetry_panel::spawn_telemetry_panel(root);
+
+            // DEEP-TIME GEOLOGICAL EPOCH SCRUBBER DRAWER
+            super::epoch_scrubber::spawn_epoch_scrubber_panel(root);
         });
 }

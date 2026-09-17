@@ -22,6 +22,7 @@ pub fn record_impact_crater_basin(
         formation_time_yr: sim_time_yr,
         melt_glow_fraction: 1.0,
         elongation: elongation.clamp(1.0, 3.5),
+        scar_intensity: 1.0,
     };
 
     if let Ok(mut cmd) = commands.get_entity(primary_entity) {
@@ -118,11 +119,15 @@ pub fn deliver_volatiles_and_crater(
     }
 }
 
-/// Relaxes and cools crater magma melt pools over geological simulation timescales.
+/// Relaxes and cools crater magma melt pools and gradually heals impact scars over simulation timescales.
 pub fn update_impact_basin_relaxation(
     sim_time: Res<SimTime>,
     time_warp: Res<TimeWarp>,
-    mut query: Query<&mut PlanetaryBasins>,
+    mut query: Query<(
+        &mut PlanetaryBasins,
+        Option<&VolatileInventory>,
+        Option<&PlanetaryClimate>,
+    )>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
         return;
@@ -132,15 +137,33 @@ pub fn update_impact_basin_relaxation(
         return;
     }
 
-    for mut pb in query.iter_mut() {
+    for (mut pb, opt_vol, opt_climate) in query.iter_mut() {
+        let has_weathering = opt_vol
+            .is_some_and(|v| v.atmospheric_pressure_bar > 0.05 || v.ocean_coverage_frac > 0.02)
+            || opt_climate.is_some_and(|c| c.cloud_coverage_frac > 0.05);
+
         for basin in &mut pb.basins {
+            // 1. Magma melt glow cooling: cools from glowing molten lava to solidified rock over ~50 to 300 years
             if basin.melt_glow_fraction > 0.0 {
-                // Cooling timescale depends on basin radius (2,000 to 50,000 years)
-                let cooling_tau_yr =
-                    (f64::from(basin.angular_radius) * 80_000.0).clamp(2_000.0, 50_000.0);
+                let cooling_tau_yr = (f64::from(basin.angular_radius) * 600.0).clamp(50.0, 300.0);
                 let decay = (dt_yr / cooling_tau_yr) as f32;
                 basin.melt_glow_fraction = (basin.melt_glow_fraction - decay).max(0.0);
             }
+
+            // 2. Crustal scar healing / weathering / isostatic relaxation:
+            // Scars smoothly heal and fade back into the planetary crust.
+            // Worlds with atmospheres and oceans erode/infill craters faster (~200 to 500 years).
+            // Airless worlds heal via crustal viscous relaxation over ~600 to 1,500 years.
+            let healing_tau_yr = if has_weathering {
+                (f64::from(basin.angular_radius) * 800.0).clamp(200.0, 500.0)
+            } else {
+                (f64::from(basin.angular_radius) * 2000.0).clamp(600.0, 1500.0)
+            };
+            let heal_decay = (dt_yr / healing_tau_yr) as f32;
+            basin.scar_intensity = (basin.scar_intensity - heal_decay).max(0.0);
         }
+
+        // Cleanly remove fully healed scars so they no longer occupy shader/data slots
+        pb.basins.retain(|b| b.scar_intensity > 0.005);
     }
 }

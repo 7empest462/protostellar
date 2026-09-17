@@ -6,32 +6,45 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
 use super::palettes::calc_ring_color;
-use super::VisualAssets;
+use super::{VisualAssets, VisualBody};
 
 /// Marker component for an instantiated visual planetary ring entity.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct VisualRingChild;
 
 /// Synchronizes 3D planetary ring system meshes, materials, and axial tilt transforms.
+#[allow(clippy::type_complexity, reason = "Planetary ring query")]
 pub fn sync_planetary_rings(
     mut commands: Commands,
     _config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut ring_materials: ResMut<Assets<RingMaterial>>,
-    planets_with_rings_query: Query<(
-        Entity,
-        &PlanetaryRingSystem,
-        &Radius,
-        &CelestialBody,
-        Option<&SpinState>,
-        Option<&Children>,
-    )>,
+    planets_with_rings_query: Query<
+        (
+            Entity,
+            &PlanetaryRingSystem,
+            &Radius,
+            &CelestialBody,
+            &Transform,
+            Option<&SpinState>,
+            Option<&Children>,
+        ),
+        With<VisualBody>,
+    >,
+    stars_query: Query<(&SimPosition, &CelestialBody)>,
     mut ring_children_query: Query<
         (&mut Transform, &MeshMaterial3d<RingMaterial>),
-        With<VisualRingChild>,
+        (With<VisualRingChild>, Without<CelestialBody>),
     >,
 ) {
-    for (planet_entity, ring_sys, radius, _body, opt_spin, opt_children) in
+    let star_world_pos = stars_query
+        .iter()
+        .find(|(_, b)| b.body_type.is_star_or_remnant())
+        .map_or(Vec3::ZERO, |(pos, _)| {
+            Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
+        });
+
+    for (planet_entity, ring_sys, radius, _body, planet_trans, opt_spin, opt_children) in
         planets_with_rings_query.iter()
     {
         let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
@@ -48,6 +61,16 @@ pub fn sync_planetary_rings(
         let tilt_degrees = opt_spin.map_or(26.7, |s| s.axial_tilt_degrees as f32);
         let ring_rotation = Quat::from_rotation_z(tilt_degrees.to_radians());
 
+        let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
+        let star_dir_world = if star_dir_world.length_squared() < 0.01 {
+            Vec3::Y
+        } else {
+            star_dir_world
+        };
+        let ring_world_rot = planet_trans.rotation * ring_rotation;
+        let star_dir_local = (ring_world_rot.inverse() * star_dir_world).normalize_or_zero();
+        let planet_radius_ratio = 1.0 / ring_ratio;
+
         let mut found_child = false;
         if let Some(children) = opt_children {
             for child in children.iter() {
@@ -62,6 +85,13 @@ pub fn sync_planetary_rings(
                         mat.uniforms.optical_depth = ring_sys.optical_depth;
                         mat.uniforms.ice_fraction = ring_sys.ice_fraction;
                         mat.uniforms.ring_color = calc_ring_color(ring_sys.ice_fraction);
+                        mat.uniforms.star_dir_local = Vec4::new(
+                            star_dir_local.x,
+                            star_dir_local.y,
+                            star_dir_local.z,
+                            planet_radius_ratio,
+                        );
+                        mat.uniforms.shadow_params = Vec4::new(0.03, 0.022, 0.97, 0.0);
                     }
                 }
             }
@@ -76,6 +106,13 @@ pub fn sync_planetary_rings(
                     optical_depth: ring_sys.optical_depth,
                     ice_fraction: ring_sys.ice_fraction,
                     ring_color,
+                    star_dir_local: Vec4::new(
+                        star_dir_local.x,
+                        star_dir_local.y,
+                        star_dir_local.z,
+                        planet_radius_ratio,
+                    ),
+                    shadow_params: Vec4::new(0.03, 0.022, 0.97, 0.0),
                 },
             });
 
@@ -87,6 +124,7 @@ pub fn sync_planetary_rings(
                         MeshMaterial3d(material),
                         Transform::from_scale(Vec3::new(ring_outer_scale, 1.0, ring_outer_scale))
                             .with_rotation(ring_rotation),
+                        Visibility::default(),
                         NotShadowCaster,
                     ));
                 });

@@ -3,7 +3,9 @@
 use bevy::prelude::*;
 
 use super::types::*;
-use crate::simulation::components::{Composition, PlanetaryClimate, VolatileInventory};
+use crate::simulation::components::{
+    Composition, PlanetaryClimate, RelativisticJetState, VolatileInventory,
+};
 
 /// Spawns the bottom-left Target Inspector and actions panel.
 pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) {
@@ -98,17 +100,7 @@ fn spawn_inspector_scrollable_body(panel: &mut ChildSpawnerCommands) {
             },
         ))
         .with_children(|scroll_box| {
-            scroll_box.spawn((
-                Text::new(
-                    "No celestial body selected. Click on the Star or Planets to inspect & edit.",
-                ),
-                TextFont {
-                    font_size: FontSize::Px(11.0),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.90, 0.94, 1.0)),
-                HudInspectorText,
-            ));
+            spawn_inspector_text_and_forecast(scroll_box);
 
             scroll_box
                 .spawn(Node {
@@ -179,8 +171,58 @@ fn spawn_inspector_chip(col: &mut ChildSpawnerCommands) {
 fn spawn_inspector_toolbar_rows(actions: &mut ChildSpawnerCommands) {
     spawn_orbit_tracking_row(actions);
     spawn_mass_composition_row(actions);
+    spawn_terraforming_bombardment_row(actions);
     spawn_astrophysics_actions_row(actions);
     spawn_exotic_experiments_row(actions);
+}
+
+fn spawn_terraforming_bombardment_row(actions: &mut ChildSpawnerCommands) {
+    actions.spawn((
+        Text::new("TERRAFORMING & BOMBARDMENT:"),
+        TextFont {
+            font_size: FontSize::Px(9.0),
+            ..default()
+        },
+        TextColor(Color::srgb(0.35, 0.90, 0.95)),
+    ));
+    actions
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            margin: UiRect::bottom(Val::Px(2.0)),
+            flex_wrap: FlexWrap::Wrap,
+            ..default()
+        })
+        .with_children(|row| {
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 4] = [
+                (
+                    UiButtonAction::BombardComet,
+                    "Comet (H₂O)",
+                    Color::srgba(0.06, 0.18, 0.24, 0.9),
+                    Color::srgb(0.35, 0.85, 1.0),
+                ),
+                (
+                    UiButtonAction::BombardChondrite,
+                    "Chondrite (Atm)",
+                    Color::srgba(0.22, 0.14, 0.06, 0.9),
+                    Color::srgb(1.0, 0.65, 0.25),
+                ),
+                (
+                    UiButtonAction::BombardSalvo,
+                    "Volatile Salvo",
+                    Color::srgba(0.18, 0.08, 0.24, 0.9),
+                    Color::srgb(0.80, 0.50, 1.0),
+                ),
+                (
+                    UiButtonAction::BombardCore,
+                    "Core Impactor",
+                    Color::srgba(0.24, 0.08, 0.06, 0.9),
+                    Color::srgb(1.0, 0.35, 0.25),
+                ),
+            ];
+            for (act, label, bg, border) in BUTTONS {
+                create_compact_button(row, act, label, bg, border);
+            }
+        });
 }
 
 fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
@@ -200,7 +242,7 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 7] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 10] = [
                 (
                     UiButtonAction::FocusLock,
                     "Track [F]",
@@ -212,6 +254,18 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
                     "Fix Orbit [Z]",
                     Color::srgba(0.06, 0.22, 0.22, 0.9),
                     Color::srgb(0.3, 0.95, 0.85),
+                ),
+                (
+                    UiButtonAction::TidalLock,
+                    "⚡ Lock",
+                    Color::srgba(0.12, 0.14, 0.28, 0.9),
+                    Color::srgb(0.65, 0.75, 1.0),
+                ),
+                (
+                    UiButtonAction::AccelerateInspiral,
+                    "⚡ Inspiral",
+                    Color::srgba(0.18, 0.08, 0.24, 0.9),
+                    Color::srgb(0.85, 0.50, 1.0),
                 ),
                 (
                     UiButtonAction::ExpandOrbit,
@@ -238,6 +292,12 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
                     Color::srgb(0.95, 0.65, 0.25),
                 ),
                 (
+                    UiButtonAction::ToggleTrajectoryPredictor,
+                    "Forecast [N]",
+                    Color::srgba(0.08, 0.20, 0.25, 0.9),
+                    Color::srgb(0.4, 0.9, 1.0),
+                ),
+                (
                     UiButtonAction::DeselectBody,
                     "Deselect [Esc]",
                     Color::srgba(0.15, 0.15, 0.18, 0.9),
@@ -247,6 +307,42 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
             for (act, label, bg, border) in BUTTONS {
                 create_compact_button(row, act, label, bg, border);
             }
+        });
+}
+
+fn spawn_inspector_text_and_forecast(scroll_box: &mut ChildSpawnerCommands) {
+    scroll_box.spawn((
+        Text::new("No celestial body selected. Click on the Star or Planets to inspect & edit."),
+        TextFont {
+            font_size: FontSize::Px(11.0),
+            ..default()
+        },
+        TextColor(Color::srgb(0.90, 0.94, 1.0)),
+        HudInspectorText,
+    ));
+
+    scroll_box
+        .spawn((
+            Node {
+                padding: UiRect::axes(Val::Px(4.0), Val::Px(2.5)),
+                margin: UiRect::top(Val::Px(3.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                width: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.05, 0.10, 0.92)),
+            BorderColor::all(Color::srgba(0.3, 0.7, 1.0, 0.45)),
+        ))
+        .with_children(|fc_box| {
+            fc_box.spawn((
+                Text::new("🎯 FORECAST [N]: Scanning orbital path..."),
+                TextFont {
+                    font_size: FontSize::Px(9.5),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.70, 0.90, 1.0)),
+                HudEncounterForecastText,
+            ));
         });
 }
 
@@ -316,7 +412,7 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 7] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 8] = [
                 (
                     UiButtonAction::IgniteStar,
                     "Ignite [I]",
@@ -358,6 +454,12 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
                     "Tractor [T]",
                     Color::srgba(0.22, 0.08, 0.22, 0.9),
                     Color::srgb(0.95, 0.45, 0.95),
+                ),
+                (
+                    UiButtonAction::StripAtmosphere,
+                    "Strip Atm",
+                    Color::srgba(0.20, 0.10, 0.26, 0.9),
+                    Color::srgb(0.80, 0.55, 1.0),
                 ),
             ];
             for (act, label, bg, border) in BUTTONS {
@@ -409,8 +511,8 @@ fn spawn_exotic_experiments_row(actions: &mut ChildSpawnerCommands) {
         });
 }
 
-/// Formats the volatile H2O component for the composition readout,
-/// dynamically distinguishing liquid water and ocean coverage from frozen ice.
+/// Formats the volatile H2O mass component for the bulk composition readout (percentage of total mass),
+/// distinguishing liquid water from frozen ice based on temperature.
 pub fn format_composition_water_ice(
     comp: &Composition,
     opt_vol: Option<&VolatileInventory>,
@@ -426,26 +528,12 @@ pub fn format_composition_water_ice(
 
     let surf_temp_k = opt_climate.map_or(temp_k, |c| f64::from(c.surface_temperature_k));
     let is_warm = temp_k >= 273.0 || surf_temp_k >= 273.0;
-    let ocean_pct = opt_vol.map_or(0.0, |v| (f64::from(v.ocean_coverage_frac) * 100.0).round());
-    let surface_ice_pct = opt_climate.map_or(
-        opt_vol.map_or(0.0, |v| f64::from(v.ocean_coverage_frac)),
-        |c| f64::from(c.ice_coverage_frac),
-    ) * 100.0;
-    let ice_cov_pct = surface_ice_pct.round();
     let has_water =
         norm.ice_frac > 0.0001 || opt_vol.is_some_and(|v| v.delivered_water_m_earth > 1e-6);
 
     if is_warm {
-        if ocean_pct >= 1.0 {
-            if ice_pct >= 1.0 {
-                format!("{ocean_pct:.0}% Ocean ({ice_pct:.0}% Water)")
-            } else {
-                format!("{ocean_pct:.0}% Ocean Water")
-            }
-        } else if ice_pct >= 1.0 {
+        if ice_pct >= 1.0 {
             format!("{ice_pct:.0}% Water")
-        } else if ice_cov_pct >= 1.0 {
-            format!("{ice_cov_pct:.0}% Polar Ice")
         } else if has_water {
             "<1% Water".to_string()
         } else {
@@ -453,11 +541,74 @@ pub fn format_composition_water_ice(
         }
     } else if ice_pct >= 1.0 {
         format!("{ice_pct:.0}% Ice")
-    } else if ice_cov_pct >= 1.0 {
-        format!("{ice_cov_pct:.0}% Surface Ice")
     } else if has_water {
         "<1% Ice".to_string()
     } else {
         "0% Ice".to_string()
     }
+}
+
+/// Formats Kozai-Lidov secular resonance telemetry for the Target Inspector panel.
+pub fn format_kozai_lidov_telemetry(
+    opt_kozai: Option<&crate::simulation::kozai_lidov::KozaiLidovState>,
+) -> String {
+    let mut out = String::new();
+    if let Some(kozai) = opt_kozai {
+        if kozai.is_in_resonance || kozai.mutual_inclination_deg > 5.0 {
+            use std::fmt::Write;
+            let status = if kozai.is_in_resonance {
+                format!("ACTIVE ({})", kozai.regime.label())
+            } else {
+                "Subcritical".to_string()
+            };
+            let _ = write!(
+                out,
+                "\nKozai-Lidov: {} | Mut Inc: {:.1}° (Crit: {:.1}°)",
+                status, kozai.mutual_inclination_deg, kozai.critical_inclination_deg
+            );
+            if kozai.is_in_resonance {
+                let _ = write!(
+                    out,
+                    "\ne_max: {:.2} (q_min: {:.3} AU) | τ_KL: {:.1e} yr",
+                    kozai.max_eccentricity_forecast,
+                    kozai.min_periastron_au,
+                    kozai.kozai_period_years
+                );
+                if kozai.is_gr_suppressed {
+                    let _ = write!(
+                        out,
+                        " | [GR Suppressed: τ_KL/τ_GR = {:.1}]",
+                        kozai.gr_precession_ratio
+                    );
+                }
+                if kozai.regime == crate::simulation::kozai_lidov::KozaiRegime::TidalDisruptionRisk
+                {
+                    out.push_str(" ⚠️ ROCHE DANGER");
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Formats relativistic polar jet and synchrotron emission cone telemetry for the Target Inspector panel.
+pub fn append_relativistic_jet_telemetry(out: &mut String, jet: &RelativisticJetState) {
+    use std::fmt::Write;
+    let beta = crate::simulation::relativity::calculate_relativistic_velocity(jet.lorentz_factor);
+    let beam_deg = crate::simulation::relativity::calculate_beaming_half_angle(jet.lorentz_factor)
+        .to_degrees();
+    let cone_deg = jet.opening_angle_rad.to_degrees();
+    let _ = write!(
+        out,
+        "\n--------------------------------------------------\n  >> RELATIVISTIC JET & SYNCHROTRON CONE <<\n--------------------------------------------------\n  • Lorentz Factor (Γ): {:>8.1} (v = {:.4}c)\n  • Beaming Half-Angle: {:>8.1}°\n  • Collimation Cone:   {:>8.1}°\n  • Jet Extent:         {:>8.1} AU\n  • Shock Knots:        {:>8.1}x ({:.2}c)\n  • Synchrotron Lum:    {:>8.1} L☉ (p={:.2})\n--------------------------------------------------",
+        jet.lorentz_factor,
+        beta,
+        beam_deg,
+        cone_deg,
+        jet.jet_length_au,
+        jet.knot_frequency,
+        jet.knot_speed_c,
+        jet.synchrotron_luminosity,
+        jet.spectral_index,
+    );
 }

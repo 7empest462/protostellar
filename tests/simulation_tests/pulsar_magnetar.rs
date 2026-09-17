@@ -131,6 +131,7 @@ fn setup_pulsar_magnetar_app() -> App {
     app.insert_resource(VisualAssets {
         star_mesh: star_mesh.clone(),
         planet_mesh: star_mesh.clone(),
+        atmosphere_mesh: star_mesh.clone(),
         asteroid_potato_mesh: star_mesh.clone(),
         asteroid_rubble_mesh: star_mesh.clone(),
         comet_bilobate_mesh: star_mesh.clone(),
@@ -324,6 +325,7 @@ fn test_magnetar_scenario_orbital_stability_and_field_attachment() {
     app.insert_resource(VisualAssets {
         star_mesh: star_mesh.clone(),
         planet_mesh: star_mesh.clone(),
+        atmosphere_mesh: star_mesh.clone(),
         asteroid_potato_mesh: star_mesh.clone(),
         asteroid_rubble_mesh: star_mesh.clone(),
         comet_bilobate_mesh: star_mesh.clone(),

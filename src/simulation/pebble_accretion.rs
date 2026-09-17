@@ -196,7 +196,10 @@ pub fn apply_pebble_accretion(
             &mut CelestialBody,
             Option<&mut InternalDifferentiation>,
         ),
-        Without<CentralStar>,
+        (
+            Without<CentralStar>,
+            Without<crate::simulation::terraforming::BombardmentProjectile>,
+        ),
     >,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {

@@ -24,6 +24,18 @@ pub struct PlanetUniforms {
     pub impact_basins_pos: [Vec4; 4],
     /// Basin dynamics: x = melt_glow_fraction, y = elongation, z = rim_height, w = active flag
     pub impact_basins_data: [Vec4; 4],
+    /// x, y, z: unit direction to central star in world coordinates, w: star luminosity factor
+    pub star_dir_and_lum: Vec4,
+    /// x, y, z: Rayleigh scattering coefficients beta_R (RGB), w: Mie forward scattering factor
+    pub scattering_params: Vec4,
+    /// x: inner_radius_ratio, y: outer_radius_ratio, z: optical_depth, w: has_rings (1.0 or 0.0)
+    pub ring_shadow_params: Vec4,
+    /// xyz: relative moon pos in planet radii, w: moon radius in planet radii
+    pub eclipse_moons_pos: [Vec4; 2],
+    /// x: active flag (1.0 or 0.0), y: penumbra softness, z: shadow depth, w: reserved
+    pub eclipse_moons_data: [Vec4; 2],
+    /// x: geological_age_gyr (0.0=Hadean, 4.56=Modern), y: continental_drift_phase, z: ocean_oxidation_progress (0.0=Archean iron-green, 1.0=blue), w: terrestrial_vegetation_fraction (0.0=craton rock, 1.0=lush flora)
+    pub geological_params: Vec4,
 }
 
 impl Default for PlanetUniforms {
@@ -41,6 +53,12 @@ impl Default for PlanetUniforms {
             spin_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
             impact_basins_pos: [Vec4::ZERO; 4],
             impact_basins_data: [Vec4::ZERO; 4],
+            star_dir_and_lum: Vec4::new(0.0, 1.0, 0.0, 1.0),
+            scattering_params: Vec4::new(0.28, 0.65, 1.0, 0.82),
+            ring_shadow_params: Vec4::ZERO,
+            eclipse_moons_pos: [Vec4::ZERO; 2],
+            eclipse_moons_data: [Vec4::ZERO; 2],
+            geological_params: Vec4::new(4.56, 0.0, 1.0, 1.0),
         }
     }
 }
@@ -59,33 +77,89 @@ impl MaterialExtension for PlanetMaterialExtension {
 
 pub type PlanetMaterial = ExtendedMaterial<StandardMaterial, PlanetMaterialExtension>;
 
-#[derive(Clone, Default, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug)]
+pub struct AtmosphereUniforms {
+    /// x, y, z: Rayleigh scattering coefficients beta_R (RGB), w: scale height H_R
+    pub rayleigh_params: Vec4,
+    /// x, y, z: Mie aerosol scattering coefficients beta_M (RGB), w: scale height H_M
+    pub mie_params: Vec4,
+    /// x: Mie asymmetry parameter g (0.76 - 0.85), y: surface pressure bar, z: inner planet radius, w: outer atmosphere radius
+    pub optical_params: Vec4,
+    /// x, y, z: unit direction to central star in world coordinates, w: star intensity factor
+    pub star_dir_and_intensity: Vec4,
+    /// x, y, z: planet world position, w: visual scale factor
+    pub planet_center: Vec4,
+}
+
+impl Default for AtmosphereUniforms {
+    fn default() -> Self {
+        Self {
+            rayleigh_params: Vec4::new(0.28, 0.65, 1.0, 0.08),
+            mie_params: Vec4::new(0.85, 0.92, 1.0, 0.03),
+            optical_params: Vec4::new(0.82, 1.0, 1.0, 1.05),
+            star_dir_and_intensity: Vec4::new(0.0, 1.0, 0.0, 1.0),
+            planet_center: Vec4::ZERO,
+        }
+    }
+}
+
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct AtmosphereMaterial {
+    #[uniform(0)]
+    pub uniforms: AtmosphereUniforms,
+}
+
+impl Material for AtmosphereMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/atmosphere.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+#[derive(Clone, ShaderType, Debug)]
 pub struct RingUniforms {
     pub inner_radius: f32,
     pub outer_radius: f32,
     pub optical_depth: f32,
     pub ice_fraction: f32,
     pub ring_color: Vec4,
+    /// xyz: unit vector towards central star in ring local space, w: planet_radius_ratio (1.0 / ring_ratio)
+    pub star_dir_local: Vec4,
+    /// x: ambient nightside floor (e.g. 0.03), y: penumbra softness width (e.g. 0.025), z: shadow depth, w: reserved
+    pub shadow_params: Vec4,
 }
 
-#[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
+impl Default for RingUniforms {
+    fn default() -> Self {
+        Self {
+            inner_radius: 0.0008,
+            outer_radius: 0.0028,
+            optical_depth: 0.85,
+            ice_fraction: 0.95,
+            ring_color: Vec4::ONE,
+            star_dir_local: Vec4::new(0.0, 1.0, 0.0, 0.35),
+            shadow_params: Vec4::new(0.03, 0.025, 0.97, 0.0),
+        }
+    }
+}
+
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct RingMaterial {
     #[uniform(0)]
     pub uniforms: RingUniforms,
-}
-
-impl Default for RingMaterial {
-    fn default() -> Self {
-        Self {
-            uniforms: RingUniforms {
-                inner_radius: 0.0008,
-                outer_radius: 0.0028,
-                optical_depth: 0.85,
-                ice_fraction: 0.95,
-                ring_color: Vec4::ONE,
-            },
-        }
-    }
 }
 
 impl Material for RingMaterial {
@@ -155,6 +229,63 @@ impl Material for SkyboxMaterial {
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         // Double-sided / inside rendering on celestial sphere
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+/// GPU uniform parameters for relativistic polar jets, synchrotron light cones, and Doppler beaming.
+#[derive(Clone, ShaderType, Debug)]
+pub struct RelativisticJetUniforms {
+    /// x: elapsed time (s), y: lorentz factor gamma (>= 1.0), z: opening angle (rad), w: jet length (AU)
+    pub jet_params: Vec4,
+    /// xyz: unit jet pointing direction vector in world space, w: precession cone angle (rad)
+    pub jet_dir_and_precession: Vec4,
+    /// x: electron power-law index p (e.g. 2.3), y: knot speed (v/c, e.g. 0.95), z: knot frequency, w: helical pitch
+    pub synchrotron_params: Vec4,
+    /// Base core emission RGBA (incandescent core)
+    pub core_color: Vec4,
+    /// Outer lobe / sheath emission RGBA (synchrotron cocoon)
+    pub lobe_color: Vec4,
+    /// xyz: jet origin in world space, w: doppler boost toggle (1.0 = on, 0.0 = off)
+    pub jet_origin_and_doppler: Vec4,
+}
+
+impl Default for RelativisticJetUniforms {
+    fn default() -> Self {
+        Self {
+            jet_params: Vec4::new(0.0, 8.5, 0.075, 3.2),
+            jet_dir_and_precession: Vec4::new(0.0, 1.0, 0.0, 0.12),
+            synchrotron_params: Vec4::new(2.35, 0.94, 3.5, 5.0),
+            core_color: Vec4::new(0.85, 0.95, 1.0, 1.0),
+            lobe_color: Vec4::new(0.30, 0.65, 1.0, 0.85),
+            jet_origin_and_doppler: Vec4::new(0.0, 0.0, 0.0, 1.0),
+        }
+    }
+}
+
+/// Custom Bevy material for volumetric relativistic polar jets and synchrotron emission cones.
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct RelativisticJetMaterial {
+    #[uniform(0)]
+    pub uniforms: RelativisticJetUniforms,
+}
+
+impl Material for RelativisticJetMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/relativistic_jet.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;
         Ok(())
     }

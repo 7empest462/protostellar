@@ -6,6 +6,8 @@ struct RingUniforms {
     optical_depth: f32,
     ice_fraction: f32,
     ring_color: vec4<f32>,
+    star_dir_local: vec4<f32>,
+    shadow_params: vec4<f32>,
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -112,5 +114,42 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    return vec4<f32>(final_color, alpha);
+    // Planetary shadow calculation: Host planet casts umbra and penumbra onto ring plane
+    var star_dir = ring.star_dir_local.xyz;
+    if (dot(star_dir, star_dir) < 0.01) {
+        star_dir = vec3<f32>(0.0, 1.0, 0.0);
+    } else {
+        star_dir = normalize(star_dir);
+    }
+
+    // Normalized 3D position of ring fragment in local space: X = local_uv.x, Y = 0, Z = local_uv.y
+    let p_ring = vec3<f32>(local_uv.x, 0.0, local_uv.y);
+
+    // Ray towards central star: R(s) = p_ring + s * star_dir (for s > 0)
+    // Parameter along ray of closest approach to planet origin (0, 0, 0):
+    let s_closest = -dot(p_ring, star_dir);
+    var shadow_factor = 1.0;
+
+    if (s_closest > 0.0) {
+        let p_closest = p_ring + s_closest * star_dir;
+        let d_closest = length(p_closest);
+
+        let planet_rad = max(ring.star_dir_local.w, 0.15);
+        let penumbra = max(ring.shadow_params.y, 0.022);
+        let umbra_r = max(planet_rad - penumbra, 0.0);
+        let penumbra_r = planet_rad + penumbra;
+
+        shadow_factor = smoothstep(umbra_r, penumbra_r, d_closest);
+    }
+
+    let ambient_floor = max(ring.shadow_params.x, 0.025);
+    let shadow_depth = select(0.97, ring.shadow_params.z, ring.shadow_params.z > 0.0);
+    let lit_mult = mix(ambient_floor, 1.0, mix(1.0 - shadow_depth, 1.0, shadow_factor));
+
+    // Inclination illumination: ring particles catch direct starlight proportionally to solar elevation
+    let sun_elev = abs(star_dir.y);
+    let ring_illumination = max(sun_elev, 0.22);
+
+    let shaded_color = final_color * lit_mult * ring_illumination;
+    return vec4<f32>(shaded_color, alpha);
 }

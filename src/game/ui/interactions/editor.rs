@@ -627,6 +627,32 @@ pub fn handle_body_editor_action(
             handle_age_star(selected_query, toast);
             true
         }
+        UiButtonAction::TidalLock => {
+            handle_tidal_lock(selected_query, player_state, star_mass, commands, toast);
+            true
+        }
+        UiButtonAction::AccelerateInspiral => {
+            handle_accelerate_inspiral(selected_query, player_state, toast);
+            true
+        }
+        UiButtonAction::StripAtmosphere => {
+            handle_strip_atmosphere(selected_query, player_state, commands, toast);
+            true
+        }
+        UiButtonAction::BombardComet
+        | UiButtonAction::BombardChondrite
+        | UiButtonAction::BombardSalvo
+        | UiButtonAction::BombardCore => {
+            handle_bombardment_trigger(
+                action,
+                selected_query,
+                player_state,
+                commands,
+                sim_time_years,
+                toast,
+            );
+            true
+        }
         _ => handle_shatter_and_life(
             action,
             selected_query,
@@ -636,4 +662,176 @@ pub fn handle_body_editor_action(
             toast,
         ),
     }
+}
+
+fn handle_tidal_lock(
+    selected_query: &SelectedWorldQuery,
+    player_state: &PlayerInteractionState,
+    star_mass: f64,
+    commands: &mut Commands,
+    toast: &mut NotificationToast,
+) {
+    if let Some(ent) = player_state.selected_entity {
+        if let Ok((_, _, _, pos, _, _, body, ..)) = selected_query.get(ent) {
+            if !body.body_type.is_star_or_remnant() {
+                let r_au = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.01);
+                let p_yr = (r_au.powi(3) / star_mass.max(0.01)).sqrt();
+                let p_hours = (p_yr * YEAR_SECONDS / 3600.0).clamp(1.0, 50000.0);
+                commands.entity(ent).insert((
+                    SpinState {
+                        spin_vector: DVec3::new(0.0, 1.0, 0.0),
+                        rotation_period_hours: p_hours,
+                        axial_tilt_degrees: 0.0,
+                    },
+                    crate::simulation::tides::TidalState::new_locked(1.0),
+                ));
+                toast.message = format!(
+                    "⚡ {} Synchronously Tidally Locked (Period: {:.1}h, Tilt: 0.0°)",
+                    body.name, p_hours
+                );
+                toast.timer = 4.0;
+            }
+        }
+    }
+}
+
+fn handle_accelerate_inspiral(
+    selected_query: &mut SelectedWorldQuery,
+    player_state: &PlayerInteractionState,
+    toast: &mut NotificationToast,
+) {
+    let Some(ent) = player_state.selected_entity else {
+        toast.message =
+            "⚠️ Select an orbiting companion first to accelerate GW inspiral.".to_string();
+        toast.timer = 3.5;
+        return;
+    };
+
+    if let Ok((_, _, _, pos, mut vel, _, body, is_star, ..)) = selected_query.get_mut(ent) {
+        if is_star.is_some() {
+            toast.message = "⚠️ Central star selected; select an orbiting companion.".to_string();
+            toast.timer = 3.5;
+            return;
+        }
+
+        // Dampen orbital speed by 10% to accelerate inspiral
+        vel.0 *= 0.90;
+        let r_au = pos.0.length();
+        toast.message = format!(
+            "⚡ Accelerated GW inspiral decay for \"{}\" (r = {:.3} AU, Δv = -10%)",
+            body.name, r_au
+        );
+        toast.timer = 4.0;
+    }
+}
+
+fn handle_strip_atmosphere(
+    selected_query: &mut SelectedWorldQuery,
+    player_state: &PlayerInteractionState,
+    commands: &mut Commands,
+    toast: &mut NotificationToast,
+) {
+    let Some(ent) = player_state.selected_entity else {
+        toast.message = "⚠️ Please select a planet first to strip its atmosphere!".to_string();
+        toast.timer = 3.5;
+        return;
+    };
+
+    if let Ok((_, mut mass, mut radius, _, _, mut comp, mut body, is_star, ..)) =
+        selected_query.get_mut(ent)
+    {
+        if is_star.is_some() || body.body_type.is_star_or_remnant() {
+            toast.message = "⚠️ Cannot strip atmosphere from a star or remnant.".to_string();
+            toast.timer = 3.5;
+            return;
+        }
+
+        let gas_stripped = mass.0 * comp.gas_frac;
+        mass.0 = (mass.0 - gas_stripped).max(EARTH_MASS_SOLAR * 0.01);
+        comp.gas_frac = 0.0;
+        let norm = comp.normalized();
+        comp.silicate_frac = norm.silicate_frac;
+        comp.metal_frac = norm.metal_frac;
+        comp.ice_frac = norm.ice_frac;
+        comp.organics_frac = norm.organics_frac;
+
+        let avg_density = comp.average_density();
+        radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * std::f64::consts::PI))
+            .cbrt()
+            .max(EARTH_RADIUS_AU * 0.1);
+
+        body.body_type = classify_body_by_mass_and_comp(mass.0, &comp, false);
+
+        commands.entity(ent).insert(AtmosphericEscapeTail {
+            loss_rate_m_earth_per_myr: 50.0,
+            tail_length_au: 4.5,
+            ion_color: Color::srgba(0.25, 0.85, 1.0, 0.85),
+            is_active: true,
+        });
+
+        toast.message = format!(
+            "💨 PHOTOEVAPORATION BURST! Stripped gaseous envelope from \"{}\", revealing bare rocky core!",
+            body.name
+        );
+        toast.timer = 4.5;
+    }
+}
+
+fn handle_bombardment_trigger(
+    action: &UiButtonAction,
+    selected_query: &mut SelectedWorldQuery,
+    player_state: &PlayerInteractionState,
+    commands: &mut Commands,
+    sim_time_years: f64,
+    toast: &mut NotificationToast,
+) {
+    let Some(ent) = player_state.selected_entity else {
+        toast.message =
+            "⚠️ Select a planetary body first to order targeted bombardment.".to_string();
+        toast.timer = 3.5;
+        return;
+    };
+
+    let Ok((t_ent, mass, rad, pos, vel, _, body, is_star, ..)) = selected_query.get(ent) else {
+        return;
+    };
+
+    if is_star.is_some() || body.body_type.is_star_or_remnant() {
+        toast.message = "⚠️ Cannot bombard a stellar plasma furnace!".to_string();
+        toast.timer = 3.5;
+        return;
+    }
+
+    let b_type = match action {
+        UiButtonAction::BombardComet => crate::simulation::terraforming::BombardmentType::IcyComet,
+        UiButtonAction::BombardChondrite => {
+            crate::simulation::terraforming::BombardmentType::CarbonaceousChondrite
+        }
+        UiButtonAction::BombardSalvo => {
+            crate::simulation::terraforming::BombardmentType::VolatileAblationSalvo
+        }
+        UiButtonAction::BombardCore => {
+            crate::simulation::terraforming::BombardmentType::IronAsteroid
+        }
+        _ => return,
+    };
+
+    crate::simulation::terraforming::launch_targeted_bombardment(
+        commands,
+        t_ent,
+        pos.0,
+        vel.0,
+        mass.0,
+        rad.0,
+        &body.name,
+        b_type,
+        sim_time_years,
+    );
+
+    toast.message = format!(
+        "☄️ INBOUND BOMBARDMENT // {} launched on intercept corridor to {}!",
+        b_type.name(),
+        body.name
+    );
+    toast.timer = 6.0;
 }

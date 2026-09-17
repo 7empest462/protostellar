@@ -10,8 +10,12 @@ use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::simulation::atmosphere_escape::AtmosphericEscapeState;
 use crate::simulation::components::*;
+use crate::simulation::kozai_lidov::KozaiLidovState;
+use crate::simulation::relativity::RelativisticState;
 use crate::simulation::resources::*;
+use crate::simulation::tides::TidalState;
 
 /// Root serialized structure representing a snapshot of the solar system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +130,14 @@ pub struct CelestialBodySave {
     pub black_hole_state: Option<BlackHoleStarState>,
     #[serde(default)]
     pub satellite: Option<SatelliteSave>,
+    #[serde(default)]
+    pub tidal_state: Option<TidalState>,
+    #[serde(default)]
+    pub relativistic_state: Option<RelativisticState>,
+    #[serde(default)]
+    pub atmospheric_escape: Option<AtmosphericEscapeState>,
+    #[serde(default)]
+    pub kozai_lidov: Option<KozaiLidovState>,
 }
 
 /// Message event to request saving the active system state to disk.
@@ -201,6 +213,10 @@ type BodySerializeQuery<'w, 's> = Query<
             Option<&'static StellarEvolutionState>,
             Option<&'static BlackHoleStarState>,
             Option<&'static SatelliteOf>,
+            Option<&'static TidalState>,
+            Option<&'static RelativisticState>,
+            Option<&'static AtmosphericEscapeState>,
+            Option<&'static KozaiLidovState>,
             Has<CentralStar>,
         ),
     ),
@@ -226,7 +242,18 @@ fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySa
         comp,
         spin,
         (opt_diff, opt_vol, opt_ring, opt_basins, opt_clim, opt_bio),
-        (opt_em, opt_ign, opt_evol, opt_bhs, opt_sat, is_star),
+        (
+            opt_em,
+            opt_ign,
+            opt_evol,
+            opt_bhs,
+            opt_sat,
+            opt_tide,
+            opt_rel,
+            opt_escape,
+            opt_kozai,
+            is_star,
+        ),
     ) in bodies_query.iter()
     {
         let satellite = opt_sat.map(|sat| SatelliteSave {
@@ -262,6 +289,10 @@ fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySa
             stellar_evolution: opt_evol.copied(),
             black_hole_state: opt_bhs.cloned(),
             satellite,
+            tidal_state: opt_tide.copied(),
+            relativistic_state: opt_rel.copied(),
+            atmospheric_escape: opt_escape.copied(),
+            kozai_lidov: opt_kozai.cloned(),
         });
     }
 
@@ -369,6 +400,18 @@ fn spawn_saved_body(commands: &mut Commands, save: &CelestialBodySave) -> Entity
     }
     if let Some(ref bhs) = save.black_hole_state {
         cmd.insert(bhs.clone());
+    }
+    if let Some(tide) = save.tidal_state {
+        cmd.insert(tide);
+    }
+    if let Some(rel) = save.relativistic_state {
+        cmd.insert(rel);
+    }
+    if let Some(esc) = save.atmospheric_escape {
+        cmd.insert(esc);
+    }
+    if let Some(ref kozai) = save.kozai_lidov {
+        cmd.insert(kozai.clone());
     }
     if save.is_central_star {
         cmd.insert(CentralStar);

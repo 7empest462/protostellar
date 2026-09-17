@@ -29,8 +29,10 @@ impl Plugin for RenderingPlugin {
                 GasCloudPlugin,
                 ParticleSwarmPlugin,
                 MaterialPlugin::<PlanetMaterial>::default(),
+                MaterialPlugin::<AtmosphereMaterial>::default(),
                 MaterialPlugin::<RingMaterial>::default(),
                 MaterialPlugin::<SkyboxMaterial>::default(),
+                MaterialPlugin::<RelativisticJetMaterial>::default(),
             ))
             .add_systems(
                 Startup,
@@ -49,11 +51,18 @@ impl Plugin for RenderingPlugin {
                     update_pan_orbit_camera.after(sync_celestial_transforms),
                     (sync_skybox_to_camera, update_skybox_uniforms).after(update_pan_orbit_camera),
                     draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
+                    draw_bombardment_gizmos.after(update_pan_orbit_camera),
                     spawn_missing_visuals,
-                    sync_planetary_rings.after(sync_celestial_transforms),
+                    sync_planetary_atmospheres
+                        .after(sync_celestial_transforms)
+                        .after(spawn_missing_visuals),
+                    sync_planetary_rings
+                        .after(sync_celestial_transforms)
+                        .after(spawn_missing_visuals),
                     sync_quasar_beams.after(sync_celestial_transforms),
                     sync_pulsar_beams.after(sync_celestial_transforms),
                     sync_magnetar_structures.after(sync_celestial_transforms),
+                    sync_relativistic_jets.after(sync_celestial_transforms),
                     update_impact_shockwaves
                         .after(crate::simulation::physics::step_physics_simulation),
                     update_roche_debris_streams

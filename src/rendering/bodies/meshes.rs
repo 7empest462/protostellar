@@ -426,6 +426,12 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let beam_core_mesh = meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(16));
     let beam_sheath_mesh = meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(24));
     let accretion_disk_mesh = meshes.add(Mesh::from(Plane3d::default().mesh().size(1.0, 1.0)));
+    let atmosphere_mesh = meshes.add(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(6)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 36)),
+    );
     let pulsar_beam_mesh = meshes.add(generate_pulsar_beam_mesh());
     let magnetar_ring_mesh = meshes.add(generate_magnetar_ring_mesh());
     let magnetar_field_loops_mesh = meshes.add(generate_magnetar_field_loops_mesh());
@@ -433,6 +439,7 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     commands.insert_resource(VisualAssets {
         star_mesh,
         planet_mesh,
+        atmosphere_mesh,
         asteroid_potato_mesh: asteroid_potato,
         asteroid_rubble_mesh: asteroid_rubble,
         comet_bilobate_mesh: comet_bilobate,
