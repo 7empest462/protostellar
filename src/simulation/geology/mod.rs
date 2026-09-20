@@ -10,7 +10,7 @@ pub use systems::{
     calculate_oxygen_level_pal, calculate_supercontinent_aggregation,
     calculate_vegetation_expansion, sync_geological_evolution_system,
 };
-pub use types::{GeologicalEpoch, GeologicalState, TimelineScrubber};
+pub use types::{EpochTargetPlanet, GeologicalEpoch, GeologicalState, TimelineScrubber};
 
 /// Plugin managing deep-time geological evolution, continental drift, and timeline scrubbing.
 pub struct GeologyPlugin;

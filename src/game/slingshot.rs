@@ -87,6 +87,7 @@ fn execute_slingshot_release(
     pan_orbit_query: &mut Query<&mut PanOrbitCamera>,
     player_state: &mut PlayerInteractionState,
     star_mass: f64,
+    star_pos: DVec3,
     toast: &mut NotificationToast,
 ) {
     if let (Some(origin), Some(current)) =
@@ -122,8 +123,12 @@ fn execute_slingshot_release(
                     cam.target_entity = Some(new_ent);
                 }
 
-                let elements =
-                    state_vectors_to_orbital_elements(origin, launch_velocity, star_mass, 1e-6);
+                let elements = state_vectors_to_orbital_elements(
+                    origin - star_pos,
+                    launch_velocity,
+                    star_mass,
+                    1e-6,
+                );
                 if let Some(el) = elements {
                     toast.message = format!(
                         "🚀 Launched {}! v={:.1} km/s | a={:.2} AU | e={:.2}",
@@ -141,6 +146,9 @@ fn execute_slingshot_release(
                 }
                 toast.timer = 5.0;
             }
+        } else {
+            toast.message = "🎯 Slingshot: Click and drag to set launch velocity!".to_string();
+            toast.timer = 2.0;
         }
     }
 
@@ -167,6 +175,7 @@ pub fn handle_slingshot_input(
     disk_params: Res<DiskParameters>,
     mut toast: ResMut<NotificationToast>,
     ui_interaction_query: Query<&Interaction, With<Button>>,
+    star_query: Query<&SimPosition, With<CentralStar>>,
     mut bodies_query: Query<(
         Entity,
         &SimPosition,
@@ -198,19 +207,17 @@ pub fn handle_slingshot_input(
         .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
 
     let hit_plane_coords = compute_cursor_plane_coords(window, camera, camera_transform);
+    let star_pos = star_query.iter().next().map_or(DVec3::ZERO, |p| p.0);
 
     // 1. Mouse down: Start drag
     if mouse_buttons.just_pressed(MouseButton::Left) && !cursor_over_ui {
         if let Some(plane_pt) = hit_plane_coords {
             let mut nearest_ent: Option<(Entity, DVec3)> = None;
-            let mut min_dist = 0.50f64;
+            let mut min_dist = 0.05f64;
 
-            for (ent, pos, rad, _, body) in bodies_query.iter() {
-                let hit_radius = (rad.0 * 2.5).max(if body.body_type.is_star_or_remnant() {
-                    2.0
-                } else {
-                    0.4
-                });
+            for (ent, pos, rad, _, _body) in bodies_query.iter() {
+                // Only target existing bodies if clicked directly on their visible surface
+                let hit_radius = (rad.0 * 1.5).clamp(0.02, 0.05);
                 let d = (pos.0 - plane_pt).length();
                 if d < hit_radius && d < min_dist {
                     min_dist = d;
@@ -230,10 +237,57 @@ pub fn handle_slingshot_input(
         }
     }
 
-    // 2. Mouse dragging: update current position
+    // 2. Mouse dragging: update current position and provide live HUD feedback
     if mouse_buttons.pressed(MouseButton::Left) && slingshot_state.drag_origin.is_some() {
         if let Some(plane_pt) = hit_plane_coords {
             slingshot_state.drag_current = Some(plane_pt);
+        }
+
+        if let (Some(origin), Some(current)) =
+            (slingshot_state.drag_origin, slingshot_state.drag_current)
+        {
+            let delta = current - origin;
+            let dist = delta.length();
+            if dist >= 0.02 {
+                let launch_velocity = delta * slingshot_state.velocity_scale;
+                let v_kms = launch_velocity.length() * AU_PER_YR_TO_KM_PER_S;
+                let v_au_yr = launch_velocity.length();
+                let star_mass = disk_params.central_star_mass;
+                let rel_pos = origin - star_pos;
+                let elements_opt =
+                    state_vectors_to_orbital_elements(rel_pos, launch_velocity, star_mass, 1e-6);
+
+                if let Some(el) = elements_opt {
+                    let (status, icon) = if el.eccentricity >= 1.0 {
+                        ("Hyperbolic Escape", "🚀")
+                    } else if el.periapsis <= 0.006 {
+                        ("STELLAR COLLISION WARNING", "💥")
+                    } else if el.eccentricity < 0.10 {
+                        ("CIRCULAR ORBIT", "✨")
+                    } else {
+                        ("Bound Orbit", "🪐")
+                    };
+
+                    toast.message = format!(
+                        "🎯 Slingshot [{}]: Speed: {:.1} km/s ({:.2} AU/yr) | a={:.2} AU, e={:.2} [{} {}]",
+                        slingshot_state.archetype.display_name(),
+                        v_kms,
+                        v_au_yr,
+                        el.semi_major_axis,
+                        el.eccentricity,
+                        status,
+                        icon,
+                    );
+                } else {
+                    toast.message = format!(
+                        "🎯 Slingshot [{}]: Speed: {:.1} km/s ({:.2} AU/yr)",
+                        slingshot_state.archetype.display_name(),
+                        v_kms,
+                        v_au_yr,
+                    );
+                }
+                toast.timer = 0.25;
+            }
         }
     }
 
@@ -247,6 +301,7 @@ pub fn handle_slingshot_input(
             &mut pan_orbit_query,
             &mut player_state,
             star_mass,
+            star_pos,
             &mut toast,
         );
     }

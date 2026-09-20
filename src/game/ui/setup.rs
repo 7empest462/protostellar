@@ -757,29 +757,36 @@ fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
                     );
                     create_compact_button(
                         speed_row,
+                        UiButtonAction::TimeSpeedRealtime,
+                        "Real [1]",
+                        Color::srgba(0.08, 0.20, 0.16, 0.9),
+                        Color::srgb(0.4, 1.0, 0.7),
+                    );
+                    create_compact_button(
+                        speed_row,
                         UiButtonAction::TimeSpeed1,
-                        "1x [1]",
+                        "11d [2]",
                         Color::srgba(0.08, 0.16, 0.24, 0.9),
                         Color::srgb(0.4, 0.8, 1.0),
                     );
                     create_compact_button(
                         speed_row,
                         UiButtonAction::TimeSpeed100,
-                        "100x [2]",
+                        "100x [4]",
                         Color::srgba(0.08, 0.16, 0.24, 0.9),
                         Color::srgb(0.4, 0.8, 1.0),
                     );
                     create_compact_button(
                         speed_row,
                         UiButtonAction::TimeSpeed10k,
-                        "10k [3]",
+                        "10k [6]",
                         Color::srgba(0.12, 0.18, 0.28, 0.9),
                         Color::srgb(0.5, 0.85, 1.0),
                     );
                     create_compact_button(
                         speed_row,
                         UiButtonAction::TimeSpeed1M,
-                        "1M [4]",
+                        "1M [8]",
                         Color::srgba(0.18, 0.14, 0.32, 0.9),
                         Color::srgb(0.7, 0.6, 1.0),
                     );

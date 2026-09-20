@@ -772,3 +772,25 @@ fn test_giant_planet_resonance_migration() {
     assert!(p_ratio_final > 2.0); // Crossed 2:1 resonance!
     assert!((p_ratio_final - 2.50).abs() < 0.1);
 }
+
+#[test]
+fn test_defensive_duplicate_despawn_safety() {
+    use bevy::prelude::*;
+
+    let mut app = App::new();
+    let ent = app.world_mut().spawn_empty().id();
+
+    // Defensively despawn through get_entity
+    let mut commands = app.world_mut().commands();
+    if let Ok(mut entity_cmd) = commands.get_entity(ent) {
+        entity_cmd.despawn();
+    }
+    // Attempting a second get_entity despawn command before flush
+    if let Ok(mut entity_cmd) = commands.get_entity(ent) {
+        entity_cmd.despawn();
+    }
+
+    // Flush commands cleanly without panicking
+    app.update();
+    assert!(app.world().get_entity(ent).is_err());
+}

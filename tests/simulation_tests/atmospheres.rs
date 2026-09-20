@@ -213,22 +213,7 @@ fn test_atmosphere_shell_ecs_lifecycle() {
         meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap())
     };
 
-    app.insert_resource(VisualAssets {
-        star_mesh: sphere_mesh.clone(),
-        planet_mesh: sphere_mesh.clone(),
-        atmosphere_mesh: sphere_mesh.clone(),
-        asteroid_potato_mesh: sphere_mesh.clone(),
-        asteroid_rubble_mesh: sphere_mesh.clone(),
-        comet_bilobate_mesh: sphere_mesh.clone(),
-        particle_mesh: sphere_mesh.clone(),
-        ring_mesh: sphere_mesh.clone(),
-        beam_core_mesh: sphere_mesh.clone(),
-        beam_sheath_mesh: sphere_mesh.clone(),
-        accretion_disk_mesh: sphere_mesh.clone(),
-        pulsar_beam_mesh: sphere_mesh.clone(),
-        magnetar_ring_mesh: sphere_mesh.clone(),
-        magnetar_field_loops_mesh: sphere_mesh.clone(),
-    });
+    app.insert_resource(VisualAssets::dummy(sphere_mesh));
 
     // Spawn central star
     app.world_mut().spawn((
@@ -374,22 +359,7 @@ fn test_minor_bodies_do_not_spawn_atmosphere_shells() {
         meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap())
     };
 
-    app.insert_resource(VisualAssets {
-        star_mesh: sphere_mesh.clone(),
-        planet_mesh: sphere_mesh.clone(),
-        atmosphere_mesh: sphere_mesh.clone(),
-        asteroid_potato_mesh: sphere_mesh.clone(),
-        asteroid_rubble_mesh: sphere_mesh.clone(),
-        comet_bilobate_mesh: sphere_mesh.clone(),
-        particle_mesh: sphere_mesh.clone(),
-        ring_mesh: sphere_mesh.clone(),
-        beam_core_mesh: sphere_mesh.clone(),
-        beam_sheath_mesh: sphere_mesh.clone(),
-        accretion_disk_mesh: sphere_mesh.clone(),
-        pulsar_beam_mesh: sphere_mesh.clone(),
-        magnetar_ring_mesh: sphere_mesh.clone(),
-        magnetar_field_loops_mesh: sphere_mesh.clone(),
-    });
+    app.insert_resource(VisualAssets::dummy(sphere_mesh));
 
     // Spawn central star
     app.world_mut().spawn((

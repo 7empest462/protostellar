@@ -161,19 +161,7 @@ fn spawn_planet_visual(
         },
     });
 
-    let mesh_handle = match body.body_type {
-        BodyType::Comet => visual_assets.comet_bilobate_mesh.clone(),
-        BodyType::Asteroid => {
-            let hash: usize = body.name.bytes().map(|b| b as usize).sum();
-            if hash.is_multiple_of(2) {
-                visual_assets.asteroid_potato_mesh.clone()
-            } else {
-                visual_assets.asteroid_rubble_mesh.clone()
-            }
-        }
-        BodyType::DustGrain => visual_assets.particle_mesh.clone(),
-        _ => visual_assets.planet_mesh.clone(),
-    };
+    let mesh_handle = super::meshes::select_body_mesh(body, visual_assets);
 
     entity_cmd.try_insert((
         VisualBody,

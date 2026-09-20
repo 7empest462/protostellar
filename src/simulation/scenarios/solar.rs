@@ -220,8 +220,8 @@ fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
         // Canonical Kuiper Belt & Trans-Neptunian Cometary Reservoir (Volatile Ices)
         (
             17.80,
-            0.00002 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.08,
+            3.7e-11 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_863,
             "1P/Halley (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -229,8 +229,8 @@ fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
         ),
         (
             3.30,
-            0.00001 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.05,
+            2.5e-12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_377,
             "2P/Encke (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -238,8 +238,8 @@ fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
         ),
         (
             18.50,
-            0.00001 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.05,
+            1.7e-12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_314,
             "67P/C-G (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -247,8 +247,8 @@ fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
         ),
         (
             28.40,
-            0.00003 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.09,
+            2.2e-9 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.00471,
             "Hale-Bopp (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -256,8 +256,8 @@ fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
         ),
         (
             25.20,
-            0.00002 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.07,
+            1.7e-10 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.00204,
             "Swift-Tuttle (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -265,8 +265,8 @@ fn get_mmsn_outer_seeds() -> [MmsnSeed; 14] {
         ),
         (
             13.70,
-            0.00003 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.09,
+            8.4e-7 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.0171,
             "Chiron (Centaur Comet)",
             Composition::icy(),
             BodyType::Comet,

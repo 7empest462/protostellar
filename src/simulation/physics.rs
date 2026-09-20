@@ -88,16 +88,21 @@ fn kepler_drift_body(pos: &mut DVec3, vel: &mut DVec3, star_pos: DVec3, star_mas
     }
 
     let e_vec = vel.cross(h_vec) / mu - r_rel / r;
-    let mut e = e_vec.length();
-    if !e.is_finite() {
+    let e_len = e_vec.length();
+    if !e_len.is_finite() {
         *pos += *vel * dt;
         return;
     }
+    let p_hat = if e_len > 1e-6 {
+        e_vec / e_len
+    } else {
+        r_rel / r
+    };
+    let mut e = e_len;
     if e >= 0.999 {
         e = 0.985;
     }
 
-    let p_hat = if e > 1e-6 { e_vec / e } else { r_rel / r };
     let w_hat = h_vec / h;
     let q_hat = w_hat.cross(p_hat);
 
@@ -118,7 +123,7 @@ fn kepler_drift_body(pos: &mut DVec3, vel: &mut DVec3, star_pos: DVec3, star_mas
     let mut e1 = m1_norm + e * m1_norm.sin();
     for _ in 0..5 {
         let f = e1 - e * e1.sin() - m1_norm;
-        let f_prime = 1.0 - e * e1.cos();
+        let f_prime = (1.0 - e * e1.cos()).abs().max(1e-7);
         let delta = f / f_prime;
         e1 -= delta;
         if delta.abs() < 1e-12 {
@@ -867,7 +872,7 @@ pub fn step_physics_simulation(
     }
 
     let dt = config.base_dt_yr;
-    let target_dt = dt * time_warp.multiplier.max(0.01);
+    let target_dt = dt * time_warp.multiplier.max(TimeWarp::MIN_SPEED);
     let is_compact_system = scenario_state
         .as_deref()
         .is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System)

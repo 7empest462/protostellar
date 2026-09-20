@@ -252,6 +252,29 @@ pub fn handle_selection_action(
             cycle_target_body(selected_query, player_state, camera_query, config, toast);
             true
         }
+        UiButtonAction::SelectEpochTargetPlanet(planet) => {
+            let (primary, fallback) = match planet {
+                crate::simulation::geology::types::EpochTargetPlanet::Earth => {
+                    ("earth", "proto-earth")
+                }
+                crate::simulation::geology::types::EpochTargetPlanet::Mars => {
+                    ("mars", "proto-mars")
+                }
+                crate::simulation::geology::types::EpochTargetPlanet::Venus => {
+                    ("venus", "proto-venus")
+                }
+            };
+            select_planetary_target(
+                selected_query,
+                player_state,
+                camera_query,
+                config,
+                toast,
+                primary,
+                fallback,
+            );
+            true
+        }
         _ => handle_quick_bar_action(action, quick_bar_state, toast),
     }
 }

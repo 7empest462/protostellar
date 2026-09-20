@@ -128,22 +128,14 @@ fn setup_pulsar_magnetar_app() -> App {
         )
     };
 
-    app.insert_resource(VisualAssets {
-        star_mesh: star_mesh.clone(),
-        planet_mesh: star_mesh.clone(),
-        atmosphere_mesh: star_mesh.clone(),
-        asteroid_potato_mesh: star_mesh.clone(),
-        asteroid_rubble_mesh: star_mesh.clone(),
-        comet_bilobate_mesh: star_mesh.clone(),
-        particle_mesh: star_mesh.clone(),
-        ring_mesh: star_mesh.clone(),
-        beam_core_mesh: cyl_mesh.clone(),
-        beam_sheath_mesh: cyl_mesh.clone(),
-        accretion_disk_mesh: cyl_mesh.clone(),
-        pulsar_beam_mesh: cyl_mesh.clone(),
-        magnetar_ring_mesh: cyl_mesh.clone(),
-        magnetar_field_loops_mesh: cyl_mesh.clone(),
-    });
+    let mut visual_assets = VisualAssets::dummy(star_mesh);
+    visual_assets.beam_core_mesh = cyl_mesh.clone();
+    visual_assets.beam_sheath_mesh = cyl_mesh.clone();
+    visual_assets.accretion_disk_mesh = cyl_mesh.clone();
+    visual_assets.pulsar_beam_mesh = cyl_mesh.clone();
+    visual_assets.magnetar_ring_mesh = cyl_mesh.clone();
+    visual_assets.magnetar_field_loops_mesh = cyl_mesh;
+    app.insert_resource(visual_assets);
 
     app.add_systems(Update, (sync_pulsar_beams, sync_magnetar_structures));
     app
@@ -322,22 +314,14 @@ fn test_magnetar_scenario_orbital_stability_and_field_attachment() {
         )
     };
 
-    app.insert_resource(VisualAssets {
-        star_mesh: star_mesh.clone(),
-        planet_mesh: star_mesh.clone(),
-        atmosphere_mesh: star_mesh.clone(),
-        asteroid_potato_mesh: star_mesh.clone(),
-        asteroid_rubble_mesh: star_mesh.clone(),
-        comet_bilobate_mesh: star_mesh.clone(),
-        particle_mesh: star_mesh.clone(),
-        ring_mesh: star_mesh.clone(),
-        beam_core_mesh: cyl_mesh.clone(),
-        beam_sheath_mesh: cyl_mesh.clone(),
-        accretion_disk_mesh: cyl_mesh.clone(),
-        pulsar_beam_mesh: cyl_mesh.clone(),
-        magnetar_ring_mesh: cyl_mesh.clone(),
-        magnetar_field_loops_mesh: cyl_mesh.clone(),
-    });
+    let mut visual_assets = VisualAssets::dummy(star_mesh);
+    visual_assets.beam_core_mesh = cyl_mesh.clone();
+    visual_assets.beam_sheath_mesh = cyl_mesh.clone();
+    visual_assets.accretion_disk_mesh = cyl_mesh.clone();
+    visual_assets.pulsar_beam_mesh = cyl_mesh.clone();
+    visual_assets.magnetar_ring_mesh = cyl_mesh.clone();
+    visual_assets.magnetar_field_loops_mesh = cyl_mesh;
+    app.insert_resource(visual_assets);
 
     let mut disk_params = DiskParameters::default();
     let _magnetar_ent =

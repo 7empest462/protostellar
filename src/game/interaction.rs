@@ -278,75 +278,112 @@ fn apply_body_mass_and_orbit_edits(
     }
 }
 
-fn apply_body_interaction_actions(
+fn handle_star_interaction_actions(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    entity: Entity,
+    body: &mut CelestialBody,
+    mut ignition_opt: Option<&mut IgnitionState>,
+    opt_quasi: Option<&mut BlackHoleStarState>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyI) {
+        let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+        if shift {
+            commands
+                .entity(entity)
+                .insert(crate::simulation::space_weather::StellarFlareState {
+                    flare_frequency: 1.5,
+                    current_flare_intensity: 6.5,
+                    flare_decay_timer_years: 0.15,
+                    cme_front_radius_au: 0.05,
+                    cme_speed_au_day: 0.35,
+                    cme_density_multiplier: 25.0,
+                    cme_active: true,
+                });
+            if let Some(ref mut ignition) = ignition_opt {
+                ignition.shockwave_radius = 0.1;
+            }
+            toast.message =
+                "☀️ CME Coronal Mass Ejection Erupted! Expanding Shockwave!".to_string();
+            toast.timer = 5.0;
+        } else if let Some(ref mut ignition) = ignition_opt {
+            if ignition.is_ignited {
+                ignition.shockwave_radius = 1.6;
+            } else {
+                ignition.core_temperature = 1.0e7;
+            }
+        }
+    }
+    if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
+        if let Some(ref mut ignition) = ignition_opt {
+            if !ignition.is_ignited {
+                ignition.core_temperature = 1.0e7;
+                ignition.is_ignited = true;
+                ignition.fusion_fraction = 1.0;
+                ignition.shockwave_radius = 1.6;
+                body.body_type = BodyType::MainSequenceStar;
+                body.name = "The Star (Main Sequence)".to_string();
+            }
+        }
+    }
+    if let Some(qs) = opt_quasi {
+        if keyboard.just_pressed(KeyCode::KeyX) {
+            qs.toggle_super_eddington();
+            let mode = if qs.super_eddington_active {
+                "4.5x Eddington (Hyper-Accretion Active)"
+            } else {
+                "0.9x Eddington (Sub-Eddington Normal)"
+            };
+            toast.message = format!("⚡ Inflow Rate: {mode} on {}", body.name);
+            toast.timer = 4.5;
+        }
+        if keyboard.just_pressed(KeyCode::KeyB) {
+            qs.trigger_blowout();
+            toast.message =
+                "💥 COCOON BLOWOUT: Radiation pressure shedding hydrogen envelope into Quasar!"
+                    .to_string();
+            toast.timer = 6.0;
+        }
+    }
+}
+
+fn handle_planet_interaction_actions(
     commands: &mut Commands,
     keyboard: &ButtonInput<KeyCode>,
     star_mass: f64,
     entity: Entity,
-    mass: &Mass,
-    radius: &mut Radius,
     pos: &mut SimPosition,
     vel: &mut SimVelocity,
     comp: &mut Composition,
-    body: &mut CelestialBody,
-    mut ignition_opt: Option<&mut IgnitionState>,
-    opt_quasi: Option<&mut BlackHoleStarState>,
     player_state: &mut PlayerInteractionState,
-    toast: &mut crate::game::ui::NotificationToast,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyC) {
-        *comp = comp.cycle_next_composition();
-        if !body.body_type.is_star_or_remnant() {
-            let avg_density = comp.average_density();
-            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                .cbrt()
-                .max(EARTH_RADIUS_AU * 0.1);
-        }
-    }
-    if keyboard.just_pressed(KeyCode::KeyI) {
-        if body.body_type.is_star_or_remnant() {
-            if let Some(ref mut ignition) = ignition_opt {
-                if ignition.is_ignited {
-                    ignition.shockwave_radius = 1.6;
-                } else {
-                    ignition.core_temperature = 1.0e7;
-                }
-            }
-        } else {
-            let speed = vel.0.length();
-            if speed > 0.0 {
-                vel.0 += (vel.0 / speed) * (speed * 0.15);
-            }
-        }
-    }
-    if keyboard.just_pressed(KeyCode::KeyB) && !body.body_type.is_star_or_remnant() {
+    if keyboard.just_pressed(KeyCode::KeyI) || keyboard.just_pressed(KeyCode::KeyB) {
         let speed = vel.0.length();
         if speed > 0.0 {
             vel.0 += (vel.0 / speed) * (speed * 0.15);
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyK) && !body.body_type.is_star_or_remnant() {
+    if keyboard.just_pressed(KeyCode::KeyK) {
         let speed = vel.0.length();
         if speed > 0.0 {
             vel.0 -= (vel.0 / speed) * (speed * 0.15);
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyZ) && !body.body_type.is_star_or_remnant() {
+    if keyboard.just_pressed(KeyCode::KeyZ) {
         let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
         let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
         let phi = pos.0.z.atan2(pos.0.x);
         vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
         pos.0.y = 0.0;
     }
-    if (keyboard.just_pressed(KeyCode::Delete) || keyboard.just_pressed(KeyCode::Backspace))
-        && !body.body_type.is_star_or_remnant()
-    {
+    if keyboard.just_pressed(KeyCode::Delete) || keyboard.just_pressed(KeyCode::Backspace) {
         if let Ok(mut cmd) = commands.get_entity(entity) {
             cmd.despawn();
         }
         player_state.selected_entity = None;
     }
-    if keyboard.just_pressed(KeyCode::KeyX) && !body.body_type.is_star_or_remnant() {
+    if keyboard.just_pressed(KeyCode::KeyX) {
         if let Ok(mut cmd) = commands.get_entity(entity) {
             cmd.insert(PlanetaryRingSystem {
                 inner_radius_au: 0.0008,
@@ -358,7 +395,7 @@ fn apply_body_interaction_actions(
             });
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyE) && !body.body_type.is_star_or_remnant() {
+    if keyboard.just_pressed(KeyCode::KeyE) {
         if let Ok(mut cmd) = commands.get_entity(entity) {
             cmd.insert((
                 VolatileInventory {
@@ -387,36 +424,54 @@ fn apply_body_interaction_actions(
             comp.gas_frac = 0.02;
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
-        if let Some(ref mut ignition) = ignition_opt {
-            if !ignition.is_ignited {
-                ignition.core_temperature = 1.0e7;
-                ignition.is_ignited = true;
-                ignition.fusion_fraction = 1.0;
-                ignition.shockwave_radius = 1.6;
-                body.body_type = BodyType::MainSequenceStar;
-                body.name = "The Star (Main Sequence)".to_string();
-            }
+}
+
+fn apply_body_interaction_actions(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    star_mass: f64,
+    entity: Entity,
+    mass: &Mass,
+    radius: &mut Radius,
+    pos: &mut SimPosition,
+    vel: &mut SimVelocity,
+    comp: &mut Composition,
+    body: &mut CelestialBody,
+    ignition_opt: Option<&mut IgnitionState>,
+    opt_quasi: Option<&mut BlackHoleStarState>,
+    player_state: &mut PlayerInteractionState,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        *comp = comp.cycle_next_composition();
+        if !body.body_type.is_star_or_remnant() {
+            let avg_density = comp.average_density();
+            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+                .cbrt()
+                .max(EARTH_RADIUS_AU * 0.1);
         }
     }
-    if let Some(qs) = opt_quasi {
-        if keyboard.just_pressed(KeyCode::KeyX) {
-            qs.toggle_super_eddington();
-            let mode = if qs.super_eddington_active {
-                "4.5x Eddington (Hyper-Accretion Active)"
-            } else {
-                "0.9x Eddington (Sub-Eddington Normal)"
-            };
-            toast.message = format!("⚡ Inflow Rate: {} on {}", mode, body.name);
-            toast.timer = 4.5;
-        }
-        if keyboard.just_pressed(KeyCode::KeyB) {
-            qs.trigger_blowout();
-            toast.message =
-                "💥 COCOON BLOWOUT: Radiation pressure shedding hydrogen envelope into Quasar!"
-                    .to_string();
-            toast.timer = 6.0;
-        }
+    if body.body_type.is_star_or_remnant() || opt_quasi.is_some() {
+        handle_star_interaction_actions(
+            commands,
+            keyboard,
+            entity,
+            body,
+            ignition_opt,
+            opt_quasi,
+            toast,
+        );
+    } else {
+        handle_planet_interaction_actions(
+            commands,
+            keyboard,
+            star_mass,
+            entity,
+            pos,
+            vel,
+            comp,
+            player_state,
+        );
     }
 }
 

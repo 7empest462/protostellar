@@ -298,3 +298,71 @@ fn test_solar_wind_radiation_pressure_clearing() {
     let gas_cleared: f64 = (1.0 - (shockwave_radius / 35.0)).clamp(0.0, 1.0);
     assert_eq!(gas_cleared, 0.0);
 }
+
+#[test]
+fn test_thermodynamics_zero_distance_and_negative_luminosity_resilience() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::*;
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<SimTime>()
+        .init_resource::<TimeWarp>()
+        .add_message::<StarIgnitionEvent>()
+        .add_message::<SupernovaEvent>()
+        .add_message::<PlanetaryEngulfmentEvent>();
+
+    // Central star with zero/negative luminosity and zero temperature
+    app.world_mut().spawn((
+        CentralStar,
+        Mass(1.0),
+        Radius(0.00465),
+        Temperature(0.0),
+        Luminosity(0.0),
+        IgnitionState::default(),
+        CelestialBody {
+            name: "Dark Star".to_string(),
+            body_type: BodyType::BlackHole,
+        },
+    ));
+
+    // Planet placed at origin (0, 0, 0) - testing r = 0 resilience
+    let planet_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            Mass(EARTH_MASS_SOLAR),
+            Radius(6371.0 / AU_TO_KM),
+            Temperature(288.0),
+            Composition::rocky(),
+            CelestialBody {
+                name: "Origin Body".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+        ))
+        .id();
+
+    app.add_systems(
+        Update,
+        protostellar::simulation::thermodynamics::update_thermodynamics,
+    );
+    app.update();
+
+    let temp = app
+        .world()
+        .get::<Temperature>(planet_ent)
+        .expect("Planet temperature");
+    assert!(
+        temp.0.is_finite(),
+        "Surface temperature must be finite, got {}",
+        temp.0
+    );
+    assert!(
+        temp.0 >= 30.0,
+        "Surface temperature should be at least deep space floor 30 K, got {}",
+        temp.0
+    );
+}

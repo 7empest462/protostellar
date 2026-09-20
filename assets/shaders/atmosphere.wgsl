@@ -9,6 +9,7 @@ struct AtmosphereUniforms {
     optical_params: vec4<f32>,  // x = g (mie asymmetry), y = surface_pressure_bar, z = inner planet radius, w = outer atmosphere radius
     star_dir_and_intensity: vec4<f32>, // xyz = unit star dir in world space, w = star intensity factor
     planet_center: vec4<f32>,   // xyz = planet world pos, w = outer shell scale factor
+    aurora_params: vec4<f32>,   // x = oval_colatitude_rad, y = oval_width_rad, z = auroral_intensity, w = geomagnetic_kp_index
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -95,11 +96,18 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     var optical_depth_r: f32 = 0.0;
     var optical_depth_m: f32 = 0.0;
     var in_scatter: vec3<f32> = vec3<f32>(0.0);
+    var aurora_emission: vec3<f32> = vec3<f32>(0.0);
+
+    let oval_colat = atmo.aurora_params.x;
+    let oval_width = max(atmo.aurora_params.y, 0.03);
+    let aurora_int = atmo.aurora_params.z;
 
     for (var i = 0; i < step_count; i = i + 1) {
         let t_sample = t_start + (f32(i) + 0.5) * step_size;
         let sample_pos = ray_origin + ray_dir * t_sample;
-        let alt = length(sample_pos - center) - r_planet;
+        let p_rel = sample_pos - center;
+        let sample_dist = length(p_rel);
+        let alt = sample_dist - r_planet;
 
         if (alt < 0.0) {
             continue;
@@ -129,6 +137,27 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
         let scatter_slice = (beta_r * density_r * p_rayleigh + beta_m * density_m * p_mie) * attenuation * sun_visible * star_intensity;
         in_scatter += scatter_slice;
+
+        // Volumetric polar auroral curtain emission (Ionospheric layer)
+        if (aurora_int > 0.05) {
+            let norm_p = p_rel / max(sample_dist, 0.0001);
+            let polar_co = min(acos(clamp(norm_p.y, -1.0, 1.0)), acos(clamp(-norm_p.y, -1.0, 1.0)));
+            let d_oval = abs(polar_co - oval_colat);
+            let oval_ring = exp(-0.5 * (d_oval * d_oval) / (oval_width * oval_width));
+            
+            let atmo_thickness = max(r_atmo - r_planet, 0.001);
+            let alt_frac = alt / atmo_thickness;
+            let iono_layer = smoothstep(0.12, 0.40, alt_frac) * smoothstep(0.98, 0.65, alt_frac);
+
+            // Emerald 557.7nm O(1S) fading into violet N2+ at base and red O(1D) at apex
+            let auroral_rgb = mix(vec3<f32>(0.12, 0.98, 0.42), vec3<f32>(0.45, 0.22, 0.95), smoothstep(0.25, 0.80, alt_frac));
+            
+            // Nightside enhancement from magnetotail reconnection
+            let sun_alignment = dot(norm_p, star_dir);
+            let night_mult = mix(2.2, 0.35, clamp(sun_alignment * 0.5 + 0.5, 0.0, 1.0));
+
+            aurora_emission += auroral_rgb * (oval_ring * iono_layer * aurora_int * night_mult * (step_size / atmo_thickness) * 3.0);
+        }
     }
 
     // 5. Total extinction and alpha blending
@@ -141,11 +170,12 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let edge_fade = smoothstep(1.0, 0.85, rim_norm);
 
     let alpha_base = clamp(1.0 - avg_transmission, 0.0, 1.0) * edge_fade;
-    let alpha = select(clamp(alpha_base * 1.35, 0.0, 0.95), clamp(alpha_base * 0.80, 0.0, 0.88), hit_ground);
+    let aurora_alpha = clamp(length(aurora_emission) * 0.6, 0.0, 0.85);
+    let alpha = select(clamp(alpha_base * 1.35 + aurora_alpha, 0.0, 0.95), clamp(alpha_base * 0.35 + aurora_alpha * 0.5, 0.0, 0.75), hit_ground);
 
     // Subtle nightside airglow
     let airglow = beta_r * 0.015 * clamp(pressure, 0.1, 2.0);
-    let final_rgb = in_scatter + airglow * edge_fade;
+    let final_rgb = in_scatter + airglow * edge_fade + aurora_emission;
 
     out.color = vec4<f32>(final_rgb, alpha);
     return out;

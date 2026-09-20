@@ -259,8 +259,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
     [
         (
             17.8,
-            0.00002 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.08,
+            3.7e-11 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_863,
             "1P/Halley (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -268,8 +268,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
         ),
         (
             3.30,
-            0.00001 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.05,
+            2.5e-12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_377,
             "2P/Encke (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -277,8 +277,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
         ),
         (
             45.0,
-            0.00003 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.10,
+            2.2e-9 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.00471,
             "C/Hale-Bopp (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -286,8 +286,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
         ),
         (
             26.0,
-            0.00002 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.08,
+            1.7e-10 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.00204,
             "109P/Swift-Tuttle (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -295,8 +295,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
         ),
         (
             3.50,
-            0.00001 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.05,
+            1.7e-12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_314,
             "67P/Churyumov (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -304,8 +304,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
         ),
         (
             52.0,
-            0.00003 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.09,
+            3.3e-12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_392,
             "C/NEOWISE (Comet)",
             Composition::icy(),
             BodyType::Comet,
@@ -313,8 +313,8 @@ fn get_comet_seeds() -> [SeedTuple; 12] {
         ),
         (
             48.0,
-            0.00002 * EARTH_MASS_SOLAR,
-            EARTH_RADIUS_AU * 0.08,
+            2.0e-12 * EARTH_MASS_SOLAR,
+            EARTH_RADIUS_AU * 0.000_330,
             "C/Hyakutake (Comet)",
             Composition::icy(),
             BodyType::Comet,

@@ -168,7 +168,9 @@ fn evaluate_compact_coalescence(
 
     let (_, peak_f_hz) = calculate_gw_frequency(m_total, threshold);
 
-    commands.entity(companion_entity).despawn();
+    if let Ok(mut entity_cmd) = commands.get_entity(companion_entity) {
+        entity_cmd.despawn();
+    }
 
     merger_events.write(GravitationalWaveMergerEvent {
         primary_entity,
@@ -298,18 +300,16 @@ pub fn update_relativity_evolution(
         .next()
         .map(|(e, p, v, m, r, _)| (e, p.0, v.0, m.0, r.0));
 
-    for (entity, pos, mut vel, mass, rad, body, opt_sat, opt_rel) in bodies_query.iter_mut() {
+    for (entity, pos, mut vel, mass, rad, body, opt_sat, mut opt_rel) in bodies_query.iter_mut() {
         let Some(ctx) = resolve_relativistic_host_context(pos.0, vel.0, mass.0, opt_sat, star_opt)
         else {
             continue;
         };
 
-        let mut rel_state = if let Some(r) = opt_rel {
-            *r
+        let mut rel_state = if let Some(ref r) = opt_rel {
+            **r
         } else {
-            let init = RelativisticState::default();
-            commands.entity(entity).insert(init);
-            init
+            RelativisticState::default()
         };
 
         let m_host = ctx.host_mass;
@@ -352,19 +352,25 @@ pub fn update_relativity_evolution(
                 }
             }
 
-            commands.entity(ctx.host_entity).insert((
-                Mass(remnant_mass),
-                Radius(new_radius),
-                CelestialBody {
-                    name: format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)"),
-                    body_type: remnant_type,
-                },
-            ));
+            if let Ok(mut host_cmd) = commands.get_entity(ctx.host_entity) {
+                host_cmd.insert((
+                    Mass(remnant_mass),
+                    Radius(new_radius),
+                    CelestialBody {
+                        name: format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)"),
+                        body_type: remnant_type,
+                    },
+                ));
+            }
 
             // Companion was despawned: do NOT insert components on despawned entity
             continue;
         }
 
-        commands.entity(entity).insert(rel_state);
+        if let Some(ref mut r) = opt_rel {
+            **r = rel_state;
+        } else {
+            commands.entity(entity).insert(rel_state);
+        }
     }
 }

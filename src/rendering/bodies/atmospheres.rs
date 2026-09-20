@@ -138,6 +138,7 @@ fn create_atmosphere_uniforms(
     star_vector: Vec3,
     star_lum: f32,
     planet_world_pos: Vec3,
+    aurora_params: Vec4,
 ) -> AtmosphereUniforms {
     AtmosphereUniforms {
         rayleigh_params: Vec4::new(
@@ -160,6 +161,7 @@ fn create_atmosphere_uniforms(
             planet_world_pos.z,
             profile.shell_outer_scale,
         ),
+        aurora_params,
     }
 }
 
@@ -184,6 +186,58 @@ fn spawn_atmosphere_child(
     }
 }
 
+fn derive_auroral_params(
+    opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
+    opt_diff: Option<&InternalDifferentiation>,
+) -> Vec4 {
+    opt_aurora.map_or_else(
+        || {
+            let b_gauss = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
+            if b_gauss > 0.1 {
+                Vec4::new(0.315, 0.065, (b_gauss * 0.8).clamp(0.2, 2.5), 1.5)
+            } else {
+                Vec4::ZERO
+            }
+        },
+        |a| {
+            Vec4::new(
+                a.oval_colatitude_rad,
+                a.oval_width_rad,
+                a.auroral_intensity,
+                a.geomagnetic_kp_index,
+            )
+        },
+    )
+}
+
+fn update_atmosphere_child_mesh(
+    children: &Children,
+    has_atmosphere: bool,
+    shell_scale: f32,
+    uniforms: &AtmosphereUniforms,
+    atmo_children_query: &mut Query<
+        (&mut Transform, &MeshMaterial3d<AtmosphereMaterial>),
+        With<VisualAtmosphereChild>,
+    >,
+    atmo_materials: &mut Assets<AtmosphereMaterial>,
+) -> bool {
+    let mut found_child = false;
+    for child in children.iter() {
+        if let Ok((mut transform, mat_handle)) = atmo_children_query.get_mut(child) {
+            found_child = true;
+            if has_atmosphere {
+                transform.scale = Vec3::splat(shell_scale);
+                if let Some(mut mat) = atmo_materials.get_mut(&mat_handle.0) {
+                    mat.uniforms = uniforms.clone();
+                }
+            } else {
+                transform.scale = Vec3::ZERO;
+            }
+        }
+    }
+    found_child
+}
+
 /// Synchronizes 3D planetary atmospheric limb glow shells, materials, and starlight vectors.
 #[allow(clippy::type_complexity, reason = "Atmosphere Mesh Query Complexity")]
 pub fn sync_planetary_atmospheres(
@@ -205,6 +259,8 @@ pub fn sync_planetary_atmospheres(
             Option<&PlanetaryClimate>,
             Option<&VolatileInventory>,
             Option<&Children>,
+            Option<&crate::simulation::space_weather::AuroralOvalState>,
+            Option<&InternalDifferentiation>,
         ),
         With<VisualBody>,
     >,
@@ -227,10 +283,20 @@ pub fn sync_planetary_atmospheres(
         (t_ratio * t_ratio * t_ratio * t_ratio * m_ratio).clamp(0.2, 50.0)
     });
 
-    for (planet_ent, p_pos, p_rad, body, comp, temp, opt_climate, opt_vol, opt_children) in
-        planets_query.iter()
+    for (
+        planet_ent,
+        p_pos,
+        p_rad,
+        body,
+        comp,
+        temp,
+        opt_climate,
+        opt_vol,
+        opt_children,
+        opt_aurora,
+        opt_diff,
+    ) in planets_query.iter()
     {
-        // Stars and non-planetary remnants/minor bodies do not possess bound limb atmosphere shells
         if body.body_type.is_star_or_remnant()
             || matches!(
                 body.body_type,
@@ -264,43 +330,32 @@ pub fn sync_planetary_atmospheres(
 
         let visual_r = p_rad.0 as f32;
         let atmo_r = visual_r * profile.shell_outer_scale;
+        let aurora_params = derive_auroral_params(opt_aurora, opt_diff);
+
+        let uniforms = create_atmosphere_uniforms(
+            &profile,
+            pressure_bar,
+            visual_r,
+            atmo_r,
+            star_vector,
+            star_lum,
+            planet_world_pos,
+            aurora_params,
+        );
 
         let mut found_child = false;
         if let Some(children) = opt_children {
-            for child in children.iter() {
-                if let Ok((mut transform, mat_handle)) = atmo_children_query.get_mut(child) {
-                    found_child = true;
-                    if has_atmosphere {
-                        transform.scale = Vec3::splat(profile.shell_outer_scale);
-                        if let Some(mut mat) = atmo_materials.get_mut(&mat_handle.0) {
-                            mat.uniforms = create_atmosphere_uniforms(
-                                &profile,
-                                pressure_bar,
-                                visual_r,
-                                atmo_r,
-                                star_vector,
-                                star_lum,
-                                planet_world_pos,
-                            );
-                        }
-                    } else {
-                        // Atmosphere stripped or absent -> collapse shell
-                        transform.scale = Vec3::ZERO;
-                    }
-                }
-            }
+            found_child = update_atmosphere_child_mesh(
+                children,
+                has_atmosphere,
+                profile.shell_outer_scale,
+                &uniforms,
+                &mut atmo_children_query,
+                &mut atmo_materials,
+            );
         }
 
         if !found_child && has_atmosphere {
-            let uniforms = create_atmosphere_uniforms(
-                &profile,
-                pressure_bar,
-                visual_r,
-                atmo_r,
-                star_vector,
-                star_lum,
-                planet_world_pos,
-            );
             let material = atmo_materials.add(AtmosphereMaterial { uniforms });
             spawn_atmosphere_child(
                 &mut commands,

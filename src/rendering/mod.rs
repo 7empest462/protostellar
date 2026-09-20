@@ -33,6 +33,7 @@ impl Plugin for RenderingPlugin {
                 MaterialPlugin::<RingMaterial>::default(),
                 MaterialPlugin::<SkyboxMaterial>::default(),
                 MaterialPlugin::<RelativisticJetMaterial>::default(),
+                MaterialPlugin::<CometTailMaterial>::default(),
             ))
             .add_systems(
                 Startup,
@@ -47,7 +48,9 @@ impl Plugin for RenderingPlugin {
                 Update,
                 (
                     sync_celestial_transforms
-                        .after(crate::simulation::physics::step_physics_simulation),
+                        .after(crate::simulation::physics::step_physics_simulation)
+                        .after(crate::simulation::thermodynamics::update_thermodynamics)
+                        .after(crate::simulation::geology::sync_geological_evolution_system),
                     update_pan_orbit_camera.after(sync_celestial_transforms),
                     (sync_skybox_to_camera, update_skybox_uniforms).after(update_pan_orbit_camera),
                     draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
@@ -59,9 +62,11 @@ impl Plugin for RenderingPlugin {
                     sync_planetary_rings
                         .after(sync_celestial_transforms)
                         .after(spawn_missing_visuals),
+                    sync_cometary_tails.after(sync_celestial_transforms),
                     sync_quasar_beams.after(sync_celestial_transforms),
                     sync_pulsar_beams.after(sync_celestial_transforms),
                     sync_magnetar_structures.after(sync_celestial_transforms),
+                    sync_magnetic_field_overlays.after(sync_celestial_transforms),
                     sync_relativistic_jets.after(sync_celestial_transforms),
                     update_impact_shockwaves
                         .after(crate::simulation::physics::step_physics_simulation),

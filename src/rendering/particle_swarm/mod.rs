@@ -115,7 +115,11 @@ pub fn update_particle_swarm(
     };
 
     let speed_mult = time_warp.multiplier as f32;
-    let visual_flow_dt = (0.002 * (1.0 + speed_mult.log10().max(0.0) * 2.0)).min(0.08);
+    let visual_flow_dt = if speed_mult < 1.0 {
+        (0.002 * speed_mult).max(1e-7)
+    } else {
+        (0.002 * (1.0 + speed_mult.log10() * 2.0)).min(0.08)
+    };
     let gpu_active = config.enable_gpu_compute && config.gpu_compute_active;
     let (lhb_active, lhb_resonance) = if let Some(ref lhb) = lhb_state {
         (lhb.is_active, lhb.resonance_crossed)

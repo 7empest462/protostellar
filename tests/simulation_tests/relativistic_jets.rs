@@ -136,22 +136,7 @@ fn test_relativistic_jet_ecs_synchronization() {
     // Mock VisualAssets
     let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
     let dummy_mesh = meshes.add(Mesh::from(Cuboid::new(1.0, 1.0, 1.0)));
-    let visual_assets = VisualAssets {
-        star_mesh: dummy_mesh.clone(),
-        planet_mesh: dummy_mesh.clone(),
-        atmosphere_mesh: dummy_mesh.clone(),
-        asteroid_potato_mesh: dummy_mesh.clone(),
-        asteroid_rubble_mesh: dummy_mesh.clone(),
-        comet_bilobate_mesh: dummy_mesh.clone(),
-        particle_mesh: dummy_mesh.clone(),
-        ring_mesh: dummy_mesh.clone(),
-        beam_core_mesh: dummy_mesh.clone(),
-        beam_sheath_mesh: dummy_mesh.clone(),
-        accretion_disk_mesh: dummy_mesh.clone(),
-        pulsar_beam_mesh: dummy_mesh.clone(),
-        magnetar_ring_mesh: dummy_mesh.clone(),
-        magnetar_field_loops_mesh: dummy_mesh.clone(),
-    };
+    let visual_assets = VisualAssets::dummy(dummy_mesh);
     app.insert_resource(visual_assets);
 
     // Spawn compact object (Pulsar) without explicit RelativisticJetState

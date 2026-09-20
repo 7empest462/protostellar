@@ -334,7 +334,7 @@ pub fn direct_nebular_gas_accretion(
     }
 
     let is_ignited = star_query.iter().next().is_some_and(|ig| ig.is_ignited);
-    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(0.01)).min(10.0);
+    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(10.0);
     let star_mass = disk_params.central_star_mass;
     let is_massive_disk = star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 

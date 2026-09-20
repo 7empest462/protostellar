@@ -36,6 +36,8 @@ pub struct PlanetUniforms {
     pub eclipse_moons_data: [Vec4; 2],
     /// x: geological_age_gyr (0.0=Hadean, 4.56=Modern), y: continental_drift_phase, z: ocean_oxidation_progress (0.0=Archean iron-green, 1.0=blue), w: terrestrial_vegetation_fraction (0.0=craton rock, 1.0=lush flora)
     pub geological_params: Vec4,
+    /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
+    pub aurora_params: Vec4,
 }
 
 impl Default for PlanetUniforms {
@@ -59,6 +61,7 @@ impl Default for PlanetUniforms {
             eclipse_moons_pos: [Vec4::ZERO; 2],
             eclipse_moons_data: [Vec4::ZERO; 2],
             geological_params: Vec4::new(4.56, 0.0, 1.0, 1.0),
+            aurora_params: Vec4::ZERO,
         }
     }
 }
@@ -89,6 +92,8 @@ pub struct AtmosphereUniforms {
     pub star_dir_and_intensity: Vec4,
     /// x, y, z: planet world position, w: visual scale factor
     pub planet_center: Vec4,
+    /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
+    pub aurora_params: Vec4,
 }
 
 impl Default for AtmosphereUniforms {
@@ -99,6 +104,7 @@ impl Default for AtmosphereUniforms {
             optical_params: Vec4::new(0.82, 1.0, 1.0, 1.05),
             star_dir_and_intensity: Vec4::new(0.0, 1.0, 0.0, 1.0),
             planet_center: Vec4::ZERO,
+            aurora_params: Vec4::ZERO,
         }
     }
 }
@@ -274,6 +280,63 @@ pub struct RelativisticJetMaterial {
 impl Material for RelativisticJetMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/relativistic_jet.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+/// GPU uniform parameters for cometary coma fluorescence, solar wind ion streamers, and curved dust fan.
+#[derive(Clone, ShaderType, Debug)]
+pub struct CometTailUniforms {
+    /// x: elapsed time (s), y: tail length (AU), z: coma radius (AU), w: insolation flux factor
+    pub params: Vec4,
+    /// xyz: unit anti-solar direction in world space, w: in-plane lag angle (rad)
+    pub anti_solar_and_lag: Vec4,
+    /// xyz: comet nucleus world position, w: tail mode (0.0 = volumetric tail, 1.0 = coma)
+    pub nucleus_pos_and_type: Vec4,
+    /// xyz: unit orbital velocity in-plane lag vector, w: volatile activity scale
+    pub velocity_and_activity: Vec4,
+    /// Type I Ion tail color RGBA (electric cyan/blue)
+    pub ion_color: Vec4,
+    /// Type II Dust tail color RGBA (golden-amber)
+    pub dust_color: Vec4,
+}
+
+impl Default for CometTailUniforms {
+    fn default() -> Self {
+        Self {
+            params: Vec4::new(0.0, 1.5, 0.04, 1.0),
+            anti_solar_and_lag: Vec4::new(0.0, 1.0, 0.0, 0.15),
+            nucleus_pos_and_type: Vec4::ZERO,
+            velocity_and_activity: Vec4::new(1.0, 0.0, 0.0, 1.0),
+            ion_color: Vec4::new(0.20, 0.88, 1.0, 0.95),
+            dust_color: Vec4::new(1.0, 0.88, 0.65, 0.75),
+        }
+    }
+}
+
+/// Custom Bevy material for volumetric cometary tails, ion plasma ribbons, and diffuse comas.
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct CometTailMaterial {
+    #[uniform(0)]
+    pub uniforms: CometTailUniforms,
+}
+
+impl Material for CometTailMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/comet_tail.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {

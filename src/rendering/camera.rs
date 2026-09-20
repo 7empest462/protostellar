@@ -166,7 +166,10 @@ fn handle_camera_target_picking(
         .iter()
         .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
 
-    if cursor_over_ui || !mouse_buttons.just_pressed(MouseButton::Left) {
+    if cursor_over_ui
+        || !mouse_buttons.just_pressed(MouseButton::Left)
+        || player_state.active_tool != PlayerTool::Inspect
+    {
         return;
     }
 

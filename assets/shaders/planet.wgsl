@@ -35,6 +35,7 @@ struct PlanetExtension {
     eclipse_moons_pos: array<vec4<f32>, 2>, // xyz = relative moon pos in planet radii, w = moon radius ratio
     eclipse_moons_data: array<vec4<f32>, 2>, // x = active flag (1.0 or 0.0), y = penumbra softness, z = shadow depth, w = reserved
     geological_params: vec4<f32>, // x: age_gyr, y: drift_phase, z: ocean_oxidation, w: vegetation_expansion
+    aurora_params: vec4<f32>, // x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(101)
@@ -290,6 +291,15 @@ fn render_stellar_photosphere(
             gran_col += vec3<f32>(0.35, 0.30, 0.15) * faculae;
         }
         
+        // Incandescent magnetic coronal loops & reconnection prominence arches
+        let loop_coord = p_surf * 14.0 + vec3<f32>(t * 0.15, sin(t * 0.35 + p_surf.x * 4.0), t * 0.10);
+        let loop_flux = sin(loop_coord.x * 2.5 + sin(loop_coord.y * 3.0)) * cos(loop_coord.z * 2.2);
+        if (abs(loop_flux) < 0.15 && spot_noise > 0.44) {
+            let loop_glow = (1.0 - abs(loop_flux) / 0.15) * (spot_noise - 0.44) * 3.5;
+            let loop_col = vec3<f32>(1.6, 0.85, 0.25) * (1.0 + flare_int * 2.5);
+            gran_col += loop_col * loop_glow;
+        }
+        
         // Quadratic Eddington solar limb darkening
         let limb_u = 0.60;
         let limb_v = 0.20;
@@ -539,6 +549,220 @@ struct CraterShadingResult {
     emissive: vec3<f32>,
 };
 
+// -----------------------------------------------------------------------------
+// Specialized Planetary Impact Regimes: Gas Giants, Ice Giants, Icy Moons, Rocky Worlds
+// -----------------------------------------------------------------------------
+
+fn apply_gas_giant_impact_basin(
+    p_surf: vec3<f32>,
+    center: vec3<f32>,
+    radius: f32,
+    effective_scar: f32,
+    melt_glow: f32,
+    time: f32,
+    in_res: CraterShadingResult,
+) -> CraterShadingResult {
+    var out_res = in_res;
+    // Zonal wind shear: strong equatorial and mid-latitude jet streams (100-150 m/s)
+    // shear the impact cloud horizontally along latitude bands into an elongated oval plume.
+    let tangent = normalize(cross(center, vec3<f32>(0.0, 1.0, 0.001)));
+    let d_east = dot(p_surf - center, tangent);
+    let d_north = length((p_surf - center) - tangent * d_east);
+    let sheared_dist = sqrt((d_east / 1.7) * (d_east / 1.7) + d_north * d_north);
+    let u = sheared_dist / radius;
+
+    if (u < 1.7) {
+        let turb = fbm(p_surf * 22.0 + vec3<f32>(time * 0.06, 0.0, 0.0));
+
+        // Shoemaker-Levy 9 dark carbonaceous & sulfurous aerosol soot core
+        let soot_mask = smoothstep(0.70, 0.18, u) * (0.80 + turb * 0.20) * effective_scar;
+        let soot_color = vec3<f32>(0.04, 0.025, 0.02);
+
+        // Concentric acoustic gravity wave shock ring / stratospheric fallout halo
+        let halo_mask = smoothstep(0.75, 1.0, u) * smoothstep(1.45, 1.0, u) * (0.45 + turb * 0.25) * effective_scar;
+        let halo_color = vec3<f32>(0.12, 0.08, 0.06);
+
+        out_res.color = mix(out_res.color, halo_color, halo_mask * 0.70);
+        out_res.color = mix(out_res.color, soot_color, soot_mask * 0.95);
+        out_res.roughness = mix(out_res.roughness, 0.75, soot_mask * 0.5);
+
+        // Stratospheric incandescent fireball flash when fresh
+        let active_melt = melt_glow * effective_scar;
+        if (active_melt > 0.005 && u < 0.85) {
+            let fireball = smoothstep(0.85, 0.15, u) * active_melt;
+            let flash_core = vec3<f32>(1.0, 0.65, 0.18) * (4.2 + sin(time * 3.0 + u * 6.0) * 0.6);
+            out_res.color = mix(out_res.color, vec3<f32>(1.0, 0.85, 0.5), fireball * 0.65);
+            out_res.emissive += flash_core * fireball;
+        }
+    }
+    return out_res;
+}
+
+fn apply_ice_giant_impact_basin(
+    p_surf: vec3<f32>,
+    center: vec3<f32>,
+    radius: f32,
+    effective_scar: f32,
+    melt_glow: f32,
+    time: f32,
+    in_res: CraterShadingResult,
+) -> CraterShadingResult {
+    var out_res = in_res;
+    // Neptune/Uranus supersonic retrograde zonal winds shear the anvil plume along cloud bands
+    let tangent = normalize(cross(center, vec3<f32>(0.0, 1.0, 0.001)));
+    let d_east = dot(p_surf - center, tangent);
+    let d_north = length((p_surf - center) - tangent * d_east);
+    let sheared_dist = sqrt((d_east / 1.55) * (d_east / 1.55) + d_north * d_north);
+    let u = sheared_dist / radius;
+
+    if (u < 1.7) {
+        let cirrus_turb = fbm(p_surf * 26.0 + vec3<f32>(time * 0.05, 0.0, 0.0));
+
+        // Deep dark indigo-black atmospheric vortex cavity (excavates deep tholins)
+        let vortex_mask = smoothstep(0.55, 0.15, u) * effective_scar;
+        let vortex_color = vec3<f32>(0.015, 0.06, 0.18);
+
+        // High-albedo methane & ammonia ice cirrus anvil plume ringing the impact site
+        let cirrus_mask = smoothstep(0.40, 0.75, u) * smoothstep(1.40, 0.85, u)
+            * (0.65 + cirrus_turb * 0.35) * effective_scar;
+        let cirrus_color = vec3<f32>(0.92, 0.98, 1.0);
+
+        out_res.color = mix(out_res.color, vortex_color, vortex_mask * 0.90);
+        out_res.color = mix(out_res.color, cirrus_color, cirrus_mask * 0.85);
+
+        // High-energy atmospheric cyan/blue shock glow when fresh
+        let active_melt = melt_glow * effective_scar;
+        if (active_melt > 0.005 && u < 0.85) {
+            let shock_flare = smoothstep(0.85, 0.10, u) * active_melt;
+            let flare_core = vec3<f32>(0.35, 0.85, 1.0) * (3.8 + sin(time * 3.2 + u * 8.0) * 0.6);
+            out_res.color = mix(out_res.color, vec3<f32>(0.65, 0.92, 1.0), shock_flare * 0.60);
+            out_res.emissive += flare_core * shock_flare;
+        }
+    }
+    return out_res;
+}
+
+fn apply_icy_world_impact_basin(
+    p_surf: vec3<f32>,
+    center: vec3<f32>,
+    dist: f32,
+    radius: f32,
+    effective_scar: f32,
+    melt_glow: f32,
+    time: f32,
+    in_res: CraterShadingResult,
+) -> CraterShadingResult {
+    var out_res = in_res;
+    let u = dist / radius;
+
+    if (u < 1.7) {
+        let ray_angle = atan2(p_surf.x - center.x, p_surf.z - center.z);
+        let ray_noise = sin(ray_angle * 16.0 + fbm(p_surf * 20.0) * 4.0) * 0.5 + 0.5;
+
+        // High-albedo shattered crystalline ice ejecta blanket and rays
+        let ejecta_ice = smoothstep(1.7, 0.90, u) * ray_noise * 0.60 * effective_scar;
+        let pure_ice_ray = vec3<f32>(0.90, 0.95, 1.0);
+
+        // Raised frosty ice rim
+        let rim_factor = smoothstep(0.75, 0.98, u) * smoothstep(1.25, 0.98, u) * effective_scar;
+        let rim_ice = vec3<f32>(0.82, 0.88, 0.96);
+
+        // Subsurface cryo-rock / tholin-tinted basin floor
+        let floor_factor = smoothstep(0.85, 0.70, u) * effective_scar;
+        let cryo_floor = vec3<f32>(0.22, 0.24, 0.32);
+
+        // Central rebound peak of crystalline water-ice
+        var central_peak = 0.0;
+        if (radius > 0.10 && u < 0.22) {
+            central_peak = smoothstep(0.22, 0.05, u) * 0.75 * effective_scar;
+        }
+
+        var crater_col = mix(out_res.color, pure_ice_ray, ejecta_ice);
+        crater_col = mix(crater_col, rim_ice, rim_factor);
+        crater_col = mix(crater_col, cryo_floor, floor_factor);
+        crater_col = mix(crater_col, pure_ice_ray, central_peak);
+
+        out_res.color = crater_col;
+        out_res.roughness = mix(out_res.roughness, 0.35, (rim_factor * 0.6 + ejecta_ice * 0.8));
+        out_res.metallic = mix(out_res.metallic, 0.02, floor_factor * 0.5);
+
+        // Slushy cryomagma pool (water-ammonia slush) glowing with pale cyan/blue luminescence
+        let active_melt = melt_glow * effective_scar;
+        if (active_melt > 0.005 && u < 0.80) {
+            let pool_mask = smoothstep(0.80, 0.50, u);
+            let slush_cracks = fbm(p_surf * 30.0 + vec3<f32>(time * 0.04, 0.0, 0.0));
+            let cryo_core = vec3<f32>(0.25, 0.75, 0.98) * (3.0 + sin(time * 2.6 + u * 8.0) * 0.5);
+            let frozen_slush = vec3<f32>(0.35, 0.48, 0.60);
+
+            let is_open_slush = smoothstep(0.35, 0.65, slush_cracks);
+            let slush_mix = mix(frozen_slush, cryo_core, is_open_slush);
+
+            out_res.color = mix(out_res.color, slush_mix, pool_mask * active_melt);
+            out_res.emissive += cryo_core * pool_mask * active_melt * (is_open_slush * 0.85 + 0.15);
+            out_res.roughness = mix(out_res.roughness, 0.18, pool_mask * active_melt);
+        }
+    }
+    return out_res;
+}
+
+fn apply_rocky_world_impact_basin(
+    p_surf: vec3<f32>,
+    center: vec3<f32>,
+    dist: f32,
+    radius: f32,
+    effective_scar: f32,
+    melt_glow: f32,
+    time: f32,
+    water_mask: f32,
+    in_res: CraterShadingResult,
+) -> CraterShadingResult {
+    var out_res = in_res;
+    let u = dist / radius;
+
+    if (u < 1.6) {
+        let ray_angle = atan2(p_surf.x - center.x, p_surf.z - center.z);
+        let ray_noise = sin(ray_angle * 14.0 + fbm(p_surf * 18.0) * 4.0) * 0.5 + 0.5;
+        let ejecta_blanket = smoothstep(1.6, 0.95, u) * ray_noise * 0.45 * effective_scar;
+        let ejecta_dust = vec3<f32>(0.48, 0.45, 0.42);
+
+        let rim_factor = smoothstep(0.75, 0.98, u) * smoothstep(1.25, 0.98, u) * effective_scar;
+        let rim_rock = vec3<f32>(0.38, 0.35, 0.33);
+
+        let floor_factor = smoothstep(0.85, 0.70, u) * effective_scar;
+        let basalt_mare = vec3<f32>(0.09, 0.085, 0.08);
+
+        var central_peak = 0.0;
+        if (radius > 0.12 && u < 0.22) {
+            central_peak = smoothstep(0.22, 0.05, u) * 0.7 * effective_scar;
+        }
+
+        var crater_col = mix(out_res.color, ejecta_dust, ejecta_blanket);
+        crater_col = mix(crater_col, rim_rock, rim_factor);
+        crater_col = mix(crater_col, basalt_mare, floor_factor);
+        crater_col = mix(crater_col, rim_rock, central_peak);
+
+        out_res.color = crater_col;
+        out_res.roughness = mix(out_res.roughness, 0.92, (floor_factor * 0.8 + rim_factor * 0.5) * (1.0 - water_mask));
+        out_res.metallic = mix(out_res.metallic, 0.08, floor_factor * 0.7 * (1.0 - water_mask));
+
+        let active_melt = melt_glow * effective_scar;
+        if (active_melt > 0.005 && u < 0.82) {
+            let pool_mask = smoothstep(0.82, 0.55, u);
+            let convection_cracks = fbm(p_surf * 32.0 + vec3<f32>(time * 0.05, 0.0, 0.0));
+            let lava_core = vec3<f32>(1.0, 0.48, 0.08) * (3.8 + sin(time * 2.8 + u * 10.0) * 0.6);
+            let dark_crust = vec3<f32>(0.12, 0.09, 0.08);
+
+            let is_open_lava = smoothstep(0.38, 0.62, convection_cracks);
+            let lava_mix = mix(dark_crust, lava_core, is_open_lava);
+
+            out_res.color = mix(out_res.color, lava_mix, pool_mask * active_melt);
+            out_res.emissive += lava_core * pool_mask * active_melt * (is_open_lava * 0.85 + 0.15);
+            out_res.roughness = mix(out_res.roughness, 0.25, pool_mask * active_melt);
+        }
+    }
+    return out_res;
+}
+
 fn apply_impact_craters_and_basins(
     p_surf: vec3<f32>,
     in_color: vec3<f32>,
@@ -552,6 +776,10 @@ fn apply_impact_craters_and_basins(
     out_res.roughness = in_roughness;
     out_res.metallic = in_metallic;
     out_res.emissive = vec3<f32>(0.0);
+
+    let is_gas_giant = planet.planet_type == 1u || planet.composition.w > 0.40;
+    let is_ice_giant = planet.planet_type == 2u;
+    let is_icy_world = !is_gas_giant && !is_ice_giant && planet.composition.y > 0.35;
 
     for (var i = 0u; i < 4u; i = i + 1u) {
         let b_pos = planet.impact_basins_pos[i];
@@ -582,47 +810,14 @@ fn apply_impact_craters_and_basins(
             effective_dist = sqrt((d_tangent / elongation) * (d_tangent / elongation) + d_norm * d_norm);
         }
 
-        let u = effective_dist / radius;
-        if (u < 1.6) {
-            let ray_angle = atan2(p_surf.x - center.x, p_surf.z - center.z);
-            let ray_noise = sin(ray_angle * 14.0 + fbm(p_surf * 18.0) * 4.0) * 0.5 + 0.5;
-            let ejecta_blanket = smoothstep(1.6, 0.95, u) * ray_noise * 0.45 * effective_scar;
-            let ejecta_dust = vec3<f32>(0.48, 0.45, 0.42);
-
-            let rim_factor = smoothstep(0.75, 0.98, u) * smoothstep(1.25, 0.98, u) * effective_scar;
-            let rim_rock = vec3<f32>(0.38, 0.35, 0.33);
-
-            let floor_factor = smoothstep(0.85, 0.70, u) * effective_scar;
-            let basalt_mare = vec3<f32>(0.09, 0.085, 0.08);
-
-            var central_peak = 0.0;
-            if (radius > 0.12 && u < 0.22) {
-                central_peak = smoothstep(0.22, 0.05, u) * 0.7 * effective_scar;
-            }
-
-            var crater_col = mix(out_res.color, ejecta_dust, ejecta_blanket);
-            crater_col = mix(crater_col, rim_rock, rim_factor);
-            crater_col = mix(crater_col, basalt_mare, floor_factor);
-            crater_col = mix(crater_col, rim_rock, central_peak);
-
-            out_res.color = crater_col;
-            out_res.roughness = mix(out_res.roughness, 0.92, (floor_factor * 0.8 + rim_factor * 0.5) * (1.0 - water_mask));
-            out_res.metallic = mix(out_res.metallic, 0.08, floor_factor * 0.7 * (1.0 - water_mask));
-
-            let active_melt = melt_glow * effective_scar;
-            if (active_melt > 0.005 && u < 0.82) {
-                let pool_mask = smoothstep(0.82, 0.55, u);
-                let convection_cracks = fbm(p_surf * 32.0 + vec3<f32>(time * 0.05, 0.0, 0.0));
-                let lava_core = vec3<f32>(1.0, 0.48, 0.08) * (3.8 + sin(time * 2.8 + u * 10.0) * 0.6);
-                let dark_crust = vec3<f32>(0.12, 0.09, 0.08);
-
-                let is_open_lava = smoothstep(0.38, 0.62, convection_cracks);
-                let lava_mix = mix(dark_crust, lava_core, is_open_lava);
-
-                out_res.color = mix(out_res.color, lava_mix, pool_mask * active_melt);
-                out_res.emissive += lava_core * pool_mask * active_melt * (is_open_lava * 0.85 + 0.15);
-                out_res.roughness = mix(out_res.roughness, 0.25, pool_mask * active_melt);
-            }
+        if (is_gas_giant) {
+            out_res = apply_gas_giant_impact_basin(p_surf, center, radius, effective_scar, melt_glow, time, out_res);
+        } else if (is_ice_giant) {
+            out_res = apply_ice_giant_impact_basin(p_surf, center, radius, effective_scar, melt_glow, time, out_res);
+        } else if (is_icy_world) {
+            out_res = apply_icy_world_impact_basin(p_surf, center, effective_dist, radius, effective_scar, melt_glow, time, out_res);
+        } else {
+            out_res = apply_rocky_world_impact_basin(p_surf, center, effective_dist, radius, effective_scar, melt_glow, time, water_mask, out_res);
         }
     }
 
@@ -757,7 +952,8 @@ fn fragment(
     let mag_gauss = planet.dynamics_and_mag.x;
     let lava_frac = planet.dynamics_and_mag.y;
     let geo_age = planet.geological_params.x;
-    let drift_phase = planet.geological_params.y;
+    let drift_phase = planet.spin_axis.w;
+    let aggregation = planet.geological_params.y;
     let ocean_oxidation = planet.geological_params.z;
     let vegetation_mult = planet.geological_params.w;
 
@@ -1002,40 +1198,65 @@ fn fragment(
     // =========================================================================
     // 4. Minor Bodies (Asteroids, Comets, Planetesimals)
     // =========================================================================
+    // 4. Minor Bodies (Asteroids, Comets, Planetesimals)
+    // =========================================================================
     else if (planet.planet_type == 4u) {
         let regolith = fbm(p_surf * 14.0);
         let micro_craters = fbm(p_surf * 22.0);
-        let boulder_noise = fbm(p_surf * 40.0);
-        
-        // Dark carbonaceous / chondritic basalt regolith
-        var base_reg = vec3<f32>(0.09, 0.09, 0.10);
-        if (metal > 0.35) {
-            // Metallic M-type asteroid (Psyche type): dark specular iron-nickel flecks
+        let boulder_noise = fbm(p_surf * 38.0);
+        let variegation = fbm(p_surf * 5.5);
+        let base_tint = planet.color_seed.rgb;
+
+        let is_comet = ice > 0.22 || (ice > 0.06 && base_tint.r < 0.08);
+
+        if (is_comet) {
+            // Pristine ultra-dark sublimation mantle (albedo 0.03 - 0.05) with organic tholin variegation
+            let tholin_crust = mix(base_tint * 0.80, base_tint * 1.35, variegation);
+            
+            // Fresh exposed crystalline volatile ice cliffs on shadowed scarps & crater walls
+            let ice_fissures = fbm(p_surf * 18.0 + vec3<f32>(0.5, -0.2, 0.3));
+            let ice_scarps = smoothstep(0.68, 0.88, ice_fissures);
+            let bright_ice = vec3<f32>(0.72, 0.84, 0.96);
+            
+            var nucleus_col = mix(tholin_crust, bright_ice, ice_scarps * 0.70);
+            
+            // Active Sublimation Gas Vents (Diatomic Carbon C2 / Cyanogen fluorescent green-cyan glow)
+            if (temp > 120.0) {
+                let vent_noise = fbm(p_surf * 26.0);
+                let vent_spots = smoothstep(0.82, 0.96, vent_noise) * smoothstep(0.50, 0.90, ice_fissures);
+                let vent_glow = vec3<f32>(0.18, 0.95, 0.72) * vent_spots * clamp((temp - 120.0) / 120.0, 0.0, 1.0);
+                pbr_input.material.emissive = vec4<f32>(vent_glow * 1.8, 1.0);
+                nucleus_col += vent_glow * 0.5;
+            }
+            
+            pbr_input.material.perceptual_roughness = mix(0.92, 0.35, ice_scarps);
+            pbr_input.material.metallic = 0.02;
+            color = nucleus_col * (0.85 + micro_craters * 0.30);
+        } else if (metal > 0.35) {
+            // Metallic M-type Asteroid (Psyche type): dark specular iron-nickel flecks with metallic luster
             let iron_sheen = fbm(p_surf * 18.0);
-            base_reg = mix(vec3<f32>(0.15, 0.15, 0.16), vec3<f32>(0.48, 0.46, 0.44), iron_sheen * 0.75);
-            pbr_input.material.metallic = 0.65;
-            pbr_input.material.perceptual_roughness = 0.45;
-        } else if (ice > 0.35) {
-            // Pristine icy comet nucleus: dark sublimation crust + exposed bright water ice
-            let ice_fissures = fbm(p_surf * 16.0);
-            let dark_crust = vec3<f32>(0.06, 0.06, 0.07);
-            let bright_ice = vec3<f32>(0.72, 0.82, 0.95);
-            base_reg = mix(dark_crust, bright_ice, smoothstep(0.60, 0.85, ice_fissures));
-            pbr_input.material.perceptual_roughness = 0.65;
-        } else if (ice > 0.05) {
-            // Carbonaceous asteroid with subsurface frost and exposed icy patches
-            let ice_fissures = fbm(p_surf * 24.0);
-            let dark_crust = vec3<f32>(0.06, 0.06, 0.07);
-            let bright_ice = vec3<f32>(0.65, 0.76, 0.88);
-            base_reg = mix(dark_crust, bright_ice, smoothstep(0.65, 0.88, ice_fissures));
-            pbr_input.material.perceptual_roughness = 0.75;
+            let metal_base = mix(base_tint * 0.80, base_tint * 1.30, iron_sheen);
+            let specular_flecks = smoothstep(0.65, 0.95, boulder_noise);
+            
+            pbr_input.material.metallic = 0.75;
+            pbr_input.material.perceptual_roughness = 0.38 + regolith * 0.25;
+            color = mix(metal_base, vec3<f32>(0.65, 0.63, 0.60), specular_flecks * 0.35) * (0.82 + micro_craters * 0.36);
         } else {
-            // S-type rocky / C-type carbonaceous chondrite
-            let chondrule = mix(vec3<f32>(0.18, 0.16, 0.14), vec3<f32>(0.07, 0.07, 0.08), regolith);
-            base_reg = mix(chondrule, vec3<f32>(0.28, 0.26, 0.24), boulder_noise * 0.35);
-            pbr_input.material.perceptual_roughness = 0.95;
+            // S-type (Stony), C-type (Carbonaceous), V-type (Basaltic), D/P-type (Primitive)
+            let chondrule = mix(base_tint * 0.75, base_tint * 1.30, regolith);
+            let boulder_field = mix(chondrule, base_tint * 1.60 + vec3<f32>(0.05, 0.05, 0.05), boulder_noise * 0.35);
+            
+            if (ice > 0.04) {
+                // Carbonaceous asteroid with subsurface frost and exposed icy patches
+                let frost = smoothstep(0.70, 0.90, fbm(p_surf * 24.0));
+                color = mix(boulder_field, vec3<f32>(0.65, 0.75, 0.86), frost * 0.40);
+                pbr_input.material.perceptual_roughness = mix(0.92, 0.55, frost);
+            } else {
+                color = boulder_field * (0.80 + micro_craters * 0.40);
+                pbr_input.material.perceptual_roughness = 0.92;
+            }
+            pbr_input.material.metallic = clamp(metal * 1.2, 0.02, 0.30);
         }
-        color = base_reg * (0.80 + micro_craters * 0.40);
     }
     // =========================================================================
     // 3. Terrestrial Rocky / Ocean / Biosphere Planet / Protoplanet
@@ -1047,7 +1268,22 @@ fn fragment(
             sin(drift_phase * 4.712 + p_surf.y * 2.4) * 0.28
         );
         let p_tectonic = p_surf + plate_drift;
-        let elev = fbm(p_tectonic * 3.8);
+
+        // Multi-scale bimodal crustal elevation:
+        // 1. Broad continental lithospheric shields vs deep abyssal basins
+        let continent_mask = fbm(p_tectonic * 2.1);
+        // 2. Tectonic cordillera mountain belts and rift valleys
+        let mountain_ridges = ridge_noise(p_tectonic * 6.5);
+        let detail_hills = fbm(p_tectonic * 4.8);
+        
+        // Supercontinent Wilson cycle aggregation dipole:
+        // When aggregation is high (Pangea, Rodinia, Vaalbara, Pangea Ultima), continents congregate
+        // into a massive unified landmass surrounded by the Panthalassa superocean.
+        // When aggregation is low (Modern Earth), continents disperse across both hemispheres.
+        let super_axis = normalize(vec3<f32>(0.65, 0.25, 0.70));
+        let cluster_dipole = dot(p_surf, super_axis);
+        let cluster_bias = cluster_dipole * (aggregation - 0.20) * 0.14;
+        let elev = continent_mask * 0.62 + detail_hills * 0.24 + mountain_ridges * 0.14 + cluster_bias;
 
         // A. Molten Magma Ocean Planet (temp >= 1100K or high lava_frac)
         if (temp >= 1100.0 || lava_frac > 0.65) {
@@ -1075,7 +1311,7 @@ fn fragment(
         }
         // D. Temperate Water-Bearing / Habitable Biosphere World
         else if (has_volatiles && ocean_frac >= 0.04 && temp >= 240.0 && temp <= 380.0) {
-            let sea_level = clamp(0.40 + ocean_frac * 0.45, 0.42, 0.80);
+            let sea_level = clamp(0.41 + ocean_frac * 0.24, 0.25, 0.75);
             let is_ice_cold = temp < 288.0; // Polar ice caps melt if global temp exceeds 15 °C (Earth ~288 K)
             let ice_cap_thresh = clamp(0.95 - (ice_frac * 0.50) - (273.0 / max(temp, 150.0)) * 0.05, 0.68, 0.99);
             
@@ -1156,9 +1392,9 @@ fn fragment(
                     color = color * (1.0 - (shadow_val - 0.55) * 0.5);
                 }
                 
-                let cloud_thresh = 0.52 - cloud_density * 0.14;
+                let cloud_thresh = 0.55 - cloud_density * 0.10;
                 if (total_clouds > cloud_thresh) {
-                    let cloud_alpha = clamp((total_clouds - cloud_thresh) * 2.8 * clamp(cloud_density * 1.5, 0.2, 1.0), 0.0, 0.92);
+                    let cloud_alpha = clamp((total_clouds - cloud_thresh) * 2.6 * clamp(cloud_density * 1.1, 0.2, 0.85), 0.0, 0.78);
                     color = mix(color, vec3<f32>(0.96, 0.98, 1.0), cloud_alpha);
                     pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.90, cloud_alpha);
                 }
@@ -1206,7 +1442,7 @@ fn fragment(
         }
     }
 
-    if (planet.planet_type != 0u && planet.planet_type != 1u && planet.planet_type != 5u && planet.planet_type != 7u) {
+    if (planet.planet_type != 0u && planet.planet_type != 5u && planet.planet_type != 7u) {
         let crater_res = apply_impact_craters_and_basins(
             p_surf,
             color,
@@ -1354,11 +1590,11 @@ fn fragment(
         let NdotV = max(dot(pbr_input.N, pbr_input.V), 0.0);
         let fresnel = pow(1.0 - NdotV, 2.8);
         let ambient_boost = base_col * 0.08;
+        let NdotL = dot(pbr_input.N, star_dir); // Physical solar zenith angle
         
         // Rayleigh & Mie atmospheric scattering with golden/crimson sunset terminators (planets only)
         var atmospheric_haze = vec3<f32>(0.0);
         if (planet.planet_type != 4u && (pressure_bar > 0.005 || cloud_density > 0.05 || planet.planet_type == 1u || planet.planet_type == 2u || planet.planet_type == 6u)) {
-            let NdotL = dot(pbr_input.N, star_dir); // Physical solar zenith angle
             let twilight = exp(-NdotL * NdotL * 16.0); // Concentrated along day-night terminator line
             
             // Forward Mie aerosol scattering when looking towards the star
@@ -1373,17 +1609,44 @@ fn fragment(
             atmospheric_haze = ground_scatter * (fresnel * haze_scale + forward_mie * 0.5) * day_factor;
         }
         
-        // Polar Auroral Curtains (Night-side magnetic excitation)
+        // Dynamic Polar Auroral Ovals & Coronal Excitation
         var aurora_glow = vec3<f32>(0.0);
-        if (mag_gauss > 0.15 && abs(lat) > 0.72 && NdotV < 0.6) {
-            let aurora_wave = fbm(p_tilted * 10.0 + vec3<f32>(t * 0.25, 0.0, t * 0.20));
-            if (aurora_wave > 0.55) {
-                let emerald_curtain = vec3<f32>(0.15, 0.95, 0.40) * (aurora_wave - 0.55) * 3.0;
-                aurora_glow = emerald_curtain * clamp(mag_gauss, 0.1, 1.5);
+        let oval_colat = planet.aurora_params.x;
+        let oval_width = max(planet.aurora_params.y, 0.04);
+        let aurora_int = planet.aurora_params.z;
+        let kp_index = planet.aurora_params.w;
+
+        let effective_aurora_int = select(aurora_int, clamp(mag_gauss * 0.8, 0.0, 2.0), aurora_int <= 0.01 && mag_gauss > 0.15);
+        let effective_colat = select(oval_colat, 0.315, oval_colat <= 0.01);
+
+        if (effective_aurora_int > 0.05 && (pressure_bar >= 0.001 || planet.planet_type == 1u || planet.planet_type == 2u)) {
+            // Magnetic polar co-latitude in tilted rotating frame
+            let polar_co = min(acos(clamp(p_tilted.y, -1.0, 1.0)), acos(clamp(-p_tilted.y, -1.0, 1.0)));
+            let d_oval = abs(polar_co - effective_colat);
+            let oval_ring = exp(-0.5 * (d_oval * d_oval) / (oval_width * oval_width));
+
+            if (oval_ring > 0.01) {
+                // Birkeland field-aligned current rayed curtains (azimuthal striations)
+                let az = atan2(p_tilted.z, p_tilted.x);
+                let ray_noise = fbm(vec3<f32>(az * 16.0 + t * 0.35, p_tilted.y * 24.0, t * 0.20));
+                let curtain_rays = smoothstep(0.32, 0.70, ray_noise);
+
+                // Multi-spectral emission: 557.7nm emerald green core, 391.4nm violet edge, 630.0nm ruby red
+                let edge_ratio = d_oval / oval_width;
+                let emerald_core = vec3<f32>(0.12, 0.98, 0.42);
+                let violet_edge = vec3<f32>(0.45, 0.20, 0.95);
+                let ruby_fringe = vec3<f32>(0.95, 0.15, 0.25);
+                let auroral_col = mix(emerald_core, mix(violet_edge, ruby_fringe, smoothstep(0.6, 1.2, edge_ratio)), smoothstep(0.3, 0.9, edge_ratio));
+
+                // Magnetotail reconnection boost on the nightside
+                let night_side_mult = smoothstep(0.20, -0.25, NdotL) * 1.6 + 0.30;
+                let storm_flicker = sin(t * 4.0 + az * 8.0) * 0.10 + 0.90;
+
+                aurora_glow = auroral_col * (oval_ring * curtain_rays * effective_aurora_int * night_side_mult * storm_flicker * 3.2);
             }
         }
         
-        out.color = vec4<f32>(balanced_lit + ambient_boost + atmospheric_haze + aurora_glow, 1.0);
+        out.color = vec4<f32>(balanced_lit + ambient_boost + atmospheric_haze + aurora_glow + pbr_input.material.emissive.rgb, 1.0);
     }
     
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);

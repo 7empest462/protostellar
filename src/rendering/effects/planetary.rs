@@ -3,36 +3,20 @@ use bevy::prelude::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Atmospheric escape tail rendering requires physical parameters"
+)]
 pub fn draw_cometary_escape_tails(
     gizmos: &mut Gizmos,
     body_vec: Vec3,
     star_vec: Vec3,
     vel: &SimVelocity,
-    comp: &Composition,
     opt_tail: Option<&AtmosphericEscapeTail>,
     opt_rad: Option<&Radius>,
     config: &SimulationConfig,
     elapsed: f32,
 ) {
-    let r_orbit = (body_vec - star_vec).length();
-
-    if comp.ice_frac > 0.35 && r_orbit < 6.0 && r_orbit > 0.15 {
-        let tail_dir = (body_vec - star_vec).normalize_or_zero();
-        let tail_len = (8.0 / (r_orbit * r_orbit)).clamp(0.2, 3.5) * (comp.ice_frac as f32);
-
-        gizmos.line(
-            body_vec,
-            body_vec + tail_dir * tail_len,
-            Color::srgba(0.3, 0.7, 1.0, 0.65),
-        );
-        let dust_dir = (tail_dir - vel.0.normalize_or_zero().as_vec3() * 0.3).normalize_or_zero();
-        gizmos.line(
-            body_vec,
-            body_vec + dust_dir * (tail_len * 0.7),
-            Color::srgba(0.9, 0.85, 0.6, 0.45),
-        );
-    }
-
     if let Some(tail) = opt_tail {
         if tail.is_active && tail.tail_length_au > 0.05 {
             let star_to_body = (body_vec - star_vec).normalize_or_zero();
@@ -222,7 +206,9 @@ pub fn draw_diagnostic_overlays(
                 );
             }
         }
-        DiagnosticOverlayMode::Realistic | DiagnosticOverlayMode::Hidden => {}
+        DiagnosticOverlayMode::Realistic
+        | DiagnosticOverlayMode::Hidden
+        | DiagnosticOverlayMode::MagneticFields => {}
     }
 }
 

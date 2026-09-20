@@ -4,6 +4,7 @@ use crate::rendering::materials::*;
 use crate::simulation::components::*;
 use crate::simulation::geology::GeologicalState;
 use crate::simulation::resources::*;
+use crate::simulation::space_weather::{AuroralOvalState, StellarFlareState};
 use crate::simulation::tides::TidalState;
 use crate::utils::constants::*;
 
@@ -75,10 +76,11 @@ fn update_star_material(
     body_type: BodyType,
     is_blown_out: bool,
     color: Color,
-    mag_gauss: f32,
+    params_mag_gauss: f32,
     mass: f64,
     axial_tilt: f32,
     opt_bhs: Option<&BlackHoleStarState>,
+    opt_flare: Option<&StellarFlareState>,
 ) {
     if body_type == BodyType::BlackHole || (body_type == BodyType::QuasiStar && is_blown_out) {
         mat.extension.uniforms.planet_type = 5;
@@ -90,8 +92,12 @@ fn update_star_material(
         mat.base.emissive = LinearRgba::from(Color::srgb(1.0, 0.10, 0.02)) * 32.0;
         mat.extension.uniforms.color_seed = Vec4::new(1.0, 0.10, 0.02, 1.0);
         let edd_ratio = opt_bhs.map_or(3.5, |s| s.eddington_ratio as f32);
-        mat.extension.uniforms.dynamics_and_mag =
-            Vec4::new(mag_gauss.max(1.0e6), edd_ratio, mass as f32, axial_tilt);
+        mat.extension.uniforms.dynamics_and_mag = Vec4::new(
+            params_mag_gauss.max(1.0e6),
+            edd_ratio,
+            mass as f32,
+            axial_tilt,
+        );
         mat.extension.uniforms.atmosphere_params = Vec4::new(0.65, 1.25, 0.0, 1.0);
         mat.extension.uniforms.composition = Vec4::new(0.0, 4.5, 1.5, 0.8);
     } else {
@@ -104,9 +110,11 @@ fn update_star_material(
             BodyType::Protostar => 14.0,
             _ => 30.0,
         };
-        mat.base.emissive = LinearRgba::from(color) * mult;
+        let flare_mult = opt_flare.map_or(1.0, |f| 1.0 + f.current_flare_intensity * 2.0);
+        let emissive_boost = opt_flare.map_or(1.0, |f| 1.0 + f.current_flare_intensity * 0.35);
+        mat.base.emissive = LinearRgba::from(color) * (mult * emissive_boost);
 
-        let (cell_scale, flare_intensity, pulse_freq) = match body_type {
+        let (cell_scale, mut flare_intensity, pulse_freq) = match body_type {
             BodyType::RedGiant | BodyType::RedSupergiant => (4.0, 0.35, 0.2),
             BodyType::RedDwarf => (14.0, 1.4, 0.6),
             BodyType::BrownDwarf => (8.0, 0.2, 0.3),
@@ -121,6 +129,7 @@ fn update_star_material(
             BodyType::WolfRayet => (18.0, 2.0, 2.5),
             _ => (24.0, 0.5, 0.3),
         };
+        flare_intensity *= flare_mult;
         mat.extension.uniforms.composition =
             Vec4::new(star_subtype, cell_scale, flare_intensity, pulse_freq);
 
@@ -132,7 +141,7 @@ fn update_star_material(
         };
         mat.extension.uniforms.atmosphere_params = Vec4::new(0.60, 0.85, spot_coverage, 0.0);
         mat.extension.uniforms.dynamics_and_mag =
-            Vec4::new(mag_gauss, 1.0, mass as f32, axial_tilt);
+            Vec4::new(params_mag_gauss, 1.0, mass as f32, axial_tilt);
     }
 }
 
@@ -188,23 +197,7 @@ fn update_planet_material(
 }
 
 fn select_body_mesh(body: &CelestialBody, visual_assets: &VisualAssets) -> Handle<Mesh> {
-    if body.body_type.is_star_or_remnant() {
-        visual_assets.star_mesh.clone()
-    } else {
-        match body.body_type {
-            BodyType::Comet => visual_assets.comet_bilobate_mesh.clone(),
-            BodyType::Asteroid => {
-                let hash: usize = body.name.bytes().map(|b| b as usize).sum();
-                if hash.is_multiple_of(2) {
-                    visual_assets.asteroid_potato_mesh.clone()
-                } else {
-                    visual_assets.asteroid_rubble_mesh.clone()
-                }
-            }
-            BodyType::DustGrain => visual_assets.particle_mesh.clone(),
-            _ => visual_assets.planet_mesh.clone(),
-        }
-    }
+    super::meshes::select_body_mesh(body, visual_assets)
 }
 
 fn apply_impact_basins(mat: &mut PlanetMaterial, opt_basins: Option<&PlanetaryBasins>) {
@@ -235,6 +228,67 @@ fn apply_impact_basins(mat: &mut PlanetMaterial, opt_basins: Option<&PlanetaryBa
     mat.extension.uniforms.impact_basins_data = basins_data;
 }
 
+fn compute_asteroid_spectral_palette(name: &str, comp: &Composition) -> Color {
+    let lower = name.to_lowercase();
+    if lower.contains("psyche") {
+        return Color::srgb(0.48, 0.47, 0.49);
+    } else if lower.contains("vesta") {
+        return Color::srgb(0.44, 0.42, 0.36);
+    } else if lower.contains("ceres") {
+        return Color::srgb(0.12, 0.12, 0.13);
+    } else if lower.contains("pallas")
+        || lower.contains("hygiea")
+        || lower.contains("mathilde")
+        || lower.contains("bennu")
+        || lower.contains("ryugu")
+    {
+        return Color::srgb(0.09, 0.095, 0.105);
+    } else if lower.contains("ida") || lower.contains("gaspra") || lower.contains("eros") {
+        return Color::srgb(0.34, 0.28, 0.20);
+    }
+
+    let norm = comp.normalized();
+    if norm.metal_frac > 0.40 {
+        Color::srgb(0.45, 0.44, 0.46)
+    } else if norm.organics_frac > 0.18 {
+        Color::srgb(0.24, 0.15, 0.11)
+    } else if norm.silicate_frac > 0.60 {
+        let hash = name.bytes().fold(0usize, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(b as usize)
+        });
+        if hash.is_multiple_of(3) {
+            Color::srgb(0.40, 0.38, 0.34)
+        } else {
+            Color::srgb(0.32, 0.26, 0.19)
+        }
+    } else if norm.ice_frac > 0.15 {
+        Color::srgb(0.16, 0.19, 0.23)
+    } else {
+        Color::srgb(0.10, 0.10, 0.11)
+    }
+}
+
+fn compute_comet_spectral_palette(name: &str, _comp: &Composition) -> Color {
+    let lower = name.to_lowercase();
+    if lower.contains("67p") || lower.contains("arrokoth") {
+        Color::srgb(0.062, 0.045, 0.038)
+    } else if lower.contains("hale-bopp") || lower.contains("swift") {
+        Color::srgb(0.045, 0.055, 0.070)
+    } else if lower.contains("halley") || lower.contains("tempel") {
+        Color::srgb(0.048, 0.042, 0.038)
+    } else {
+        let hash = name.bytes().fold(0usize, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(b as usize)
+        });
+        match hash % 4 {
+            0 => Color::srgb(0.040, 0.040, 0.042),
+            1 => Color::srgb(0.058, 0.044, 0.036),
+            2 => Color::srgb(0.042, 0.052, 0.065),
+            _ => Color::srgb(0.052, 0.046, 0.038),
+        }
+    }
+}
+
 fn compute_body_color(
     body: &CelestialBody,
     mass: &Mass,
@@ -250,6 +304,10 @@ fn compute_body_color(
         compute_stellar_palette(body.body_type, temp.0)
     } else if is_gas_giant {
         compute_gas_giant_palette(mass.0, temp.0, &body.name)
+    } else if matches!(body.body_type, BodyType::Asteroid | BodyType::Planetesimal) {
+        compute_asteroid_spectral_palette(&body.name, comp)
+    } else if body.body_type == BodyType::Comet {
+        compute_comet_spectral_palette(&body.name, comp)
     } else {
         Color::srgb(
             (br * 0.25 + cr * 0.75).clamp(0.1, 1.0),
@@ -273,11 +331,12 @@ fn compute_body_material_parameters(
     body_type: BodyType,
     comp: &Composition,
     temp_k: f64,
-    mass_solar: f64,
+    _mass_solar: f64,
     opt_climate: Option<&PlanetaryClimate>,
     opt_bio: Option<&BiosphereState>,
     opt_vol: Option<&VolatileInventory>,
     opt_em: Option<&ElectromagneticFieldState>,
+    opt_diff: Option<&InternalDifferentiation>,
     opt_tidal: Option<&TidalState>,
     axial_tilt: f32,
 ) -> BodyMaterialParameters {
@@ -330,7 +389,9 @@ fn compute_body_material_parameters(
     };
     let greenhouse = opt_climate.map_or(33.0, |c| c.greenhouse_delta_k);
 
-    let mag_gauss = opt_em.map_or(0.0, |e| e.magnetic_field_gauss as f32);
+    let b_em = opt_em.map_or(0.0, |e| e.magnetic_field_gauss as f32);
+    let b_diff = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
+    let mag_gauss = b_em.max(b_diff);
     let tidal_lava_boost = opt_tidal.map_or(0.0, |t| {
         if t.tidal_heating_flux_w_m2 > 0.5 {
             ((t.tidal_heating_flux_w_m2 as f32 - 0.5) / 2.5).clamp(0.0, 0.75)
@@ -348,44 +409,46 @@ fn compute_body_material_parameters(
     let liquid_ocean_frac = if temp_k > 380.0 {
         0.0
     } else if temp_k > 340.0 {
-        ocean_frac * ((380.0 - temp_k as f32) / 40.0).clamp(0.0, 1.0)
+        let boil_factor = (380.0 - temp_k) / 40.0;
+        (ocean_frac * boil_factor as f32).clamp(0.0, 1.0)
     } else {
         ocean_frac
     };
-    let steam_cloud_boost = if temp_k > 340.0 && ocean_frac > 0.01 {
-        ((temp_k as f32 - 340.0) / 60.0).clamp(0.0, 0.50)
-    } else {
-        0.0
-    };
-    let effective_cloud_density = (cloud_density + steam_cloud_boost).clamp(0.0, 0.98);
-    let mass_jup = (mass_solar / JUPITER_MASS_SOLAR) as f32;
+
+    let climate_and_bio = Vec4::new(liquid_ocean_frac, ice_frac, biomass_frac, cloud_density);
+    let atmosphere_params = Vec4::new(
+        pressure_bar,
+        scale_height,
+        haze_density,
+        (greenhouse / 33.0).clamp(0.1, 8.0),
+    );
+
+    let storm_intensity =
+        opt_climate.map_or(0.2, |c| (c.cloud_coverage_frac * 1.5).clamp(0.0, 1.5));
+    let dynamics_and_mag = Vec4::new(mag_gauss, lava_frac, storm_intensity, axial_tilt);
 
     BodyMaterialParameters {
-        climate_and_bio: Vec4::new(
-            liquid_ocean_frac,
-            ice_frac,
-            biomass_frac,
-            effective_cloud_density,
-        ),
-        atmosphere_params: Vec4::new(pressure_bar, scale_height, haze_density, greenhouse),
-        dynamics_and_mag: Vec4::new(mag_gauss, lava_frac, mass_jup, axial_tilt),
+        climate_and_bio,
+        atmosphere_params,
+        dynamics_and_mag,
         pressure_bar,
         cloud_density,
         mag_gauss,
     }
 }
 
-fn compute_spin_axis(opt_spin: Option<&SpinState>) -> Vec4 {
+fn compute_spin_axis(opt_spin: Option<&SpinState>, opt_geo: Option<&GeologicalState>) -> Vec4 {
+    let drift_phase = opt_geo.map_or(0.0, |g| g.continental_drift_phase);
     if let Some(spin) = opt_spin {
         if spin.spin_vector.length_squared() > 1e-16 {
             let n = spin.spin_vector.normalize();
-            Vec4::new(n.x as f32, n.y as f32, n.z as f32, 0.0)
+            Vec4::new(n.x as f32, n.y as f32, n.z as f32, drift_phase)
         } else {
             let tilt = (spin.axial_tilt_degrees as f32).to_radians();
-            Vec4::new(tilt.sin(), tilt.cos(), 0.0, 0.0)
+            Vec4::new(tilt.sin(), tilt.cos(), 0.0, drift_phase)
         }
     } else {
-        Vec4::new(0.0, 1.0, 0.0, 0.0)
+        Vec4::new(0.0, 1.0, 0.0, drift_phase)
     }
 }
 
@@ -407,6 +470,9 @@ fn update_body_material_properties(
     opt_basins: Option<&PlanetaryBasins>,
     opt_tidal: Option<&TidalState>,
     opt_geo: Option<&GeologicalState>,
+    opt_aurora: Option<&AuroralOvalState>,
+    opt_flare: Option<&StellarFlareState>,
+    opt_diff: Option<&InternalDifferentiation>,
 ) {
     apply_impact_basins(mat, opt_basins);
 
@@ -425,6 +491,7 @@ fn update_body_material_properties(
         opt_bio,
         opt_vol,
         opt_em,
+        opt_diff,
         opt_tidal,
         axial_tilt,
     );
@@ -452,16 +519,35 @@ fn update_body_material_properties(
         profile.rayleigh_beta.z,
         profile.mie_asymmetry_g,
     );
-    mat.extension.uniforms.spin_axis = compute_spin_axis(opt_spin);
-    let geo_params = opt_geo.map_or(Vec4::new(4.56, 0.0, 1.0, 1.0), |g| {
+    mat.extension.uniforms.spin_axis = compute_spin_axis(opt_spin, opt_geo);
+    let geo_params = opt_geo.map_or(Vec4::ZERO, |g| {
         Vec4::new(
             g.geological_age_gyr,
-            g.continental_drift_phase,
+            g.supercontinent_aggregation,
             g.ocean_oxidation_progress,
             g.terrestrial_vegetation_fraction,
         )
     });
     mat.extension.uniforms.geological_params = geo_params;
+
+    let aurora_params = opt_aurora.map_or_else(
+        || {
+            if params.mag_gauss > 0.1 {
+                Vec4::new(0.315, 0.065, (params.mag_gauss * 0.8).clamp(0.2, 2.5), 1.5)
+            } else {
+                Vec4::ZERO
+            }
+        },
+        |a| {
+            Vec4::new(
+                a.oval_colatitude_rad,
+                a.oval_width_rad,
+                a.auroral_intensity,
+                a.geomagnetic_kp_index,
+            )
+        },
+    );
+    mat.extension.uniforms.aurora_params = aurora_params;
 
     if body.body_type.is_star_or_remnant() {
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
@@ -474,6 +560,7 @@ fn update_body_material_properties(
             mass.0,
             axial_tilt,
             opt_bhs,
+            opt_flare,
         );
     } else {
         update_planet_material(mat, body.body_type, comp, temp.0, color);
@@ -674,17 +761,23 @@ pub fn sync_celestial_transforms(
             Option<&PlanetaryBasins>,
             Option<&SatelliteOf>,
         ),
+        (
+            Option<&AuroralOvalState>,
+            Option<&StellarFlareState>,
+            Option<&InternalDifferentiation>,
+        ),
     )>,
 ) {
     let star_pos = query
         .iter()
-        .find(|(_, _, _, _, _, _, b, _, _, _, _, _)| b.body_type.is_star_or_remnant())
-        .map_or(Vec3::ZERO, |(_, p, _, _, _, _, _, _, _, _, _, _)| {
+        .find(|(_, _, _, _, _, _, b, _, _, _, _, _, _)| b.body_type.is_star_or_remnant())
+        .map_or(Vec3::ZERO, |(_, p, _, _, _, _, _, _, _, _, _, _, _)| {
             Vec3::new(p.x as f32, p.y as f32, p.z as f32)
         });
 
     let mut all_moons = Vec::with_capacity(8);
-    for (m_ent, pos, _, radius, _, _, body, _, _, _, _, (_, _, _, _, _, opt_sat)) in query.iter() {
+    for (m_ent, pos, _, radius, _, _, body, _, _, _, _, (_, _, _, _, _, opt_sat), _) in query.iter()
+    {
         if opt_sat.is_some() || body.body_type == BodyType::Moon {
             let m_vis_rad = config.calc_visual_radius_for_type(radius.0, body.body_type);
             let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
@@ -705,6 +798,7 @@ pub fn sync_celestial_transforms(
         mut mesh,
         (opt_climate, opt_bio, opt_vol, opt_rings, opt_tidal, opt_geo),
         (opt_spin, opt_em, opt_bhs, opt_children, opt_basins, _),
+        (opt_aurora, opt_flare, opt_diff),
     ) in query.iter_mut()
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
@@ -754,6 +848,9 @@ pub fn sync_celestial_transforms(
                 opt_basins,
                 opt_tidal,
                 opt_geo,
+                opt_aurora,
+                opt_flare,
+                opt_diff,
             );
 
             // Feature 3.2: Update real-time ring shadow parameters

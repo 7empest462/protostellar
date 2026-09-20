@@ -211,7 +211,7 @@ pub fn apply_pebble_accretion(
         return;
     }
 
-    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(0.01)).min(50.0);
+    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(50.0);
     let star_mass = disk_params.central_star_mass;
     let snow = disk_params.snow_line_au;
 
@@ -271,9 +271,15 @@ pub fn apply_pebble_accretion(
         }
 
         let density = comp.average_density();
-        let new_radius = ((3.0 * new_mass / density.max(1e-30)) / (4.0 * PI))
-            .cbrt()
-            .max(EARTH_RADIUS_AU * 0.05);
+        let physical_radius = ((3.0 * new_mass / density.max(1e-30)) / (4.0 * PI)).cbrt();
+        let new_radius = match body.body_type {
+            BodyType::Protoplanet
+            | BodyType::TerrestrialPlanet
+            | BodyType::SuperEarth
+            | BodyType::GasGiant
+            | BodyType::IceGiant => physical_radius.max(EARTH_RADIUS_AU * 0.05),
+            _ => physical_radius.max(1e-8),
+        };
         rad.0 = new_radius;
 
         let new_type = classify_body_by_mass_and_comp(new_mass, &comp, false);

@@ -55,44 +55,20 @@ fn update_toast_text(
         if let Ok(((pos, vel, mass, rad, temp, _comp, body), ..)) =
             bodies_query.get(selected_entity)
         {
-            let type_name = match body.body_type {
-                BodyType::Protostar => "THE STAR (Protostar)",
-                BodyType::MainSequenceStar => "THE STAR (Main Sequence)",
-                BodyType::BrownDwarf => "BROWN DWARF (Sub-Stellar)",
-                BodyType::RedDwarf => "RED DWARF STAR (M-Type)",
-                BodyType::YellowDwarf => "YELLOW DWARF STAR (G2V)",
-                BodyType::BlueGiant => "BLUE GIANT STAR (B-Type)",
-                BodyType::BlueSupergiant => "BLUE SUPERGIANT (O-Type)",
-                BodyType::RedGiant => "RED GIANT STAR",
-                BodyType::RedSupergiant => "RED SUPERGIANT STAR",
-                BodyType::Hypergiant => "LUMINOUS HYPERGIANT",
-                BodyType::WolfRayet => "WOLF-RAYET STAR",
-                BodyType::WhiteDwarf => "WHITE DWARF REMNANT",
-                BodyType::NeutronStar => "NEUTRON STAR REMNANT",
-                BodyType::Pulsar => "RELATIVISTIC PULSAR",
-                BodyType::Magnetar => "MAGNETAR REMNANT",
-                BodyType::BlackHole => "STELLAR-MASS BLACK HOLE",
-                BodyType::QuasiStar => "QUASI-STAR / BLACK HOLE STAR (JWST LITTLE RED DOT)",
-                BodyType::GasGiant => "GAS GIANT",
-                BodyType::IceGiant => "ICE GIANT",
-                BodyType::SuperEarth => "SUPER-EARTH",
-                BodyType::TerrestrialPlanet => "TERRESTRIAL PLANET",
-                BodyType::Protoplanet => "PROTOPLANETARY EMBRYO",
-                BodyType::Planetesimal => "PLANETESIMAL",
-                BodyType::Asteroid => "ASTEROID",
-                BodyType::Comet => "COMET",
-                BodyType::DustGrain => "DUST GRAIN",
-                BodyType::DebrisRing => "DEBRIS RING",
-                BodyType::Moon => "NATURAL MOON / SATELLITE",
-            };
+            let type_name = format_body_inspector_type(body.body_type).to_uppercase();
+            let m_earth = mass.0 / EARTH_MASS_SOLAR;
             let mass_str = if mass.0 >= 0.01 {
                 format!(
                     "{:.2} M_sun ({:.1} M_J)",
                     mass.0,
                     mass.0 / JUPITER_MASS_SOLAR
                 )
+            } else if m_earth >= 0.01 {
+                format!("{m_earth:.2} M_earth")
+            } else if m_earth >= 1e-4 {
+                format!("{m_earth:.4} M_earth")
             } else {
-                format!("{:.2} M_earth", mass.0 / EARTH_MASS_SOLAR)
+                format!("{m_earth:.2e} M_earth")
             };
             let dist_au = if pos.0.is_finite() {
                 pos.0.length()
@@ -104,14 +80,21 @@ fn update_toast_text(
             } else {
                 0.0
             };
-            let rad_km = (rad.0 * AU_TO_KM).max(1.0);
+            let rad_km = (rad.0 * AU_TO_KM).max(0.01);
+            let rad_str = if rad_km >= 100.0 {
+                format!("{rad_km:.0} km")
+            } else if rad_km >= 10.0 {
+                format!("{rad_km:.1} km")
+            } else {
+                format!("{rad_km:.2} km")
+            };
 
             toast_text.0 = format!(
-                ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {:.0} km  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
+                ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
                 body.name.to_uppercase(),
                 type_name,
                 mass_str,
-                rad_km,
+                rad_str,
                 dist_au,
                 speed_km_s,
                 temp.0,
@@ -262,6 +245,19 @@ fn update_bottom_timer(text: &mut Text, sim_time: &SimTime, time_warp: &TimeWarp
             yr / 1_000.0,
             yr / 1_000.0
         )
+    } else if yr < 0.01 {
+        let total_sec = yr * TimeWarp::SECONDS_PER_YEAR;
+        if total_sec < 60.0 {
+            format!("{total_sec:.1} Seconds")
+        } else if total_sec < 3600.0 {
+            format!("{:.1} Minutes ({total_sec:.0}s)", total_sec / 60.0)
+        } else if total_sec < 86400.0 {
+            let hours = total_sec / 3600.0;
+            format!("{hours:.1} Hours ({hours:.1}h)")
+        } else {
+            let days = yr * 365.25;
+            format!("{days:.2} Days ({yr:.4} yr)")
+        }
     } else {
         format!("{yr:.2} Years")
     };
@@ -673,6 +669,10 @@ fn update_inspector_body_telemetry(
     bodies_query: &HudBodiesQuery,
     quasi_hud_query: &Query<&BlackHoleStarState>,
     jet_hud_query: &Query<&RelativisticJetState>,
+    space_weather_hud_query: &Query<(
+        Option<&crate::simulation::space_weather::AuroralOvalState>,
+        Option<&crate::simulation::space_weather::StellarFlareState>,
+    )>,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
 ) {
@@ -712,7 +712,14 @@ fn update_inspector_body_telemetry(
     let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
     let mass_str = format_mass_string(mass.0);
-    let radius_km = rad.0 * AU_TO_KM;
+    let radius_km = (rad.0 * AU_TO_KM).max(0.01);
+    let rad_disp = if radius_km >= 100.0 {
+        format!("{radius_km:.0} km")
+    } else if radius_km >= 10.0 {
+        format!("{radius_km:.1} km")
+    } else {
+        format!("{radius_km:.2} km")
+    };
     let density_g_cm3 = (comp.average_density() * SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0))
         .clamp(0.01, 20.0);
     let period_str = format_orbital_period_string(dist_au, body.body_type, phase_mgr.star_mass);
@@ -763,11 +770,11 @@ fn update_inspector_body_telemetry(
     };
 
     text.0 = format!(
-        ">> {} [{}]\nMass: {}\nRadius: {:.0} km ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {}{}",
+        ">> {} [{}]\nMass: {}\nRadius: {} ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {}{}",
         body.name.to_uppercase(),
         format_body_inspector_type(body.body_type).to_uppercase(),
         mass_str,
-        radius_km,
+        rad_disp,
         rad.0,
         density_g_cm3,
         temp.0,
@@ -787,23 +794,33 @@ fn update_inspector_body_telemetry(
     if let Ok(jet) = jet_hud_query.get(selected_entity) {
         super::inspector_panel::append_relativistic_jet_telemetry(&mut text.0, jet);
     }
+
+    if let Ok((opt_aurora, opt_flare)) = space_weather_hud_query.get(selected_entity) {
+        if opt_aurora.is_some() || opt_flare.is_some() {
+            super::inspector_panel::append_space_weather_telemetry(
+                &mut text.0,
+                opt_aurora,
+                opt_flare,
+            );
+        }
+    }
 }
 
 fn format_mass_string(mass_val: f64) -> String {
+    let m_earth = mass_val / EARTH_MASS_SOLAR;
     if mass_val >= 10_000.0 {
         format!("{mass_val:.0} M☉ (Supermassive Seed)")
     } else if mass_val >= 0.01 {
         format!(
-            "{:.3} M_sun ({:.1} M_J)",
-            mass_val,
+            "{mass_val:.3} M_sun ({:.1} M_J)",
             mass_val / JUPITER_MASS_SOLAR
         )
+    } else if m_earth >= 0.01 {
+        format!("{m_earth:.2} M_earth ({mass_val:.4} M_sun)")
+    } else if m_earth >= 1e-4 {
+        format!("{m_earth:.4} M_earth ({mass_val:.2e} M_sun)")
     } else {
-        format!(
-            "{:.2} M_earth ({:.4} M_sun)",
-            mass_val / EARTH_MASS_SOLAR,
-            mass_val
-        )
+        format!("{m_earth:.2e} M_earth ({mass_val:.2e} M_sun)")
     }
 }
 
@@ -865,6 +882,10 @@ pub fn update_hud(
     bodies_query: HudBodiesQuery,
     quasi_hud_query: Query<&BlackHoleStarState>,
     jet_hud_query: Query<&RelativisticJetState>,
+    space_weather_hud_query: Query<(
+        Option<&crate::simulation::space_weather::AuroralOvalState>,
+        Option<&crate::simulation::space_weather::StellarFlareState>,
+    )>,
     mut text_queries: HudTextQueries,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
@@ -908,6 +929,7 @@ pub fn update_hud(
                 &bodies_query,
                 &quasi_hud_query,
                 &jet_hud_query,
+                &space_weather_hud_query,
                 &phase_mgr,
                 &config,
             );

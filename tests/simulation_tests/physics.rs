@@ -709,3 +709,135 @@ fn test_full_simulation_speed_7_stability() {
         census.kuiper_count
     );
 }
+
+#[test]
+fn test_time_warp_real_time_progression() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.insert_resource(TimeWarp {
+        multiplier: TimeWarp::SPEED_REAL_TIME,
+        is_paused: false,
+        step_once: false,
+    });
+    app.add_systems(
+        Update,
+        protostellar::simulation::physics::step_physics_simulation,
+    );
+
+    // Verify speed formatting for real-time
+    let time_warp = app.world().resource::<TimeWarp>();
+    assert_eq!(time_warp.human_readable_speed(), "Real-Time (1s = 1.0s)");
+
+    // Spawn Sun at origin
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(protostellar::utils::constants::SOLAR_RADIUS_AU),
+        SimPosition(bevy::math::DVec3::ZERO),
+        SimVelocity(bevy::math::DVec3::ZERO),
+        SimAcceleration(bevy::math::DVec3::ZERO),
+    ));
+
+    // Spawn Earth at 1 AU with circular orbital velocity (~2*pi AU/yr)
+    let earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(protostellar::utils::constants::EARTH_MASS_SOLAR),
+            Radius(protostellar::utils::constants::EARTH_RADIUS_AU),
+            SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 2.0 * std::f64::consts::PI, 0.0)),
+            SimAcceleration(bevy::math::DVec3::ZERO),
+        ))
+        .id();
+
+    let initial_pos = app.world().get::<SimPosition>(earth).unwrap().0;
+
+    // Run 60 frames (1 wall-clock second at 60 fps)
+    for _ in 0..60 {
+        app.update();
+    }
+
+    let sim_time = app.world().resource::<SimTime>();
+    let elapsed_seconds = sim_time.elapsed_years * TimeWarp::SECONDS_PER_YEAR;
+
+    // In 60 frames, simulation time must have advanced by exactly 1.0 second!
+    assert!(
+        (elapsed_seconds - 1.0).abs() < 1e-4,
+        "Real-time warp must advance exactly 1.0 second in 60 frames, got {elapsed_seconds:.6}s"
+    );
+
+    // Earth moves ~29.78 km/s in real life (~1.99e-7 AU in 1 second)
+    let new_pos = app.world().get::<SimPosition>(earth).unwrap().0;
+    let distance_traveled_au = (new_pos - initial_pos).length();
+    let distance_traveled_km = distance_traveled_au * protostellar::utils::constants::AU_TO_KM;
+
+    assert!(
+        (distance_traveled_km - 29.78).abs() < 0.5,
+        "In 1 real second, Earth should travel ~29.78 km, got {distance_traveled_km:.2} km"
+    );
+}
+
+#[test]
+fn test_time_warp_keyboard_presets_1_through_8() {
+    use protostellar::game::time_control::handle_time_control_input;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<TimeWarp>();
+    app.add_systems(Update, handle_time_control_input);
+
+    let speed_tests = [
+        (
+            KeyCode::Digit1,
+            TimeWarp::SPEED_REAL_TIME,
+            "Real-Time (1s = 1.0s)",
+        ),
+        (KeyCode::Digit2, 1.0, "1.0x (1s = 11.0 days)"),
+        (KeyCode::Digit3, 10.0, "10x (1s = 3.6 months)"),
+        (KeyCode::Digit4, 100.0, "100x (1s = 3.0 yr)"),
+        (KeyCode::Digit5, 1000.0, "1000x (1s = 30.0 yr)"),
+        (KeyCode::Digit6, 10000.0, "10000x (1s = 300.0 yr)"),
+        (KeyCode::Digit7, 100_000.0, "100000x (1s = 3.0k yr)"),
+        (KeyCode::Digit8, 1_000_000.0, "1000000x (1s = 30.0k yr)"),
+    ];
+
+    for (key, expected_multiplier, expected_desc) in speed_tests {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(key);
+
+        let time_warp = app.world().resource::<TimeWarp>();
+        assert!(
+            (time_warp.multiplier - expected_multiplier).abs() < 1e-9,
+            "Key {:?} should set multiplier {}, got {}",
+            key,
+            expected_multiplier,
+            time_warp.multiplier
+        );
+        assert_eq!(
+            time_warp.human_readable_speed(),
+            expected_desc,
+            "Key {:?} speed description mismatch",
+            key
+        );
+    }
+}

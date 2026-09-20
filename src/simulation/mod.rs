@@ -14,6 +14,7 @@ pub mod relativity;
 pub mod resources;
 pub mod scenarios;
 pub mod serialization;
+pub mod space_weather;
 pub mod telemetry;
 pub mod terraforming;
 pub mod thermodynamics;
@@ -24,8 +25,12 @@ use bevy::prelude::*;
 pub use crate::simulation::geology::{
     apply_epoch_to_world, calculate_continental_drift_phase, calculate_ocean_oxidation_progress,
     calculate_oxygen_level_pal, calculate_supercontinent_aggregation,
-    calculate_vegetation_expansion, sync_geological_evolution_system, GeologicalEpoch,
-    GeologicalState, TimelineScrubber,
+    calculate_vegetation_expansion, sync_geological_evolution_system, EpochTargetPlanet,
+    GeologicalEpoch, GeologicalState, TimelineScrubber,
+};
+pub use crate::simulation::space_weather::{
+    update_planetary_auroral_ovals_system, update_stellar_flares_system, AuroralOvalState,
+    CmeShockwaveEvent, GeomagneticStormLevel, StellarFlareState,
 };
 
 use crate::simulation::accretion::*;
@@ -89,6 +94,7 @@ impl Plugin for SimulationPlugin {
             .add_message::<GravitationalWaveMergerEvent>()
             .add_message::<AtmosphericStrippedEvent>()
             .add_message::<KozaiDisruptionEvent>()
+            .add_message::<CmeShockwaveEvent>()
             .add_systems(Startup, setup_simulation)
             .add_systems(
                 Update,
@@ -125,6 +131,8 @@ impl Plugin for SimulationPlugin {
                     detect_hierarchical_triples.after(step_physics_simulation),
                     update_kozai_lidov_evolution.after(detect_hierarchical_triples),
                     sync_geological_evolution_system.after(update_thermodynamics),
+                    update_stellar_flares_system.after(step_physics_simulation),
+                    update_planetary_auroral_ovals_system.after(update_stellar_flares_system),
                 ),
             )
             .init_resource::<TimelineScrubber>();

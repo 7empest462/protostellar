@@ -49,7 +49,7 @@ pub fn detect_hierarchical_triples(
         })
         .collect();
 
-    for (inner_ent, pos, vel, mass, body) in all_bodies_query.iter() {
+    for (inner_ent, pos, vel, _mass, body) in all_bodies_query.iter() {
         if body.body_type.is_star_or_remnant() {
             continue;
         }
@@ -72,11 +72,20 @@ pub fn detect_hierarchical_triples(
             let strength = cand_mass / cand_dist.powi(3);
             if strength > max_quadrupole_strength {
                 max_quadrupole_strength = strength;
-                best_perturber = Some((cand_ent, cand_name.clone(), cand_dist, cand_pos, cand_vel));
+                best_perturber = Some((
+                    cand_ent,
+                    cand_name.clone(),
+                    cand_dist,
+                    cand_pos,
+                    cand_vel,
+                    cand_mass,
+                ));
             }
         }
 
-        if let Some((pert_ent, pert_name, pert_dist, pert_pos, pert_vel)) = best_perturber {
+        if let Some((pert_ent, pert_name, pert_dist, pert_pos, pert_vel, pert_mass)) =
+            best_perturber
+        {
             if !existing_state_query.contains(inner_ent) {
                 // Initialize new state
                 let h_inner = (pos.0 - p_pos.0).cross(vel.0 - p_vel.0);
@@ -85,7 +94,8 @@ pub fn detect_hierarchical_triples(
                 let is_res = is_in_kozai_resonance(i_mut_rad);
                 let e_max = compute_max_eccentricity(0.01, i_mut_rad);
                 let q_min = compute_min_periastron(inner_dist, e_max);
-                let tau_kl = compute_kozai_timescale(inner_dist, pert_dist, p_mass.0, mass.0, 0.0);
+                let tau_kl =
+                    compute_kozai_timescale(inner_dist, pert_dist, p_mass.0, pert_mass, 0.0);
 
                 commands.entity(inner_ent).insert(KozaiLidovState {
                     perturber_entity: Some(pert_ent),

@@ -147,3 +147,190 @@ fn test_late_heavy_bombardment_automatic_phase_transition_at_800_yr() {
         "lhb_state.is_active must be true at T >= 800 yr"
     );
 }
+
+#[test]
+fn test_impact_basin_relaxation_gas_and_ice_giant_rapid_atmospheric_healing() {
+    use protostellar::simulation::accretion::update_impact_basin_relaxation;
+
+    let mut app = App::new();
+    app.insert_resource(TimeWarp::default());
+    let mut sim_time = SimTime::default();
+    sim_time.current_dt_yr = 3.0; // 3 years of simulation time
+    app.insert_resource(sim_time);
+
+    let basin = ImpactBasin {
+        surface_normal: Vec3::X,
+        angular_radius: 0.10,
+        formation_time_yr: 0.0,
+        melt_glow_fraction: 1.0,
+        elongation: 1.0,
+        scar_intensity: 1.0,
+    };
+
+    // Gas Giant
+    let gas_giant = app
+        .world_mut()
+        .spawn((
+            PlanetaryBasins {
+                basins: vec![basin],
+            },
+            CelestialBody {
+                name: "Jupiter".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            Composition::solar_gas(),
+        ))
+        .id();
+
+    // Ice Giant
+    let ice_giant = app
+        .world_mut()
+        .spawn((
+            PlanetaryBasins {
+                basins: vec![basin],
+            },
+            CelestialBody {
+                name: "Neptune".to_string(),
+                body_type: BodyType::IceGiant,
+            },
+            Composition {
+                silicate_frac: 0.20,
+                ice_frac: 0.65,
+                gas_frac: 0.15,
+                metal_frac: 0.0,
+                organics_frac: 0.0,
+            },
+        ))
+        .id();
+
+    // Terrestrial Rocky World (airless)
+    let rocky_world = app
+        .world_mut()
+        .spawn((
+            PlanetaryBasins {
+                basins: vec![basin],
+            },
+            CelestialBody {
+                name: "Mercury".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Composition::rocky(),
+        ))
+        .id();
+
+    app.add_systems(Update, update_impact_basin_relaxation);
+    app.update();
+
+    let gas_basins = app
+        .world()
+        .entity(gas_giant)
+        .get::<PlanetaryBasins>()
+        .unwrap();
+    let ice_basins = app
+        .world()
+        .entity(ice_giant)
+        .get::<PlanetaryBasins>()
+        .unwrap();
+    let rock_basins = app
+        .world()
+        .entity(rocky_world)
+        .get::<PlanetaryBasins>()
+        .unwrap();
+
+    // In 3 years, atmospheric jet streams completely disperse the gas giant and ice giant scars (tau ~ 1.5 yr)
+    assert!(
+        gas_basins.basins.is_empty() || gas_basins.basins[0].scar_intensity < 0.05,
+        "Gas giant atmospheric impact plume must rapidly disperse via zonal shear in <= 3 years"
+    );
+    assert!(
+        ice_basins.basins.is_empty() || ice_basins.basins[0].scar_intensity < 0.05,
+        "Ice giant methane cirrus/vortex plume must rapidly disperse via zonal shear in <= 3 years"
+    );
+
+    // In contrast, the rocky crater on Mercury has barely begun to relax (tau ~ 600 yr)
+    assert!(
+        !rock_basins.basins.is_empty() && rock_basins.basins[0].scar_intensity > 0.95,
+        "Solid rocky crater on airless body must remain prominent after 3 years (scar: {:.3})",
+        rock_basins.basins[0].scar_intensity
+    );
+}
+
+#[test]
+fn test_impact_basin_relaxation_icy_world_timescale() {
+    use protostellar::simulation::accretion::update_impact_basin_relaxation;
+
+    let mut app = App::new();
+    app.insert_resource(TimeWarp::default());
+    let mut sim_time = SimTime::default();
+    sim_time.current_dt_yr = 150.0;
+    app.insert_resource(sim_time);
+
+    let basin = ImpactBasin {
+        surface_normal: Vec3::X,
+        angular_radius: 0.10,
+        formation_time_yr: 0.0,
+        melt_glow_fraction: 1.0,
+        elongation: 1.0,
+        scar_intensity: 1.0,
+    };
+
+    // Icy Moon / Cryo-world (Europa/Enceladus)
+    let icy_world = app
+        .world_mut()
+        .spawn((
+            PlanetaryBasins {
+                basins: vec![basin],
+            },
+            CelestialBody {
+                name: "Europa".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Composition::icy(),
+        ))
+        .id();
+
+    // Airless Rocky Body (Mercury/Moon)
+    let rocky_world = app
+        .world_mut()
+        .spawn((
+            PlanetaryBasins {
+                basins: vec![basin],
+            },
+            CelestialBody {
+                name: "Mercury".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Composition::rocky(),
+        ))
+        .id();
+
+    app.add_systems(Update, update_impact_basin_relaxation);
+    app.update();
+
+    let icy_pb = app
+        .world()
+        .entity(icy_world)
+        .get::<PlanetaryBasins>()
+        .unwrap();
+    let rocky_pb = app
+        .world()
+        .entity(rocky_world)
+        .get::<PlanetaryBasins>()
+        .unwrap();
+
+    let icy_scar = icy_pb.basins[0].scar_intensity;
+    let rocky_scar = rocky_pb.basins[0].scar_intensity;
+
+    // Icy crust relaxes faster than airless rock due to lower yield strength (300 yr vs 600 yr)
+    assert!(
+        icy_scar < rocky_scar,
+        "Icy lithosphere must relax faster ({:.3}) than airless silicate rock ({:.3})",
+        icy_scar,
+        rocky_scar
+    );
+    assert!(
+        (icy_scar - 0.50).abs() < 0.05,
+        "Icy scar after 150 yr with tau=300 yr should be ~0.50 (got {:.3})",
+        icy_scar
+    );
+}

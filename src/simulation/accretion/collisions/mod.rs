@@ -111,7 +111,9 @@ pub fn process_accretion_and_collisions(
     }
 
     for entity in pending_despawns {
-        commands.entity(entity).despawn();
+        if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+            entity_cmd.despawn();
+        }
     }
 }
 
@@ -269,7 +271,7 @@ fn process_body_pair(
     let (r_contact, v_esc, v_rel, effective_collision_radius) =
         compute_effective_collision_radius(config, ctx.star_mass, b1, b2);
 
-    let dt = (config.base_dt_yr * time_warp.multiplier.max(0.01)).min(0.05);
+    let dt = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(0.05);
     let v_rel_vec = b1.vel - b2.vel;
     let (min_dist, r_closest) = compute_closest_approach(r_rel, v_rel_vec, dist, dt);
 

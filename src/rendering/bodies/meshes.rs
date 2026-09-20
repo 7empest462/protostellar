@@ -3,6 +3,8 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use std::f32::consts::PI;
 
+use crate::simulation::components::{BodyType, CelestialBody};
+
 use super::VisualAssets;
 
 /// Recomputes smooth vertex normals for procedural meshes.
@@ -41,14 +43,36 @@ pub fn recompute_mesh_normals(mesh: &mut Mesh) {
     }
 }
 
-/// Procedurally generates an irregular, non-spherical 3D asteroid mesh with triaxial elongation,
-/// multi-octave harmonic noise displacement, and realistic impact crater depressions.
-pub fn generate_irregular_asteroid_mesh(
-    elongation: Vec3,
-    noise_strength: f32,
-    is_bilobate: bool,
-    seed: f32,
-) -> Mesh {
+/// Specialized morphological features for procedural asteroids and comets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinorBodyMorphology {
+    /// Classical elongated / potato triaxial ellipsoid (Eros / Ida / Gaspra).
+    Potato,
+    /// Top-shaped / diamond rubble pile with pronounced equatorial ridge (Bennu / Ryugu / Didymos).
+    SpinningTopRubble,
+    /// Sharp angular collisional fragment with planar cleavage facets (collisional debris).
+    FacetedShard,
+    /// Heavily cratered sub-hydrostatic irregular sphere with massive impact basins (Vesta / Pallas).
+    CrateredSpheroid,
+    /// Dumbbell / peanut contact binary with deep neck constriction (Kleopatra / Itokawa).
+    ContactBinary,
+    /// Flattened oblate disk / loaf with jagged irregular edge (Psyche / Hector).
+    OblatePancake,
+    /// Asymmetric dual-lobe comet with unequal lobes (67P / Churyumov-Gerasimenko, Arrokoth).
+    CometBilobate,
+    /// Smooth-waisted elongated bowling pin with rounded lobes (103P/Hartley 2, Borrelly).
+    CometBowlingPin,
+    /// Rugged pitted nucleus with steep-walled sublimation pit sinkholes (1P/Halley, Tempel 1).
+    CometCrateredNucleus,
+    /// Hyper-elongated razor splinter / interstellar needle (Shoemaker-Levy 9 fragments, Borisov).
+    CometJaggedSplinter,
+    /// Craggy tumbling multi-faceted irregular block (81P/Wild 2).
+    CometIrregularEllipsoid,
+}
+
+/// Procedurally generates an irregular, non-spherical 3D minor body mesh with triaxial elongation,
+/// multi-octave harmonic noise displacement, and specialized morphological features.
+pub fn generate_irregular_minor_body_mesh(morphology: MinorBodyMorphology, seed: f32) -> Mesh {
     let mut sphere = Sphere::new(1.0)
         .mesh()
         .ico(4)
@@ -57,6 +81,20 @@ pub fn generate_irregular_asteroid_mesh(
         sphere.attribute(Mesh::ATTRIBUTE_POSITION)
     else {
         return sphere;
+    };
+
+    let (elongation, noise_strength) = match morphology {
+        MinorBodyMorphology::Potato => (Vec3::new(1.55, 0.95, 0.72), 0.28),
+        MinorBodyMorphology::SpinningTopRubble => (Vec3::new(1.20, 1.30, 1.20), 0.24),
+        MinorBodyMorphology::FacetedShard => (Vec3::new(1.40, 0.85, 0.90), 0.32),
+        MinorBodyMorphology::CrateredSpheroid => (Vec3::new(1.08, 0.96, 1.02), 0.16),
+        MinorBodyMorphology::ContactBinary => (Vec3::new(1.85, 0.82, 0.78), 0.22),
+        MinorBodyMorphology::OblatePancake => (Vec3::new(1.45, 0.58, 1.25), 0.26),
+        MinorBodyMorphology::CometBilobate => (Vec3::new(1.85, 0.82, 0.75), 0.22),
+        MinorBodyMorphology::CometBowlingPin => (Vec3::new(0.85, 0.85, 1.95), 0.20),
+        MinorBodyMorphology::CometCrateredNucleus => (Vec3::new(1.35, 0.95, 0.80), 0.34),
+        MinorBodyMorphology::CometJaggedSplinter => (Vec3::new(0.50, 0.55, 2.30), 0.28),
+        MinorBodyMorphology::CometIrregularEllipsoid => (Vec3::new(1.35, 1.10, 0.90), 0.28),
     };
 
     let mut new_positions = Vec::with_capacity(positions.len());
@@ -77,24 +115,96 @@ pub fn generate_irregular_asteroid_mesh(
 
         let mut r = 1.0 + noise * noise_strength;
 
-        if is_bilobate {
-            let neck_pinch = (v.z * PI).cos().abs();
-            let waist = 1.0 - 0.45 * (1.0 - neck_pinch).powf(2.0);
-            r *= waist;
-        }
-
-        for (c_dir, c_rad, c_depth) in craters {
-            let angle = v.dot(c_dir).clamp(-1.0, 1.0).acos();
-            if angle < c_rad {
-                let norm_dist = angle / c_rad;
-                let bowl = (1.0 - norm_dist * norm_dist).powf(1.5);
-                let rim = if norm_dist > 0.75 {
-                    ((norm_dist - 0.75) / 0.25 * PI).sin() * 0.05
+        match morphology {
+            MinorBodyMorphology::SpinningTopRubble => {
+                let eq_factor = (-v.y * v.y / 0.08).exp();
+                r *= 0.85 + eq_factor * 0.40;
+            }
+            MinorBodyMorphology::FacetedShard => {
+                let planes = [
+                    Vec3::new(0.65, 0.75, 0.10).normalize(),
+                    Vec3::new(-0.70, 0.30, 0.65).normalize(),
+                    Vec3::new(0.20, -0.80, -0.55).normalize(),
+                ];
+                for pl in planes {
+                    let d = v.dot(pl);
+                    if d > 0.45 {
+                        r *= 1.0 - (d - 0.45) * 0.65;
+                    }
+                }
+            }
+            MinorBodyMorphology::CrateredSpheroid => {
+                let sp_dir = Vec3::new(0.05, -0.98, 0.10).normalize();
+                let sp_ang = v.dot(sp_dir).clamp(-1.0, 1.0).acos();
+                if sp_ang < 0.85 {
+                    let sp_dist = sp_ang / 0.85;
+                    let sp_basin = (1.0 - sp_dist * sp_dist).powf(1.8) * 0.28;
+                    let central_peak = if sp_dist < 0.35 {
+                        (1.0 - sp_dist / 0.35).powi(2) * 0.12
+                    } else {
+                        0.0
+                    };
+                    r -= sp_basin;
+                    r += central_peak;
+                }
+            }
+            MinorBodyMorphology::ContactBinary => {
+                let waist = (v.x * PI).cos().abs();
+                let neck = 1.0 - 0.50 * (1.0 - waist).powi(2);
+                r *= neck;
+            }
+            MinorBodyMorphology::OblatePancake => {
+                let azimuth = v.z.atan2(v.x);
+                let edge_wave = (azimuth * 5.0 + seed).sin() * 0.12;
+                r += edge_wave * (1.0 - v.y.abs());
+            }
+            MinorBodyMorphology::CometBilobate => {
+                let neck = (-((v.z - 0.12).powi(2)) / 0.09).exp();
+                r *= 1.0 - neck * 0.42;
+                if v.z > 0.12 {
+                    r *= 1.15;
                 } else {
-                    0.0
-                };
-                r -= bowl * c_depth;
-                r += rim;
+                    r *= 0.95;
+                }
+            }
+            MinorBodyMorphology::CometBowlingPin => {
+                let waist = (v.z * 1.5 * PI).sin().abs();
+                r *= 0.78 + 0.32 * waist;
+            }
+            MinorBodyMorphology::CometCrateredNucleus => {
+                let pit_vents = [
+                    (Vec3::new(0.4, 0.8, 0.4).normalize(), 0.45f32, 0.28f32),
+                    (Vec3::new(-0.6, -0.3, 0.7).normalize(), 0.50f32, 0.25f32),
+                    (Vec3::new(0.2, -0.8, -0.5).normalize(), 0.40f32, 0.24f32),
+                ];
+                for (pv_dir, pv_rad, pv_depth) in pit_vents {
+                    let ang = v.dot(pv_dir).clamp(-1.0, 1.0).acos();
+                    if ang < pv_rad {
+                        let norm_d = ang / pv_rad;
+                        let pit = (1.0 - norm_d * norm_d).sqrt() * pv_depth;
+                        r -= pit;
+                    }
+                }
+            }
+            MinorBodyMorphology::CometJaggedSplinter => {
+                let fluting = (v.y.atan2(v.x) * 6.0 + seed).cos() * 0.16;
+                r += fluting;
+            }
+            MinorBodyMorphology::CometIrregularEllipsoid | MinorBodyMorphology::Potato => {
+                for (c_dir, c_rad, c_depth) in craters {
+                    let angle = v.dot(c_dir).clamp(-1.0, 1.0).acos();
+                    if angle < c_rad {
+                        let norm_dist = angle / c_rad;
+                        let bowl = (1.0 - norm_dist * norm_dist).powf(1.5);
+                        let rim = if norm_dist > 0.75 {
+                            ((norm_dist - 0.75) / 0.25 * PI).sin() * 0.05
+                        } else {
+                            0.0
+                        };
+                        r -= bowl * c_depth;
+                        r += rim;
+                    }
+                }
             }
         }
 
@@ -105,6 +215,20 @@ pub fn generate_irregular_asteroid_mesh(
     sphere.insert_attribute(Mesh::ATTRIBUTE_POSITION, new_positions);
     recompute_mesh_normals(&mut sphere);
     sphere
+}
+
+/// Backwards-compatible asteroid generator forwarding to `generate_irregular_minor_body_mesh`.
+pub fn generate_irregular_asteroid_mesh(
+    _elongation: Vec3,
+    _noise_strength: f32,
+    is_bilobate: bool,
+    seed: f32,
+) -> Mesh {
+    if is_bilobate {
+        generate_irregular_minor_body_mesh(MinorBodyMorphology::CometBilobate, seed)
+    } else {
+        generate_irregular_minor_body_mesh(MinorBodyMorphology::Potato, seed)
+    }
 }
 
 /// Procedurally generates a volumetric conical lighthouse beam mesh for the Pulsar.
@@ -384,6 +508,75 @@ pub fn generate_magnetar_field_loops_mesh() -> Mesh {
     mesh
 }
 
+/// Procedurally generates a smooth 3D flared conical envelope mesh for volumetric comet tails.
+/// The mesh begins as a closed apex at (0, 0, 0) right on the nucleus, eliminating open circular holes,
+/// and smoothly flares outward to r = 1.0 at y = 1.0.
+pub fn generate_comet_tail_envelope_mesh() -> Mesh {
+    let rings = 32;
+    let sectors = 32;
+
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity((rings + 1) * (sectors + 1));
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity((rings + 1) * (sectors + 1));
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity((rings + 1) * (sectors + 1));
+    let mut colors: Vec<[f32; 4]> = Vec::with_capacity((rings + 1) * (sectors + 1));
+    let mut indices: Vec<u32> = Vec::with_capacity(rings * sectors * 6);
+
+    for i in 0..=rings {
+        let t = i as f32 / rings as f32;
+        let y = t;
+        let r = t.powf(0.75);
+
+        let slope = if t > 0.001 {
+            (0.75 * t.powf(-0.25)).min(3.0)
+        } else {
+            1.5
+        };
+
+        for j in 0..=sectors {
+            let theta = (j as f32 / sectors as f32) * 2.0 * PI;
+            let cos_t = theta.cos();
+            let sin_t = theta.sin();
+
+            positions.push([cos_t * r, y, sin_t * r]);
+
+            let n = Vec3::new(cos_t, -slope, sin_t).normalize_or_zero();
+            normals.push([n.x, n.y, n.z]);
+
+            uvs.push([j as f32 / sectors as f32, t]);
+            colors.push([1.0, 1.0, 1.0, 1.0]);
+        }
+    }
+
+    let ring_stride = (sectors + 1) as u32;
+    for i in 0..rings as u32 {
+        for j in 0..sectors as u32 {
+            let v0 = i * ring_stride + j;
+            let v1 = (i + 1) * ring_stride + j;
+            let v2 = (i + 1) * ring_stride + (j + 1);
+            let v3 = i * ring_stride + (j + 1);
+
+            indices.push(v0);
+            indices.push(v1);
+            indices.push(v2);
+
+            indices.push(v0);
+            indices.push(v2);
+            indices.push(v3);
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
 /// Initializes shared visual assets and caches procedural geometries.
 pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     let star_mesh = meshes.add(
@@ -404,24 +597,52 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
             .ico(1)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(6, 4)),
     );
-    let asteroid_potato = meshes.add(generate_irregular_asteroid_mesh(
-        Vec3::new(1.45, 0.95, 0.75),
-        0.28,
-        false,
+    let asteroid_potato = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::Potato,
         1.337,
     ));
-    let asteroid_rubble = meshes.add(generate_irregular_asteroid_mesh(
-        Vec3::new(1.15, 1.10, 0.85),
-        0.35,
-        false,
+    let asteroid_rubble = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::SpinningTopRubble,
         4.242,
     ));
-    let comet_bilobate = meshes.add(generate_irregular_asteroid_mesh(
-        Vec3::new(1.85, 0.80, 0.70),
-        0.22,
-        true,
+    let asteroid_faceted_shard = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::FacetedShard,
+        8.818,
+    ));
+    let asteroid_cratered_spheroid = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::CrateredSpheroid,
+        3.841,
+    ));
+    let asteroid_contact_binary = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::ContactBinary,
+        6.483,
+    ));
+    let asteroid_oblate_pancake = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::OblatePancake,
+        9.999,
+    ));
+
+    let comet_bilobate = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::CometBilobate,
         7.777,
     ));
+    let comet_bowling_pin = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::CometBowlingPin,
+        2.918,
+    ));
+    let comet_cratered_nucleus = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::CometCrateredNucleus,
+        5.555,
+    ));
+    let comet_jagged_splinter = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::CometJaggedSplinter,
+        1.618,
+    ));
+    let comet_irregular_ellipsoid = meshes.add(generate_irregular_minor_body_mesh(
+        MinorBodyMorphology::CometIrregularEllipsoid,
+        9.123,
+    ));
+
     let ring_mesh = meshes.add(Mesh::from(Plane3d::default().mesh().size(1.0, 1.0)));
     let beam_core_mesh = meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(16));
     let beam_sheath_mesh = meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(24));
@@ -435,6 +656,13 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let pulsar_beam_mesh = meshes.add(generate_pulsar_beam_mesh());
     let magnetar_ring_mesh = meshes.add(generate_magnetar_ring_mesh());
     let magnetar_field_loops_mesh = meshes.add(generate_magnetar_field_loops_mesh());
+    let comet_tail_mesh = meshes.add(generate_comet_tail_envelope_mesh());
+    let comet_coma_mesh = meshes.add(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(4)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(24, 16)),
+    );
 
     commands.insert_resource(VisualAssets {
         star_mesh,
@@ -442,7 +670,15 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         atmosphere_mesh,
         asteroid_potato_mesh: asteroid_potato,
         asteroid_rubble_mesh: asteroid_rubble,
+        asteroid_faceted_shard_mesh: asteroid_faceted_shard,
+        asteroid_cratered_spheroid_mesh: asteroid_cratered_spheroid,
+        asteroid_contact_binary_mesh: asteroid_contact_binary,
+        asteroid_oblate_pancake_mesh: asteroid_oblate_pancake,
         comet_bilobate_mesh: comet_bilobate,
+        comet_bowling_pin_mesh: comet_bowling_pin,
+        comet_cratered_nucleus_mesh: comet_cratered_nucleus,
+        comet_jagged_splinter_mesh: comet_jagged_splinter,
+        comet_irregular_ellipsoid_mesh: comet_irregular_ellipsoid,
         particle_mesh,
         ring_mesh,
         beam_core_mesh,
@@ -451,5 +687,104 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         pulsar_beam_mesh,
         magnetar_ring_mesh,
         magnetar_field_loops_mesh,
+        comet_tail_mesh,
+        comet_coma_mesh,
     });
+}
+
+/// Selects an asteroid mesh based on canonical astronomical morphology or deterministic name hash.
+pub fn select_asteroid_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<Mesh> {
+    let lower = name.to_lowercase();
+    if lower.contains("vesta")
+        || lower.contains("pallas")
+        || lower.contains("hygiea")
+        || lower.contains("ceres")
+    {
+        visual_assets.asteroid_cratered_spheroid_mesh.clone()
+    } else if lower.contains("psyche") || lower.contains("hector") {
+        visual_assets.asteroid_oblate_pancake_mesh.clone()
+    } else if lower.contains("bennu")
+        || lower.contains("ryugu")
+        || lower.contains("mathilde")
+        || lower.contains("didymos")
+    {
+        visual_assets.asteroid_rubble_mesh.clone()
+    } else if lower.contains("kleopatra") || lower.contains("itokawa") || lower.contains("castalia")
+    {
+        visual_assets.asteroid_contact_binary_mesh.clone()
+    } else if lower.contains("eros") || lower.contains("ida") || lower.contains("gaspra") {
+        visual_assets.asteroid_potato_mesh.clone()
+    } else {
+        let hash: usize = name.bytes().fold(0usize, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(b as usize)
+        });
+        match hash % 6 {
+            0 => visual_assets.asteroid_potato_mesh.clone(),
+            1 => visual_assets.asteroid_rubble_mesh.clone(),
+            2 => visual_assets.asteroid_faceted_shard_mesh.clone(),
+            3 => visual_assets.asteroid_cratered_spheroid_mesh.clone(),
+            4 => visual_assets.asteroid_contact_binary_mesh.clone(),
+            _ => visual_assets.asteroid_oblate_pancake_mesh.clone(),
+        }
+    }
+}
+
+/// Selects a comet nucleus mesh based on canonical astronomical morphology or deterministic name hash.
+pub fn select_comet_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<Mesh> {
+    let lower = name.to_lowercase();
+    if lower.contains("67p") || lower.contains("churyumov") || lower.contains("arrokoth") {
+        visual_assets.comet_bilobate_mesh.clone()
+    } else if lower.contains("encke") || lower.contains("hartley") || lower.contains("borrelly") {
+        visual_assets.comet_bowling_pin_mesh.clone()
+    } else if lower.contains("halley") || lower.contains("tempel") || lower.contains("hale-bopp") {
+        visual_assets.comet_cratered_nucleus_mesh.clone()
+    } else if lower.contains("borisov") || lower.contains("oumuamua") || lower.contains("shoemaker")
+    {
+        visual_assets.comet_jagged_splinter_mesh.clone()
+    } else if lower.contains("wild") || lower.contains("swift") {
+        visual_assets.comet_irregular_ellipsoid_mesh.clone()
+    } else {
+        let hash: usize = name.bytes().fold(0usize, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(b as usize)
+        });
+        match hash % 5 {
+            0 => visual_assets.comet_bilobate_mesh.clone(),
+            1 => visual_assets.comet_bowling_pin_mesh.clone(),
+            2 => visual_assets.comet_cratered_nucleus_mesh.clone(),
+            3 => visual_assets.comet_jagged_splinter_mesh.clone(),
+            _ => visual_assets.comet_irregular_ellipsoid_mesh.clone(),
+        }
+    }
+}
+
+/// Selects visual mesh for any celestial body type.
+pub fn select_body_mesh(body: &CelestialBody, visual_assets: &VisualAssets) -> Handle<Mesh> {
+    if body.body_type.is_star_or_remnant() {
+        visual_assets.star_mesh.clone()
+    } else {
+        let lower = body.name.to_lowercase();
+        let is_comet_name = lower.contains("comet")
+            || lower.contains("halley")
+            || lower.contains("encke")
+            || lower.contains("67p")
+            || lower.contains("churyumov")
+            || lower.contains("bopp")
+            || lower.contains("borisov")
+            || lower.contains("oumuamua")
+            || lower.contains("wild");
+
+        if body.body_type == BodyType::Comet || is_comet_name {
+            select_comet_mesh(&body.name, visual_assets)
+        } else if body.body_type == BodyType::Asteroid || body.body_type == BodyType::Planetesimal {
+            if lower.contains("icy") || lower.contains("ice") {
+                select_comet_mesh(&body.name, visual_assets)
+            } else {
+                select_asteroid_mesh(&body.name, visual_assets)
+            }
+        } else if body.body_type == BodyType::DustGrain {
+            visual_assets.particle_mesh.clone()
+        } else {
+            visual_assets.planet_mesh.clone()
+        }
+    }
 }

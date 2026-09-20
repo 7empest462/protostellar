@@ -482,6 +482,37 @@ fn handle_ignite_star(selected_query: &mut SelectedWorldQuery, toast: &mut Notif
     }
 }
 
+fn handle_trigger_cme(
+    selected_query: &mut SelectedWorldQuery,
+    commands: &mut Commands,
+    toast: &mut NotificationToast,
+) {
+    let mut star_opt = selected_query
+        .iter_mut()
+        .find(|(.., is_star, _, _, _, _)| is_star.is_some());
+    if let Some((star_ent, _, _, _, _, _, _, _, Some(ref mut ignition), _, _, _)) = star_opt {
+        ignition.shockwave_radius = 0.1;
+        commands
+            .entity(star_ent)
+            .insert(crate::simulation::space_weather::StellarFlareState {
+                flare_frequency: 1.5,
+                current_flare_intensity: 6.5,
+                flare_decay_timer_years: 0.15,
+                cme_front_radius_au: 0.05,
+                cme_speed_au_day: 0.35,
+                cme_density_multiplier: 25.0,
+                cme_active: true,
+            });
+        toast.message =
+            "☀️ Coronal Mass Ejection Erupted! Plasma Shockwave Propagating Interplanetary!"
+                .to_string();
+        toast.timer = 6.0;
+    } else {
+        toast.message = "⚠️ No central star found in system!".to_string();
+        toast.timer = 3.0;
+    }
+}
+
 fn handle_shatter_and_life(
     action: &UiButtonAction,
     selected_query: &mut SelectedWorldQuery,
@@ -612,6 +643,10 @@ pub fn handle_body_editor_action(
         }
         UiButtonAction::IgniteStar => {
             handle_ignite_star(selected_query, toast);
+            true
+        }
+        UiButtonAction::TriggerCoronalMassEjection => {
+            handle_trigger_cme(selected_query, commands, toast);
             true
         }
         UiButtonAction::TriggerLhb => {

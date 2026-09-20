@@ -172,6 +172,7 @@ pub fn handle_load_scenario_events(
         &mut Visibility,
         With<crate::rendering::particle_swarm::ParticleSwarmMesh>,
     >,
+    mut opt_scrubber: Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
 ) {
     for event in events.read() {
         let preset = event.0;
@@ -182,6 +183,14 @@ pub fn handle_load_scenario_events(
                 cmd.despawn();
             }
         }
+
+        if let Some(ref mut scrubber) = opt_scrubber {
+            **scrubber = crate::simulation::geology::types::TimelineScrubber::default();
+        }
+        player_state.hovered_entity = None;
+        player_state.impulse_target_entity = None;
+        player_state.tractor_position = None;
+        player_state.impulse_delta_v = None;
 
         sim_time.elapsed_years = 0.0;
         sim_time.current_dt_yr = 0.001;

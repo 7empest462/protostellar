@@ -8,6 +8,8 @@ mod atmosphere_escape;
 mod atmospheres;
 #[path = "simulation_tests/camera.rs"]
 mod camera;
+#[path = "simulation_tests/comets.rs"]
+mod comets;
 #[path = "simulation_tests/geological_epochs.rs"]
 mod geological_epochs;
 #[path = "simulation_tests/gpu_and_particles.rs"]
@@ -22,6 +24,8 @@ mod late_heavy_bombardment;
 mod lifecycle_and_visuals;
 #[path = "simulation_tests/magma_and_crust.rs"]
 mod magma_and_crust;
+#[path = "simulation_tests/magnetospheres.rs"]
+mod magnetospheres;
 #[path = "simulation_tests/mechanics.rs"]
 mod mechanics;
 #[path = "simulation_tests/orbits_and_effects.rs"]
@@ -46,6 +50,8 @@ mod scenarios;
 mod shadows_and_eclipses;
 #[path = "simulation_tests/slingshot.rs"]
 mod slingshot;
+#[path = "simulation_tests/space_weather.rs"]
+mod space_weather;
 #[path = "simulation_tests/telemetry.rs"]
 mod telemetry;
 #[path = "simulation_tests/terraforming.rs"]

@@ -71,7 +71,9 @@ pub fn update_guided_bombardment_projectiles(
         )) = target_query.get_mut(proj.target_entity)
         else {
             // Target was consumed, shattered, or despawned
-            commands.entity(p_ent).despawn();
+            if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
+                entity_cmd.despawn();
+            }
             continue;
         };
 
@@ -148,7 +150,9 @@ pub fn update_guided_bombardment_projectiles(
             impact_velocity_km_s: delivery.impact_speed_km_s,
         });
 
-        commands.entity(p_ent).despawn();
+        if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
+            entity_cmd.despawn();
+        }
     }
 }
 
@@ -168,14 +172,15 @@ fn apply_impact_delivery_to_target(
     if let Some(mut vol) = opt_vol {
         vol.delivered_water_m_earth += total_delivered_water;
         vol.cometary_impact_count += 1;
-        vol.ocean_coverage_frac = (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
+        vol.ocean_coverage_frac =
+            ((vol.delivered_water_m_earth / 0.0006) * 0.71).clamp(0.0, 0.98) as f32;
         vol.atmospheric_pressure_bar =
             (vol.atmospheric_pressure_bar + delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
                 .clamp(0.0, 150.0);
     } else {
         commands.entity(target_ent).insert(VolatileInventory {
             delivered_water_m_earth: total_delivered_water,
-            ocean_coverage_frac: (total_delivered_water / 0.0006).clamp(0.0, 0.85) as f32,
+            ocean_coverage_frac: ((total_delivered_water / 0.0006) * 0.71).clamp(0.0, 0.98) as f32,
             atmospheric_pressure_bar: (delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
                 .clamp(0.01, 150.0),
             cometary_impact_count: 1,

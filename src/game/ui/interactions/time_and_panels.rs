@@ -22,31 +22,38 @@ pub fn handle_time_action(
             toast.timer = 3.5;
             true
         }
+        UiButtonAction::TimeSpeedRealtime => {
+            time_warp.multiplier = TimeWarp::SPEED_REAL_TIME;
+            time_warp.is_paused = false;
+            toast.message = "▶ Speed: Real-time (1s = 1.0s)".to_string();
+            toast.timer = 3.5;
+            true
+        }
         UiButtonAction::TimeSpeed1 => {
             time_warp.multiplier = 1.0;
             time_warp.is_paused = false;
-            toast.message = "▶ Speed: 1.0x (Real-time flow)".to_string();
+            toast.message = "▶ Speed: 1.0x (1s = 11.0 days)".to_string();
             toast.timer = 3.5;
             true
         }
         UiButtonAction::TimeSpeed100 => {
             time_warp.multiplier = 100.0;
             time_warp.is_paused = false;
-            toast.message = "⏩ Speed: 100x Accelerated".to_string();
+            toast.message = "⏩ Speed: 100x (1s = 3.0 yr)".to_string();
             toast.timer = 3.5;
             true
         }
         UiButtonAction::TimeSpeed10k => {
             time_warp.multiplier = 10_000.0;
             time_warp.is_paused = false;
-            toast.message = "⚡ Speed: 10,000x (~10 kyr/sec)".to_string();
+            toast.message = "⚡ Speed: 10,000x (1s = 300 yr)".to_string();
             toast.timer = 3.5;
             true
         }
         UiButtonAction::TimeSpeed1M => {
             time_warp.multiplier = 1_000_000.0;
             time_warp.is_paused = false;
-            toast.message = "🚀 Speed: 1,000,000x (~1 Myr/sec)".to_string();
+            toast.message = "🚀 Speed: 1,000,000x (1s = 30.0k yr)".to_string();
             toast.timer = 3.5;
             true
         }

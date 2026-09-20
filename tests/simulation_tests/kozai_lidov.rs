@@ -324,3 +324,70 @@ fn test_kozai_hierarchical_triple_scenario_spawn_and_ecs_integration() {
         "q_min should plunge within 1.0 AU"
     );
 }
+
+#[test]
+fn test_kozai_lidov_detection_uses_perturber_mass() {
+    use protostellar::simulation::components::*;
+
+    let mut app = App::new();
+    app.init_resource::<KozaiLidovConfig>();
+
+    // Primary central star (1 M_sun)
+    app.world_mut().spawn((
+        CentralStar,
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Mass(1.0),
+        Radius(0.00465),
+        CelestialBody {
+            name: "Central Star".to_string(),
+            body_type: BodyType::Protostar,
+        },
+    ));
+
+    // Inner low-mass body: Asteroid (1e-10 M_sun) at 1 AU
+    let inner_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 6.28)),
+            Mass(1e-10),
+            CelestialBody {
+                name: "Inner Asteroid".to_string(),
+                body_type: BodyType::Asteroid,
+            },
+        ))
+        .id();
+
+    // Outer massive perturber: Giant planet (1e-3 M_sun) at 5 AU
+    app.world_mut().spawn((
+        SimPosition(DVec3::new(0.0, 4.0, 3.0)), // 5 AU with inclination
+        SimVelocity(DVec3::new(2.8, 0.0, 0.0)),
+        Mass(1e-3),
+        CelestialBody {
+            name: "Outer Giant".to_string(),
+            body_type: BodyType::GasGiant,
+        },
+    ));
+
+    app.add_systems(Update, detect_hierarchical_triples);
+    app.update();
+
+    let state = app
+        .world()
+        .get::<KozaiLidovState>(inner_ent)
+        .expect("Inner asteroid must have detected KozaiLidovState");
+
+    // Kozai timescale tau_kl with perturber mass 1e-3 should be order ~26,000 years.
+    // If the inner body's mass (1e-10) had been used, tau_kl would be ~ 2.6e11 years!
+    assert!(
+        state.kozai_period_years < 100_000.0,
+        "Kozai timescale should be ~26,000 years with perturber mass 1e-3, but got {}",
+        state.kozai_period_years
+    );
+    assert!(
+        state.kozai_period_years > 5_000.0,
+        "Kozai timescale should be > 5,000 years, got {}",
+        state.kozai_period_years
+    );
+}

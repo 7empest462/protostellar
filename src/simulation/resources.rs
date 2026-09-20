@@ -218,7 +218,16 @@ impl Default for TimeWarp {
 }
 
 impl TimeWarp {
-    pub const MIN_SPEED: f64 = 0.01;
+    /// Julian year length in seconds: 365.25 * 86,400 = 31,557,600 s.
+    pub const SECONDS_PER_YEAR: f64 = 31_557_600.0;
+    /// Baseline simulation rate at 60 fps with base dt = 0.0005 yr: 60 * 0.0005 = 0.03 yr/s.
+    pub const BASE_YEARS_PER_SEC: f64 = 0.03;
+    /// Multiplier corresponding to authentic Real-Time progression (1 wall-clock second = 1 simulation second).
+    /// 1 / (0.03 * 31,557,600) = 1 / 946,728 ≈ 1.05626958e-6.
+    pub const SPEED_REAL_TIME: f64 = 1.0 / (Self::BASE_YEARS_PER_SEC * Self::SECONDS_PER_YEAR);
+
+    /// Minimum allowable time multiplier (allows real-time and sub-second slow motion).
+    pub const MIN_SPEED: f64 = 1.0e-7;
     pub const MAX_SPEED: f64 = 1_000_000.0;
 
     /// Multiplies the speed logarithmically (e.g. by 1.25x).
@@ -242,13 +251,23 @@ impl TimeWarp {
             return "PAUSED".to_string();
         }
 
-        let years_per_sec = 0.03 * self.multiplier; // 60 fps * 0.0005 yr = 0.03 yr/s @ 1x
-        if years_per_sec < 0.0833 {
+        let years_per_sec = Self::BASE_YEARS_PER_SEC * self.multiplier;
+        let sec_per_sec = years_per_sec * Self::SECONDS_PER_YEAR;
+
+        if (sec_per_sec - 1.0).abs() < 0.05 {
+            "Real-Time (1s = 1.0s)".to_string()
+        } else if sec_per_sec < 60.0 {
+            format!("1s = {sec_per_sec:.1}s")
+        } else if sec_per_sec < 3600.0 {
+            format!("1s = {:.1} min", sec_per_sec / 60.0)
+        } else if sec_per_sec < 86400.0 {
+            format!("1s = {:.1} hr", sec_per_sec / 3600.0)
+        } else if years_per_sec < 0.0833 {
             let days = years_per_sec * 365.25;
             format!("{:.1}x (1s = {:.1} days)", self.multiplier, days)
         } else if years_per_sec < 1.0 {
             let months = years_per_sec * 12.0;
-            format!("{:.1}x (1s = {:.1} months)", self.multiplier, months)
+            format!("{:.0}x (1s = {:.1} months)", self.multiplier, months)
         } else if years_per_sec < 1000.0 {
             format!("{:.0}x (1s = {:.1} yr)", self.multiplier, years_per_sec)
         } else if years_per_sec < 1_000_000.0 {
@@ -338,6 +357,8 @@ pub enum DiagnosticOverlayMode {
     Realistic,
     SpectralComposition,
     HillSpheresAndGaps,
+    /// GPU-accelerated 3D volumetric magnetic field loops and magnetospheres
+    MagneticFields,
     /// Hide all diagnostic overlays for a clean view (no extra lines/gizmos)
     Hidden,
 }
@@ -347,7 +368,8 @@ impl DiagnosticOverlayMode {
         match self {
             Self::Realistic => Self::SpectralComposition,
             Self::SpectralComposition => Self::HillSpheresAndGaps,
-            Self::HillSpheresAndGaps => Self::Hidden,
+            Self::HillSpheresAndGaps => Self::MagneticFields,
+            Self::MagneticFields => Self::Hidden,
             Self::Hidden => Self::Realistic,
         }
     }
@@ -357,7 +379,8 @@ impl DiagnosticOverlayMode {
             Self::Realistic => "Realistic PBR",
             Self::SpectralComposition => "Spectral Composition Map",
             Self::HillSpheresAndGaps => "Hill Spheres & Annular Gaps",
-            Self::Hidden => "Hidden",
+            Self::MagneticFields => "Magnetic Fields (GPU)",
+            Self::Hidden => "No Overlay",
         }
     }
 }

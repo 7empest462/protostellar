@@ -412,7 +412,7 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 8] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 9] = [
                 (
                     UiButtonAction::IgniteStar,
                     "Ignite [I]",
@@ -460,6 +460,12 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
                     "Strip Atm",
                     Color::srgba(0.20, 0.10, 0.26, 0.9),
                     Color::srgb(0.80, 0.55, 1.0),
+                ),
+                (
+                    UiButtonAction::TriggerCoronalMassEjection,
+                    "⚡ CME Flare",
+                    Color::srgba(0.28, 0.14, 0.02, 0.9),
+                    Color::srgb(1.0, 0.70, 0.15),
                 ),
             ];
             for (act, label, bg, border) in BUTTONS {
@@ -611,4 +617,68 @@ pub fn append_relativistic_jet_telemetry(out: &mut String, jet: &RelativisticJet
         jet.synchrotron_luminosity,
         jet.spectral_index,
     );
+}
+
+/// Formats space weather telemetry (stellar CME flares and planetary auroral ovals) for the Target Inspector panel.
+pub fn append_space_weather_telemetry(
+    out: &mut String,
+    opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
+    opt_flare: Option<&crate::simulation::space_weather::StellarFlareState>,
+) {
+    use std::fmt::Write;
+    if let Some(flare) = opt_flare {
+        let flare_status = if flare.current_flare_intensity > 0.1 {
+            let class_str = if flare.current_flare_intensity >= 5.0 {
+                format!("SUPERFLARE ({:.1}x)", flare.current_flare_intensity)
+            } else if flare.current_flare_intensity >= 2.0 {
+                format!("X-CLASS ({:.1})", flare.current_flare_intensity * 2.0)
+            } else {
+                format!("M-CLASS ({:.1})", flare.current_flare_intensity * 5.0)
+            };
+            format!(
+                "ACTIVE [{class_str}] (Decay: {:.2} yr)",
+                flare.flare_decay_timer_years
+            )
+        } else {
+            "Quiescent / Solar Minimum".to_string()
+        };
+
+        let cme_str = if flare.cme_active {
+            let speed_km_s =
+                flare.cme_speed_au_day * (crate::utils::constants::AU_TO_KM as f32) / 86400.0;
+            format!(
+                "PROPAGATING | Front: {:.2} AU | Speed: {:.0} km/s ({:.2} AU/day) | Shock: {:.0}x",
+                flare.cme_front_radius_au,
+                speed_km_s,
+                flare.cme_speed_au_day,
+                flare.cme_density_multiplier
+            )
+        } else {
+            "No active CME shock front".to_string()
+        };
+
+        let _ = write!(
+            out,
+            "\n--------------------------------------------------\n  >> STELLAR CORONA & SPACE WEATHER <<\n--------------------------------------------------\n  • Coronal Activity: {}\n  • CME Shockwave:    {}\n  • Flare Frequency:  {:.1} / year\n--------------------------------------------------",
+            flare_status,
+            cme_str,
+            flare.flare_frequency
+        );
+    }
+
+    if let Some(aurora) = opt_aurora {
+        let lat_deg = 90.0 - aurora.oval_colatitude_rad.to_degrees();
+        let width_deg = aurora.oval_width_rad.to_degrees();
+        let _ = write!(
+            out,
+            "\n--------------------------------------------------\n  >> MAGNETOSPHERE & AURORAL OVAL <<\n--------------------------------------------------\n  • Space Weather:     {} (Kp {:1.1})\n  • Magnetopause:      {:.1} Rp (Subsolar Standoff)\n  • Auroral Footprint: ±{:.1}° Lat (θ_A = {:.1}°) | Width: {:.1}°\n  • Auroral Emission:  {:.0}% [O 557.7nm / N₂⁺ 391.4nm]\n--------------------------------------------------",
+            aurora.storm_level.label(),
+            aurora.geomagnetic_kp_index,
+            aurora.magnetopause_standoff_rp,
+            lat_deg,
+            aurora.oval_colatitude_rad.to_degrees(),
+            width_deg,
+            aurora.auroral_intensity * 100.0
+        );
+    }
 }

@@ -253,3 +253,41 @@ fn test_slingshot_trajectory_prediction_integration() {
         first_pt.x
     );
 }
+
+#[test]
+fn test_hyperbolic_kepler_near_asymptote_stability() {
+    let star_mass = 1.0;
+    // Hyperbolic orbit: e = 1.5, a = -2.0 AU
+    // Asymptote is at cos(nu_inf) = -1/e = -1/1.5 = -0.66667 (nu_inf ~ 2.3005 rad)
+    let e: f64 = 1.5;
+    let nu_inf = (-1.0 / e).acos();
+    // Test true anomalies very close to the asymptote
+    for delta_nu in [1e-2, 1e-4, 1e-6] {
+        let nu_near_asymptote = nu_inf - delta_nu;
+        let elements = OrbitalElements {
+            semi_major_axis: -2.0,
+            eccentricity: e,
+            true_anomaly: nu_near_asymptote,
+            periapsis_dir: DVec3::X,
+            semilatus_dir: DVec3::Z,
+            ..Default::default()
+        };
+
+        let result = propagate_kepler_position_velocity(&elements, 0.05, star_mass);
+        assert!(
+            result.is_some(),
+            "Propagation near asymptote should succeed"
+        );
+        let (pos, vel) = result.expect("propagation result");
+        assert!(
+            pos.is_finite(),
+            "Position near asymptote must be finite, got {:?}",
+            pos
+        );
+        assert!(
+            vel.is_finite(),
+            "Velocity near asymptote must be finite, got {:?}",
+            vel
+        );
+    }
+}

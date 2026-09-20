@@ -143,7 +143,7 @@ pub fn solve_kepler_hyperbolic(mean_anomaly_h: f64, eccentricity: f64) -> f64 {
             break;
         }
         let delta = f / f_prime;
-        h -= delta;
+        h = (h - delta).clamp(-700.0, 700.0);
         if delta.abs() < 1e-11 {
             break;
         }
@@ -194,9 +194,10 @@ pub fn propagate_kepler_position_velocity(
         let a = elements.semi_major_axis.abs().max(0.01);
         let n_h = (mu / a.powi(3)).sqrt();
 
-        let cosh_h0 = ((e + nu_0.cos()) / (1.0 + e * nu_0.cos())).max(1.0);
-        let sinh_h0 = (e * e - 1.0).max(0.0).sqrt() * nu_0.sin() / (1.0 + e * nu_0.cos());
-        let h_0 = (cosh_h0 + sinh_h0).ln();
+        let denom = (1.0 + e * nu_0.cos()).abs().max(1e-6);
+        let cosh_h0 = ((e + nu_0.cos()) / denom).max(1.0);
+        let sinh_h0 = (e * e - 1.0).max(0.0).sqrt() * nu_0.sin() / denom;
+        let h_0 = (cosh_h0 + sinh_h0).max(1e-12).ln();
         let m_h0 = e * h_0.sinh() - h_0;
 
         let m_ht = m_h0 + n_h * delta_t_yr;

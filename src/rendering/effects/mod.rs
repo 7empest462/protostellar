@@ -50,10 +50,11 @@ fn draw_star_effects(
     overlay_mode: DiagnosticOverlayMode,
     elapsed: f32,
 ) {
-    // When overlays are hidden we intentionally skip drawing any star-related
-    // gizmos (magnetospheres, jets, ignition shockwaves, nebulae, etc.) so the
-    // cinematic view remains clean.
-    if overlay_mode == DiagnosticOverlayMode::Hidden {
+    // When overlays are hidden or in GPU MagneticFields mode, skip star-related
+    // line gizmos so the 3D visual field representations remain pristine.
+    if overlay_mode == DiagnosticOverlayMode::Hidden
+        || overlay_mode == DiagnosticOverlayMode::MagneticFields
+    {
         return;
     }
     if let Some(evo) = opt_evo {
@@ -232,15 +233,17 @@ fn draw_single_body_gizmos(
     let body_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
     let r_orbit = pos.0.length() as f32;
 
-    let should_draw_tail = match player_state.orbit_mode {
-        OrbitVisualizationMode::Off => false,
-        // SelectedOnly: only the selected body — no comet/tail exceptions.
-        OrbitVisualizationMode::SelectedOnly => is_selected,
-        OrbitVisualizationMode::All => true,
-    };
-    // Do not draw cometary tails when overlays are hidden.
-    let should_draw_tail =
-        should_draw_tail && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
+    let is_active_escape = opt_tail.is_some_and(|t| t.is_active && t.tail_length_au > 0.05);
+
+    let should_draw_tail = if is_active_escape {
+        match player_state.orbit_mode {
+            OrbitVisualizationMode::Off => false,
+            OrbitVisualizationMode::SelectedOnly => is_selected,
+            OrbitVisualizationMode::All => true,
+        }
+    } else {
+        false
+    } && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
 
     if should_draw_tail {
         draw_cometary_escape_tails(
@@ -248,7 +251,6 @@ fn draw_single_body_gizmos(
             body_vec,
             params.star_vec,
             vel,
-            comp,
             opt_tail,
             opt_rad,
             config,
@@ -257,7 +259,9 @@ fn draw_single_body_gizmos(
     }
 
     if let Some(diff) = opt_diff {
-        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden
+            && player_state.overlay_mode != DiagnosticOverlayMode::MagneticFields
+        {
             draw_planetary_magnetospheres(gizmos, body_vec, params.star_vec, diff, opt_spin);
         }
     }
@@ -271,6 +275,7 @@ fn draw_single_body_gizmos(
                 || opt_satellite.is_some()
                 || (mass.0 / EARTH_MASS_SOLAR) >= 0.05
                 || body.body_type == BodyType::Comet
+                || body.body_type == BodyType::Asteroid
         }
     } && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
 
@@ -449,13 +454,16 @@ fn should_skip_orbital_gizmos(
     opt_slingshot: Option<&crate::simulation::resources::SlingshotState>,
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
 ) -> bool {
+    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
+        return true;
+    }
+
     let slingshot_dragging = opt_slingshot.is_some_and(|s| s.is_active && s.drag_origin.is_some());
     let has_predictor = opt_predictor.is_some_and(|p| {
         p.is_enabled && (!p.trajectory_points.is_empty() || p.active_encounter.is_some())
     });
 
-    (player_state.orbit_mode == OrbitVisualizationMode::Off
-        || player_state.overlay_mode == DiagnosticOverlayMode::Hidden)
+    player_state.orbit_mode == OrbitVisualizationMode::Off
         && shockwave_pool.shockwaves.is_empty()
         && debris_pool.streams.is_empty()
         && opt_builder.is_none()

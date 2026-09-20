@@ -90,14 +90,14 @@ pub fn deliver_volatiles_and_crater(
                     vol.delivered_water_m_earth += d_water_earth;
                     vol.cometary_impact_count += 1;
                     vol.ocean_coverage_frac =
-                        (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32;
+                        ((vol.delivered_water_m_earth / 0.0006) * 0.71).clamp(0.0, 0.98) as f32;
                     vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
                         + (d_gas_earth * 120.0) as f32)
                         .clamp(0.01, 90.0);
                 })
                 .or_insert(VolatileInventory {
                     delivered_water_m_earth: d_water_earth,
-                    ocean_coverage_frac: (d_water_earth / 0.0006).clamp(0.0, 0.85) as f32,
+                    ocean_coverage_frac: ((d_water_earth / 0.0006) * 0.71).clamp(0.0, 0.98) as f32,
                     atmospheric_pressure_bar: (d_gas_earth * 120.0).clamp(0.01, 90.0) as f32,
                     cometary_impact_count: 1,
                 });
@@ -119,6 +119,40 @@ pub fn deliver_volatiles_and_crater(
     }
 }
 
+/// Computes thermal cooling and crustal/atmospheric relaxation timescales based on planetary classification.
+fn compute_basin_timescales(
+    angular_radius: f32,
+    body_type: BodyType,
+    comp: &Composition,
+    has_weathering: bool,
+) -> (f64, f64) {
+    let r = f64::from(angular_radius);
+    let norm = comp.normalized();
+    if matches!(body_type, BodyType::GasGiant | BodyType::IceGiant) || norm.gas_frac > 0.40 {
+        // Fluid atmospheric relaxation: supersonic zonal jet streams shear and disperse
+        // atmospheric soot / aerosol plumes within a few months to several years.
+        let cooling_tau_yr = (r * 10.0).clamp(0.2, 1.5);
+        let healing_tau_yr = (r * 12.0).clamp(1.5, 6.0);
+        (cooling_tau_yr, healing_tau_yr)
+    } else if norm.ice_frac > 0.35 {
+        // Icy lithosphere / cryo-crust (Europa, Enceladus, Pluto, Callisto):
+        // Slushy cryomagma freezes over decades; viscous relaxation of ice shell over centuries.
+        let cooling_tau_yr = (r * 300.0).clamp(20.0, 150.0);
+        let healing_tau_yr = (r * 1200.0).clamp(300.0, 800.0);
+        (cooling_tau_yr, healing_tau_yr)
+    } else {
+        // Silicate / rocky lithosphere (Earth, Mars, Moon, Mercury, Asteroids):
+        // Molten basalt cools over centuries; weathering or isostatic relaxation over deep time.
+        let cooling_tau_yr = (r * 600.0).clamp(50.0, 300.0);
+        let healing_tau_yr = if has_weathering {
+            (r * 800.0).clamp(200.0, 500.0)
+        } else {
+            (r * 2000.0).clamp(600.0, 1500.0)
+        };
+        (cooling_tau_yr, healing_tau_yr)
+    }
+}
+
 /// Relaxes and cools crater magma melt pools and gradually heals impact scars over simulation timescales.
 pub fn update_impact_basin_relaxation(
     sim_time: Res<SimTime>,
@@ -127,6 +161,8 @@ pub fn update_impact_basin_relaxation(
         &mut PlanetaryBasins,
         Option<&VolatileInventory>,
         Option<&PlanetaryClimate>,
+        Option<&CelestialBody>,
+        Option<&Composition>,
     )>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
@@ -137,28 +173,24 @@ pub fn update_impact_basin_relaxation(
         return;
     }
 
-    for (mut pb, opt_vol, opt_climate) in query.iter_mut() {
+    for (mut pb, opt_vol, opt_climate, opt_body, opt_comp) in query.iter_mut() {
         let has_weathering = opt_vol
             .is_some_and(|v| v.atmospheric_pressure_bar > 0.05 || v.ocean_coverage_frac > 0.02)
             || opt_climate.is_some_and(|c| c.cloud_coverage_frac > 0.05);
 
+        let body_type = opt_body.map_or(BodyType::TerrestrialPlanet, |b| b.body_type);
+        let default_comp = Composition::default();
+        let comp = opt_comp.unwrap_or(&default_comp);
+
         for basin in &mut pb.basins {
-            // 1. Magma melt glow cooling: cools from glowing molten lava to solidified rock over ~50 to 300 years
+            let (cooling_tau_yr, healing_tau_yr) =
+                compute_basin_timescales(basin.angular_radius, body_type, comp, has_weathering);
+
             if basin.melt_glow_fraction > 0.0 {
-                let cooling_tau_yr = (f64::from(basin.angular_radius) * 600.0).clamp(50.0, 300.0);
                 let decay = (dt_yr / cooling_tau_yr) as f32;
                 basin.melt_glow_fraction = (basin.melt_glow_fraction - decay).max(0.0);
             }
 
-            // 2. Crustal scar healing / weathering / isostatic relaxation:
-            // Scars smoothly heal and fade back into the planetary crust.
-            // Worlds with atmospheres and oceans erode/infill craters faster (~200 to 500 years).
-            // Airless worlds heal via crustal viscous relaxation over ~600 to 1,500 years.
-            let healing_tau_yr = if has_weathering {
-                (f64::from(basin.angular_radius) * 800.0).clamp(200.0, 500.0)
-            } else {
-                (f64::from(basin.angular_radius) * 2000.0).clamp(600.0, 1500.0)
-            };
             let heal_decay = (dt_yr / healing_tau_yr) as f32;
             basin.scar_intensity = (basin.scar_intensity - heal_decay).max(0.0);
         }

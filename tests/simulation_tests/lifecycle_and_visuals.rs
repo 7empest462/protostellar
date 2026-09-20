@@ -486,3 +486,283 @@ fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
         "Camera target_entity must NOT bounce back to the star!"
     );
 }
+
+#[test]
+fn test_minor_bodies_mesh_variety_and_spectral_classification() {
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::meshes::{
+        select_asteroid_mesh, select_body_mesh, select_comet_mesh, setup_visual_assets,
+    };
+    use protostellar::rendering::bodies::VisualAssets;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Assets<Mesh>>();
+    app.add_systems(Startup, setup_visual_assets);
+    app.update();
+
+    let assets = app.world().resource::<VisualAssets>();
+
+    // 1. Verify Named Asteroids map to canonical astronomical morphologies
+    let vesta = select_asteroid_mesh("4 Vesta (Asteroid)", assets);
+    let psyche = select_asteroid_mesh("16 Psyche (Metal Asteroid)", assets);
+    let bennu = select_asteroid_mesh("101955 Bennu (Rubble Pile)", assets);
+    let ida = select_asteroid_mesh("243 Ida (Asteroid)", assets);
+    let kleopatra = select_asteroid_mesh("216 Kleopatra (Contact Binary)", assets);
+
+    assert_eq!(vesta, assets.asteroid_cratered_spheroid_mesh);
+    assert_eq!(psyche, assets.asteroid_oblate_pancake_mesh);
+    assert_eq!(bennu, assets.asteroid_rubble_mesh);
+    assert_eq!(ida, assets.asteroid_potato_mesh);
+    assert_eq!(kleopatra, assets.asteroid_contact_binary_mesh);
+
+    // 2. Verify Named Comets map to canonical nucleus morphologies
+    let churyumov = select_comet_mesh("67P/Churyumov-Gerasimenko", assets);
+    let encke = select_comet_mesh("2P/Encke (Comet)", assets);
+    let halley = select_comet_mesh("1P/Halley (Comet)", assets);
+    let borisov = select_comet_mesh("2I/Borisov (Interstellar Splinter)", assets);
+    let wild = select_comet_mesh("81P/Wild 2 (Comet)", assets);
+
+    assert_eq!(churyumov, assets.comet_bilobate_mesh);
+    assert_eq!(encke, assets.comet_bowling_pin_mesh);
+    assert_eq!(halley, assets.comet_cratered_nucleus_mesh);
+    assert_eq!(borisov, assets.comet_jagged_splinter_mesh);
+    assert_eq!(wild, assets.comet_irregular_ellipsoid_mesh);
+
+    // 3. Verify procedural asteroids achieve diverse archetype spread
+    let mut asteroid_handles = Vec::new();
+    for i in 0..30 {
+        let name = format!("Asteroid #{i}");
+        let body = CelestialBody {
+            name,
+            body_type: BodyType::Asteroid,
+        };
+        let handle = select_body_mesh(&body, assets);
+        if !asteroid_handles.contains(&handle) {
+            asteroid_handles.push(handle);
+        }
+    }
+    assert!(
+        asteroid_handles.len() >= 4,
+        "Procedural asteroids must select from multiple distinct 3D mesh archetypes (got {})",
+        asteroid_handles.len()
+    );
+
+    // 4. Verify procedural comets achieve diverse archetype spread
+    let mut comet_handles = Vec::new();
+    for i in 0..30 {
+        let name = format!("Comet-{i}.0AU");
+        let body = CelestialBody {
+            name,
+            body_type: BodyType::Comet,
+        };
+        let handle = select_body_mesh(&body, assets);
+        if !comet_handles.contains(&handle) {
+            comet_handles.push(handle);
+        }
+    }
+    assert!(
+        comet_handles.len() >= 4,
+        "Procedural comets must select from multiple distinct 3D nucleus archetypes (got {})",
+        comet_handles.len()
+    );
+}
+
+#[test]
+fn test_planetesimal_and_comet_mesh_fallback_never_smooth_sphere() {
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::meshes::{select_body_mesh, setup_visual_assets};
+    use protostellar::rendering::bodies::VisualAssets;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Assets<Mesh>>();
+    app.add_systems(Startup, setup_visual_assets);
+    app.update();
+
+    let assets = app.world().resource::<VisualAssets>();
+
+    // Planetesimals, asteroids, and comets must NEVER return smooth hydrostatic planet_mesh
+    let test_bodies = [
+        ("1P/Halley (Comet)", BodyType::Comet),
+        ("1P/Halley (Icy Planetesimal)", BodyType::Planetesimal),
+        ("Planetesimal #4", BodyType::Planetesimal),
+        ("Icy Planetesimal #12", BodyType::Planetesimal),
+        ("C/Hale-Bopp (Comet)", BodyType::Comet),
+        ("67P/C-G (Comet)", BodyType::Comet),
+        ("Generic Planetesimal", BodyType::Planetesimal),
+        ("Asteroid #99", BodyType::Asteroid),
+    ];
+
+    for (name, body_type) in test_bodies {
+        let body = CelestialBody {
+            name: name.to_string(),
+            body_type,
+        };
+        let handle = select_body_mesh(&body, assets);
+        assert_ne!(
+            handle, assets.planet_mesh,
+            "Minor body '{name}' of type {body_type:?} must never use smooth hydrostatic planet_mesh!"
+        );
+    }
+}
+
+#[test]
+fn test_canonical_comets_physical_dimensions_and_radii() {
+    use bevy::prelude::*;
+    use protostellar::simulation::resources::DiskParameters;
+    use protostellar::simulation::scenarios::solar::spawn_solar_nebula_mmsn;
+    use protostellar::utils::constants::AU_TO_KM;
+
+    let mut app = App::new();
+    let mut disk_params = DiskParameters::default();
+    let _star_ent = spawn_solar_nebula_mmsn(&mut app.world_mut().commands(), &mut disk_params);
+    app.update();
+
+    let mut found_halley = false;
+    let mut found_encke = false;
+    let mut found_67p = false;
+
+    let mut query = app.world_mut().query::<(&CelestialBody, &Radius, &Mass)>();
+    for (body, rad, mass) in query.iter(app.world()) {
+        let rad_km = rad.0 * AU_TO_KM;
+        if body.name.contains("Halley") {
+            found_halley = true;
+            assert!(
+                (4.0..=7.0).contains(&rad_km),
+                "1P/Halley radius must be ~5.5 km, found {rad_km:.2} km"
+            );
+            assert!(
+                mass.0 < 1e-12,
+                "1P/Halley mass must be astronomically small, found {:e} M_sun",
+                mass.0
+            );
+        } else if body.name.contains("Encke") {
+            found_encke = true;
+            assert!(
+                (1.5..=3.5).contains(&rad_km),
+                "2P/Encke radius must be ~2.4 km, found {rad_km:.2} km"
+            );
+        } else if body.name.contains("67P") {
+            found_67p = true;
+            assert!(
+                (1.0..=3.0).contains(&rad_km),
+                "67P radius must be ~2.0 km, found {rad_km:.2} km"
+            );
+        }
+    }
+
+    assert!(found_halley, "1P/Halley must be spawned in MMSN");
+    assert!(found_encke, "2P/Encke must be spawned in MMSN");
+    assert!(found_67p, "67P must be spawned in MMSN");
+}
+
+#[test]
+fn test_no_overlay_mode_and_comet_asteroid_line_gating() {
+    use bevy::prelude::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+
+    // 1. Verify display name of DiagnosticOverlayMode::Hidden is "No Overlay"
+    assert_eq!(
+        DiagnosticOverlayMode::Hidden.display_name(),
+        "No Overlay",
+        "DiagnosticOverlayMode::Hidden display name must be 'No Overlay'"
+    );
+
+    // 2. Set up app with resources and gizmo plugin
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::asset::AssetPlugin::default());
+    app.add_plugins(bevy::gizmos::GizmoPlugin);
+
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<ImpactShockwavePool>();
+    app.init_resource::<RocheDebrisPool>();
+
+    // Spawn central star
+    let star_ent = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            CelestialBody {
+                body_type: BodyType::Protostar,
+                name: "Sun".to_string(),
+            },
+            Mass(1.0),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            Radius(0.00465),
+            IgnitionState::default(),
+            StellarEvolutionState::default(),
+        ))
+        .id();
+
+    // Spawn an active comet
+    let comet_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Comet,
+                name: "1P/Halley".to_string(),
+            },
+            Mass(3.7e-11 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.5, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 5.0)),
+            Radius(EARTH_RADIUS_AU * 0.001),
+            Composition::icy(),
+        ))
+        .id();
+
+    // Spawn an asteroid with ice accretion (e.g. Ceres at 2.77 AU)
+    let asteroid_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Asteroid,
+                name: "Ceres".to_string(),
+            },
+            Mass(0.00015 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(2.77, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 3.8)),
+            Radius(EARTH_RADIUS_AU * 0.18),
+            Composition {
+                ice_frac: 0.35, // High ice from pebble accretion
+                metal_frac: 0.15,
+                silicate_frac: 0.50,
+                gas_frac: 0.0,
+                organics_frac: 0.0,
+            },
+        ))
+        .id();
+
+    // Spawn Camera3d
+    app.world_mut().spawn((
+        Camera3d::default(),
+        Transform::from_translation(Vec3::new(0.0, 10.0, 10.0)),
+    ));
+
+    // Test with Hidden ("No Overlay")
+    {
+        let mut state = app.world_mut().resource_mut::<PlayerInteractionState>();
+        state.selected_entity = Some(comet_ent);
+        state.overlay_mode = DiagnosticOverlayMode::Hidden;
+        state.orbit_mode = OrbitVisualizationMode::All;
+    }
+
+    let mut sched = Schedule::default();
+    sched.add_systems(protostellar::rendering::effects::draw_orbital_effects_and_gizmos);
+    sched.run(app.world_mut());
+
+    // Test with OrbitVisualizationMode::Off
+    {
+        let mut state = app.world_mut().resource_mut::<PlayerInteractionState>();
+        state.selected_entity = Some(asteroid_ent);
+        state.overlay_mode = DiagnosticOverlayMode::Realistic;
+        state.orbit_mode = OrbitVisualizationMode::Off;
+    }
+    sched.run(app.world_mut());
+
+    let _ = star_ent;
+}

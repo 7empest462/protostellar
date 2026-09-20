@@ -329,30 +329,44 @@ pub fn record_planetary_telemetry(
         Option<&BiosphereState>,
     )>,
 ) {
-    if time_warp.is_paused && !time_warp.step_once {
-        return;
-    }
-
     let t = sim_time.elapsed_years;
-    let effective_interval =
-        telemetry.sample_interval_yr * (time_warp.multiplier / 2.0).clamp(1.0, 50.0);
-    if (t - telemetry.last_sample_yr).abs() < effective_interval && telemetry.samples.len() >= 2 {
-        return;
-    }
-
     let star_mass = star_query.iter().next().map_or(1.0, |m| m.0);
 
-    // Determine target entity: player selected body, or previous tracked, or auto-fallback to Earth-like body
+    // Determine target entity: player selected planet, or previous tracked planet, or auto-fallback to terrestrial planet.
+    // Stars, black holes, and non-planetary bodies are excluded from Climate & Habitability telemetry.
     let target_entity = player_state
         .selected_entity
-        .or(telemetry.tracked_entity)
+        .filter(|&ent| {
+            bodies_query
+                .get(ent)
+                .is_ok_and(|(_, b, _, _, _, _, _, _, _)| {
+                    !b.body_type.is_star_or_remnant() && b.body_type != BodyType::BlackHole
+                })
+        })
+        .or_else(|| {
+            telemetry.tracked_entity.filter(|&ent| {
+                bodies_query
+                    .get(ent)
+                    .is_ok_and(|(_, b, _, _, _, _, _, _, _)| {
+                        !b.body_type.is_star_or_remnant() && b.body_type != BodyType::BlackHole
+                    })
+            })
+        })
         .or_else(|| {
             bodies_query
                 .iter()
                 .find(|(_, b, _, _, _, _, _, _, _)| {
                     b.body_type == BodyType::TerrestrialPlanet
                         || b.name == "Earth"
-                        || b.name.contains("Proto-Earth")
+                        || b.name.contains("Earth")
+                })
+                .map(|(e, _, _, _, _, _, _, _, _)| e)
+        })
+        .or_else(|| {
+            bodies_query
+                .iter()
+                .find(|(_, b, _, _, _, _, _, _, _)| {
+                    !b.body_type.is_star_or_remnant() && b.body_type != BodyType::BlackHole
                 })
                 .map(|(e, _, _, _, _, _, _, _, _)| e)
         });
@@ -366,11 +380,23 @@ pub fn record_planetary_telemetry(
         return;
     };
 
-    // If tracked entity changed, clear previous history to avoid mixed lines
-    if telemetry.tracked_entity != Some(entity) {
+    // If tracked entity changed, clear previous history and take an immediate baseline sample (even if paused)
+    let is_target_changed = telemetry.tracked_entity != Some(entity);
+    if is_target_changed {
         telemetry.clear();
         telemetry.tracked_entity = Some(entity);
         telemetry.tracked_name.clone_from(&body.name);
+    } else {
+        if time_warp.is_paused && !time_warp.step_once {
+            return;
+        }
+
+        let effective_interval =
+            telemetry.sample_interval_yr * (time_warp.multiplier / 2.0).clamp(1.0, 50.0);
+        if (t - telemetry.last_sample_yr).abs() < effective_interval && telemetry.samples.len() >= 2
+        {
+            return;
+        }
     }
 
     let mass_earth = mass.0 / EARTH_MASS_SOLAR;

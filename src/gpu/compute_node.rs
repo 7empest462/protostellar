@@ -124,7 +124,11 @@ pub fn extract_gpu_sim_data(
     };
 
     let speed_mult = time_warp.multiplier as f32;
-    let visual_flow_dt = (0.002 * (1.0 + speed_mult.log10().max(0.0) * 2.0)).min(0.08);
+    let visual_flow_dt = if speed_mult < 1.0 {
+        (0.002 * speed_mult).max(1e-7)
+    } else {
+        (0.002 * (1.0 + speed_mult.log10() * 2.0)).min(0.08)
+    };
 
     commands.insert_resource(GpuSimExtractedParams {
         is_paused: time_warp.is_paused,

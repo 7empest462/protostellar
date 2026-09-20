@@ -512,6 +512,14 @@ pub struct EpochScrubberMetricsText;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EpochQuickButton(pub crate::simulation::geology::types::GeologicalEpoch);
 
+/// Marker component for grouping epoch buttons by planetary archetype (Earth, Mars, Venus).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochPlanetButtonGroup(pub crate::simulation::geology::types::EpochTargetPlanet);
+
+/// Marker for planetary timeline switcher tab buttons.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochPlanetTabButton(pub crate::simulation::geology::types::EpochTargetPlanet);
+
 /// On-screen notification toast resource.
 #[derive(Resource, Debug, Clone)]
 pub struct NotificationToast {
@@ -534,6 +542,7 @@ impl Default for NotificationToast {
 pub enum UiButtonAction {
     // Time Controls
     TimePause,
+    TimeSpeedRealtime,
     TimeSpeed1,
     TimeSpeed100,
     TimeSpeed10k,
@@ -568,6 +577,7 @@ pub enum UiButtonAction {
     ExportTelemetryCsv,
     // Deep-Time Geological Epoch Scrubber Actions
     ToggleEpochScrubberPanel,
+    SelectEpochTargetPlanet(crate::simulation::geology::types::EpochTargetPlanet),
     ScrubToEpoch(crate::simulation::geology::types::GeologicalEpoch),
     ScrubTimeStep(i32),
     ToggleScrubAutoAdvance,
@@ -591,6 +601,7 @@ pub enum UiButtonAction {
     DeselectBody,
     FixOrbit,
     IgniteStar,
+    TriggerCoronalMassEjection,
     TriggerLhb,
     ShatterIntoRings,
     SeedLife,
@@ -644,10 +655,11 @@ impl UiButtonAction {
     pub fn tooltip_description(&self) -> &'static str {
         match self {
             UiButtonAction::TimePause => "[Space]: Pause or resume continuous orbital physics flow.",
-            UiButtonAction::TimeSpeed1 => "[1]: 1.0x Real-time orbital flow speed.",
-            UiButtonAction::TimeSpeed100 => "[2]: 100x Accelerated time progression.",
-            UiButtonAction::TimeSpeed10k => "[3]: 10,000x High-speed planetary accretion flow (~10 kyr/sec).",
-            UiButtonAction::TimeSpeed1M => "[4]: 1,000,000x Deep astronomical time-warp (~1 Myr/sec).",
+            UiButtonAction::TimeSpeedRealtime => "[1]: 1:1 Real-time progression (1s = 1s).",
+            UiButtonAction::TimeSpeed1 => "[2]: 1.0x Orbital flow speed (1s = 11.0 days).",
+            UiButtonAction::TimeSpeed100 => "[4]: 100x Accelerated time progression (~3.0 yr/sec).",
+            UiButtonAction::TimeSpeed10k => "[6]: 10,000x High-speed planetary accretion flow (~300 yr/sec).",
+            UiButtonAction::TimeSpeed1M => "[8]: 1,000,000x Deep astronomical time-warp (~30 kyr/sec).",
             UiButtonAction::SelectEntity(_) => "Focus and inspect this celestial body.",
             UiButtonAction::SelectStar => "Select the central star to inspect solar mass, temperature, and corona.",
             UiButtonAction::SelectMercury => "Select the innermost rocky terrestrial planet.",
@@ -674,6 +686,11 @@ impl UiButtonAction {
             UiButtonAction::SelectTelemetryMetric(_) => "Switch active telemetry graph metric (Habitability, Temperature, Ocean, Pressure, Orbit).",
             UiButtonAction::ExportTelemetryCsv => "Export current planetary telemetry history to a standard CSV file in ./exports/.",
             UiButtonAction::ToggleEpochScrubberPanel => "[F11]: Open or close the deep geological epoch scrubber and continental drift timeline.",
+            UiButtonAction::SelectEpochTargetPlanet(planet) => match planet {
+                crate::simulation::geology::types::EpochTargetPlanet::Earth => "Switch epoch scrubber to Earth's 4.56 Gyr geological history.",
+                crate::simulation::geology::types::EpochTargetPlanet::Mars => "Switch epoch scrubber to Mars's Noachian & Amazonian planetary history.",
+                crate::simulation::geology::types::EpochTargetPlanet::Venus => "Switch epoch scrubber to Venus's temperate ocean & runaway greenhouse history.",
+            },
             UiButtonAction::ScrubToEpoch(epoch) => epoch.supercontinent_name(),
             UiButtonAction::ScrubTimeStep(myr) => if *myr > 0 { "Advance geological timeline into the future." } else { "Step geological timeline backwards in deep time." },
             UiButtonAction::ToggleScrubAutoAdvance => "Toggle continuous simulation time auto-advance for the geological clock.",
@@ -697,6 +714,9 @@ impl UiButtonAction {
             UiButtonAction::DeselectBody => "[Esc]: Close inspector and clear selection.",
             UiButtonAction::FixOrbit => "[Z]: Circularize orbital eccentricity to 0.00.",
             UiButtonAction::IgniteStar => "[I]: Force instant core ignition / coronal solar blast.",
+            UiButtonAction::TriggerCoronalMassEjection => {
+                "[Shift+I]: Trigger extreme Coronal Mass Ejection (CME) flare & plasma shockwave."
+            }
             UiButtonAction::TriggerLhb => "[G]: Trigger 2:1 resonance migration & Late Heavy Bombardment.",
             UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupt selected moon/body into glowing planetary rings.",
             UiButtonAction::SeedLife => "[E]: Seed primordial water oceans, atmosphere, and photosynthetic biosphere.",
