@@ -38,6 +38,10 @@ pub struct PlanetUniforms {
     pub geological_params: Vec4,
     /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
     pub aurora_params: Vec4,
+    /// x: hexagon_amplitude, y: hexagon_wavenumber (e.g. 6.0), z: great_spot_size, w: great_spot_lat_rad
+    pub storm_features: Vec4,
+    /// x: great_spot_lon_rad, y: vortex_spin_rate, z: secondary_oval_count, w: zonal_shear_turbulence
+    pub storm_dynamics: Vec4,
 }
 
 impl Default for PlanetUniforms {
@@ -62,6 +66,8 @@ impl Default for PlanetUniforms {
             eclipse_moons_data: [Vec4::ZERO; 2],
             geological_params: Vec4::new(4.56, 0.0, 1.0, 1.0),
             aurora_params: Vec4::ZERO,
+            storm_features: Vec4::ZERO,
+            storm_dynamics: Vec4::new(0.0, 1.0, 0.0, 0.5),
         }
     }
 }

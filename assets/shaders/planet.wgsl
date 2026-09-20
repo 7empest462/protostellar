@@ -36,6 +36,8 @@ struct PlanetExtension {
     eclipse_moons_data: array<vec4<f32>, 2>, // x = active flag (1.0 or 0.0), y = penumbra softness, z = shadow depth, w = reserved
     geological_params: vec4<f32>, // x: age_gyr, y: drift_phase, z: ocean_oxidation, w: vegetation_expansion
     aurora_params: vec4<f32>, // x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
+    storm_features: vec4<f32>, // x: hex_amplitude, y: hex_wavenumber (e.g. 6.0), z: great_spot_size, w: great_spot_lat_rad
+    storm_dynamics: vec4<f32>, // x: great_spot_lon_rad, y: vortex_spin_rate, z: secondary_oval_count, w: zonal_shear_turbulence
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(101)
@@ -899,6 +901,218 @@ fn evaluate_magma_ocean_surface(
     return res;
 }
 
+// =========================================================================
+// ATMOSPHERIC STORM HEXAGONS & CLOUD VORTICES (Feature 3.4)
+// =========================================================================
+
+struct PolarHexagonResult {
+    inside_mask: f32,
+    jet_mask: f32,
+    eye_mask: f32,
+    color: vec3<f32>,
+    active: bool,
+};
+
+// Evaluates Saturn-like standing Rossby wave polar hexagon (k=6 wavenumber)
+// with high-speed jet perimeter, deep cyclonic eye, and golden interior haze.
+fn evaluate_polar_hexagon(
+    p_gas: vec3<f32>,
+    t: f32,
+    hex_amplitude: f32,
+    hex_wavenumber: f32,
+) -> PolarHexagonResult {
+    var res: PolarHexagonResult;
+    res.inside_mask = 0.0;
+    res.jet_mask = 0.0;
+    res.eye_mask = 0.0;
+    res.color = vec3<f32>(0.0);
+    res.active = false;
+
+    // Hexagon is localized to northern polar region (lat > ~50 deg N, colatitude < 0.70 rad)
+    if (hex_amplitude < 0.001 || p_gas.y < 0.65) {
+        return res;
+    }
+
+    let colatitude = acos(clamp(p_gas.y, -1.0, 1.0));
+    let azimuth = atan2(p_gas.z, p_gas.x);
+    let k = max(round(hex_wavenumber), 3.0);
+
+    // Standing Rossby wave perimeter at ~77.5 deg North (colatitude ~ 0.218 rad)
+    let r0 = 0.218;
+    // Extremely slow planetary wave drift
+    let wave_phase = k * azimuth - t * 0.006;
+    // Primary Rossby harmonic + secondary harmonic for crisp geometric polygon straight edges
+    let r_hex = r0 * (1.0 + hex_amplitude * cos(wave_phase) + (hex_amplitude * 0.22) * cos(2.0 * wave_phase));
+
+    let delta_r = colatitude - r_hex;
+
+    // High-speed jet perimeter ribbon (Gaussian width ~ 0.018 rad)
+    let jet = exp(-pow(delta_r / 0.018, 2.0));
+
+    // Interior warm polar haze (smooth step across boundary)
+    let inside = smoothstep(0.025, -0.025, delta_r);
+
+    // Deep central polar cyclonic eye at colatitude < 0.055 rad (~3 degrees from pole)
+    let eye = smoothstep(0.055, 0.018, colatitude);
+    let eyewall = smoothstep(0.015, 0.038, colatitude) * smoothstep(0.065, 0.042, colatitude);
+
+    // Dynamic turbulent interior cloud structure
+    let interior_turb = fbm(p_gas * 14.0 + vec3<f32>(t * 0.03, 0.0, -t * 0.03));
+
+    // Saturn's golden-amber interior haze vs bright jet ribbon vs dark eye core
+    let haze_gold = vec3<f32>(0.88, 0.68, 0.30) * (0.85 + interior_turb * 0.30);
+    let jet_cream = vec3<f32>(0.98, 0.91, 0.70);
+    let eye_dark = vec3<f32>(0.28, 0.14, 0.05);
+    let eyewall_bright = vec3<f32>(0.95, 0.82, 0.52);
+
+    var storm_col = mix(haze_gold, jet_cream, jet * 0.85);
+    storm_col = mix(storm_col, eyewall_bright, eyewall * 0.90);
+    storm_col = mix(storm_col, eye_dark, eye * 0.95);
+
+    res.inside_mask = inside;
+    res.jet_mask = jet;
+    res.eye_mask = eye;
+    res.color = storm_col;
+    res.active = true;
+    return res;
+}
+
+struct AnticyclonicVortexResult {
+    spot_mask: f32,
+    collar_mask: f32,
+    eye_mask: f32,
+    wake_mask: f32,
+    oval_mask: f32,
+    color: vec3<f32>,
+    active: bool,
+};
+
+// Evaluates Jovian Great Red Spot anticyclone (aspect ratio ~2.2:1),
+// high-speed outer collar, calm core, Kelvin-Helmholtz wake, Oval BA & white ovals.
+fn evaluate_anticyclonic_vortices(
+    p_gas: vec3<f32>,
+    t: f32,
+    spin: f32,
+    spot_size: f32,
+    spot_lat: f32,
+    spot_lon: f32,
+    spin_rate: f32,
+    secondary_count: f32,
+    mass_jup: f32,
+) -> AnticyclonicVortexResult {
+    var res: AnticyclonicVortexResult;
+    res.spot_mask = 0.0;
+    res.collar_mask = 0.0;
+    res.eye_mask = 0.0;
+    res.wake_mask = 0.0;
+    res.oval_mask = 0.0;
+    res.color = vec3<f32>(0.0);
+    res.active = false;
+
+    if (spot_size < 0.01) {
+        return res;
+    }
+
+    let lat = asin(clamp(p_gas.y, -1.0, 1.0));
+    let lon = atan2(p_gas.z, p_gas.x);
+
+    // 1. Primary Great Red Spot (GRS) - Elliptic vortex (aspect ratio ~2.2:1)
+    let d_lat = lat - spot_lat;
+    var d_lon = lon - spot_lon;
+    // Wrap longitude difference to [-PI, PI]
+    d_lon = d_lon - 6.2831853 * round(d_lon / 6.2831853);
+
+    // Elliptic metric: semi-major a ~ 1.50, semi-minor b ~ 0.68
+    let u = d_lon / (1.50 * spot_size);
+    let v = d_lat / (0.68 * spot_size);
+    let r_ell = sqrt(u * u + v * v);
+
+    // High-speed outer collar wind peaks at r_ell ~ 0.85
+    let collar = exp(-pow((r_ell - 0.85) / 0.20, 2.0));
+
+    // Core body (steep edge at r_ell = 1.0)
+    let body = smoothstep(1.08, 0.45, r_ell);
+
+    // Calm central eye (inner core radius ~ 0.35)
+    let eye = smoothstep(0.38, 0.10, r_ell);
+
+    // Anticyclonic counter-clockwise spiral arms
+    let vortex_angle = atan2(v, u);
+    let spiral = sin(vortex_angle * 3.0 - spin_rate * t * 0.4 - r_ell * 5.0) * 0.5 + 0.5;
+
+    // Trailing Kelvin-Helmholtz turbulent wake downstream (eastward/westward shear flow)
+    var wake = 0.0;
+    if (d_lon > (0.6 * spot_size) && d_lon < (3.6 * spot_size) && abs(d_lat) < (0.9 * spot_size)) {
+        let wake_x = (d_lon - 0.6 * spot_size) / (3.0 * spot_size);
+        let wake_y = d_lat / (0.9 * spot_size);
+        let wake_envelope = (1.0 - wake_x) * exp(-wake_y * wake_y * 3.0);
+        let wake_turb = fbm(p_gas * 22.0 + vec3<f32>(t * 0.12, 0.0, 0.0));
+        wake = wake_envelope * smoothstep(0.40, 0.85, wake_turb);
+    }
+
+    // Dynamic storm coloration based on mass/tier
+    var spot_core_col = vec3<f32>(0.92, 0.26, 0.10); // Classic Jovian crimson/brick-red
+    var collar_col = vec3<f32>(0.82, 0.42, 0.18);    // Lighter orange-tan collar
+    var eye_col = vec3<f32>(0.74, 0.18, 0.08);       // Deep darker calm eye
+    if (mass_jup > 6.0) {
+        spot_core_col = vec3<f32>(0.85, 0.18, 0.65);
+        collar_col = vec3<f32>(0.70, 0.30, 0.85);
+        eye_col = vec3<f32>(0.55, 0.10, 0.45);
+    } else if (mass_jup > 3.5) {
+        spot_core_col = vec3<f32>(0.18, 0.65, 0.95);
+        collar_col = vec3<f32>(0.35, 0.80, 0.98);
+        eye_col = vec3<f32>(0.10, 0.45, 0.75);
+    } else if (mass_jup > 1.8) {
+        spot_core_col = vec3<f32>(0.15, 0.88, 0.65);
+        collar_col = vec3<f32>(0.30, 0.95, 0.80);
+        eye_col = vec3<f32>(0.08, 0.65, 0.48);
+    }
+
+    var grs_col = mix(spot_core_col, collar_col, collar * 0.65);
+    grs_col = mix(grs_col, eye_col, eye * 0.75);
+    // Spiral filaments texture
+    grs_col = grs_col * (0.88 + spiral * 0.24);
+
+    // 2. Secondary Anticyclones: Oval BA and White Ovals
+    var oval_mask = 0.0;
+    if (secondary_count >= 1.0) {
+        // Oval BA ("Red Spot Jr.") at -33 deg latitude, trailing GRS
+        let ba_lat = spot_lat - 0.18;
+        var ba_dlon = lon - (spot_lon + 1.65);
+        ba_dlon = ba_dlon - 6.2831853 * round(ba_dlon / 6.2831853);
+        let ba_u = ba_dlon / (0.85 * spot_size);
+        let ba_v = (lat - ba_lat) / (0.48 * spot_size);
+        let ba_r = sqrt(ba_u * ba_u + ba_v * ba_v);
+        let ba_body = smoothstep(1.05, 0.35, ba_r);
+        if (ba_body > 0.0) {
+            oval_mask = max(oval_mask, ba_body * 0.95);
+        }
+
+        // Additional White Ovals spaced along South Temperate Belt
+        if (secondary_count >= 2.0) {
+            for (var oi = 1; oi <= 2; oi = oi + 1) {
+                let off_lon = spot_lon - f32(oi) * 1.95;
+                var o_dlon = lon - off_lon;
+                o_dlon = o_dlon - 6.2831853 * round(o_dlon / 6.2831853);
+                let o_u = o_dlon / (0.55 * spot_size);
+                let o_v = (lat - (spot_lat - 0.24)) / (0.35 * spot_size);
+                let o_r = sqrt(o_u * o_u + o_v * o_v);
+                let o_body = smoothstep(1.05, 0.30, o_r);
+                oval_mask = max(oval_mask, o_body * 0.85);
+            }
+        }
+    }
+
+    res.spot_mask = body;
+    res.collar_mask = collar;
+    res.eye_mask = eye;
+    res.wake_mask = wake;
+    res.oval_mask = oval_mask;
+    res.color = grs_col;
+    res.active = (body > 0.001 || wake > 0.001 || oval_mask > 0.001);
+    return res;
+}
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -970,9 +1184,27 @@ fn fragment(
         let jet_stream = sin(lat * (16.0 + min(mass_jup, 6.0) * 2.0)) * (t * 0.12);
         var p_gas = rotate_y(p_tilted, t * (spin * 0.8) + jet_stream);
         
-        // Anticyclonic Great Red Spot / Primary Storm Vortex
-        let spot_center = vec3<f32>(0.65, -0.28, 0.65);
-        p_gas = vortex_swirl(p_gas, spot_center, 0.42, 3.2 + sin(t * 0.5) * 0.8);
+        // Atmospheric storm parameters from uniforms
+        let hex_amp = planet.storm_features.x;
+        let hex_k = planet.storm_features.y;
+        let spot_size = planet.storm_features.z;
+        let spot_lat = planet.storm_features.w;
+        let spot_lon = planet.storm_dynamics.x;
+        let vortex_spin = planet.storm_dynamics.y;
+        let sec_ovals = planet.storm_dynamics.z;
+        let shear_turb = planet.storm_dynamics.w;
+
+        // Dynamic vortex swirl distortion on coordinates
+        if (spot_size > 0.01) {
+            let spot_y = sin(spot_lat);
+            let spot_r = cos(spot_lat);
+            let spot_center = vec3<f32>(spot_r * cos(spot_lon), spot_y, spot_r * sin(spot_lon));
+            p_gas = vortex_swirl(p_gas, spot_center, spot_size * 1.5, vortex_spin * 0.85 + sin(t * 0.5) * 0.4);
+        } else if (hex_amp <= 0.001) {
+            // Anticyclonic Great Red Spot / Primary Storm Vortex fallback for default worlds
+            let spot_center = vec3<f32>(0.65, -0.28, 0.65);
+            p_gas = vortex_swirl(p_gas, spot_center, 0.42, 3.2 + sin(t * 0.5) * 0.8);
+        }
         
         // Secondary Counter-Rotating Anticyclone for Super-Jupiters (> 1.8 M_jup)
         if (mass_jup > 1.8) {
@@ -984,31 +1216,57 @@ fn fragment(
         let flow = fbm(p_gas * 6.5 + vec3<f32>(t * 0.04, 0.0, -t * 0.02));
         let storm = fbm(p_gas * 18.0 + vec3<f32>(t * 0.08, 0.0, 0.0));
         
-        let band_val = sin(band_lat + flow * 2.4) * 0.5 + 0.5;
+        // Kelvin-Helmholtz shear billows across zonal jet boundaries
+        let kh_shear = sin(p_gas.x * 24.0 + sin(band_lat * 2.0) * 3.5) * cos(p_gas.z * 24.0) * shear_turb * 0.22;
+        let band_val = sin(band_lat + flow * 2.4 + kh_shear) * 0.5 + 0.5;
         
         // Dynamic palette derivation: dark belts (c1) vs light zones (c2)
         let seed = planet.color_seed.rgb;
         let c1 = seed * 0.75;
         let c2 = seed * 1.35 + vec3<f32>(0.08, 0.08, 0.08);
-        let c3 = mix(c1, c2, band_val);
+        var c3 = mix(c1, c2, band_val);
         
-        // Primary Great Red Spot / Storm Feature
-        let spot_dist = distance(p_gas, spot_center);
-        let spot_mask = smoothstep(0.35, 0.05, spot_dist);
-        
-        // Dynamic storm color matching palette tier
-        var spot_color = vec3<f32>(0.90, 0.32, 0.12); // Classic Jovian brick-red
-        if (mass_jup > 6.0) {
-            spot_color = vec3<f32>(0.85, 0.20, 0.65); // Radiant magenta storm eye
-        } else if (mass_jup > 3.5) {
-            spot_color = vec3<f32>(0.20, 0.75, 0.95); // Lapis-azure storm
-        } else if (mass_jup > 1.8) {
-            spot_color = vec3<f32>(0.15, 0.88, 0.70); // Glowing emerald-aquamarine storm
+        // Evaluate primary anticyclonic storm (Great Red Spot) and secondary ovals
+        if (spot_size > 0.01) {
+            let vortex_res = evaluate_anticyclonic_vortices(
+                p_gas, t, spin, spot_size, spot_lat, spot_lon, vortex_spin, sec_ovals, mass_jup
+            );
+            if (vortex_res.active) {
+                c3 = mix(c3, vortex_res.color, vortex_res.spot_mask * 0.95);
+                c3 = mix(c3, c1 * 0.55, vortex_res.wake_mask * 0.70);
+                c3 = mix(c3, vec3<f32>(0.96, 0.94, 0.90), vortex_res.oval_mask * 0.85);
+            }
+        } else if (hex_amp <= 0.001) {
+            // Fallback spot for unconfigured custom gas giants
+            let spot_center = vec3<f32>(0.65, -0.28, 0.65);
+            let spot_dist = distance(p_gas, spot_center);
+            let spot_mask = smoothstep(0.35, 0.05, spot_dist);
+            
+            var spot_color = vec3<f32>(0.90, 0.32, 0.12);
+            if (mass_jup > 6.0) {
+                spot_color = vec3<f32>(0.85, 0.20, 0.65);
+            } else if (mass_jup > 3.5) {
+                spot_color = vec3<f32>(0.20, 0.75, 0.95);
+            } else if (mass_jup > 1.8) {
+                spot_color = vec3<f32>(0.15, 0.88, 0.70);
+            }
+            c3 = mix(c3, spot_color, spot_mask * 0.90);
+        }
+
+        // Evaluate standing Rossby wave polar hexagon (Saturn's North Polar Hexagon)
+        if (hex_amp > 0.001) {
+            let hex_res = evaluate_polar_hexagon(p_gas, t, hex_amp, hex_k);
+            if (hex_res.active) {
+                let hex_blend = max(hex_res.inside_mask * 0.85, hex_res.jet_mask * 0.95);
+                c3 = mix(c3, hex_res.color, hex_blend);
+                if (hex_res.eye_mask > 0.0) {
+                    c3 = mix(c3, vec3<f32>(0.28, 0.14, 0.05), hex_res.eye_mask * 0.95);
+                }
+            }
         }
         
         let white_ovals = smoothstep(0.72, 0.88, storm) * smoothstep(0.6, -0.6, abs(lat));
-        let base_gas = mix(c3, spot_color, spot_mask * 0.90);
-        color = mix(base_gas, vec3<f32>(0.96, 0.94, 0.90), white_ovals * 0.60);
+        color = mix(c3, vec3<f32>(0.96, 0.94, 0.90), white_ovals * 0.55);
         
         // Thermal night-side infrared emission for Brown Dwarfs and ultra-hot Super-Jupiters
         if (mass_jup > 10.0 || temp > 800.0) {
@@ -1034,7 +1292,26 @@ fn fragment(
         let cirrus = fbm(cirrus_coord * 14.0);
         let white_clouds = smoothstep(0.65, 0.85, cirrus);
         
-        color = mix(methane_veil, vec3<f32>(0.92, 0.96, 1.0), white_clouds * 0.55);
+        var base_ice = mix(methane_veil, vec3<f32>(0.92, 0.96, 1.0), white_clouds * 0.55);
+
+        // Neptune's Great Dark Spot and companion cirrus "Scooter"
+        let spot_size = planet.storm_features.z;
+        if (spot_size > 0.01) {
+            let dark_spot = evaluate_anticyclonic_vortices(
+                p_ice_gas, t, spin, spot_size, planet.storm_features.w,
+                planet.storm_dynamics.x, planet.storm_dynamics.y, planet.storm_dynamics.z, 0.8
+            );
+            if (dark_spot.active) {
+                // Deep royal-indigo / navy vortex
+                let dark_spot_col = vec3<f32>(0.02, 0.08, 0.24);
+                base_ice = mix(base_ice, dark_spot_col, dark_spot.spot_mask * 0.88);
+                // Companion bright white methane cirrus clouds ("Scooter")
+                let scooter_clouds = dark_spot.collar_mask * fbm(p_ice_gas * 28.0 + vec3<f32>(t * 0.2, 0.0, 0.0));
+                base_ice = mix(base_ice, vec3<f32>(0.98, 0.99, 1.0), smoothstep(0.40, 0.80, scooter_clouds) * 0.92);
+            }
+        }
+
+        color = base_ice;
     }
     // =========================================================================
     // 6. Super-Earth (Dedicated Mega-Terrestrial World: Vast Oceans, Continents, Storms)

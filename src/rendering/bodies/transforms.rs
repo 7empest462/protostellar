@@ -473,6 +473,7 @@ fn update_body_material_properties(
     opt_aurora: Option<&AuroralOvalState>,
     opt_flare: Option<&StellarFlareState>,
     opt_diff: Option<&InternalDifferentiation>,
+    opt_storm: Option<&AtmosphericStormState>,
 ) {
     apply_impact_basins(mat, opt_basins);
 
@@ -548,6 +549,82 @@ fn update_body_material_properties(
         },
     );
     mat.extension.uniforms.aurora_params = aurora_params;
+
+    // Feature 3.4: Atmospheric Storm Hexagons & Cloud Vortices (GRS, Saturn Hexagon, Oval BA)
+    let (storm_features, storm_dynamics) = opt_storm.map_or_else(
+        || {
+            let lower_name = body.name.to_lowercase();
+            if lower_name.contains("saturn") {
+                let s = AtmosphericStormState::saturn();
+                (
+                    Vec4::new(
+                        s.polar_hexagon_amplitude,
+                        s.polar_hexagon_wavenumber,
+                        s.great_spot_size,
+                        s.great_spot_latitude_rad,
+                    ),
+                    Vec4::new(
+                        s.great_spot_longitude_rad,
+                        s.vortex_spin_rate,
+                        s.secondary_oval_count as f32,
+                        s.zonal_shear_turbulence,
+                    ),
+                )
+            } else if lower_name.contains("jupiter") {
+                let j = AtmosphericStormState::jupiter();
+                (
+                    Vec4::new(
+                        j.polar_hexagon_amplitude,
+                        j.polar_hexagon_wavenumber,
+                        j.great_spot_size,
+                        j.great_spot_latitude_rad,
+                    ),
+                    Vec4::new(
+                        j.great_spot_longitude_rad,
+                        j.vortex_spin_rate,
+                        j.secondary_oval_count as f32,
+                        j.zonal_shear_turbulence,
+                    ),
+                )
+            } else if lower_name.contains("neptune") {
+                let n = AtmosphericStormState::neptune();
+                (
+                    Vec4::new(
+                        n.polar_hexagon_amplitude,
+                        n.polar_hexagon_wavenumber,
+                        n.great_spot_size,
+                        n.great_spot_latitude_rad,
+                    ),
+                    Vec4::new(
+                        n.great_spot_longitude_rad,
+                        n.vortex_spin_rate,
+                        n.secondary_oval_count as f32,
+                        n.zonal_shear_turbulence,
+                    ),
+                )
+            } else {
+                (Vec4::ZERO, Vec4::new(0.0, 1.0, 0.0, 0.5))
+            }
+        },
+        |s| {
+            (
+                Vec4::new(
+                    s.polar_hexagon_amplitude,
+                    s.polar_hexagon_wavenumber,
+                    s.great_spot_size,
+                    s.great_spot_latitude_rad,
+                ),
+                Vec4::new(
+                    s.great_spot_longitude_rad,
+                    s.vortex_spin_rate,
+                    s.secondary_oval_count as f32,
+                    s.zonal_shear_turbulence,
+                ),
+            )
+        },
+    );
+    mat.extension.uniforms.storm_features = storm_features;
+    mat.extension.uniforms.storm_dynamics = storm_dynamics;
 
     if body.body_type.is_star_or_remnant() {
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
@@ -765,6 +842,7 @@ pub fn sync_celestial_transforms(
             Option<&AuroralOvalState>,
             Option<&StellarFlareState>,
             Option<&InternalDifferentiation>,
+            Option<&AtmosphericStormState>,
         ),
     )>,
 ) {
@@ -798,7 +876,7 @@ pub fn sync_celestial_transforms(
         mut mesh,
         (opt_climate, opt_bio, opt_vol, opt_rings, opt_tidal, opt_geo),
         (opt_spin, opt_em, opt_bhs, opt_children, opt_basins, _),
-        (opt_aurora, opt_flare, opt_diff),
+        (opt_aurora, opt_flare, opt_diff, opt_storm),
     ) in query.iter_mut()
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
@@ -851,6 +929,7 @@ pub fn sync_celestial_transforms(
                 opt_aurora,
                 opt_flare,
                 opt_diff,
+                opt_storm,
             );
 
             // Feature 3.2: Update real-time ring shadow parameters

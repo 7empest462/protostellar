@@ -39,6 +39,17 @@ fn spawn_rogue_intruder(commands: &mut Commands) -> Entity {
                 axial_tilt_degrees: 42.0,
                 spin_vector: DVec3::new(0.3, 0.9, 0.2).normalize(),
             },
+            AtmosphericStormState {
+                polar_hexagon_amplitude: 0.0,
+                polar_hexagon_wavenumber: 0.0,
+                polar_hexagon_colatitude: 0.22,
+                great_spot_size: 0.48,
+                great_spot_latitude_rad: -0.32,
+                great_spot_longitude_rad: 0.40,
+                vortex_spin_rate: 3.5,
+                secondary_oval_count: 5,
+                zonal_shear_turbulence: 0.95,
+            },
         ))
         .id()
 }
@@ -119,7 +130,7 @@ pub fn spawn_rogue_planet_scenario(
         let pos = DVec3::new(a_au * phi.cos(), 0.0, a_au * phi.sin());
         let vel = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
 
-        commands.spawn((
+        let mut entity_cmds = commands.spawn((
             CelestialBody {
                 body_type: b_type,
                 name: name.to_string(),
@@ -138,6 +149,12 @@ pub fn spawn_rogue_planet_scenario(
             AngularMomentum(pos.cross(vel) * m_s),
             comp,
         ));
+
+        if name == "Jupiter" {
+            entity_cmds.insert(AtmosphericStormState::jupiter());
+        } else if name == "Neptune" {
+            entity_cmds.insert(AtmosphericStormState::neptune());
+        }
     }
 
     for i in 0..12 {
@@ -880,6 +897,7 @@ pub fn spawn_kozai_triple_scenario(
                 cycle_phase: 0.0,
             },
             crate::simulation::tides::TidalState::new_gas_giant(),
+            AtmosphericStormState::jupiter(),
         ))
         .id();
 

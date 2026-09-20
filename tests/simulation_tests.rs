@@ -52,6 +52,8 @@ mod shadows_and_eclipses;
 mod slingshot;
 #[path = "simulation_tests/space_weather.rs"]
 mod space_weather;
+#[path = "simulation_tests/storms.rs"]
+mod storms;
 #[path = "simulation_tests/telemetry.rs"]
 mod telemetry;
 #[path = "simulation_tests/terraforming.rs"]

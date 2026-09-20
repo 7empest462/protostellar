@@ -385,6 +385,15 @@ pub fn spawn_solar_nebula_mmsn(
                 ice_fraction: 0.96,
                 silicate_fraction: 0.04,
             });
+            entity_cmds.insert(AtmosphericStormState::saturn());
+        }
+
+        if name.contains("Jupiter") {
+            entity_cmds.insert(AtmosphericStormState::jupiter());
+        }
+
+        if name.contains("Neptune") {
+            entity_cmds.insert(AtmosphericStormState::neptune());
         }
 
         if name.contains("Mercury") {

@@ -2,6 +2,8 @@
 
 pub mod celestial;
 pub mod planetary;
+pub mod storms;
 
 pub use celestial::*;
 pub use planetary::*;
+pub use storms::*;
