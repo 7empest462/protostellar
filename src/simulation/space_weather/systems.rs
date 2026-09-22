@@ -86,7 +86,9 @@ fn ensure_space_weather_components_attached(
             |v| v.atmospheric_pressure_bar >= 0.001,
         );
         if b_gauss > 0.01 && has_atmo {
-            commands.entity(p_ent).insert(AuroralOvalState::default());
+            commands
+                .entity(p_ent)
+                .try_insert(AuroralOvalState::default());
         }
     }
 }

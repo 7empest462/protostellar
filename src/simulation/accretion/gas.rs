@@ -40,14 +40,13 @@ fn calculate_gas_capacity_limits(
         (0.005 * EARTH_MASS_SOLAR, 0.010, 100.0)
     } else if r_au < 5.0 {
         (0.5 * EARTH_MASS_SOLAR, 0.045, 100.0)
-    } else if r_au < 12.0 {
-        (JUPITER_MASS_SOLAR * 1.5, 0.94, 0.5)
-    } else if r_au < 22.0 {
-        (JUPITER_MASS_SOLAR * 0.45, 0.88, 0.4)
-    } else if r_au < 36.0 {
-        (20.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
-    } else if r_au < 50.0 {
-        (22.0 * EARTH_MASS_SOLAR, 0.22, 0.3)
+    } else if r_au < 11.5 {
+        // Gas Giant zone (Jupiter 5.2 AU & Saturn 9.5 AU)
+        (JUPITER_MASS_SOLAR * 1.5, 0.94, 10.0)
+    } else if r_au < 45.0 {
+        // Ice Giant zone (Uranus 19.2 AU, Neptune 30.0 AU, Planet Nine)
+        // Gas envelope is strictly limited to ~15-20% by mass over heavy volatile ice/rock mantle
+        (22.0 * EARTH_MASS_SOLAR, 0.20, 12.0)
     } else {
         (0.05 * EARTH_MASS_SOLAR, 0.02, 100.0)
     }
@@ -142,14 +141,14 @@ fn calculate_gas_growth_step(
     };
     let max_step_growth = (m * max_annual_growth_rate * env.dt_yr).max(1e-12 * env.dt_yr);
 
-    let remaining_gas_capacity = if !env.is_massive_disk && r_au < 5.0 {
+    let remaining_gas_capacity = if env.is_massive_disk {
+        (env.max_gas_mass - m).max(0.0)
+    } else {
         let max_g = m * env.max_gas_frac;
         let current_g = m * comp_gas_frac;
         let frac_remaining = (max_g - current_g).max(0.0);
         let mass_remaining = (env.max_gas_mass - m).max(0.0);
         frac_remaining.min(mass_remaining)
-    } else {
-        (env.max_gas_mass - m).max(0.0)
     };
 
     (c_gas
@@ -183,12 +182,14 @@ fn apply_gas_accretion_to_body(
     mass.0 = new_mass;
 
     *comp = comp.mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas);
-    if !is_massive_disk && r_au < 2.7 {
+    if !is_massive_disk {
         comp.gas_frac = comp.gas_frac.min(max_gas_frac);
     }
 
     let updated_type = if body.body_type == BodyType::BlackHole {
         BodyType::BlackHole
+    } else if body.body_type == BodyType::Moon {
+        BodyType::Moon
     } else {
         classify_body_by_mass_and_comp(new_mass, comp, false)
     };
@@ -251,6 +252,9 @@ fn update_gas_accretion_body_name(
     r_au: f64,
 ) {
     let is_canonical_solar = body.name == "Earth"
+        || body.name == "The Moon"
+        || body.name.contains("Moon")
+        || body.body_type == BodyType::Moon
         || body.name == "Venus"
         || body.name == "Mars"
         || body.name == "Mercury"
@@ -364,7 +368,7 @@ pub fn direct_nebular_gas_accretion(
         if m >= max_gas_mass {
             continue;
         }
-        if !is_massive_disk && r_au < 2.7 && comp.gas_frac >= max_gas_frac {
+        if !is_massive_disk && comp.gas_frac >= max_gas_frac {
             continue;
         }
 

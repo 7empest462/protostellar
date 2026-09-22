@@ -1,6 +1,9 @@
 //! 3D Orbital Camera with logarithmic zoom, focus-lock, and smooth interpolation.
 
+use bevy::camera::Hdr;
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
+use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
@@ -62,14 +65,46 @@ pub fn setup_camera(mut commands: Commands) {
         * Quat::from_axis_angle(Vec3::X, -pan_orbit.pitch);
     let translation = pan_orbit.focus + rot * Vec3::new(0.0, 0.0, pan_orbit.radius);
 
-    // Single camera: 3D scene + UI overlay (canonical Bevy pattern)
+    // Single camera: 3D scene + UI overlay with HDR bloom and filmic tonemapping.
+    //
+    // In Bevy 0.19, the `Hdr` component activates floating-point render targets,
+    // allowing fragment colours > 1.0 to accumulate without clamping. The bloom
+    // prefilter threshold (1.8) is set above the SDR ceiling (1.0), so only genuinely
+    // incandescent surfaces (stars, lava, aurorae, accretion disks) contribute to the
+    // bloom halo. Threshold-softness (0.4) avoids a hard pop-in at the knee.
+    // TonyMcMapface is a filmic display transform that preserves hue even at extreme
+    // HDR values — critical for accurate star colours. DebandDither prevents gradient banding.
     commands.spawn((
         Camera3d::default(),
+        Hdr,
+        Camera::default(),
         Projection::Perspective(PerspectiveProjection {
             near: 0.0001,
             far: 2_000_000.0,
             ..default()
         }),
+        Tonemapping::TonyMcMapface,
+        DebandDither::Enabled,
+        Bloom {
+            // Controls how much overall glow energy the star emits.
+            // 0.28 gives a radiant corona without washing out nearby planets.
+            intensity: 0.28,
+            // Low-frequency broad halo (mimics real optical lens glow &
+            // coronagraph diffraction rings around bright stars).
+            low_frequency_boost: 0.55,
+            low_frequency_boost_curvature: 0.88,
+            // High-frequency tight glints (specular ocean sunglint, lightning,
+            // lava fountains, aurora curtains).
+            high_pass_frequency: 1.0,
+            prefilter: BloomPrefilter {
+                // Only emit bloom above SDR white (> 1.8 nits) — stars and
+                // lava surpass this; dark rocky planets never trigger it.
+                threshold: 1.8,
+                threshold_softness: 0.40,
+            },
+            composite_mode: BloomCompositeMode::Additive,
+            ..default()
+        },
         Transform {
             translation,
             rotation: rot,
@@ -78,7 +113,7 @@ pub fn setup_camera(mut commands: Commands) {
         pan_orbit,
         IsDefaultUiCamera,
     ));
-    info!("✅ setup_camera: Spawned Camera3d with IsDefaultUiCamera");
+    info!("✅ setup_camera: Spawned Camera3d with IsDefaultUiCamera, HDR Bloom, TonyMcMapface");
 }
 
 /// Configures Bevy's Gizmo rendering parameters:

@@ -370,7 +370,7 @@ pub fn update_relativity_evolution(
         if let Some(ref mut r) = opt_rel {
             **r = rel_state;
         } else {
-            commands.entity(entity).insert(rel_state);
+            commands.entity(entity).try_insert(rel_state);
         }
     }
 }

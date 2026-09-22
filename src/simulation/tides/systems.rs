@@ -323,6 +323,6 @@ fn step_body_tidal_evolution(
     if let Some(ref mut t) = opt_tide {
         **t = tide;
     } else {
-        commands.entity(entity).insert(tide);
+        commands.entity(entity).try_insert(tide);
     }
 }

@@ -164,21 +164,37 @@ fn compute_effective_collision_radius(
     b1: &BodySnapshot,
     b2: &BodySnapshot,
 ) -> (f64, f64, f64, f64) {
-    let r1_vis = f64::from(config.calc_visual_radius_for_type(b1.radius, b1.body_type));
-    let r2_vis = f64::from(config.calc_visual_radius_for_type(b2.radius, b2.body_type));
-    let r_contact = (r1_vis + r2_vis).max(b1.radius + b2.radius);
+    let is_minor = |t: BodyType| {
+        matches!(
+            t,
+            BodyType::Asteroid
+                | BodyType::Comet
+                | BodyType::Planetesimal
+                | BodyType::DustGrain
+                | BodyType::DebrisRing
+        )
+    };
+
+    let is_stellar = b1.is_central
+        || b2.is_central
+        || b1.body_type.is_star_or_remnant()
+        || b2.body_type.is_star_or_remnant();
+    let both_major = b1.body_type.is_planet() && b2.body_type.is_planet();
+
+    let r_phys = b1.radius + b2.radius;
+    let r_contact = if is_stellar || both_major {
+        r_phys
+    } else {
+        let r1_vis = f64::from(config.calc_visual_radius_for_type(b1.radius, b1.body_type));
+        let r2_vis = f64::from(config.calc_visual_radius_for_type(b2.radius, b2.body_type));
+        (r1_vis + r2_vis).max(r_phys)
+    };
 
     let v_esc = (2.0 * G_ASTRO * (b1.mass + b2.mass) / r_contact.max(1e-6)).sqrt();
     let v_rel_vec = b1.vel - b2.vel;
     let v_rel = v_rel_vec.length();
 
     let safronov_factor = 1.0 + (v_esc * v_esc) / (v_rel * v_rel + 1e-4);
-    let is_minor = |t: BodyType| {
-        matches!(
-            t,
-            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
-        )
-    };
     let capture_r = if (b1.body_type.is_planet() && is_minor(b2.body_type))
         || (b2.body_type.is_planet() && is_minor(b1.body_type))
     {
@@ -250,11 +266,13 @@ fn process_body_pair(
 
     let is_parent_satellite =
         b1.satellite_parent == Some(b2.entity) || b2.satellite_parent == Some(b1.entity);
-    let is_earth_name = |n: &str| {
-        (n == "Earth"
-            || n == "Proto-Earth"
-            || n.starts_with("Earth")
-            || n.starts_with("Proto-Earth"))
+    let is_earth_name = |n: &str, b_type: BodyType| {
+        b_type.is_planet()
+            && !n.contains("Moon")
+            && (n == "Earth"
+                || n == "Proto-Earth"
+                || n.starts_with("Earth")
+                || n.starts_with("Proto-Earth"))
             && !n.contains("Planet Nine")
             && !n.contains("Planet 9")
             && !n.contains("Super-Earth")
@@ -262,8 +280,14 @@ fn process_body_pair(
             && !n.contains("Mercury")
             && !n.contains("Mars")
     };
-    let is_earth_moon = (is_earth_name(&b1.name) && b2.name.contains("Moon"))
-        || (is_earth_name(&b2.name) && b1.name.contains("Moon"));
+    let is_earth_moon = (is_earth_name(&b1.name, b1.body_type)
+        && b2.name.contains("Moon")
+        && (b2.satellite_parent == Some(b1.entity) || b2.name == "The Moon" || b2.name == "Moon"))
+        || (is_earth_name(&b2.name, b2.body_type)
+            && b1.name.contains("Moon")
+            && (b1.satellite_parent == Some(b2.entity)
+                || b1.name == "The Moon"
+                || b1.name == "Moon"));
     if is_parent_satellite || is_earth_moon {
         return;
     }

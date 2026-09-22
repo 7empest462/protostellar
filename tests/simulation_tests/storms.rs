@@ -205,3 +205,97 @@ fn test_planet_uniforms_storm_defaults_and_alignment() {
     // Verify 16-byte alignment of PlanetUniforms
     assert_eq!(std::mem::size_of::<PlanetUniforms>() % 16, 0);
 }
+
+#[test]
+fn test_planet_wgsl_shader_naga_validation() {
+    let shader_source = std::fs::read_to_string("assets/shaders/planet.wgsl")
+        .expect("assets/shaders/planet.wgsl must exist");
+
+    let mock_header = r#"
+struct View { world_position: vec3<f32> };
+@group(0) @binding(0) var<uniform> view: View;
+
+struct StandardMaterial {
+    base_color: vec4<f32>,
+    perceptual_roughness: f32,
+    metallic: f32,
+    emissive: vec4<f32>,
+    reflectance: f32,
+    ior: f32,
+    attenuation_color: vec4<f32>,
+    attenuation_distance: f32,
+};
+
+struct PbrInput {
+    material: StandardMaterial,
+    diffuse_transmission: f32,
+    specular_transmission: f32,
+    thickness: f32,
+    N: vec3<f32>,
+    V: vec3<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    world_position: vec4<f32>,
+    world_normal: vec3<f32>,
+    uv: vec2<f32>,
+};
+
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+};
+
+fn pbr_input_from_standard_material(in: VertexOutput, is_front: bool) -> PbrInput {
+    var res: PbrInput;
+    return res;
+}
+
+fn alpha_discard(mat: StandardMaterial, color: vec4<f32>) -> vec4<f32> {
+    return color;
+}
+
+fn main_pass_post_lighting_processing(pbr: PbrInput, color: vec4<f32>) -> vec4<f32> {
+    return color;
+}
+
+fn apply_pbr_lighting(pbr: PbrInput) -> vec4<f32> {
+    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+}
+"#;
+
+    // Filter out preprocessor lines and prepass branch for forward pass validation
+    let mut cleaned_lines = Vec::new();
+    let mut skip_prepass = false;
+    for line in shader_source.lines().skip(18) {
+        let trimmed = line.trim();
+        if trimmed == "#ifdef PREPASS_PIPELINE" {
+            skip_prepass = true;
+            continue;
+        }
+        if trimmed == "#else" {
+            skip_prepass = false;
+            continue;
+        }
+        if trimmed == "#endif" {
+            continue;
+        }
+        if skip_prepass {
+            continue;
+        }
+        cleaned_lines.push(line);
+    }
+
+    let full_source = format!("{mock_header}\n{}", cleaned_lines.join("\n"))
+        .replace("#{MATERIAL_BIND_GROUP}", "2u");
+
+    let res = wgpu::naga::front::wgsl::parse_str(&full_source);
+    if let Err(ref err) = res {
+        eprintln!("WGSL Parse Error: {:?}", err);
+    }
+    assert!(
+        res.is_ok(),
+        "planet.wgsl must parse cleanly with naga without reserved keyword or syntax errors: {:?}",
+        res.err()
+    );
+}

@@ -761,6 +761,8 @@ pub fn select_comet_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<Mes
 pub fn select_body_mesh(body: &CelestialBody, visual_assets: &VisualAssets) -> Handle<Mesh> {
     if body.body_type.is_star_or_remnant() {
         visual_assets.star_mesh.clone()
+    } else if body.body_type == BodyType::Moon || body.name.to_lowercase().contains("moon") {
+        visual_assets.planet_mesh.clone()
     } else {
         let lower = body.name.to_lowercase();
         let is_comet_name = lower.contains("comet")

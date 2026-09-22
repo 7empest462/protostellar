@@ -190,13 +190,16 @@ pub fn classify_body_by_mass_and_comp(
             let norm = comp.normalized();
             let refractory_frac = norm.silicate_frac + norm.metal_frac + norm.organics_frac;
             // Giant Planet Regime (>= 12 Earth Masses / >= 16 M_earth):
-            // 1. Gas Giant: Dominant hydrogen/helium envelope (gas > 20%).
-            // 2. Ice Giant: MUST have a hefty volatile ice/water percentage (ice >= 25%).
-            // 3. Mega-Earth / Massive Terrestrial: Dominantly rocky/metallic (refractory >= 55%, gas <= 12%, ice < 25%).
-            if norm.gas_frac > 0.20 {
-                BodyType::GasGiant
-            } else if norm.ice_frac >= 0.25 {
+            // 1. Ice Giant: Substantial volatile ices (ice >= 20% or ice >= gas with ice >= 15%)
+            //    and gas envelope does not overwhelm the heavy mantle (gas <= 45%).
+            // 2. Gas Giant: Dominant hydrogen/helium envelope (gas > 45%, or gas > 20% with ice < 20%).
+            // 3. Mega-Earth / Massive Terrestrial: Dominantly rocky/metallic (refractory >= 55%, gas <= 12%, ice < 20%).
+            if (norm.ice_frac >= 0.20 || (norm.ice_frac >= 0.15 && norm.ice_frac >= norm.gas_frac))
+                && norm.gas_frac <= 0.45
+            {
                 BodyType::IceGiant
+            } else if norm.gas_frac > 0.20 {
+                BodyType::GasGiant
             } else if refractory_frac >= 0.55 && norm.gas_frac <= 0.12 {
                 BodyType::SuperEarth // Mega-Earth / massive rocky terrestrial world
             } else if norm.gas_frac > 0.12 {

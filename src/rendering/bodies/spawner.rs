@@ -24,14 +24,25 @@ fn spawn_star_visual(
         BodyType::QuasiStar => (
             7u32,
             true,
-            LinearRgba::from(Color::srgb(1.0, 0.10, 0.02)) * 32.0,
+            // Quasi-star: deep UV-infrared furnace; high emissive for bloom corona
+            LinearRgba::from(Color::srgb(1.0, 0.10, 0.02)) * 160.0,
         ),
-        BodyType::WhiteDwarf => (0u32, true, LinearRgba::from(base_color) * 35.0),
+        BodyType::WhiteDwarf => (0u32, true, LinearRgba::from(base_color) * 220.0),
         BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => {
-            (0u32, true, LinearRgba::from(base_color) * 45.0)
+            (0u32, true, LinearRgba::from(base_color) * 280.0)
         }
-        BodyType::Protostar => (0u32, true, LinearRgba::from(base_color) * 16.0),
-        _ => (0u32, true, LinearRgba::from(base_color) * 28.0),
+        BodyType::Protostar => (0u32, true, LinearRgba::from(base_color) * 55.0),
+        BodyType::RedDwarf => (0u32, true, LinearRgba::from(base_color) * 80.0),
+        BodyType::BrownDwarf => (0u32, true, LinearRgba::from(base_color) * 28.0),
+        BodyType::RedGiant | BodyType::RedSupergiant => {
+            (0u32, true, LinearRgba::from(base_color) * 95.0)
+        }
+        BodyType::BlueGiant | BodyType::BlueSupergiant | BodyType::Hypergiant => {
+            (0u32, true, LinearRgba::from(base_color) * 350.0)
+        }
+        BodyType::WolfRayet => (0u32, true, LinearRgba::from(base_color) * 310.0),
+        // Sun-like main sequence — 120× produces a visible bloom corona at typical orbital distances
+        _ => (0u32, true, LinearRgba::from(base_color) * 120.0),
     };
 
     let star_subtype = star_subtype_from_body_type(body.body_type);
@@ -70,12 +81,22 @@ fn spawn_star_visual(
             parent.spawn((
                 PointLight {
                     color: base_color,
+                    // HDR-scaled initial intensity — update_star_lights_and_strobes will
+                    // refine this every frame, but we seed it at the HDR level so the
+                    // first frame doesn't show a dark star surrounded by an unlit void.
                     intensity: if body.body_type == BodyType::BlackHole {
-                        1_500_000.0
+                        2_000_000.0
                     } else if body.body_type == BodyType::QuasiStar {
-                        15_000_000.0
+                        60_000_000.0
+                    } else if matches!(
+                        body.body_type,
+                        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+                    ) {
+                        30_000_000.0
+                    } else if body.body_type == BodyType::WhiteDwarf {
+                        25_000_000.0
                     } else {
-                        2_500_000.0
+                        18_000_000.0
                     },
                     range: 500.0,
                     shadow_maps_enabled: false,

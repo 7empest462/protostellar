@@ -712,7 +712,7 @@ fn handle_tidal_lock(
                 let r_au = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.01);
                 let p_yr = (r_au.powi(3) / star_mass.max(0.01)).sqrt();
                 let p_hours = (p_yr * YEAR_SECONDS / 3600.0).clamp(1.0, 50000.0);
-                commands.entity(ent).insert((
+                commands.entity(ent).try_insert((
                     SpinState {
                         spin_vector: DVec3::new(0.0, 1.0, 0.0),
                         rotation_period_hours: p_hours,
@@ -797,7 +797,7 @@ fn handle_strip_atmosphere(
 
         body.body_type = classify_body_by_mass_and_comp(mass.0, &comp, false);
 
-        commands.entity(ent).insert(AtmosphericEscapeTail {
+        commands.entity(ent).try_insert(AtmosphericEscapeTail {
             loss_rate_m_earth_per_myr: 50.0,
             tail_length_au: 4.5,
             ion_color: Color::srgba(0.25, 0.85, 1.0, 0.85),

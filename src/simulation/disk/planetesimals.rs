@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
 
 use super::spawner::sample_disk_radius;
@@ -334,9 +335,19 @@ pub fn auto_spawn_delayed_proto_earth(
     sim_time: Res<SimTime>,
     time_warp: Res<TimeWarp>,
     disk_params: Res<DiskParameters>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
     query: Query<&CelestialBody>,
 ) {
     if *spawned {
+        return;
+    }
+
+    if scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset != ScenarioPreset::SolarNebulaMmsn)
+        || disk_params.central_star_mass < 0.5
+        || disk_params.outer_radius_au < 1.0
+    {
         return;
     }
 

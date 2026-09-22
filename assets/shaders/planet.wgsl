@@ -910,7 +910,7 @@ struct PolarHexagonResult {
     jet_mask: f32,
     eye_mask: f32,
     color: vec3<f32>,
-    active: bool,
+    is_active: bool,
 };
 
 // Evaluates Saturn-like standing Rossby wave polar hexagon (k=6 wavenumber)
@@ -926,7 +926,7 @@ fn evaluate_polar_hexagon(
     res.jet_mask = 0.0;
     res.eye_mask = 0.0;
     res.color = vec3<f32>(0.0);
-    res.active = false;
+    res.is_active = false;
 
     // Hexagon is localized to northern polar region (lat > ~50 deg N, colatitude < 0.70 rad)
     if (hex_amplitude < 0.001 || p_gas.y < 0.65) {
@@ -973,7 +973,7 @@ fn evaluate_polar_hexagon(
     res.jet_mask = jet;
     res.eye_mask = eye;
     res.color = storm_col;
-    res.active = true;
+    res.is_active = true;
     return res;
 }
 
@@ -984,7 +984,7 @@ struct AnticyclonicVortexResult {
     wake_mask: f32,
     oval_mask: f32,
     color: vec3<f32>,
-    active: bool,
+    is_active: bool,
 };
 
 // Evaluates Jovian Great Red Spot anticyclone (aspect ratio ~2.2:1),
@@ -1007,7 +1007,7 @@ fn evaluate_anticyclonic_vortices(
     res.wake_mask = 0.0;
     res.oval_mask = 0.0;
     res.color = vec3<f32>(0.0);
-    res.active = false;
+    res.is_active = false;
 
     if (spot_size < 0.01) {
         return res;
@@ -1109,7 +1109,7 @@ fn evaluate_anticyclonic_vortices(
     res.wake_mask = wake;
     res.oval_mask = oval_mask;
     res.color = grs_col;
-    res.active = (body > 0.001 || wake > 0.001 || oval_mask > 0.001);
+    res.is_active = (body > 0.001 || wake > 0.001 || oval_mask > 0.001);
     return res;
 }
 
@@ -1231,7 +1231,7 @@ fn fragment(
             let vortex_res = evaluate_anticyclonic_vortices(
                 p_gas, t, spin, spot_size, spot_lat, spot_lon, vortex_spin, sec_ovals, mass_jup
             );
-            if (vortex_res.active) {
+            if (vortex_res.is_active) {
                 c3 = mix(c3, vortex_res.color, vortex_res.spot_mask * 0.95);
                 c3 = mix(c3, c1 * 0.55, vortex_res.wake_mask * 0.70);
                 c3 = mix(c3, vec3<f32>(0.96, 0.94, 0.90), vortex_res.oval_mask * 0.85);
@@ -1256,7 +1256,7 @@ fn fragment(
         // Evaluate standing Rossby wave polar hexagon (Saturn's North Polar Hexagon)
         if (hex_amp > 0.001) {
             let hex_res = evaluate_polar_hexagon(p_gas, t, hex_amp, hex_k);
-            if (hex_res.active) {
+            if (hex_res.is_active) {
                 let hex_blend = max(hex_res.inside_mask * 0.85, hex_res.jet_mask * 0.95);
                 c3 = mix(c3, hex_res.color, hex_blend);
                 if (hex_res.eye_mask > 0.0) {
@@ -1301,7 +1301,7 @@ fn fragment(
                 p_ice_gas, t, spin, spot_size, planet.storm_features.w,
                 planet.storm_dynamics.x, planet.storm_dynamics.y, planet.storm_dynamics.z, 0.8
             );
-            if (dark_spot.active) {
+            if (dark_spot.is_active) {
                 // Deep royal-indigo / navy vortex
                 let dark_spot_col = vec3<f32>(0.02, 0.08, 0.24);
                 base_ice = mix(base_ice, dark_spot_col, dark_spot.spot_mask * 0.88);
@@ -1919,10 +1919,15 @@ fn fragment(
                 let night_side_mult = smoothstep(0.20, -0.25, NdotL) * 1.6 + 0.30;
                 let storm_flicker = sin(t * 4.0 + az * 8.0) * 0.10 + 0.90;
 
-                aurora_glow = auroral_col * (oval_ring * curtain_rays * effective_aurora_int * night_side_mult * storm_flicker * 3.2);
+                // Boosted to 6.5: intense aurora (Kp >= 8, strong magnetosphere) surpasses the
+                // bloom threshold (1.8) and emits a neon curtain glow corona. Faint aurora stays
+                // sub-threshold and reads as pure emissive colour with no halo.
+                aurora_glow = auroral_col * (oval_ring * curtain_rays * effective_aurora_int * night_side_mult * storm_flicker * 6.5);
             }
         }
-        
+
+        // HDR scene-linear radiance accumulation. All emissive sources (lava pools, comet
+        // gas vents, biomass phosphorescence) are pre-scaled at their HDR intensities above.
         out.color = vec4<f32>(balanced_lit + ambient_boost + atmospheric_haze + aurora_glow + pbr_input.material.emissive.rgb, 1.0);
     }
     

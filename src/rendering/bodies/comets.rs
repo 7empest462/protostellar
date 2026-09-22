@@ -103,7 +103,7 @@ fn compute_tail_parameters(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "Helper function")]
 fn spawn_comet_tail_hierarchy(
     commands: &mut Commands,
     assets: &VisualAssets,

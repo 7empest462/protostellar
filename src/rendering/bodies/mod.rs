@@ -24,7 +24,7 @@ pub use meshes::{
     setup_visual_assets,
 };
 pub use palettes::{
-    calc_ring_color, compute_gas_giant_palette, compute_stellar_palette,
+    calc_ring_color, compute_gas_giant_palette, compute_ice_giant_palette, compute_stellar_palette,
     star_subtype_from_body_type,
 };
 pub use spawner::spawn_missing_visuals;

@@ -365,12 +365,14 @@ fn update_visual_tail(
         tail.ion_color = ion_color;
         tail.is_active = is_active;
     } else if is_active {
-        commands.entity(planet_ent).insert(AtmosphericEscapeTail {
-            loss_rate_m_earth_per_myr: loss_rate,
-            tail_length_au,
-            ion_color,
-            is_active: true,
-        });
+        commands
+            .entity(planet_ent)
+            .try_insert(AtmosphericEscapeTail {
+                loss_rate_m_earth_per_myr: loss_rate,
+                tail_length_au,
+                ion_color,
+                is_active: true,
+            });
     }
 }
 
@@ -396,18 +398,20 @@ fn write_escape_state(
         st.cumulative_mass_lost_m_earth += mass_lost_step;
         st.escape_regime = rates.regime;
     } else {
-        commands.entity(planet_ent).insert(AtmosphericEscapeState {
-            photoevaporative_loss_rate_m_earth_per_myr: rates.photo_rate,
-            solar_wind_stripping_rate_m_earth_per_myr: rates.wind_rate,
-            jeans_escape_rate_m_earth_per_myr: rates.jeans_rate,
-            total_loss_rate_m_earth_per_myr: rates.total_loss_rate,
-            magnetopause_radius_au: rates.magnetopause_radius_au,
-            magnetic_shielding_factor: rates.magnetic_shielding,
-            xuv_flux_w_m2: rates.xuv_flux_w_m2,
-            solar_wind_pressure_n_m2: rates.solar_wind_pressure,
-            roche_lobe_fill_fraction: rates.roche_fill_fraction,
-            cumulative_mass_lost_m_earth: mass_lost_step,
-            escape_regime: rates.regime,
-        });
+        commands
+            .entity(planet_ent)
+            .try_insert(AtmosphericEscapeState {
+                photoevaporative_loss_rate_m_earth_per_myr: rates.photo_rate,
+                solar_wind_stripping_rate_m_earth_per_myr: rates.wind_rate,
+                jeans_escape_rate_m_earth_per_myr: rates.jeans_rate,
+                total_loss_rate_m_earth_per_myr: rates.total_loss_rate,
+                magnetopause_radius_au: rates.magnetopause_radius_au,
+                magnetic_shielding_factor: rates.magnetic_shielding,
+                xuv_flux_w_m2: rates.xuv_flux_w_m2,
+                solar_wind_pressure_n_m2: rates.solar_wind_pressure,
+                roche_lobe_fill_fraction: rates.roche_fill_fraction,
+                cumulative_mass_lost_m_earth: mass_lost_step,
+                escape_regime: rates.regime,
+            });
     }
 }

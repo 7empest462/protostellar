@@ -367,34 +367,30 @@ pub fn handle_grazing_bounce(
                 .map(|q| q.8.name.clone())
                 .unwrap_or_default(),
         );
-        let is_theia_or_earth = |n: &str| {
+        let is_earth = |n: &str| {
             (n == "Earth"
                 || n == "Proto-Earth"
                 || n.starts_with("Proto-Earth")
                 || n.starts_with("Earth (")
-                || (n.contains("Earth") && !n.contains("Super-Earth"))
-                || n.contains("Theia"))
+                || (n.contains("Earth") && !n.contains("Super-Earth")))
+                && !n.contains("Moon")
                 && !n.contains("Planet Nine")
                 && !n.contains("Planet 9")
                 && !n.contains("Venus")
                 && !n.contains("Mercury")
                 && !n.contains("Mars")
         };
-        let is_earth_or_moon = |n: &str| {
-            (n == "Earth"
-                || n == "Proto-Earth"
-                || n.starts_with("Proto-Earth")
-                || n.starts_with("Earth (")
-                || (n.contains("Earth") && !n.contains("Super-Earth"))
-                || n.contains("Moon"))
+        let is_theia = |n: &str| {
+            n.contains("Theia")
+                && !n.contains("Earth")
+                && !n.contains("Moon")
                 && !n.contains("Planet Nine")
                 && !n.contains("Planet 9")
-                && !n.contains("Venus")
-                && !n.contains("Mercury")
-                && !n.contains("Mars")
         };
-        if (is_theia_or_earth(&name1) && is_theia_or_earth(&name2))
-            || (is_earth_or_moon(&name1) && is_earth_or_moon(&name2))
+        if (is_theia(&name1) && is_earth(&name2))
+            || (is_theia(&name2) && is_earth(&name1))
+            || (is_earth(&name1) && name2.contains("Moon"))
+            || (is_earth(&name2) && name1.contains("Moon"))
         {
             return;
         }
@@ -449,11 +445,13 @@ pub fn handle_inelastic_merger(
     v_rel: f64,
     b1: &mut BodySnapshot,
 ) {
-    let is_earth_name = |n: &str| {
-        (n == "Earth"
-            || n == "Proto-Earth"
-            || n.starts_with("Earth")
-            || n.starts_with("Proto-Earth"))
+    let is_earth_name = |n: &str, b_type: BodyType| {
+        b_type.is_planet()
+            && !n.contains("Moon")
+            && (n == "Earth"
+                || n == "Proto-Earth"
+                || n.starts_with("Earth")
+                || n.starts_with("Proto-Earth"))
             && !n.contains("Planet Nine")
             && !n.contains("Planet 9")
             && !n.contains("Super-Earth")
@@ -461,8 +459,8 @@ pub fn handle_inelastic_merger(
             && !n.contains("Mercury")
             && !n.contains("Mars")
     };
-    if (is_earth_name(&pair.p_name) && pair.s_name.contains("Moon"))
-        || (is_earth_name(&pair.s_name) && pair.p_name.contains("Moon"))
+    if (is_earth_name(&pair.p_name, pair.p_type) && pair.s_name.contains("Moon"))
+        || (is_earth_name(&pair.s_name, pair.s_type) && pair.p_name.contains("Moon"))
     {
         return;
     }
@@ -500,6 +498,12 @@ pub fn handle_inelastic_merger(
     let is_star_like = pair.p_type.is_star_or_remnant();
     let updated_type = if is_star_like {
         pair.p_type
+    } else if pair.p_type == BodyType::Moon || pair.s_type == BodyType::Moon {
+        if pair.p_type.is_planet() {
+            classify_body_by_mass_and_comp(total_mass, &merged_comp, false)
+        } else {
+            BodyType::Moon
+        }
     } else {
         classify_body_by_mass_and_comp(total_mass, &merged_comp, false)
     };
@@ -550,10 +554,9 @@ pub fn handle_inelastic_merger(
 
     deliver_volatiles_and_crater(ctx, pair);
 
-    for e in [pair.primary_entity, pair.secondary_entity] {
-        if let Ok(mut cmd) = ctx.commands.get_entity(e) {
-            cmd.remove::<SatelliteOf>();
-        }
+    // Only remove SatelliteOf from secondary (despawned) entity, preserving orbit for primary if it was a satellite!
+    if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {
+        cmd.remove::<SatelliteOf>();
     }
 
     if ctx.player_state.selected_entity == Some(pair.secondary_entity) {

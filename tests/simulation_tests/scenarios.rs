@@ -609,3 +609,185 @@ fn test_guaranteed_minor_body_formation_to_capacity_limit() {
     );
     assert!(comets >= 250, "Must have abundant comets (found {comets})");
 }
+
+#[test]
+fn test_trappist1_all_seven_planets_persist_through_simulation() {
+    use protostellar::game::phases::LateHeavyBombardmentState;
+    use protostellar::simulation::accretion::collisions::process_accretion_and_collisions;
+    use protostellar::simulation::accretion::events::{
+        AccretionMergeEvent, CollisionBounceEvent, MoonFormationEvent, RocheDisruptionEvent,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::scenarios::trappist::spawn_trappist_1_system;
+    use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
+
+    let mut app = App::new();
+    let mut config = SimulationConfig::default();
+    config.gas_density_scale = 0.0;
+    app.insert_resource(config)
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<LateHeavyBombardmentState>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<MoonFormationEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .add_message::<RocheDisruptionEvent>()
+        .add_systems(
+            Update,
+            (
+                step_physics_simulation,
+                process_accretion_and_collisions.after(step_physics_simulation),
+            ),
+        );
+
+    let mut disk_params = app.world().resource::<DiskParameters>().clone();
+    let star_entity = spawn_trappist_1_system(&mut app.world_mut().commands(), &mut disk_params);
+    app.insert_resource(disk_params);
+    app.insert_resource(ActiveScenarioState {
+        current_preset: ScenarioPreset::Trappist1System,
+        ..Default::default()
+    });
+
+    // Run first frame to spawn commands and initialize ECS
+    app.update();
+
+    // Verify initial spawn: exactly 1 star + 7 planets = 8 bodies
+    let initial_bodies: Vec<String> = app
+        .world_mut()
+        .query::<&CelestialBody>()
+        .iter(app.world())
+        .map(|b| b.name.clone())
+        .collect();
+    assert_eq!(
+        initial_bodies.len(),
+        8,
+        "TRAPPIST-1 system must initially spawn 1 star + 7 resonant planets (found {initial_bodies:?})"
+    );
+
+    // Run 50 full simulation steps with physics and accretion/collision processing active
+    for _ in 0..50 {
+        app.update();
+        let body_count = app
+            .world_mut()
+            .query::<&CelestialBody>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            body_count, 8,
+            "All 7 TRAPPIST-1 planets and star must persist on every step"
+        );
+    }
+
+    // Verify all 7 planets and the central star remain alive and unswallowed
+    let surviving_bodies: Vec<String> = app
+        .world_mut()
+        .query::<&CelestialBody>()
+        .iter(app.world())
+        .map(|b| b.name.clone())
+        .collect();
+
+    assert_eq!(
+        surviving_bodies.len(),
+        8,
+        "All 7 TRAPPIST-1 planets and star must survive without erroneous collision engulfment (found {surviving_bodies:?})"
+    );
+
+    let expected_worlds = [
+        "TRAPPIST-1b",
+        "TRAPPIST-1c",
+        "TRAPPIST-1d",
+        "TRAPPIST-1e",
+        "TRAPPIST-1f",
+        "TRAPPIST-1g",
+        "TRAPPIST-1h",
+    ];
+    for expected in expected_worlds {
+        assert!(
+            surviving_bodies.iter().any(|n| n == expected),
+            "Planet {expected} must survive in TRAPPIST-1 system (active bodies: {surviving_bodies:?})"
+        );
+    }
+
+    assert!(
+        app.world().get_entity(star_entity).is_ok(),
+        "Central star TRAPPIST-1 must survive"
+    );
+}
+
+#[test]
+fn test_uranus_and_neptune_retain_ice_giant_classification_and_blue_palette() {
+    use protostellar::rendering::bodies::palettes::compute_ice_giant_palette;
+    use protostellar::simulation::components::classify_body_by_mass_and_comp;
+    use protostellar::simulation::components::{BodyType, Composition};
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    // 1. Verify classify_body_by_mass_and_comp on typical Ice Giant compositions
+    // Real Neptune / Uranus: mass ~ 14-17 M_earth, ~60% ices, ~20% rock, ~15% gas
+    let comp_neptune = Composition {
+        ice_frac: 0.60,
+        silicate_frac: 0.20,
+        metal_frac: 0.05,
+        organics_frac: 0.00,
+        gas_frac: 0.15,
+    };
+    let neptune_type =
+        classify_body_by_mass_and_comp(17.15 * EARTH_MASS_SOLAR, &comp_neptune, false);
+    assert_eq!(
+        neptune_type,
+        BodyType::IceGiant,
+        "Neptune must be classified as BodyType::IceGiant"
+    );
+
+    // High volatile mantle with 40% gas (the user's scenario: 31% water, 23% rock, 6% metal, 40% gas)
+    let comp_user_neptune = Composition {
+        ice_frac: 0.31,
+        silicate_frac: 0.23,
+        metal_frac: 0.06,
+        organics_frac: 0.00,
+        gas_frac: 0.40,
+    };
+    let user_type =
+        classify_body_by_mass_and_comp(20.0 * EARTH_MASS_SOLAR, &comp_user_neptune, false);
+    assert_eq!(
+        user_type,
+        BodyType::IceGiant,
+        "Volatile-rich planet with 31% ice and 40% gas must classify as IceGiant, not GasGiant"
+    );
+
+    // Pure Gas Giant (Jupiter-like: 88% gas, 5% rock, 5% metal, 2% ice)
+    let comp_jupiter = Composition {
+        ice_frac: 0.02,
+        silicate_frac: 0.05,
+        metal_frac: 0.05,
+        organics_frac: 0.00,
+        gas_frac: 0.88,
+    };
+    let jupiter_type =
+        classify_body_by_mass_and_comp(317.8 * EARTH_MASS_SOLAR, &comp_jupiter, false);
+    assert_eq!(
+        jupiter_type,
+        BodyType::GasGiant,
+        "Jupiter must be classified as BodyType::GasGiant"
+    );
+
+    // 2. Verify specialized Ice Giant color palettes
+    let neptune_color = compute_ice_giant_palette("Proto-Neptune", 60.0);
+    let neptune_linear = LinearRgba::from(neptune_color);
+    assert!(
+        neptune_linear.blue > neptune_linear.red * 2.0,
+        "Neptune palette must be predominantly azure blue: {neptune_linear:?}"
+    );
+
+    let uranus_color = compute_ice_giant_palette("Proto-Uranus", 75.0);
+    let uranus_linear = LinearRgba::from(uranus_color);
+    assert!(
+        uranus_linear.blue > uranus_linear.red * 1.5
+            && uranus_linear.green > uranus_linear.red * 1.5,
+        "Uranus palette must be predominantly aquamarine/cyan: {uranus_linear:?}"
+    );
+}

@@ -1,5 +1,6 @@
 //! Protostellar — Application Entry Point.
 
+use bevy::ecs::error::{warn as bevy_warn_handler, FallbackErrorHandler};
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 
@@ -10,6 +11,11 @@ use protostellar::simulation::SimulationPlugin;
 
 fn main() {
     App::new()
+        // Project-wide error policy: downgrade all entity-command errors (e.g. inserting
+        // on a just-despawned entity) to WARN instead of panicking. Individual hot-paths
+        // also use `.try_insert()` explicitly for clarity, but this acts as the final
+        // safety net for any future call sites.
+        .insert_resource(FallbackErrorHandler(bevy_warn_handler))
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {

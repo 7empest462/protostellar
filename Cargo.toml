@@ -77,6 +77,8 @@ bevy = { version = "0.19.1", default-features = false, features = [
     "bevy_winit",
     "bevy_gltf",
     "bevy_mesh",
+    "bevy_camera",
+    "bevy_post_process",
     "tonemapping_luts",
     "default_font",
     "zstd_rust",

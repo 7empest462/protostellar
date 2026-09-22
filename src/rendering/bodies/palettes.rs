@@ -47,9 +47,31 @@ pub fn compute_stellar_palette(body_type: BodyType, temp_k: f64) -> Color {
 
 /// Computes realistic astrophysical color palette for Gas Giants based on
 /// mass tier (Jupiter vs Super-Jupiter vs Brown Dwarf) and equilibrium temperature.
+/// Computes specialized atmospheric palettes for Ice Giants (Uranus, Neptune, Sub-Neptunes).
+pub fn compute_ice_giant_palette(name: &str, _temp_k: f64) -> Color {
+    let lower = name.to_lowercase();
+    if lower.contains("uranus") {
+        Color::srgb(0.42, 0.76, 0.82) // Pale aquamarine cyan/teal
+    } else if lower.contains("neptune") {
+        Color::srgb(0.18, 0.48, 0.88) // Deep vivid cobalt azure
+    } else if lower.contains("nine") {
+        Color::srgb(0.14, 0.32, 0.58) // Deep abyssal navy / indigo
+    } else {
+        Color::srgb(0.24, 0.58, 0.86) // Luminous celestial azure-cyan
+    }
+}
+
 pub fn compute_gas_giant_palette(mass_solar: f64, temp_k: f64, name: &str) -> Color {
     let mass_jup = mass_solar / crate::utils::constants::JUPITER_MASS_SOLAR;
     let lower = name.to_lowercase();
+
+    // 0. Ice Giant Fallback
+    if lower.contains("neptune") {
+        return Color::srgb(0.18, 0.48, 0.88); // Deep vivid cobalt azure
+    }
+    if lower.contains("uranus") {
+        return Color::srgb(0.42, 0.76, 0.82); // Pale aquamarine cyan/teal
+    }
 
     // 1. Saturn Preset
     if lower.contains("saturn") {

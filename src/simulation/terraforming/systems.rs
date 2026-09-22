@@ -178,7 +178,7 @@ fn apply_impact_delivery_to_target(
             (vol.atmospheric_pressure_bar + delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
                 .clamp(0.0, 150.0);
     } else {
-        commands.entity(target_ent).insert(VolatileInventory {
+        commands.entity(target_ent).try_insert(VolatileInventory {
             delivered_water_m_earth: total_delivered_water,
             ocean_coverage_frac: ((total_delivered_water / 0.0006) * 0.71).clamp(0.0, 0.98) as f32,
             atmospheric_pressure_bar: (delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
@@ -195,14 +195,16 @@ fn apply_impact_delivery_to_target(
         terra.impact_dust_optical_depth += delivery.delta_dust_opacity;
         terra.total_bombarded_mass_earth += p_mass_earth;
     } else {
-        commands.entity(target_ent).insert(TerraformingAtmosphere {
-            co2_pressure_bar: delivery.delta_co2_bar,
-            nitrogen_pressure_bar: delivery.delta_nitrogen_bar,
-            surface_liquid_water_m_earth: delivery.liquid_water_delivered_m_earth,
-            atmospheric_water_m_earth: delivery.steam_vapor_delivered_m_earth,
-            impact_dust_optical_depth: delivery.delta_dust_opacity,
-            total_bombarded_mass_earth: p_mass_earth,
-        });
+        commands
+            .entity(target_ent)
+            .try_insert(TerraformingAtmosphere {
+                co2_pressure_bar: delivery.delta_co2_bar,
+                nitrogen_pressure_bar: delivery.delta_nitrogen_bar,
+                surface_liquid_water_m_earth: delivery.liquid_water_delivered_m_earth,
+                atmospheric_water_m_earth: delivery.steam_vapor_delivered_m_earth,
+                impact_dust_optical_depth: delivery.delta_dust_opacity,
+                total_bombarded_mass_earth: p_mass_earth,
+            });
     }
 
     if let Some(ref mut climate) = opt_climate {

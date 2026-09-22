@@ -12,6 +12,7 @@ use std::f64::consts::PI;
 use crate::game::ui::NotificationToast;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
 
 /// Tracks the status and execution of the Theia-Earth Moon-forming giant impact.
@@ -314,7 +315,7 @@ fn resolve_giant_impact_moon(
         diff.recalculate(moon_mass, theia.4 .0, &Composition::rocky());
     }
 
-    commands.entity(theia_ent).insert(SatelliteOf {
+    commands.entity(theia_ent).try_insert(SatelliteOf {
         parent: earth_ent,
         semi_major_axis_au: orbit_dist_au,
         orbital_period_years: p_moon_yr,
@@ -395,6 +396,7 @@ pub fn update_theia_rendezvous(
     sim_time: Res<SimTime>,
     time_warp: Res<TimeWarp>,
     mut theia_state: ResMut<TheiaImpactState>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
     star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
     mut bodies_query: TheiaBodiesQuery,
     mut toast: Option<ResMut<NotificationToast>>,
@@ -404,6 +406,14 @@ pub fn update_theia_rendezvous(
     }
 
     if theia_state.moon_formed {
+        return;
+    }
+
+    if !theia_state.manual_trigger_requested
+        && scenario_state
+            .as_ref()
+            .is_some_and(|s| s.current_preset != ScenarioPreset::SolarNebulaMmsn)
+    {
         return;
     }
 

@@ -97,7 +97,7 @@ pub fn detect_hierarchical_triples(
                 let tau_kl =
                     compute_kozai_timescale(inner_dist, pert_dist, p_mass.0, pert_mass, 0.0);
 
-                commands.entity(inner_ent).insert(KozaiLidovState {
+                commands.entity(inner_ent).try_insert(KozaiLidovState {
                     perturber_entity: Some(pert_ent),
                     perturber_name: pert_name,
                     mutual_inclination_deg: i_mut_rad.to_degrees(),

@@ -195,7 +195,7 @@ fn auto_provision_relativistic_jet_states(
             _ => None,
         };
         if let Some(state) = auto_state {
-            commands.entity(entity).insert(state);
+            commands.entity(entity).try_insert(state);
         }
     }
 }

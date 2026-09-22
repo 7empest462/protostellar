@@ -282,7 +282,11 @@ pub fn apply_pebble_accretion(
         };
         rad.0 = new_radius;
 
-        let new_type = classify_body_by_mass_and_comp(new_mass, &comp, false);
+        let new_type = if body.body_type == BodyType::Moon {
+            BodyType::Moon
+        } else {
+            classify_body_by_mass_and_comp(new_mass, &comp, false)
+        };
         if new_type != body.body_type {
             let old_type = body.body_type;
             body.body_type = new_type;

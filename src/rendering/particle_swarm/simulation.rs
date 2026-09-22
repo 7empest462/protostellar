@@ -334,15 +334,30 @@ fn update_growing_body_physics(
             mass.0 = (mass.0 + gain * runaway_mult).min(1.02 * EARTH_MASS_SOLAR);
         }
     } else if !is_massive_disk {
-        let max_giant_mass = 2.5 * JUPITER_MASS_SOLAR;
-        if mass.0 < max_giant_mass {
+        let max_body_mass = if r_au < 4.5 {
+            // Main Asteroid belt barrier
+            0.005 * EARTH_MASS_SOLAR
+        } else if r_au < 11.5 {
+            // Gas Giant zone (Jupiter & Saturn)
+            2.5 * JUPITER_MASS_SOLAR
+        } else if r_au < 45.0 {
+            // Ice Giant zone (Uranus, Neptune, Planet Nine)
+            25.0 * EARTH_MASS_SOLAR
+        } else {
+            // Outer Kuiper belt & Oort cloud dwarf planets (Pluto, etc.)
+            0.05 * EARTH_MASS_SOLAR
+        };
+
+        if mass.0 < max_body_mass {
             let m_earth = mass.0 / EARTH_MASS_SOLAR;
             let runaway_mult = if m_earth < 10.0 {
                 1.0 + 0.05 * m_earth
-            } else {
+            } else if r_au < 11.5 {
                 1.5 + 0.15 * m_earth.clamp(10.0, 350.0).powf(0.30)
+            } else {
+                1.0
             };
-            mass.0 = (mass.0 + gain * runaway_mult).min(max_giant_mass);
+            mass.0 = (mass.0 + gain * runaway_mult).min(max_body_mass);
         }
     } else {
         let max_ring_mass = crate::simulation::accretion::circum_nuclear_ring_mass_capacity(
@@ -364,6 +379,8 @@ fn update_growing_body_physics(
 
     let updated_type = if body.body_type == BodyType::BlackHole {
         BodyType::BlackHole
+    } else if body.body_type == BodyType::Moon {
+        BodyType::Moon
     } else {
         crate::simulation::components::classify_body_by_mass_and_comp(mass.0, comp, false)
     };
@@ -381,9 +398,24 @@ fn update_growing_body_physics(
     };
     radius.0 = new_radius;
 
-    if is_beyond_snowline && mass.0 >= 6.0 * EARTH_MASS_SOLAR && comp.gas_frac < 0.40 {
+    if is_beyond_snowline
+        && (4.5..11.5).contains(&r_au)
+        && mass.0 >= 6.0 * EARTH_MASS_SOLAR
+        && comp.gas_frac < 0.85
+    {
         comp.gas_frac = (comp.gas_frac + 0.08).min(0.92);
         comp.ice_frac = (comp.ice_frac * 0.90).max(0.04);
+    } else if is_beyond_snowline && r_au >= 11.5 {
+        // Outer Ice Giant zone: particle accretion adds volatile ices and silicates, not hydrogen/helium gas
+        let ice_add = 0.65;
+        let rock_add = 0.35;
+        let old_m = (mass.0 - gain).max(1e-12);
+        if mass.0 > 0.0 {
+            comp.ice_frac = ((comp.ice_frac * old_m + ice_add * gain) / mass.0).clamp(0.20, 0.85);
+            comp.silicate_frac =
+                ((comp.silicate_frac * old_m + rock_add * gain) / mass.0).clamp(0.10, 0.60);
+            comp.gas_frac = comp.gas_frac.min(0.20);
+        }
     }
     if mass.0 >= 13.0 * JUPITER_MASS_SOLAR {
         comp.gas_frac = (comp.gas_frac + 0.15).min(0.99);

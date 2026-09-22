@@ -48,24 +48,39 @@ fn update_star_lights_and_strobes(
     for child in children.iter() {
         if let Ok(mut light) = light_query.get_mut(child) {
             if body_type == BodyType::BlackHole {
-                light.intensity = 1_500_000.0;
+                // Gravitational lensing ring — no photon emission
+                light.intensity = 2_000_000.0;
             } else if body_type == BodyType::QuasiStar {
                 light.color = Color::srgb(1.0, 0.10, 0.02);
                 light.intensity = if is_blown_out {
-                    1_500_000.0
+                    2_000_000.0
                 } else {
-                    12_000_000.0
+                    // Eddington-luminosity quasi-star: blinding at close range
+                    60_000_000.0
                 };
             } else if body_type == BodyType::Pulsar {
                 let strobe = (elapsed_secs * 24.0).sin().abs().powi(4);
                 light.color = Color::srgb(0.70, 0.90, 1.0);
-                light.intensity = 3_000_000.0 + strobe * 25_000_000.0;
+                // Peak X-ray millisecond pulsar flash
+                light.intensity = 8_000_000.0 + strobe * 80_000_000.0;
             } else if body_type == BodyType::Magnetar {
                 let flare = ((elapsed_secs * 5.0).sin() * (elapsed_secs * 13.0).cos())
                     .abs()
                     .powf(1.8);
                 light.color = Color::srgb(0.85, 0.60, 1.0);
-                light.intensity = 4_000_000.0 + flare * 30_000_000.0;
+                // Soft gamma repeater burst
+                light.intensity = 12_000_000.0 + flare * 120_000_000.0;
+            } else if body_type == BodyType::NeutronStar {
+                light.color = Color::srgb(0.65, 0.82, 1.0);
+                light.intensity = 30_000_000.0;
+            } else if body_type == BodyType::WhiteDwarf {
+                light.color = Color::srgb(0.85, 0.92, 1.0);
+                light.intensity = 25_000_000.0;
+            } else {
+                // Main-sequence stars (Sun-like, Red Dwarf, etc.)
+                // Physical solar luminosity at 1 AU produces ~1361 W/m² irradiance.
+                // We scale so nearby objects appear realistically illuminated in HDR.
+                light.intensity = 18_000_000.0;
             }
         }
     }
@@ -104,14 +119,22 @@ fn update_star_material(
         mat.extension.uniforms.planet_type = 0;
         mat.base.unlit = true;
         let star_subtype = star_subtype_from_body_type(body_type);
+        // HDR emissive radiance. Values are scene-linear; Bloom threshold is 1.8.
+        // Multipliers must push above that to generate a glow halo.
+        // These are calibrated so stars look incandescent, not glowing-plastic.
         let mult = match body_type {
-            BodyType::WhiteDwarf => 35.0,
-            BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => 45.0,
-            BodyType::Protostar => 14.0,
-            _ => 30.0,
+            BodyType::WhiteDwarf => 220.0, // Intense blue-white ultraviolet furnace
+            BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => 280.0,
+            BodyType::Protostar => 55.0, // Young, luminous but not fully ignited
+            BodyType::RedDwarf => 80.0,
+            BodyType::BrownDwarf => 28.0, // Barely above threshold — faint deep-red glow
+            BodyType::RedGiant | BodyType::RedSupergiant => 95.0,
+            BodyType::BlueGiant | BodyType::BlueSupergiant | BodyType::Hypergiant => 350.0,
+            BodyType::WolfRayet => 310.0,
+            _ => 120.0, // Main-sequence yellow/orange dwarfs (Sun-like)
         };
         let flare_mult = opt_flare.map_or(1.0, |f| 1.0 + f.current_flare_intensity * 2.0);
-        let emissive_boost = opt_flare.map_or(1.0, |f| 1.0 + f.current_flare_intensity * 0.35);
+        let emissive_boost = opt_flare.map_or(1.0, |f| 1.0 + f.current_flare_intensity * 1.8);
         mat.base.emissive = LinearRgba::from(color) * (mult * emissive_boost);
 
         let (cell_scale, mut flare_intensity, pulse_freq) = match body_type {
@@ -148,6 +171,7 @@ fn update_star_material(
 fn update_planet_material(
     mat: &mut PlanetMaterial,
     body_type: BodyType,
+    name: &str,
     comp: &Composition,
     temp_k: f64,
     color: Color,
@@ -160,11 +184,17 @@ fn update_planet_material(
         norm_comp.metal_frac as f32,
         norm_comp.gas_frac as f32,
     );
-    mat.extension.uniforms.planet_type = match body_type {
+    let lower = name.to_lowercase();
+    let effective_type = if lower.contains("uranus") || lower.contains("neptune") {
+        BodyType::IceGiant
+    } else {
+        body_type
+    };
+    mat.extension.uniforms.planet_type = match effective_type {
         BodyType::GasGiant => 1,
         BodyType::IceGiant => 2,
         BodyType::SuperEarth => 6,
-        BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
+        BodyType::TerrestrialPlanet | BodyType::Protoplanet | BodyType::Moon => {
             if norm_comp.ice_frac > 0.40 {
                 2
             } else {
@@ -298,10 +328,17 @@ fn compute_body_color(
     let (br, bg, bb) = blackbody_to_srgb(temp.0);
     let (cr, cg, cb) = comp.visual_color_tint();
 
+    let lower = body.name.to_lowercase();
     let is_star_like = body.body_type.is_star_or_remnant();
-    let is_gas_giant = body.body_type == BodyType::GasGiant || comp.normalized().gas_frac > 0.30;
+    let is_ice_giant = body.body_type == BodyType::IceGiant
+        || lower.contains("uranus")
+        || lower.contains("neptune");
+    let is_gas_giant = !is_ice_giant
+        && (body.body_type == BodyType::GasGiant || comp.normalized().gas_frac > 0.45);
     if is_star_like {
         compute_stellar_palette(body.body_type, temp.0)
+    } else if is_ice_giant {
+        super::palettes::compute_ice_giant_palette(&body.name, temp.0)
     } else if is_gas_giant {
         compute_gas_giant_palette(mass.0, temp.0, &body.name)
     } else if matches!(body.body_type, BodyType::Asteroid | BodyType::Planetesimal) {
@@ -640,7 +677,7 @@ fn update_body_material_properties(
             opt_flare,
         );
     } else {
-        update_planet_material(mat, body.body_type, comp, temp.0, color);
+        update_planet_material(mat, body.body_type, &body.name, comp, temp.0, color);
     }
 }
 

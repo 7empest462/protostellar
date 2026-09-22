@@ -350,7 +350,7 @@ fn test_kozai_lidov_detection_uses_perturber_mass() {
         .world_mut()
         .spawn((
             SimPosition(DVec3::new(1.0, 0.0, 0.0)),
-            SimVelocity(DVec3::new(0.0, 0.0, 6.28)),
+            SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
             Mass(1e-10),
             CelestialBody {
                 name: "Inner Asteroid".to_string(),
