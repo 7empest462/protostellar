@@ -9,6 +9,10 @@
 2. [🎮 Flight Manual & How to Access Everything In-Game](#-flight-manual--how-to-access-everything-in-game)
    - [Camera & Viewport Controls](#camera--viewport-controls)
    - [Time Flow Engine](#time-flow-engine)
+   - [Supernova Core-Collapse, Matter Ejection & Remnant Formation](#supernova-core-collapse-matter-ejection--remnant-formation)
+   - [Pristine Disk Genesis & Protostellar Thermonuclear Ignition](#pristine-disk-genesis--protostellar-thermonuclear-ignition)
+   - [Secular Kozai-Lidov Resonance & Hierarchical Triples](#secular-kozai-lidov-resonance--hierarchical-triples)
+   - [Contextual Scenario-Specific HUD Adaptation](#contextual-scenario-specific-hud-adaptation)
    - [Interactive Orbital Slingshot Launcher](#interactive-orbital-slingshot-launcher)
    - [Real-Time Trajectory Predictor & Encounter Forecaster](#real-time-trajectory-predictor--encounter-forecaster)
    - [Deep-Time Geological Epoch Scrubber & Continental Drift](#deep-time-geological-epoch-scrubber--continental-drift)
@@ -29,7 +33,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (242 Tests)](#-automated-test-suite-242-tests)
+6. [🧪 Automated Test Suite (312 Tests)](#-automated-test-suite-312-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -41,6 +45,10 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 
 | System / Feature | Description | Primary In-Game Access |
 | :--- | :--- | :---: |
+| **Supernova Core-Collapse & Ejecta Simulation** | High-energy stellar detonations with prompt breakout fireballs, supersonic multi-layer shockwaves, turbulent Rayleigh-Taylor matter clumps, SPH circumstellar disk clearing ($+15\text{ AU/s}$), and asteroid vaporization. Differentiated by progenitor mass: Hypernova / Collapsar ($\ge 25\ M_\odot \to$ Black Hole), Type II ($8 - 25\ M_\odot \to$ Pulsar), Type Ia ($> 1.44\ M_\odot \to$ Complete Disruption), and Planetary Nebula ($0.5 - 8\ M_\odot \to$ White Dwarf). | Open Inspector (**`[I]`**) $\to$ click **`[💥 Supernova]`**, or press **`[N]`** on star, or over-accrete a White Dwarf |
+| **Pristine Disk Genesis & Star Ignition** | Class II T-Tauri disk without starter planets. Features 100,000 SPH viscous particles, aerodynamic gas drag, $2.7\text{ AU}$ water snow line trap, protostellar gravitational contraction, and automatic thermonuclear ignition at $10.0\text{ MK}$ ($100\%$) with solar wind clearing. | Press **`[Shift + F1]`** or click **`[Disk Genesis]`** in Scenarios Bar |
+| **Secular Kozai-Lidov Resonance** | Quadrupole secular gravitational coupling in hierarchical triples, driving massive cyclic exchanges of orbital inclination and eccentricity ($e \leftrightarrow i$) up to $e \to 0.88+$, triggering extreme tidal heating, captures, or Roche shredding. | Press **`[F11]`** or click **`[HD 80606]`** in Scenarios Bar |
+| **Contextual Scenario-Specific HUD** | Dynamic toolbar and telemetry filtering that correlates HUD action menus, tools, and readouts to the currently loaded scenario, eliminating visual clutter while preserving universal sandbox tools everywhere. | Automatic across all 11 scenario presets |
 | **Interactive Orbital Slingshot Launcher** | Aim and inject projectiles, comets, or rogue planets with click-and-drag flight vectors. | Press **`[K]`** or click **`[🎯 Slingshot [K]]`** |
 | **Trajectory Predictor & Encounter Forecaster** | Conic Keplerian trajectory propagation forecasting closest approaches, Hill sphere entries, and direct impacts. | Press **`[N]`** or click **`[🎯 Forecast: ON [N]]`** |
 | **Deep-Time Geological Epoch Scrubber** | Scrub planets across 4.56 Gyr of planetary evolution: Hadean magma oceans, Archean Great Oxidation, supercontinents, and biosphere expansion. | Press **`[F11]`** or click **`[⏳ Epochs [F11]]`** |
@@ -76,6 +84,68 @@ Protostellar features a multi-tiered symplectic time integrator allowing you to 
 - **`3`**: $10,000\times$ High-speed planetary accretion flow (~$10\text{ kyr/s}$).
 - **`4`**: $1,000,000\times$ Deep astronomical time warp (~$1\text{ Myr/s}$).
 - **`←` / `→`**: Incrementally step simulation speed down or up.
+
+---
+
+### Supernova Core-Collapse, Matter Ejection & Remnant Formation
+Witness the violent death of massive stars and the birth of exotic compact remnants through real-time 3D explosive hydrodynamic visuals:
+- **Mass-Differentiated Astrophysical Regimes**:
+  - **Hypernova / Collapsar ($\ge 25\ M_\odot$ - Relativistic Black Hole)**: Blast speeds reach $75\text{ AU/s}$ out to $150\text{ AU}$. Features dual relativistic polar breakout cones ($250,000\text{ K}$ sapphire-violet), massive core $^{56}\text{Ni}$ radioactive clumps, and leaves behind a stellar-mass Black Hole.
+  - **Type II Core-Collapse ($8 - 25\ M_\odot$ - Pulsar / Neutron Star)**: Iron core-collapse neutrino detonation expanding at $45\text{ AU/s}$ out to $110\text{ AU}$. Yields concentric chemical shells: inner golden radioactive nickel-iron, middle $[\text{O III}]/\text{Si}/\text{S}$ emerald mantle, and outer $H\alpha$ ruby hydrogen envelope, leaving a rotating Pulsar.
+  - **Type Ia Thermonuclear Detonation ($> 1.44\ M_\odot$ White Dwarf)**: Complete thermonuclear runaway consumption of the carbon-oxygen core expanding at $35\text{ AU/s}$ out to $95\text{ AU}$, thoroughly disrupting the star with zero remnant core.
+  - **Planetary Nebula Thermal Pulse ($0.5 - 8\ M_\odot$ - White Dwarf)**: Gentle thermal envelope shedding at $4.5\text{ AU/s}$ out to $45\text{ AU}$ leaving a cooling degenerate White Dwarf.
+- **Prompt Detonation Fireball & Rayleigh-Taylor Ejecta**:
+  - Prompt shock breakout fireball begins at the star's photosphere radius rather than a point singularity, decaying exponentially ($I(t) = e^{-3.5 t}$).
+  - 100+ discrete high-velocity matter clumps experience procedural Rayleigh-Taylor turbulent harmonic vorticity ($\sin/\cos$ curling) and trail filamentary streamer fingers back toward the center of explosion.
+  - Ejecta clumps decelerate under interstellar medium resistance and cool down radiatively over time.
+- **Circumstellar Disk & Planetary Blast Wave Interaction**:
+  - The forward blast imparts a supersonic radial kick ($+15\text{ AU/s}$) to protoplanetary disk particles, vaporizes volatile ices (`ice_frac = 0.0`), and superheats circumstellar dust to an incandescent $4,500\text{ K}$.
+  - Inner asteroids and comets within $2.0\text{ AU}$ of the core collapse are completely vaporized and despawned.
+  - Surviving planets absorb outward momentum impulses, experience extreme surface heating, and have active cometary atmospheric ablation tails dynamically attached pointing radially away from the remnant.
+- **In-Game Triggers**:
+  - In the Target Inspector (**`[I]`**), advance a massive star's evolutionary state until it detonates.
+  - Focus the central star and press **`[N]`** to trigger instant core collapse.
+  - Over-accrete a White Dwarf past the Chandrasekhar limit ($1.44\ M_\odot$) or a Neutron Star past the TOV limit ($2.17\ M_\odot$).
+
+---
+
+### Pristine Disk Genesis & Protostellar Thermonuclear Ignition
+Start from absolute cosmic scratch and watch planets assemble organically:
+1. Load the **Disk Genesis** scenario via **`[Shift + F1]`** or clicking **`[Disk Genesis]`** in the Scenarios bar.
+2. Unlike preset planetary systems, Genesis begins with only a central contracting protostar and a pristine Class II T-Tauri accretion disk of 100,000 SPH viscous gas and dust particles.
+3. **Astrophysical Growth Mechanics**:
+   - **Aerodynamic Gas Drag & Settling**: Fine grains settle to the midplane and experience sub-Keplerian headwind drift.
+   - **Water-Ice Snow Line Trap ($2.7\text{ AU}$)**: Rapid volatile ice condensation forms a high-density pressure bump, accelerating pebble coagulation into rocky cores and gas giant seeds.
+4. **Thermonuclear Core Ignition**:
+   - The central protostar gravitationally contracts, building immense core temperature and pressure over ~100,000 to 200,000 simulated years.
+   - Once core temperature reaches **$10.0\text{ MK}$ ($100\%$ fusion threshold)**, the protostar automatically ignites into a hydrogen-burning **Main Sequence Star**!
+   - Core ignition unleashes a blinding shock breakout and intense solar wind radiation pressure that sweeps residual inner gas away into the outer system.
+   - **Manual Hotkey Controls**:
+     - Press **`[I]`** anytime to immediately ignite the protostar.
+     - Press **`[Shift + I]`** (or press **`[I]`** on an ignited star) to trigger a violent Coronal Mass Ejection (CME) shockwave.
+
+---
+
+### Secular Kozai-Lidov Resonance & Hierarchical Triples
+Experience three-body gravitational chaos and secular orbital evolution:
+1. Load **`[F11]`** or click **`[HD 80606 (Kozai-Lidov Triple)]`** in the Scenarios bar.
+2. An inner binary/planet orbits a primary star with a distant, highly inclined third companion (mutual inclination $i_{\text{mut}} > 39.2^\circ$).
+3. **Quadrupole Secular Perturbations**:
+   - Conserves the vertical component of orbital angular momentum:
+     $$\sqrt{1 - e^2} \cos i = \text{const}$$
+   - Drives large-amplitude cyclic oscillations between orbital inclination and eccentricity ($e \leftrightarrow i$).
+   - Over secular timescales, the planet's orbit stretches from near-circular to extreme eccentricity ($e \to 0.88 - 0.93$), driving the periastron down to grazing distances where tidal dissipation, catastrophic heating, or Roche tidal disruption occur!
+
+---
+
+### Contextual Scenario-Specific HUD Adaptation
+To preserve clarity and focus across wildly different astrophysical regimes, Protostellar features an intelligent contextual UI filter:
+- **Scenario-Specific Menus**: Specialized action buttons only appear when relevant to the active scenario:
+  - *Solar MMSN*: Late Heavy Bombardment (**`[G]`**), Theia-Moon giant collision (**`[M]`**).
+  - *Disk Genesis*: Real-time protostellar core heating telemetry, manual thermonuclear ignition (**`[I]`**), CME triggers.
+  - *JWST Little Red Dot*: Supermassive black hole accretion rates, Eddington ratio readouts, and gravitational lensing controls.
+  - *Relativistic Binaries & Compact Remnants*: Synchrotron jet telemetry, 1PN precession readouts, and Peters GW inspiral triggers.
+- **Universal Sandbox Tools**: Universal tools—such as the Interactive Orbital Slingshot (**`[K]`**), Trajectory Predictor (**`[N]`**), Planet Builder (**`[P]`**), Target Inspector (**`[I]`**), Scientific Telemetry (**`[F10]`**), and Time Integrator (**`Space`**, **`1`**-**`4`**)—remain accessible across all 11 scenarios.
 
 ---
 
@@ -272,6 +342,7 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | Preset | Key | Description |
 | :--- | :---: | :--- |
 | **Hayashi Solar Nebula** | `[F1]` | Canonical 4.56 Gyr Minimum Mass Solar Nebula (MMSN) with central protostar, Earth, Mars, Jupiter, and 1,024 asteroid planetesimals. |
+| **Disk Genesis (Organic Planets)** | `[Shift+F1]` | Pristine Class II T-Tauri disk without starter planets. Aerodynamic gas drag, $2.7\text{ AU}$ snow line, and core contraction leading to $10.0\text{ MK}$ auto-ignition. |
 | **TRAPPIST-1 System** | `[F2]` | Ultracool M-dwarf with 7 resonant Earth-sized worlds in a compact Laplace chain (3 in the liquid water habitable zone). |
 | **Kepler-16 Circumbinary** | `[F3]` | "Tatooine" K/M-dwarf binary pair orbited by a Saturn-mass circumbinary giant with an exomoon and outer ocean world. |
 | **Hot Jupiter Migration** | `[F4]` | Massive $1.4\text{ M}_{\text{Jup}}$ gas giant undergoing Type II disk torque inward migration from $5.2\text{ AU}$ down to $0.045\text{ AU}$. |
@@ -279,7 +350,8 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | **JWST Little Red Dot** | `[F6]` | Cosmic Dawn ($z \sim 8.5$): $450,000\text{ M}_\odot$ Quasi-Star seed encased in a $60\text{ AU}$ pure hydrogen cocoon with active gravitational lensing. |
 | **PSR B1257+12 Pulsar** | `[F7]` | Relativistic $161\text{ Hz}$ millisecond pulsar with synchrotron lighthouse beams & 3 zombie planets (Draugr, Poltergeist, Phobetor). |
 | **SGR 1806-20 Magnetar** | `[F9]` | Ultra-magnetized $10^{15}\text{ G}$ magnetar with starquake flares, 3D magnetic flux loops, and LBV 1806-20 hypergiant cluster companion. |
-| **Hierarchical Kozai Triple** | `[F11]` | Hierarchical triple system demonstrating periodic eccentricity and inclination exchange via the Kozai-Lidov mechanism. |
+| **PSR B1913+16 Relativistic Binary** | `[HUD]` | Hulse-Taylor binary pulsar ($1.44\ M_\odot + 1.38\ M_\odot$) in an eccentric $0.013\text{ AU}$ orbit demonstrating $4.22^\circ/\text{yr}$ 1PN periastron advance and GW inspiral decay. |
+| **HD 80606 Kozai-Lidov Triple** | `[F11]` | Hierarchical triple system demonstrating periodic eccentricity and inclination exchange via the Kozai-Lidov mechanism ($e \to 0.88+$). |
 
 ---
 
@@ -311,16 +383,19 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | Key / Input | Action |
 | :--- | :--- |
 | **`P`** | Toggle Planet Builder & Spawner GUI |
-| **`I`** | Toggle Target Inspector Panel |
+| **`I`** | Toggle Target Inspector Panel (or ignite protostar / trigger solar flare when star is focused or in Genesis) |
+| **`Shift + I`** | Trigger Coronal Mass Ejection (CME) solar blast wave |
 | **`K`** | Toggle Interactive Orbital Slingshot Launcher |
 | **`C`** | Cycle slingshot projectile archetype (in Slingshot mode) |
-| **`N`** | Toggle Trajectory Predictor & Encounter Forecaster |
+| **`N`** | Toggle Trajectory Predictor & Encounter Forecaster (or trigger core-collapse supernova when star is focused) |
+| **`F1`** / **`Shift + F1`** | Load Solar MMSN / Load Disk Genesis (Organic Planet Formation) |
+| **`F2`** - **`F7`**, **`F9`**, **`F11`** | Load scenario presets (TRAPPIST, Kepler-16, Hot Jupiter, Rogue Planet, Little Red Dot, Pulsar, Magnetar, Kozai Triple) |
 | **`F10`** | Toggle Telemetry & Habitability Graph Drawer |
-| **`F11`** | Toggle Deep-Time Geological Epoch Scrubber |
+| **`F11`** | Toggle Deep-Time Geological Epoch Scrubber (when planet focused) |
 | **`F12`** | Quick Save simulation state (`saves/quicksave.json`) |
 | **`Shift + F12`** | Quick Load simulation state (`saves/quicksave.json`) |
-| **`M`** | Trigger Theia giant impact & Moon formation |
-| **`G`** | Trigger Late Heavy Bombardment cometary cascade |
+| **`M`** | Trigger Theia giant impact & Moon formation (exclusive to Solar scenario) |
+| **`G`** | Trigger Late Heavy Bombardment cometary cascade (exclusive to Solar scenario) |
 | **`F8`** | Hot-swap between GPU compute particles & CPU fallback |
 
 ### Live Body Editing (Selected Body)
@@ -331,8 +406,9 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | **`O`** | Expand orbit by $+10\%$ (re-circularizes) |
 | **`L`** | Contract orbit by $-10\%$ (re-circularizes) |
 | **`C`** | Cycle composition (Silicate $\to$ Ice $\to$ Iron $\to$ Gas) |
-| **`I`** / **`B`** | Apply forward prograde delta-V impulse ($+15\%$) |
+| **`B`** | Apply forward prograde delta-V impulse ($+15\%$) |
 | **`K`** | Apply retrograde braking delta-V impulse ($-15\%$) |
+| **`I`** | Ignite protostar into Main Sequence / Trigger Coronal Mass Ejection |
 | **`Z`** | Zero orbital inclination and re-circularize orbit |
 | **`Delete`** / **`Backspace`** | Despawn body cleanly |
 | **`X`** | Vaporize body into expanding debris |
@@ -363,11 +439,12 @@ protostellar/
 │   │   ├── components/           # ECS definitions (Mass, Position, Climate, JetState, SpinState, etc.)
 │   │   ├── disk/                 # Protoplanetary disk structure, gas drag, pebble drift
 │   │   ├── geology/              # Deep-time epochs, continental drift, Great Oxidation Event
-│   │   ├── kozai_lidov/          # Hierarchical triple resonance & orbital tilt exchange
+│   │   ├── kozai_lidov/          # Hierarchical triple resonance & secular orbital tilt exchange
 │   │   ├── predictor.rs          # Real-time Keplerian trajectory predictor & encounter forecaster
 │   │   ├── relativity/           # 1PN precession, GW Peters orbital decay, relativistic jets
-│   │   ├── scenarios/            # Scenario presets (Solar, TRAPPIST, Kepler-16, Pulsar, Magnetar, etc.)
+│   │   ├── scenarios/            # 11 scenario presets (Solar, Genesis, TRAPPIST, Kepler-16, Pulsar, Magnetar, etc.)
 │   │   ├── serialization.rs      # System JSON save/load serializer
+│   │   ├── space_weather/        # CMEs, stellar flares, magnetospheric stand-off & auroral ovals
 │   │   ├── telemetry.rs          # Symplectic energy auditing, metrics history & CSV export
 │   │   ├── terraforming/         # Targeted bombardment spawner & dynamic climate modification
 │   │   ├── thermodynamics.rs     # Stellar evolution, habitability indexing & climate regimes
@@ -375,7 +452,7 @@ protostellar/
 │   │   └── physics.rs            # Symplectic leapfrog N-body integrator
 │   ├── rendering/
 │   │   ├── bodies/               # Meshes, atmospheres, relativistic jets, ring systems
-│   │   ├── effects/              # Conics, orbit ribbons, cometary tails, lensing
+│   │   ├── effects/              # Supernova core-collapse explosions, conics, orbit ribbons, cometary tails
 │   │   ├── materials.rs          # Custom Bevy PBR & volumetric shader materials
 │   │   └── camera.rs             # Pan-orbit camera, zoom, target tracking
 │   ├── game/
@@ -386,15 +463,18 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 29 specialized test suites covering 242 automated tests
+    └── simulation_tests/         # 37 specialized test suites covering 312 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (242 Tests)
+## 🧪 Automated Test Suite (312 Tests)
 
-Protostellar enforces rigorous physical validity through **242 comprehensive integration tests** across 29 specialized test suites:
+Protostellar enforces rigorous physical validity through **312 comprehensive integration tests** across 37 specialized test suites:
 
+- **Supernova Core-Collapse & Ejecta**: Mass-differentiated explosion regimes (Hypernova, Type II, Type Ia, Planetary Nebula), prompt breakout fireball decay, high-velocity ejecta kinematics, SPH disk blast clearing, and planet atmospheric escape tails.
+- **Pristine Disk Genesis & Star Ignition**: Organic coagulation from 100,000 SPH particles, water-ice snow line trapping, protostellar core contraction, and automatic 10.0 MK fusion ignition.
+- **Hierarchical Kozai-Lidov Triples**: Secular quadrupole angular momentum conservation ($L_z = \sqrt{1 - e^2} \cos i = \text{const}$), cyclic eccentricity-inclination coupling, and grazing tidal captures.
 - **Orbital Mechanics & Conservation**: Symplectic leapfrog energy conservation, Keplerian solver accuracy, high-warp orbital stability.
 - **Accretion & Theia Giant Impact**: Oblique impact kinematics, prograde lunar coalescence, Earth spin-up, LLSVP density contrast.
 - **Geology & Climate**: Magma ocean cooling, Great Oxidation Event transitions, continental drift phases, vegetation expansion.
@@ -402,8 +482,9 @@ Protostellar enforces rigorous physical validity through **242 comprehensive int
 - **Tides & Rheology**: Viscoelastic dissipation scaling, 1:1 spin synchronization, tidal heating flux.
 - **Atmospheric Physics**: Multi-layer Rayleigh/Mie scattering, photoevaporative mass loss, cometary ion tail aberration.
 - **Shadows & Eclipses**: Umbral/penumbral eclipse ratios, planetary ring day/night hemisphere shadowing.
+- **Space Weather & Auroral Ovals**: Stellar flares, CME shockwave propagation, planetary magnetosphere stand-off, auroral oval geometry.
 - **Trajectory Forecasts**: Bound elliptical vs hyperbolic conics, Hill sphere entries, Roche disruption predictions.
-- **UI & System Serialization**: JSON round-trip save/load, quick bar zoning, inspector formatting, HUD minimization.
+- **UI & System Serialization**: JSON round-trip save/load, quick bar zoning, inspector formatting, HUD minimization, and scenario contextual filtering.
 
 To run all automated tests:
 ```bash
