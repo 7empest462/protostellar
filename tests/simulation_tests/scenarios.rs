@@ -892,12 +892,8 @@ fn test_trappist1_visual_hierarchy_and_spacing() {
 
     // Star: TRAPPIST-1 (R = 0.121 R_sun = 0.000563 AU)
     let star_phys_r = 0.000563f64;
-    let star_vis_r = config.calc_visual_radius_with_orbit(
-        star_phys_r,
-        BodyType::RedDwarf,
-        0.0,
-        min_orbit_au,
-    );
+    let star_vis_r =
+        config.calc_visual_radius_with_orbit(star_phys_r, BodyType::RedDwarf, 0.0, min_orbit_au);
 
     // Planet b: R = 1.116 R_earth, a = 0.01154 AU
     let b_phys_r = 1.116 * EARTH_RADIUS_AU;
@@ -978,7 +974,8 @@ fn test_trappist1_visual_hierarchy_and_spacing() {
     );
 
     // 4. Solar system planets (e.g. Earth at 1.0 AU, Mercury at 0.387 AU) must NOT be modified by compact scaling
-    let earth_normal = config.calc_visual_radius_for_type(EARTH_RADIUS_AU, BodyType::TerrestrialPlanet);
+    let earth_normal =
+        config.calc_visual_radius_for_type(EARTH_RADIUS_AU, BodyType::TerrestrialPlanet);
     let earth_with_orbit = config.calc_visual_radius_with_orbit(
         EARTH_RADIUS_AU,
         BodyType::TerrestrialPlanet,
@@ -990,4 +987,3 @@ fn test_trappist1_visual_hierarchy_and_spacing() {
         "Solar system planets must retain standard visual scaling"
     );
 }
-

@@ -1,7 +1,7 @@
 //! Real-time planetary ring shadows and moon solar eclipse shadow computations.
 
-use bevy::prelude::*;
 use crate::simulation::components::PlanetaryRingSystem;
+use bevy::prelude::*;
 
 /// Calculates the planetary shadow factor on a ring fragment (0.0 = full umbra, 1.0 = full sunlight).
 pub fn compute_planetary_ring_shadow(

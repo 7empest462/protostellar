@@ -790,7 +790,10 @@ fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
     // 1. Unpaused: visual_time_secs advances with delta_secs
     sched.run(app.world_mut());
     let t1 = app.world().resource::<SimTime>().visual_time_secs;
-    assert!(t1 > 0.045 && t1 < 0.055, "Visual time should advance when unpaused: {t1}");
+    assert!(
+        t1 > 0.045 && t1 < 0.055,
+        "Visual time should advance when unpaused: {t1}"
+    );
 
     {
         let mut t = app.world_mut().resource_mut::<Time>();
@@ -798,7 +801,10 @@ fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
     }
     sched.run(app.world_mut());
     let t2 = app.world().resource::<SimTime>().visual_time_secs;
-    assert!(t2 > t1 + 0.045, "Visual time should continue advancing: {t2}");
+    assert!(
+        t2 > t1 + 0.045,
+        "Visual time should continue advancing: {t2}"
+    );
 
     // 2. Paused: visual_time_secs freezes completely regardless of delta_secs
     app.world_mut().resource_mut::<TimeWarp>().is_paused = true;
@@ -809,7 +815,10 @@ fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
         }
         sched.run(app.world_mut());
         let t_paused = app.world().resource::<SimTime>().visual_time_secs;
-        assert_eq!(t_paused, t2, "Visual time must freeze 100% when time is paused");
+        assert_eq!(
+            t_paused, t2,
+            "Visual time must freeze 100% when time is paused"
+        );
     }
 
     // 3. Step Once while paused: visual_time_secs advances by exactly one frame
@@ -820,7 +829,10 @@ fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
     }
     sched.run(app.world_mut());
     let t_step = app.world().resource::<SimTime>().visual_time_secs;
-    assert!(t_step > t2 + 0.015, "Visual time should advance when step_once is true");
+    assert!(
+        t_step > t2 + 0.015,
+        "Visual time should advance when step_once is true"
+    );
 
     // 4. Resumed: visual_time_secs resumes seamlessly without jumps
     app.world_mut().resource_mut::<TimeWarp>().is_paused = false;
@@ -831,8 +843,11 @@ fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
     }
     sched.run(app.world_mut());
     let t_resumed = app.world().resource::<SimTime>().visual_time_secs;
-    assert!(t_resumed > t_step + 0.018 && t_resumed < t_step + 0.025,
-        "Visual time resumes smoothly from paused angle: {t_resumed} (expected ~{})", t_step + 0.020);
+    assert!(
+        t_resumed > t_step + 0.018 && t_resumed < t_step + 0.025,
+        "Visual time resumes smoothly from paused angle: {t_resumed} (expected ~{})",
+        t_step + 0.020
+    );
 }
 
 #[test]
@@ -841,7 +856,9 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
     use bevy::prelude::*;
     use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
     use protostellar::rendering::bodies::VisualAssets;
-    use protostellar::rendering::materials::{PlanetMaterial, PlanetMaterialExtension, PlanetUniforms};
+    use protostellar::rendering::materials::{
+        PlanetMaterial, PlanetMaterialExtension, PlanetUniforms,
+    };
     use protostellar::simulation::components::*;
     use protostellar::simulation::physics::update_simulation_visual_time;
     use protostellar::simulation::resources::{SimTime, SimulationConfig, TimeWarp};
@@ -871,20 +888,23 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
     drop(materials);
 
     // Spawn a planet entity
-    let _planet_ent = app.world_mut().spawn((
-        SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
-        Mass(1e-6),
-        Radius(0.0001),
-        Temperature(288.0),
-        Composition::default(),
-        CelestialBody {
-            name: "Earth".to_string(),
-            body_type: BodyType::TerrestrialPlanet,
-        },
-        Transform::default(),
-        MeshMaterial3d(mat_handle.clone()),
-        Mesh3d(default_mesh.clone()),
-    )).id();
+    let _planet_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+            Mass(1e-6),
+            Radius(0.0001),
+            Temperature(288.0),
+            Composition::default(),
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Transform::default(),
+            MeshMaterial3d(mat_handle.clone()),
+            Mesh3d(default_mesh.clone()),
+        ))
+        .id();
 
     let mut sched = Schedule::default();
     sched.add_systems((
@@ -902,7 +922,10 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
     let materials = app.world().resource::<Assets<PlanetMaterial>>();
     let mat = materials.get(&mat_handle).unwrap();
     let unpaused_time = mat.extension.uniforms.time;
-    assert!(unpaused_time > 0.09, "Material time should match visual time: {unpaused_time}");
+    assert!(
+        unpaused_time > 0.09,
+        "Material time should match visual time: {unpaused_time}"
+    );
 
     // 2. Paused: Advance time by 0.5s over 5 frames
     app.world_mut().resource_mut::<TimeWarp>().is_paused = true;
@@ -914,8 +937,10 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
         sched.run(app.world_mut());
         let materials = app.world().resource::<Assets<PlanetMaterial>>();
         let mat = materials.get(&mat_handle).unwrap();
-        assert_eq!(mat.extension.uniforms.time, unpaused_time,
-            "Shader material time must freeze 100% when time is paused");
+        assert_eq!(
+            mat.extension.uniforms.time, unpaused_time,
+            "Shader material time must freeze 100% when time is paused"
+        );
     }
 
     // 3. Unpaused again: Resumes smoothly without time skipping or rewind
@@ -928,6 +953,10 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
 
     let materials = app.world().resource::<Assets<PlanetMaterial>>();
     let mat = materials.get(&mat_handle).unwrap();
-    assert!(mat.extension.uniforms.time > unpaused_time + 0.045 && mat.extension.uniforms.time < unpaused_time + 0.055,
-        "Material time resumes smoothly: {}", mat.extension.uniforms.time);
+    assert!(
+        mat.extension.uniforms.time > unpaused_time + 0.045
+            && mat.extension.uniforms.time < unpaused_time + 0.055,
+        "Material time resumes smoothly: {}",
+        mat.extension.uniforms.time
+    );
 }

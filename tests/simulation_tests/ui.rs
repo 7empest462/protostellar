@@ -887,7 +887,9 @@ fn test_inspector_composition_water_ice_formatting() {
 
 #[test]
 fn test_scenario_contextual_ui_filtering() {
-    use protostellar::game::ui::{update_scenario_contextual_ui, InspectorExoticHeader, InspectorSection, UiButtonAction};
+    use protostellar::game::ui::{
+        update_scenario_contextual_ui, InspectorExoticHeader, InspectorSection, UiButtonAction,
+    };
     use protostellar::simulation::resources::PlayerInteractionState;
     use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 
@@ -899,41 +901,77 @@ fn test_scenario_contextual_ui_filtering() {
     });
 
     // Spawn test UI entities for buttons
-    let btn_theia = app.world_mut().spawn((UiButtonAction::InjectEmbryo, Node::default())).id();
-    let btn_lhb = app.world_mut().spawn((UiButtonAction::TriggerLhb, Node::default())).id();
-    let btn_epochs = app.world_mut().spawn((UiButtonAction::ToggleEpochScrubberPanel, Node::default())).id();
-    let btn_pop3 = app.world_mut().spawn((UiButtonAction::SpawnInfallPop3Star, Node::default())).id();
-    let btn_inspiral = app.world_mut().spawn((UiButtonAction::AccelerateInspiral, Node::default())).id();
-    let btn_hyper = app.world_mut().spawn((UiButtonAction::ToggleSuperEddington, Node::default())).id();
-    let btn_blowout = app.world_mut().spawn((UiButtonAction::TriggerBlowoutCocoon, Node::default())).id();
+    let btn_theia = app
+        .world_mut()
+        .spawn((UiButtonAction::InjectEmbryo, Node::default()))
+        .id();
+    let btn_lhb = app
+        .world_mut()
+        .spawn((UiButtonAction::TriggerLhb, Node::default()))
+        .id();
+    let btn_epochs = app
+        .world_mut()
+        .spawn((UiButtonAction::ToggleEpochScrubberPanel, Node::default()))
+        .id();
+    let btn_pop3 = app
+        .world_mut()
+        .spawn((UiButtonAction::SpawnInfallPop3Star, Node::default()))
+        .id();
+    let btn_inspiral = app
+        .world_mut()
+        .spawn((UiButtonAction::AccelerateInspiral, Node::default()))
+        .id();
+    let btn_hyper = app
+        .world_mut()
+        .spawn((UiButtonAction::ToggleSuperEddington, Node::default()))
+        .id();
+    let btn_blowout = app
+        .world_mut()
+        .spawn((UiButtonAction::TriggerBlowoutCocoon, Node::default()))
+        .id();
 
     // Spawn section nodes and exotic header
-    let sec_terra = app.world_mut().spawn((InspectorSection::TerraformingBombardment, Node::default())).id();
-    let sec_exotic = app.world_mut().spawn((InspectorSection::ExoticExperiments, Node::default())).id();
-    let header_exotic = app.world_mut().spawn((Text::new(""), InspectorExoticHeader)).id();
+    let sec_terra = app
+        .world_mut()
+        .spawn((InspectorSection::TerraformingBombardment, Node::default()))
+        .id();
+    let sec_exotic = app
+        .world_mut()
+        .spawn((InspectorSection::ExoticExperiments, Node::default()))
+        .id();
+    let header_exotic = app
+        .world_mut()
+        .spawn((Text::new(""), InspectorExoticHeader))
+        .id();
 
     // Spawn an Earth planet
-    let earth_ent = app.world_mut().spawn((
-        CelestialBody {
-            name: "Earth".to_string(),
-            body_type: BodyType::TerrestrialPlanet,
-        },
-        Mass(EARTH_MASS_SOLAR),
-        SimPosition(DVec3::new(1.0, 0.0, 0.0)),
-        SimVelocity(DVec3::ZERO),
-    )).id();
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::ZERO),
+        ))
+        .id();
 
     // Spawn central Sun
-    let sun_ent = app.world_mut().spawn((
-        CentralStar,
-        CelestialBody {
-            name: "Sun".to_string(),
-            body_type: BodyType::YellowDwarf,
-        },
-        Mass(1.0),
-        SimPosition(DVec3::ZERO),
-        SimVelocity(DVec3::ZERO),
-    )).id();
+    let sun_ent = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            CelestialBody {
+                name: "Sun".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            Mass(1.0),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+        ))
+        .id();
 
     app.add_systems(Update, update_scenario_contextual_ui);
 
@@ -944,16 +982,46 @@ fn test_scenario_contextual_ui_filtering() {
     }
     app.update();
 
-    assert_eq!(app.world().get::<Node>(btn_theia).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_lhb).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_epochs).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_pop3).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_inspiral).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_hyper).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_blowout).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(sec_terra).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(sec_exotic).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Text>(header_exotic).unwrap().0, "EXOTIC PHENOMENA:");
+    assert_eq!(
+        app.world().get::<Node>(btn_theia).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_lhb).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_epochs).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_pop3).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_inspiral).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_hyper).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_blowout).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(sec_terra).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(sec_exotic).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Text>(header_exotic).unwrap().0,
+        "EXOTIC PHENOMENA:"
+    );
 
     // 2. Select Sun in Solar MMSN: Terraforming row must hide
     {
@@ -961,7 +1029,10 @@ fn test_scenario_contextual_ui_filtering() {
         player.selected_entity = Some(sun_ent);
     }
     app.update();
-    assert_eq!(app.world().get::<Node>(sec_terra).unwrap().display, Display::None);
+    assert_eq!(
+        app.world().get::<Node>(sec_terra).unwrap().display,
+        Display::None
+    );
 
     // 3. Switch to Little Red Dot scenario:
     {
@@ -970,15 +1041,42 @@ fn test_scenario_contextual_ui_filtering() {
     }
     app.update();
 
-    assert_eq!(app.world().get::<Node>(btn_hyper).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_blowout).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_pop3).unwrap().display, Display::Flex); // Universal Pop-III
-    assert_eq!(app.world().get::<Node>(btn_theia).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_lhb).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_inspiral).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_epochs).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(sec_terra).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Text>(header_exotic).unwrap().0, "EXOTIC / LITTLE RED DOT:");
+    assert_eq!(
+        app.world().get::<Node>(btn_hyper).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_blowout).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_pop3).unwrap().display,
+        Display::Flex
+    ); // Universal Pop-III
+    assert_eq!(
+        app.world().get::<Node>(btn_theia).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_lhb).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_inspiral).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_epochs).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(sec_terra).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Text>(header_exotic).unwrap().0,
+        "EXOTIC / LITTLE RED DOT:"
+    );
 
     // 4. Switch to Relativistic Binary scenario:
     {
@@ -987,11 +1085,28 @@ fn test_scenario_contextual_ui_filtering() {
     }
     app.update();
 
-    assert_eq!(app.world().get::<Node>(btn_inspiral).unwrap().display, Display::Flex);
-    assert_eq!(app.world().get::<Node>(btn_pop3).unwrap().display, Display::Flex); // Universal Pop-III
-    assert_eq!(app.world().get::<Node>(btn_hyper).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_blowout).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_theia).unwrap().display, Display::None);
-    assert_eq!(app.world().get::<Node>(btn_epochs).unwrap().display, Display::None);
+    assert_eq!(
+        app.world().get::<Node>(btn_inspiral).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_pop3).unwrap().display,
+        Display::Flex
+    ); // Universal Pop-III
+    assert_eq!(
+        app.world().get::<Node>(btn_hyper).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_blowout).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_theia).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(btn_epochs).unwrap().display,
+        Display::None
+    );
 }
-

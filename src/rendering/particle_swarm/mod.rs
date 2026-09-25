@@ -16,9 +16,9 @@ pub use billboards::{sync_mesh_attributes, update_billboard_mesh_quads};
 pub use promotions::{check_clump_promotions, replenish_cleared_particles, spawn_promoted_bodies};
 pub use setup::{create_soft_particle_texture, reseed_particle_swarm, setup_particle_swarm};
 pub use simulation::{
-    apply_particle_accretion_to_bodies, build_spatial_hash_bins,
-    compute_gas_aerodynamic_drift, integrate_particles_and_collect_accretions,
-    process_particle_collisions_and_sticking, ParticleIntegrationParams,
+    apply_particle_accretion_to_bodies, build_spatial_hash_bins, compute_gas_aerodynamic_drift,
+    integrate_particles_and_collect_accretions, process_particle_collisions_and_sticking,
+    ParticleIntegrationParams,
 };
 
 /// Marker component for the 50,000 particle visual swarm mesh.

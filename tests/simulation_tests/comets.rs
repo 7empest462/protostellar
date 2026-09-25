@@ -5,9 +5,7 @@ use protostellar::rendering::bodies::{
 };
 use protostellar::rendering::materials::CometTailMaterial;
 use protostellar::simulation::components::*;
-use protostellar::simulation::resources::{
-    PlayerInteractionState, SimTime, SimulationConfig,
-};
+use protostellar::simulation::resources::{PlayerInteractionState, SimTime, SimulationConfig};
 use protostellar::utils::constants::*;
 
 fn setup_comet_test_app() -> App {
@@ -136,11 +134,24 @@ fn test_comet_tails_exclude_planets_and_moons() {
         .map(|(e, r)| (e, *r))
         .collect();
 
-    assert_eq!(roots.len(), 1, "Exactly the 1 comet must have a CometTailRoot entity spawned");
+    assert_eq!(
+        roots.len(),
+        1,
+        "Exactly the 1 comet must have a CometTailRoot entity spawned"
+    );
     assert_eq!(roots[0].1.comet_entity, comet);
-    assert!(!roots.iter().any(|(_, r)| r.comet_entity == super_jupiter), "Gas giants must not have cometary tails");
-    assert!(!roots.iter().any(|(_, r)| r.comet_entity == moon), "Moons must not have cometary tails");
-    assert!(!roots.iter().any(|(_, r)| r.comet_entity == asteroid), "Rocky asteroids must not have cometary tails");
+    assert!(
+        !roots.iter().any(|(_, r)| r.comet_entity == super_jupiter),
+        "Gas giants must not have cometary tails"
+    );
+    assert!(
+        !roots.iter().any(|(_, r)| r.comet_entity == moon),
+        "Moons must not have cometary tails"
+    );
+    assert!(
+        !roots.iter().any(|(_, r)| r.comet_entity == asteroid),
+        "Rocky asteroids must not have cometary tails"
+    );
 }
 
 #[test]
@@ -214,8 +225,16 @@ fn test_comet_tails_scale_with_physics_and_despawn() {
 
     assert_eq!(roots.len(), 2);
 
-    let large_root = roots.iter().find(|(_, r)| r.comet_entity == large_comet).unwrap().0;
-    let small_root = roots.iter().find(|(_, r)| r.comet_entity == small_comet).unwrap().0;
+    let large_root = roots
+        .iter()
+        .find(|(_, r)| r.comet_entity == large_comet)
+        .unwrap()
+        .0;
+    let small_root = roots
+        .iter()
+        .find(|(_, r)| r.comet_entity == small_comet)
+        .unwrap()
+        .0;
 
     let large_children = app.world().get::<Children>(large_root).unwrap();
     let small_children = app.world().get::<Children>(small_root).unwrap();
@@ -247,7 +266,11 @@ fn test_comet_tails_scale_with_physics_and_despawn() {
     assert!(large_coma_r > small_coma_r);
 
     let envelope = protostellar::rendering::bodies::meshes::generate_comet_tail_envelope_mesh();
-    let positions = envelope.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap();
+    let positions = envelope
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap();
     assert_eq!(positions[0], [0.0, 0.0, 0.0]);
 
     // Inactive comets beyond 6 AU despawn their roots
@@ -264,7 +287,10 @@ fn test_comet_tails_scale_with_physics_and_despawn() {
         .query_filtered::<Entity, With<CometTailRoot>>()
         .iter(app.world())
         .collect();
-    assert!(post_roots.is_empty(), "All comet tail roots must be despawned beyond sublimation boundary");
+    assert!(
+        post_roots.is_empty(),
+        "All comet tail roots must be despawned beyond sublimation boundary"
+    );
 }
 
 #[test]

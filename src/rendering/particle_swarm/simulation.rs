@@ -658,8 +658,7 @@ pub fn process_particle_collisions_and_sticking(
                                 let is_beyond_snowline = r_body > disk_params.snow_line_au as f32;
 
                                 let comp_a_val = data.compositions.get(idx_a).copied();
-                                let dist_to_snow =
-                                    (r_body - disk_params.snow_line_au as f32).abs();
+                                let dist_to_snow = (r_body - disk_params.snow_line_au as f32).abs();
                                 let snow_trap_boost = if dist_to_snow < 0.45 {
                                     2.2 * (1.0 - dist_to_snow / 0.45)
                                 } else {

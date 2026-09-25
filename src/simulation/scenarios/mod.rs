@@ -270,11 +270,7 @@ fn configure_scenario_particles_and_swarm(
     }
 
     if let Some(ref mut swarm_data) = swarm {
-        crate::rendering::particle_swarm::reseed_particle_swarm(
-            swarm_data,
-            disk_params,
-            config,
-        );
+        crate::rendering::particle_swarm::reseed_particle_swarm(swarm_data, disk_params, config);
     }
 }
 

@@ -183,7 +183,8 @@ pub fn update_late_heavy_bombardment_cascade(
     let mut active_impactor_count = 0;
     for (i_ent, mut i_pos, mut i_vel, impactor, _, i_rad) in impactor_query.iter_mut() {
         active_impactor_count += 1;
-        if let Ok((_, t_pos, t_vel, _, t_mass, t_rad, _)) = target_query.get(impactor.target_entity) {
+        if let Ok((_, t_pos, t_vel, _, t_mass, t_rad, _)) = target_query.get(impactor.target_entity)
+        {
             let r_rel = t_pos.0 - i_pos.0;
             let dist = r_rel.length();
             let contact_dist = t_rad.0 + i_rad.0;
@@ -250,13 +251,11 @@ pub fn update_late_heavy_bombardment_cascade(
             is_earth && needs_water
         })
         .or_else(|| {
-            target_query
-                .iter()
-                .find(|(_, _, _, body, _, _, _)| {
-                    body.name.contains("Moon")
-                        || body.name.contains("Mars")
-                        || body.name.contains("Venus")
-                })
+            target_query.iter().find(|(_, _, _, body, _, _, _)| {
+                body.name.contains("Moon")
+                    || body.name.contains("Mars")
+                    || body.name.contains("Venus")
+            })
         })
         .or_else(|| {
             target_query

@@ -170,9 +170,18 @@ fn test_supernova_blast_clears_particle_swarm() {
 
     let swarm = app.world().resource::<ParticleSwarmData>();
     // Swarm particles in blast wave must have outward kick, vaporized ice, and incandescent heat
-    assert!(swarm.velocities[0][0] > 5.0, "Particle must receive outward blast kick");
-    assert_eq!(swarm.compositions[0].ice_frac, 0.0, "Ices must be vaporized by blast");
-    assert_eq!(swarm.temperatures[0], 4500.0, "Particles must be superheated");
+    assert!(
+        swarm.velocities[0][0] > 5.0,
+        "Particle must receive outward blast kick"
+    );
+    assert_eq!(
+        swarm.compositions[0].ice_frac, 0.0,
+        "Ices must be vaporized by blast"
+    );
+    assert_eq!(
+        swarm.temperatures[0], 4500.0,
+        "Particles must be superheated"
+    );
 }
 
 #[test]

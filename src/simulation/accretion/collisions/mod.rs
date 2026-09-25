@@ -206,18 +206,10 @@ fn compute_effective_collision_radius(
         let r_orb1 = (b1.pos.x * b1.pos.x + b1.pos.z * b1.pos.z).sqrt() as f32;
         let r_orb2 = (b2.pos.x * b2.pos.x + b2.pos.z * b2.pos.z).sqrt() as f32;
         let min_r = r_orb1.min(r_orb2).max(0.001);
-        let r1_vis = f64::from(config.calc_visual_radius_with_orbit(
-            b1.radius,
-            b1.body_type,
-            r_orb1,
-            min_r,
-        ));
-        let r2_vis = f64::from(config.calc_visual_radius_with_orbit(
-            b2.radius,
-            b2.body_type,
-            r_orb2,
-            min_r,
-        ));
+        let r1_vis =
+            f64::from(config.calc_visual_radius_with_orbit(b1.radius, b1.body_type, r_orb1, min_r));
+        let r2_vis =
+            f64::from(config.calc_visual_radius_with_orbit(b2.radius, b2.body_type, r_orb2, min_r));
         // Major planets collide if physically touching or passing halfway through each other visually
         ((r1_vis + r2_vis) * 0.40).max(r_phys)
     } else {
@@ -284,9 +276,8 @@ fn is_theia_earth_snapshot(b1: &BodySnapshot, b2: &BodySnapshot) -> bool {
             || n.contains("Pluto");
         (is_explicit || is_procedural) && !is_excluded
     };
-    let is_theia = |b: &BodySnapshot| {
-        crate::simulation::accretion::theia::is_explicit_theia(b.name.as_str())
-    };
+    let is_theia =
+        |b: &BodySnapshot| crate::simulation::accretion::theia::is_explicit_theia(b.name.as_str());
     (is_theia(b1) && is_earth(b2)) || (is_theia(b2) && is_earth(b1))
 }
 
@@ -442,9 +433,7 @@ fn execute_collision_regimes(
             || n.contains("Pluto");
         (is_explicit || is_procedural) && !is_excluded
     };
-    let is_theia_cand = |n: &str| {
-        crate::simulation::accretion::theia::is_explicit_theia(n)
-    };
+    let is_theia_cand = |n: &str| crate::simulation::accretion::theia::is_explicit_theia(n);
     let is_theia_earth = (is_theia_cand(&pair.p_name)
         && is_earth_cand(&pair.s_name, pair.s_pos, pair.s_type))
         || (is_theia_cand(&pair.s_name) && is_earth_cand(&pair.p_name, pair.p_pos, pair.p_type));

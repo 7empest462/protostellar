@@ -11,7 +11,8 @@ use protostellar::simulation::SimulationPlugin;
 
 fn protostellar_error_handler(error: BevyError, ctx: ErrorContext) {
     let msg = error.to_string();
-    if msg.contains("Entity despawned") || msg.contains("is invalid; its index now has generation") {
+    if msg.contains("Entity despawned") || msg.contains("is invalid; its index now has generation")
+    {
         bevy::log::debug!("Benign accretion collision entity despawn: {error} ({ctx})");
     } else {
         bevy::ecs::error::warn(error, ctx);

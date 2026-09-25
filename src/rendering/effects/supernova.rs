@@ -264,15 +264,14 @@ pub fn update_supernova_explosions(
                 } else {
                     BodyType::WhiteDwarf
                 };
-                let remnant_m = if mass.0 >= 25.0 { 3.5 } else if mass.0 >= 8.0 { 1.44 } else { 0.55 };
-                trigger_supernova_explosion(
-                    &mut pool,
-                    entity,
-                    center,
-                    mass.0,
-                    remnant_m,
-                    remnant,
-                );
+                let remnant_m = if mass.0 >= 25.0 {
+                    3.5
+                } else if mass.0 >= 8.0 {
+                    1.44
+                } else {
+                    0.55
+                };
+                trigger_supernova_explosion(&mut pool, entity, center, mass.0, remnant_m, remnant);
             }
         }
     }
@@ -327,7 +326,11 @@ fn advance_explosion_kinematics(exp: &mut SupernovaExplosionInstance, dt: f32) {
     }
 }
 
-fn apply_swarm_blast(exp: &SupernovaExplosionInstance, swarm_data: &mut ParticleSwarmData, dt: f32) {
+fn apply_swarm_blast(
+    exp: &SupernovaExplosionInstance,
+    swarm_data: &mut ParticleSwarmData,
+    dt: f32,
+) {
     let r_shock = exp.current_radius_au;
     let r_prev = if exp.timer <= dt * 2.0 + 0.1 {
         0.0
@@ -453,39 +456,38 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
         };
 
         gizmos.circle(
-            Isometry3d::new(exp.center, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            Isometry3d::new(
+                exp.center,
+                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            ),
             exp.current_radius_au,
             shock_col,
         );
         gizmos.circle(
-            Isometry3d::new(exp.center, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+            Isometry3d::new(
+                exp.center,
+                Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            ),
             exp.current_radius_au * 0.95,
-            Color::srgba(shock_col.to_srgba().red, shock_col.to_srgba().green, shock_col.to_srgba().blue, alpha * 0.45),
+            Color::srgba(
+                shock_col.to_srgba().red,
+                shock_col.to_srgba().green,
+                shock_col.to_srgba().blue,
+                alpha * 0.45,
+            ),
         );
 
         // 3. 3D Filamentary Matter Ejecta Knots and Streamers
         for frag in &exp.fragments {
             let knot_col = match frag.layer {
-                EjectaLayer::RelativisticJetBreakout => {
-                    Color::srgba(0.65, 0.35, 1.0, alpha * 0.95)
-                }
-                EjectaLayer::CoreNickelIron => {
-                    Color::srgba(1.0, 0.75, 0.20, alpha * 0.90)
-                }
-                EjectaLayer::MantleOxygenSilicon => {
-                    Color::srgba(0.15, 0.95, 0.85, alpha * 0.85)
-                }
-                EjectaLayer::OuterEnvelopeHydrogen => {
-                    Color::srgba(0.95, 0.25, 0.30, alpha * 0.80)
-                }
+                EjectaLayer::RelativisticJetBreakout => Color::srgba(0.65, 0.35, 1.0, alpha * 0.95),
+                EjectaLayer::CoreNickelIron => Color::srgba(1.0, 0.75, 0.20, alpha * 0.90),
+                EjectaLayer::MantleOxygenSilicon => Color::srgba(0.15, 0.95, 0.85, alpha * 0.85),
+                EjectaLayer::OuterEnvelopeHydrogen => Color::srgba(0.95, 0.25, 0.30, alpha * 0.80),
             };
 
             // Glowing ejecta knot
-            gizmos.sphere(
-                Isometry3d::from_translation(frag.pos),
-                frag.scale,
-                knot_col,
-            );
+            gizmos.sphere(Isometry3d::from_translation(frag.pos), frag.scale, knot_col);
 
             // Streamer trail connecting ejecta knot back toward center (Rayleigh-Taylor finger)
             let tail_len = (frag.pos - exp.center).length().min(frag.scale * 6.0);

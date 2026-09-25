@@ -204,10 +204,7 @@ pub type CometSourceQueryItem<'a> = (
 
 pub type CometSourceQuery<'w, 's> = Query<'w, 's, CometSourceQueryItem<'static>>;
 
-pub type CometTailPartQueryItem<'a> = (
-    &'a mut Transform,
-    &'a MeshMaterial3d<CometTailMaterial>,
-);
+pub type CometTailPartQueryItem<'a> = (&'a mut Transform, &'a MeshMaterial3d<CometTailMaterial>);
 
 pub type CometTailPartFilter = (
     With<CometTailPart>,

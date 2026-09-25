@@ -88,7 +88,12 @@ fn resolve_bombardment_impact(
     mut target: TargetImpactContext<'_>,
 ) {
     let curr_p = target.opt_terra.as_ref().map_or_else(
-        || target.opt_vol.as_ref().map_or(0.0, |v| v.atmospheric_pressure_bar),
+        || {
+            target
+                .opt_vol
+                .as_ref()
+                .map_or(0.0, |v| v.atmospheric_pressure_bar)
+        },
         |t| t.total_pressure_bar(),
     );
 
@@ -114,8 +119,7 @@ fn resolve_bombardment_impact(
     );
 
     if let Some(ref mut diff) = target.opt_diff {
-        diff.core_temp_k =
-            (diff.core_temp_k + delivery.core_temp_boost_k).clamp(300.0, 35000.0);
+        diff.core_temp_k = (diff.core_temp_k + delivery.core_temp_boost_k).clamp(300.0, 35000.0);
         if diff.is_differentiated && delivery.core_temp_boost_k > 50.0 {
             diff.magnetic_field_gauss = (diff.magnetic_field_gauss + 0.05).min(5.0);
         }
@@ -220,7 +224,14 @@ pub fn update_guided_bombardment_projectiles(
         let contact_dist = (t_rad.0 + p_rad.0 * 2.0).max(t_rad.0 * 1.15);
         let arrival_elapsed = sim_time.elapsed_years >= proj.expected_arrival_yr;
 
-        if !check_swept_impact(disp, dist, p_vel.0 - t_vel.0, dt, contact_dist, arrival_elapsed) {
+        if !check_swept_impact(
+            disp,
+            dist,
+            p_vel.0 - t_vel.0,
+            dt,
+            contact_dist,
+            arrival_elapsed,
+        ) {
             steer_proportional_navigation(
                 &mut p_vel.0,
                 disp,

@@ -138,12 +138,15 @@ impl SimulationConfig {
                 // For compact systems (where inner planet orbits within 0.15 AU, e.g. TRAPPIST-1),
                 // scale the star so it does not engulf the inner planetary orbits.
                 if physical_radius_au < 0.002 {
-                    let max_star_r = (min_planetary_orbit_au * 0.28).max(0.001) * self.size_exaggeration;
+                    let max_star_r =
+                        (min_planetary_orbit_au * 0.28).max(0.001) * self.size_exaggeration;
                     base_rad.min(max_star_r)
                 } else {
                     base_rad
                 }
-            } else if body_type.is_planet() || body_type == crate::simulation::components::BodyType::Moon {
+            } else if body_type.is_planet()
+                || body_type == crate::simulation::components::BodyType::Moon
+            {
                 // In compact systems, scale planets down proportionally with the compact star
                 // so the star is always visibly dominant (~4.5-5.5x wider in diameter) and planets
                 // have spacious dark voids between their orbits.

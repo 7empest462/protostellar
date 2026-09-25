@@ -52,8 +52,7 @@ pub type MagnetosphereBodyQueryItem<'a> = (
     Option<&'a super::MagnetarStructureRoot>,
 );
 
-pub type MagnetosphereBodyQuery<'w, 's> =
-    Query<'w, 's, MagnetosphereBodyQueryItem<'static>>;
+pub type MagnetosphereBodyQuery<'w, 's> = Query<'w, 's, MagnetosphereBodyQueryItem<'static>>;
 
 pub type MagnetosphereRootQueryItem<'a> = (
     Entity,
@@ -62,13 +61,9 @@ pub type MagnetosphereRootQueryItem<'a> = (
     Option<&'a Children>,
 );
 
-pub type MagnetosphereRootQuery<'w, 's> =
-    Query<'w, 's, MagnetosphereRootQueryItem<'static>>;
+pub type MagnetosphereRootQuery<'w, 's> = Query<'w, 's, MagnetosphereRootQueryItem<'static>>;
 
-pub type MagnetospherePartQueryItem<'a> = (
-    &'a mut Transform,
-    &'a MeshMaterial3d<StandardMaterial>,
-);
+pub type MagnetospherePartQueryItem<'a> = (&'a mut Transform, &'a MeshMaterial3d<StandardMaterial>);
 
 pub type MagnetospherePartFilter = (
     With<MagneticFieldLoopsPart>,
@@ -78,9 +73,7 @@ pub type MagnetospherePartFilter = (
 pub type MagnetospherePartQuery<'w, 's> =
     Query<'w, 's, MagnetospherePartQueryItem<'static>, MagnetospherePartFilter>;
 
-fn find_magnetar_source(
-    body_query: &MagnetosphereBodyQuery,
-) -> Option<MagnetarSource> {
+fn find_magnetar_source(body_query: &MagnetosphereBodyQuery) -> Option<MagnetarSource> {
     body_query
         .iter()
         .find(|(_, _, _, body, _, _, _, opt_em, _, opt_mag_root)| {
@@ -386,12 +379,8 @@ pub fn sync_magnetic_field_overlays(
     let magnetar_source = find_magnetar_source(&body_query);
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
-    let candidate_map = collect_magnetosphere_candidates(
-        &body_query,
-        magnetar_source.as_ref(),
-        &config,
-        elapsed,
-    );
+    let candidate_map =
+        collect_magnetosphere_candidates(&body_query, magnetar_source.as_ref(), &config, elapsed);
 
     let updated_entities = update_existing_magnetospheres(
         &mut commands,

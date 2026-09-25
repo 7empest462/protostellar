@@ -9,7 +9,8 @@ fn test_accretion_disk_genesis_spawner_zero_starter_planets() {
     let mut app = App::new();
     let mut disk_params = DiskParameters::default();
 
-    let star_entity = spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
+    let star_entity =
+        spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
     app.update();
 
     // 1. Verify disk parameters are set for a young Class II disk with 3.65 AU snow line
@@ -21,23 +22,37 @@ fn test_accretion_disk_genesis_spawner_zero_starter_planets() {
     assert_eq!(disk_params.reference_temp_1au, 325.0);
 
     // 2. Verify central protostar properties
-    let star_body = app.world().get::<CelestialBody>(star_entity).expect("Star must exist");
+    let star_body = app
+        .world()
+        .get::<CelestialBody>(star_entity)
+        .expect("Star must exist");
     assert!(
         star_body.name.contains("Genesis Protostar"),
         "Central star must be designated as Genesis Protostar (got {})",
         star_body.name
     );
-    let star_mass = app.world().get::<Mass>(star_entity).expect("Mass must exist");
-    assert_eq!(star_mass.0, 1.33, "Genesis protostar mass must be 1.33 Solar Masses");
+    let star_mass = app
+        .world()
+        .get::<Mass>(star_entity)
+        .expect("Mass must exist");
+    assert_eq!(
+        star_mass.0, 1.33,
+        "Genesis protostar mass must be 1.33 Solar Masses"
+    );
     assert!(app.world().get::<CentralStar>(star_entity).is_some());
-    let ignition = app.world().get::<IgnitionState>(star_entity).expect("IgnitionState must exist");
+    let ignition = app
+        .world()
+        .get::<IgnitionState>(star_entity)
+        .expect("IgnitionState must exist");
     assert!(
         !ignition.is_ignited,
         "Young Class II protostar must start in pre-main-sequence un-ignited phase"
     );
 
     // 3. CRITICAL REQUIREMENT: Exactly ZERO starter planets or embryos exist at inception
-    let mut bodies_query = app.world_mut().query_filtered::<Entity, (With<CelestialBody>, Without<CentralStar>)>();
+    let mut bodies_query = app
+        .world_mut()
+        .query_filtered::<Entity, (With<CelestialBody>, Without<CentralStar>)>();
     let non_star_count = bodies_query.iter(app.world()).count();
     assert_eq!(
         non_star_count, 0,
@@ -52,7 +67,8 @@ fn test_snow_line_thermodynamic_location() {
     disk_params.snow_line_au = 3.65;
 
     // Thermodynamic water ice sublimation temperature in protostellar disks is ~170 K
-    let temp_at_snow_line = disk_params.reference_temp_1au * (disk_params.snow_line_au / 1.0).powf(-0.5);
+    let temp_at_snow_line =
+        disk_params.reference_temp_1au * (disk_params.snow_line_au / 1.0).powf(-0.5);
     assert!(
         (temp_at_snow_line - 170.1).abs() < 1.0,
         "Temperature at 3.65 AU snow line must be ~170 K for water ice condensation (got {:.1} K)",
@@ -106,7 +122,8 @@ fn test_sph_gas_drag_and_snow_line_pressure_trap() {
     );
 
     // 4. At the inner silicate sublimation front (~0.35 AU): inner pressure bump halts rapid drain into star (v_drift >= 0)
-    let v_inner_trap = compute_gas_aerodynamic_drift(0.35, v_k(0.35), m, b_mass, snow_line_au, gas_scale);
+    let v_inner_trap =
+        compute_gas_aerodynamic_drift(0.35, v_k(0.35), m, b_mass, snow_line_au, gas_scale);
     assert!(
         v_inner_trap >= 0.0,
         "Inner silicate sublimation trap must halt inward drift (v_drift = {v_inner_trap} >= 0) to retain inner disk particles"
@@ -117,7 +134,8 @@ fn test_sph_gas_drag_and_snow_line_pressure_trap() {
 fn test_genesis_protostar_retains_inner_disk_without_premature_ignition() {
     let mut app = App::new();
     let mut disk_params = DiskParameters::default();
-    let star_entity = spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
+    let star_entity =
+        spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
 
     app.init_resource::<TimeWarp>();
     app.insert_resource(SimTime {
@@ -134,17 +152,26 @@ fn test_genesis_protostar_retains_inner_disk_without_premature_ignition() {
     app.add_message::<PlanetaryEngulfmentEvent>();
     app.add_message::<SupernovaEvent>();
 
-    app.add_systems(Update, protostellar::simulation::thermodynamics::update_thermodynamics);
+    app.add_systems(
+        Update,
+        protostellar::simulation::thermodynamics::update_thermodynamics,
+    );
     app.update();
 
-    let star_body = app.world().get::<CelestialBody>(star_entity).expect("Star must exist");
+    let star_body = app
+        .world()
+        .get::<CelestialBody>(star_entity)
+        .expect("Star must exist");
     assert!(
         star_body.name.contains("Genesis Protostar"),
         "Genesis protostar name must be retained during disk epoch (got {})",
         star_body.name
     );
 
-    let ignition = app.world().get::<IgnitionState>(star_entity).expect("Ignition must exist");
+    let ignition = app
+        .world()
+        .get::<IgnitionState>(star_entity)
+        .expect("Ignition must exist");
     assert!(
         !ignition.is_ignited,
         "Genesis protostar must NOT auto-ignite after 100 yr"
@@ -198,7 +225,8 @@ fn test_inner_terrestrial_clump_promotion_threshold() {
     );
 
     assert_eq!(
-        promotions.len(), 1,
+        promotions.len(),
+        1,
         "Inner disk clump at 1.0 AU (0.0025 M_earth) must successfully promote"
     );
     assert!(
@@ -213,11 +241,12 @@ fn test_clump_promotions_to_planetesimals_and_embryos() {
     let mass_planetesimal = 0.005 * EARTH_MASS_SOLAR;
     let comp_snowline = Composition::carbonaceous();
 
-    let body_type_planetesimal = protostellar::simulation::components::classify_body_by_mass_and_comp(
-        mass_planetesimal,
-        &comp_snowline,
-        false,
-    );
+    let body_type_planetesimal =
+        protostellar::simulation::components::classify_body_by_mass_and_comp(
+            mass_planetesimal,
+            &comp_snowline,
+            false,
+        );
     assert_eq!(
         body_type_planetesimal,
         BodyType::Planetesimal,
@@ -255,7 +284,10 @@ fn test_clump_promotions_to_planetesimals_and_embryos() {
 #[test]
 fn test_genesis_scenario_preset_metadata() {
     let preset = ScenarioPreset::AccretionDiskGenesis;
-    assert_eq!(preset.display_name(), "Disk Genesis (Organic Planet Formation)");
+    assert_eq!(
+        preset.display_name(),
+        "Disk Genesis (Organic Planet Formation)"
+    );
     assert!(preset.description().contains("SPH viscous gas"));
     assert!(preset.description().contains("snow line"));
     assert!(preset.description().contains("starter planets"));
@@ -265,7 +297,8 @@ fn test_genesis_scenario_preset_metadata() {
 fn test_genesis_protostar_auto_ignites_at_100_percent_core_heating() {
     let mut app = App::new();
     let mut disk_params = DiskParameters::default();
-    let star_entity = spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
+    let star_entity =
+        spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
 
     app.init_resource::<TimeWarp>();
     app.insert_resource(SimTime {
@@ -285,14 +318,22 @@ fn test_genesis_protostar_auto_ignites_at_100_percent_core_heating() {
     // Set core temperature right at ignition threshold (10.0 MK)
     {
         let world = app.world_mut();
-        let mut ignition = world.get_mut::<IgnitionState>(star_entity).expect("Ignition must exist");
+        let mut ignition = world
+            .get_mut::<IgnitionState>(star_entity)
+            .expect("Ignition must exist");
         ignition.core_temperature = 1.0e7;
     }
 
-    app.add_systems(Update, protostellar::simulation::thermodynamics::update_thermodynamics);
+    app.add_systems(
+        Update,
+        protostellar::simulation::thermodynamics::update_thermodynamics,
+    );
     app.update();
 
-    let ignition = app.world().get::<IgnitionState>(star_entity).expect("Ignition must exist");
+    let ignition = app
+        .world()
+        .get::<IgnitionState>(star_entity)
+        .expect("Ignition must exist");
     assert!(
         ignition.is_ignited,
         "Genesis protostar MUST auto-ignite when core temperature reaches 10.0 MK (100% heating)"
@@ -306,7 +347,10 @@ fn test_genesis_protostar_auto_ignites_at_100_percent_core_heating() {
         "Solar wind shockwave must begin propagating upon ignition"
     );
 
-    let star_body = app.world().get::<CelestialBody>(star_entity).expect("Star must exist");
+    let star_body = app
+        .world()
+        .get::<CelestialBody>(star_entity)
+        .expect("Star must exist");
     assert_eq!(
         star_body.body_type,
         BodyType::YellowDwarf,
@@ -323,15 +367,18 @@ fn test_key_i_triggers_star_ignition_and_cme() {
 
     let mut app = App::new();
     let mut disk_params = DiskParameters::default();
-    let star_entity = spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
+    let star_entity =
+        spawn_accretion_disk_genesis(&mut app.world_mut().commands(), &mut disk_params);
     app.update();
 
     let mut toast = NotificationToast::default();
 
     // 1. Pressing 'I' (shift = false) on unignited protostar forces instant ignition
     {
-        let mut sys_state: SystemState<(Commands, Query<(&mut CelestialBody, &mut IgnitionState)>)> =
-            SystemState::new(app.world_mut());
+        let mut sys_state: SystemState<(
+            Commands,
+            Query<(&mut CelestialBody, &mut IgnitionState)>,
+        )> = SystemState::new(app.world_mut());
         let (mut commands, mut query) = sys_state.get_mut(app.world_mut()).unwrap();
         let (mut star_body, mut ignition) = query.get_mut(star_entity).expect("Star must exist");
 
@@ -347,19 +394,27 @@ fn test_key_i_triggers_star_ignition_and_cme() {
     }
     app.update();
 
-    let ignition = app.world().get::<IgnitionState>(star_entity).expect("Ignition must exist");
+    let ignition = app
+        .world()
+        .get::<IgnitionState>(star_entity)
+        .expect("Ignition must exist");
     assert!(ignition.is_ignited, "Pressing 'I' must trigger ignition");
     assert_eq!(ignition.fusion_fraction, 1.0);
     assert_eq!(ignition.shockwave_radius, 1.6);
-    let star_body = app.world().get::<CelestialBody>(star_entity).expect("Body must exist");
+    let star_body = app
+        .world()
+        .get::<CelestialBody>(star_entity)
+        .expect("Body must exist");
     assert_eq!(star_body.body_type, BodyType::MainSequenceStar);
     assert!(star_body.name.contains("Genesis Star (Main Sequence)"));
     assert!(toast.message.contains("Hydrogen Core Fusion Ignited"));
 
     // 2. Pressing 'I' on an ALREADY ignited star triggers coronal solar blast
     {
-        let mut sys_state: SystemState<(Commands, Query<(&mut CelestialBody, &mut IgnitionState)>)> =
-            SystemState::new(app.world_mut());
+        let mut sys_state: SystemState<(
+            Commands,
+            Query<(&mut CelestialBody, &mut IgnitionState)>,
+        )> = SystemState::new(app.world_mut());
         let (mut commands, mut query) = sys_state.get_mut(app.world_mut()).unwrap();
         let (mut star_body, mut ignition) = query.get_mut(star_entity).expect("Star must exist");
 
@@ -375,14 +430,21 @@ fn test_key_i_triggers_star_ignition_and_cme() {
     }
     app.update();
 
-    let ignition = app.world().get::<IgnitionState>(star_entity).expect("Ignition must exist");
+    let ignition = app
+        .world()
+        .get::<IgnitionState>(star_entity)
+        .expect("Ignition must exist");
     assert_eq!(ignition.shockwave_radius, 1.6);
-    assert!(toast.message.contains("Coronal Mass Ejection & Solar Blast Triggered"));
+    assert!(toast
+        .message
+        .contains("Coronal Mass Ejection & Solar Blast Triggered"));
 
     // 3. Pressing Shift+I triggers CME space weather outburst
     {
-        let mut sys_state: SystemState<(Commands, Query<(&mut CelestialBody, &mut IgnitionState)>)> =
-            SystemState::new(app.world_mut());
+        let mut sys_state: SystemState<(
+            Commands,
+            Query<(&mut CelestialBody, &mut IgnitionState)>,
+        )> = SystemState::new(app.world_mut());
         let (mut commands, mut query) = sys_state.get_mut(app.world_mut()).unwrap();
         let (mut star_body, mut ignition) = query.get_mut(star_entity).expect("Star must exist");
 

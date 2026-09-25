@@ -290,4 +290,3 @@ pub fn update_scenario_contextual_ui(
         }
     }
 }
-

@@ -208,12 +208,20 @@ fn step_protostar_ignition_and_limits(
         } else if mass.0 < 0.50 {
             2600.0 + 1200.0 * ff
         } else if mass.0 < 8.0 {
-            if is_genesis { 4800.0 } else { 3200.0 + 2578.0 * ff }
+            if is_genesis {
+                4800.0
+            } else {
+                3200.0 + 2578.0 * ff
+            }
         } else {
             8000.0 + 20000.0 * ff
         };
         temp.0 = target_surface_temp;
-        radius.0 = if is_genesis { radius.0 } else { SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ff)) };
+        radius.0 = if is_genesis {
+            radius.0
+        } else {
+            SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ff))
+        };
 
         let should_ignite = if is_genesis {
             ignition.core_temperature >= ignition_threshold
@@ -236,7 +244,10 @@ fn step_protostar_ignition_and_limits(
             } else if mass.0 < 8.0 {
                 (BodyType::BlueGiant, "The Star (Blue Giant - B Type)")
             } else if mass.0 < 25.0 {
-                (BodyType::BlueSupergiant, "The Star (Blue Supergiant - O Type)")
+                (
+                    BodyType::BlueSupergiant,
+                    "The Star (Blue Supergiant - O Type)",
+                )
             } else {
                 (BodyType::Hypergiant, "The Star (Luminous Hypergiant)")
             };
@@ -325,8 +336,10 @@ fn apply_stellar_collapse_limits(
             shockwave_velocity_km_s: 12_000.0,
         });
         mass.0 = 1.40;
-    } else if matches!(body.body_type, BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar)
-        && mass.0 > 2.17
+    } else if matches!(
+        body.body_type,
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+    ) && mass.0 > 2.17
     {
         body.body_type = BodyType::BlackHole;
         body.name = "The Star (Stellar-Mass Black Hole)".to_string();

@@ -539,4 +539,3 @@ fn test_guided_bombardment_orbiting_target_zero_miss() {
         "Cometary impact count must increment by 1"
     );
 }
-

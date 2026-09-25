@@ -531,10 +531,5 @@ pub fn draw_bombardment_gizmos(
         return;
     }
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
-    draw_bombardment_projectiles_gizmo(
-        &mut gizmos,
-        &projectiles_query,
-        &targets_query,
-        elapsed,
-    );
+    draw_bombardment_projectiles_gizmo(&mut gizmos, &projectiles_query, &targets_query, elapsed);
 }

@@ -258,7 +258,6 @@ fn apply_impact_basins(mat: &mut PlanetMaterial, opt_basins: Option<&PlanetaryBa
     mat.extension.uniforms.impact_basins_data = basins_data;
 }
 
-
 fn compute_body_color(
     body: &CelestialBody,
     mass: &Mass,
@@ -628,9 +627,7 @@ pub type CelestialBodyQueryItem<'a> = (
 
 pub type CelestialBodyQuery<'w, 's> = Query<'w, 's, CelestialBodyQueryItem<'static>>;
 
-fn find_star_position_and_min_orbit(
-    query: &CelestialBodyQuery,
-) -> (Vec3, Option<Entity>, f32) {
+fn find_star_position_and_min_orbit(query: &CelestialBodyQuery) -> (Vec3, Option<Entity>, f32) {
     let mut s_pos = Vec3::ZERO;
     let mut s_ent = None;
     for (e, p, _, _, _, _, b, ..) in query.iter() {
@@ -664,12 +661,8 @@ fn collect_system_moons(
         if opt_sat.is_some() || body.body_type == BodyType::Moon {
             let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let r_orb = (m_pos - star_pos).length();
-            let m_vis_rad = config.calc_visual_radius_with_orbit(
-                radius.0,
-                body.body_type,
-                r_orb,
-                min_orbit_r,
-            );
+            let m_vis_rad =
+                config.calc_visual_radius_with_orbit(radius.0, body.body_type, r_orb, min_orbit_r);
             all_moons.push((m_ent, m_pos, m_vis_rad, opt_sat.map(|s| s.parent)));
         }
     }
@@ -716,12 +709,8 @@ pub fn sync_celestial_transforms(
         );
 
         let r_orb = (transform.translation - star_pos).length();
-        let visual_radius = config.calc_visual_radius_with_orbit(
-            radius.0,
-            body.body_type,
-            r_orb,
-            min_orbit_r,
-        );
+        let visual_radius =
+            config.calc_visual_radius_with_orbit(radius.0, body.body_type, r_orb, min_orbit_r);
         transform.scale = Vec3::splat(visual_radius);
 
         if let Some(spin) = opt_spin {

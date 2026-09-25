@@ -390,7 +390,9 @@ pub fn draw_slingshot_preview(
         );
 
         let launch_vel = delta * slingshot.velocity_scale;
-        if let Some(el) = state_vectors_to_orbital_elements(rel_pos, launch_vel, star_mass_val, 1e-6) {
+        if let Some(el) =
+            state_vectors_to_orbital_elements(rel_pos, launch_vel, star_mass_val, 1e-6)
+        {
             draw_slingshot_orbit_forecast(gizmos, &el, star_vec, pulse);
         }
     }

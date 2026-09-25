@@ -99,23 +99,23 @@ pub fn detect_hierarchical_triples(
 
                 if let Ok(mut cmd) = commands.get_entity(inner_ent) {
                     cmd.try_insert(KozaiLidovState {
-                    perturber_entity: Some(pert_ent),
-                    perturber_name: pert_name,
-                    mutual_inclination_deg: i_mut_rad.to_degrees(),
-                    critical_inclination_deg: super::types::KOZAI_CRITICAL_ANGLE_DEG,
-                    is_in_resonance: is_res,
-                    max_eccentricity_forecast: e_max,
-                    min_periastron_au: q_min,
-                    kozai_period_years: tau_kl,
-                    gr_precession_ratio: 0.0,
-                    is_gr_suppressed: false,
-                    regime: if is_res {
-                        KozaiRegime::Circulation
-                    } else {
-                        KozaiRegime::Inactive
-                    },
-                    cycle_phase: 0.0,
-                });
+                        perturber_entity: Some(pert_ent),
+                        perturber_name: pert_name,
+                        mutual_inclination_deg: i_mut_rad.to_degrees(),
+                        critical_inclination_deg: super::types::KOZAI_CRITICAL_ANGLE_DEG,
+                        is_in_resonance: is_res,
+                        max_eccentricity_forecast: e_max,
+                        min_periastron_au: q_min,
+                        kozai_period_years: tau_kl,
+                        gr_precession_ratio: 0.0,
+                        is_gr_suppressed: false,
+                        regime: if is_res {
+                            KozaiRegime::Circulation
+                        } else {
+                            KozaiRegime::Inactive
+                        },
+                        cycle_phase: 0.0,
+                    });
                 }
             }
         }

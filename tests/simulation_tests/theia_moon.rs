@@ -787,4 +787,3 @@ fn test_the_moon_retains_spherical_planet_mesh_under_gas_and_pebble_accretion() 
         "Sibling moons must always select planet_mesh"
     );
 }
-
