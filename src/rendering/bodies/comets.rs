@@ -181,66 +181,69 @@ fn spawn_comet_tail_hierarchy(
         });
 }
 
-/// Synchronizes 3D volumetric GPU cometary coma and dual-tail meshes and materials.
-/// Strictly filters for active comets and icy minor bodies; planets and moons are never given comet tails.
-#[allow(
-    clippy::type_complexity,
-    reason = "Astrophysical cometary tail GPU synchronization system"
-)]
-pub fn sync_cometary_tails(
-    mut commands: Commands,
-    time: Res<Time>,
-    visual_assets: Option<Res<VisualAssets>>,
-    config: Res<SimulationConfig>,
-    mut comet_materials: ResMut<Assets<CometTailMaterial>>,
-    comet_query: Query<(
-        Entity,
-        &SimPosition,
-        &SimVelocity,
-        &Composition,
-        &CelestialBody,
-        &Radius,
-        Option<&AtmosphericEscapeTail>,
-    )>,
-    stars_query: Query<(&SimPosition, &CelestialBody)>,
-    mut root_query: Query<(Entity, &mut Transform, &CometTailRoot, Option<&Children>)>,
-    mut tail_parts_query: Query<
-        (&mut Transform, &MeshMaterial3d<CometTailMaterial>),
-        (
-            With<CometTailPart>,
-            Without<CometTailRoot>,
-            Without<CometComaPart>,
-        ),
-    >,
-    mut coma_parts_query: Query<
-        (&mut Transform, &MeshMaterial3d<CometTailMaterial>),
-        (
-            With<CometComaPart>,
-            Without<CometTailRoot>,
-            Without<CometTailPart>,
-        ),
-    >,
-) {
-    let Some(assets) = visual_assets else {
-        return;
-    };
+#[derive(Clone, Copy)]
+struct ActiveCometCandidate {
+    world_pos: Vec3,
+    world_vel: Vec3,
+    r_orbit: f32,
+    comp: Composition,
+    r_km: f32,
+    nuc_visual_r: f32,
+    opt_escape_len: Option<f32>,
+}
 
-    let star_pos = stars_query
-        .iter()
-        .find(|(_, b)| b.body_type.is_star_or_remnant())
-        .map_or(Vec3::ZERO, |(pos, _)| {
-            Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
-        });
+pub type CometSourceQueryItem<'a> = (
+    Entity,
+    &'a SimPosition,
+    &'a SimVelocity,
+    &'a Composition,
+    &'a CelestialBody,
+    &'a Radius,
+    Option<&'a AtmosphericEscapeTail>,
+);
 
-    // 1. Map all candidates that qualify for cometary activity.
-    // Strictly restrict to Comets or active icy minor bodies; NEVER planets, gas giants, or moons!
-    let mut active_comet_map: HashMap<
-        Entity,
-        (Vec3, Vec3, f32, Composition, f32, f32, Option<f32>),
-    > = HashMap::new();
+pub type CometSourceQuery<'w, 's> = Query<'w, 's, CometSourceQueryItem<'static>>;
+
+pub type CometTailPartQueryItem<'a> = (
+    &'a mut Transform,
+    &'a MeshMaterial3d<CometTailMaterial>,
+);
+
+pub type CometTailPartFilter = (
+    With<CometTailPart>,
+    Without<CometTailRoot>,
+    Without<CometComaPart>,
+);
+
+pub type CometTailPartQuery<'w, 's> =
+    Query<'w, 's, CometTailPartQueryItem<'static>, CometTailPartFilter>;
+
+pub type CometComaPartFilter = (
+    With<CometComaPart>,
+    Without<CometTailRoot>,
+    Without<CometTailPart>,
+);
+
+pub type CometComaPartQuery<'w, 's> =
+    Query<'w, 's, CometTailPartQueryItem<'static>, CometComaPartFilter>;
+
+pub type CometTailRootQueryItem<'a> = (
+    Entity,
+    &'a mut Transform,
+    &'a CometTailRoot,
+    Option<&'a Children>,
+);
+
+pub type CometTailRootQuery<'w, 's> = Query<'w, 's, CometTailRootQueryItem<'static>>;
+
+fn collect_active_comets(
+    comet_query: &CometSourceQuery,
+    star_pos: Vec3,
+    config: &SimulationConfig,
+) -> HashMap<Entity, ActiveCometCandidate> {
+    let mut map = HashMap::new();
 
     for (entity, pos, vel, comp, body, radius, opt_tail) in comet_query.iter() {
-        // Exclude major planets, gas giants, moons, and stars
         if matches!(
             body.body_type,
             BodyType::Protoplanet
@@ -272,13 +275,11 @@ pub fn sync_cometary_tails(
         let volatile_frac = (comp.ice_frac + comp.gas_frac) as f32;
         let has_active_escape = opt_tail.is_some_and(|t| t.is_active && t.tail_length_au > 0.01);
 
-        // Active sublimation criteria
         let is_active = if has_active_escape {
             true
         } else if is_comet_type || is_named_comet {
             (comp.ice_frac > 0.05 || volatile_frac > 0.10) && r_orbit < 6.0 && r_orbit > 0.05
         } else {
-            // Active Centaur / icy planetesimal / main-belt active minor body
             (comp.ice_frac > 0.10 || volatile_frac > 0.15) && r_orbit < 4.5 && r_orbit > 0.05
         };
 
@@ -292,43 +293,50 @@ pub fn sync_cometary_tails(
                     None
                 }
             });
-            active_comet_map.insert(
+            map.insert(
                 entity,
-                (
+                ActiveCometCandidate {
                     world_pos,
                     world_vel,
                     r_orbit,
-                    *comp,
+                    comp: *comp,
                     r_km,
                     nuc_visual_r,
                     opt_escape_len,
-                ),
+                },
             );
         }
     }
+    map
+}
 
-    let elapsed = time.elapsed_secs();
+fn update_existing_comet_tails(
+    commands: &mut Commands,
+    active_comet_map: &HashMap<Entity, ActiveCometCandidate>,
+    star_pos: Vec3,
+    elapsed: f32,
+    comet_materials: &mut Assets<CometTailMaterial>,
+    root_query: &mut CometTailRootQuery,
+    tail_parts_query: &mut CometTailPartQuery,
+    coma_parts_query: &mut CometComaPartQuery,
+) -> HashSet<Entity> {
     let mut updated_entities = HashSet::new();
 
-    // 2. Update existing CometTailRoots or despawn orphans
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
-        if let Some(&(
-            world_pos,
-            world_vel,
-            r_orbit,
-            ref comp,
-            r_km,
-            nuc_visual_r,
-            opt_escape_len,
-        )) = active_comet_map.get(&root.comet_entity)
-        {
-            root_trans.translation = world_pos;
+        if let Some(candidate) = active_comet_map.get(&root.comet_entity) {
+            root_trans.translation = candidate.world_pos;
             updated_entities.insert(root.comet_entity);
 
             let (anti_solar, in_plane_lag, rotation) =
-                compute_tail_directions(world_pos, star_pos, world_vel);
+                compute_tail_directions(candidate.world_pos, star_pos, candidate.world_vel);
             let (tail_len, coma_r, tail_width, activity, dust_ratio, ion_color, dust_color) =
-                compute_tail_parameters(r_orbit, comp, r_km, nuc_visual_r, opt_escape_len);
+                compute_tail_parameters(
+                    candidate.r_orbit,
+                    &candidate.comp,
+                    candidate.r_km,
+                    candidate.nuc_visual_r,
+                    candidate.opt_escape_len,
+                );
 
             if let Some(children) = opt_children {
                 for child in children.iter() {
@@ -339,8 +347,12 @@ pub fn sync_cometary_tails(
                             mat.uniforms.params = Vec4::new(elapsed, tail_len, coma_r, activity);
                             mat.uniforms.anti_solar_and_lag =
                                 Vec4::new(anti_solar.x, anti_solar.y, anti_solar.z, 0.15);
-                            mat.uniforms.nucleus_pos_and_type =
-                                Vec4::new(world_pos.x, world_pos.y, world_pos.z, 0.0);
+                            mat.uniforms.nucleus_pos_and_type = Vec4::new(
+                                candidate.world_pos.x,
+                                candidate.world_pos.y,
+                                candidate.world_pos.z,
+                                0.0,
+                            );
                             mat.uniforms.velocity_and_activity = Vec4::new(
                                 in_plane_lag.x,
                                 in_plane_lag.y,
@@ -356,8 +368,12 @@ pub fn sync_cometary_tails(
                             mat.uniforms.params = Vec4::new(elapsed, tail_len, coma_r, activity);
                             mat.uniforms.anti_solar_and_lag =
                                 Vec4::new(anti_solar.x, anti_solar.y, anti_solar.z, 0.15);
-                            mat.uniforms.nucleus_pos_and_type =
-                                Vec4::new(world_pos.x, world_pos.y, world_pos.z, 1.0);
+                            mat.uniforms.nucleus_pos_and_type = Vec4::new(
+                                candidate.world_pos.x,
+                                candidate.world_pos.y,
+                                candidate.world_pos.z,
+                                1.0,
+                            );
                             mat.uniforms.velocity_and_activity = Vec4::new(
                                 in_plane_lag.x,
                                 in_plane_lag.y,
@@ -374,26 +390,40 @@ pub fn sync_cometary_tails(
             cmd.despawn();
         }
     }
+    updated_entities
+}
 
-    // 3. Spawn missing CometTailRoots for newly activated comets
-    for (&target, &(world_pos, world_vel, r_orbit, ref comp, r_km, nuc_visual_r, opt_escape_len)) in
-        &active_comet_map
-    {
+fn spawn_missing_comet_tails(
+    commands: &mut Commands,
+    assets: &VisualAssets,
+    comet_materials: &mut Assets<CometTailMaterial>,
+    active_comet_map: &HashMap<Entity, ActiveCometCandidate>,
+    updated_entities: &HashSet<Entity>,
+    star_pos: Vec3,
+    elapsed: f32,
+) {
+    for (&target, candidate) in active_comet_map {
         if updated_entities.contains(&target) {
             continue;
         }
 
         let (anti_solar, in_plane_lag, rotation) =
-            compute_tail_directions(world_pos, star_pos, world_vel);
+            compute_tail_directions(candidate.world_pos, star_pos, candidate.world_vel);
         let (tail_len, coma_r, tail_width, activity, dust_ratio, ion_color, dust_color) =
-            compute_tail_parameters(r_orbit, comp, r_km, nuc_visual_r, opt_escape_len);
+            compute_tail_parameters(
+                candidate.r_orbit,
+                &candidate.comp,
+                candidate.r_km,
+                candidate.nuc_visual_r,
+                candidate.opt_escape_len,
+            );
 
         spawn_comet_tail_hierarchy(
-            &mut commands,
-            &assets,
-            &mut comet_materials,
+            commands,
+            assets,
+            comet_materials,
             target,
-            world_pos,
+            candidate.world_pos,
             anti_solar,
             in_plane_lag,
             rotation,
@@ -407,4 +437,54 @@ pub fn sync_cometary_tails(
             elapsed,
         );
     }
+}
+
+/// Synchronizes 3D volumetric GPU cometary coma and dual-tail meshes and materials.
+/// Strictly filters for active comets and icy minor bodies; planets and moons are never given comet tails.
+pub fn sync_cometary_tails(
+    mut commands: Commands,
+    sim_time: Option<Res<SimTime>>,
+    visual_assets: Option<Res<VisualAssets>>,
+    config: Res<SimulationConfig>,
+    mut comet_materials: ResMut<Assets<CometTailMaterial>>,
+    comet_query: CometSourceQuery,
+    stars_query: Query<(&SimPosition, &CelestialBody)>,
+    mut root_query: CometTailRootQuery,
+    mut tail_parts_query: CometTailPartQuery,
+    mut coma_parts_query: CometComaPartQuery,
+) {
+    let Some(assets) = visual_assets else {
+        return;
+    };
+
+    let star_pos = stars_query
+        .iter()
+        .find(|(_, b)| b.body_type.is_star_or_remnant())
+        .map_or(Vec3::ZERO, |(pos, _)| {
+            Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
+        });
+
+    let active_comet_map = collect_active_comets(&comet_query, star_pos, &config);
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+
+    let updated_entities = update_existing_comet_tails(
+        &mut commands,
+        &active_comet_map,
+        star_pos,
+        elapsed,
+        &mut comet_materials,
+        &mut root_query,
+        &mut tail_parts_query,
+        &mut coma_parts_query,
+    );
+
+    spawn_missing_comet_tails(
+        &mut commands,
+        &assets,
+        &mut comet_materials,
+        &active_comet_map,
+        &updated_entities,
+        star_pos,
+        elapsed,
+    );
 }

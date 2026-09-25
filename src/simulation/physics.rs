@@ -339,8 +339,9 @@ fn apply_planetary_migration_and_lhb(
     saturn_entity: Option<Entity>,
     ice_giant_entities: &hashbrown::HashSet<Entity>,
     sub_dt: f64,
+    is_compact_system: bool,
 ) {
-    if !lhb_state.is_active {
+    if is_compact_system || !lhb_state.is_active {
         return;
     }
     lhb_state.time_active_years += sub_dt;
@@ -665,6 +666,7 @@ fn run_physics_substeps(
     softening_sq: f64,
     tractor: Option<(DVec3, f64)>,
     is_little_red_dot: bool,
+    is_compact_system: bool,
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     jupiter_entity: Option<Entity>,
     saturn_entity: Option<Entity>,
@@ -744,6 +746,7 @@ fn run_physics_substeps(
             saturn_entity,
             ice_giant_entities,
             sub_dt,
+            is_compact_system,
         );
 
         apply_velocity_kick_and_limits(body_data, sub_dt, star_mass, is_little_red_dot);
@@ -755,6 +758,7 @@ struct PhysicsSystemContext {
     star_mass: f64,
     star_pos: DVec3,
     is_little_red_dot: bool,
+    is_compact_system: bool,
     n_substeps: usize,
     sub_dt: f64,
     massive_indices: Vec<usize>,
@@ -837,9 +841,22 @@ fn analyze_physics_system(
         star_mass,
         star_pos,
         is_little_red_dot,
+        is_compact_system,
         n_substeps,
         sub_dt,
         massive_indices,
+    }
+}
+
+/// Advances accumulated visual simulation time in seconds for shaders and rendering animations.
+/// Pauses when time_warp is paused, freezing planetary rotation, cloud movement, and stellar boiling.
+pub fn update_simulation_visual_time(
+    time: Res<Time>,
+    time_warp: Res<TimeWarp>,
+    mut sim_time: ResMut<SimTime>,
+) {
+    if !time_warp.is_paused || time_warp.step_once {
+        sim_time.visual_time_secs += time.delta_secs();
     }
 }
 
@@ -944,6 +961,7 @@ pub fn step_physics_simulation(
         softening_sq,
         tractor,
         ctx.is_little_red_dot,
+        ctx.is_compact_system,
         &mut lhb_state,
         jupiter_entity,
         saturn_entity,

@@ -139,6 +139,7 @@ fn create_atmosphere_uniforms(
     star_lum: f32,
     planet_world_pos: Vec3,
     aurora_params: Vec4,
+    spin_axis: Vec4,
 ) -> AtmosphereUniforms {
     AtmosphereUniforms {
         rayleigh_params: Vec4::new(
@@ -162,6 +163,7 @@ fn create_atmosphere_uniforms(
             profile.shell_outer_scale,
         ),
         aurora_params,
+        spin_axis,
     }
 }
 
@@ -261,6 +263,7 @@ pub fn sync_planetary_atmospheres(
             Option<&Children>,
             Option<&crate::simulation::space_weather::AuroralOvalState>,
             Option<&InternalDifferentiation>,
+            Option<&SpinState>,
         ),
         With<VisualBody>,
     >,
@@ -295,6 +298,7 @@ pub fn sync_planetary_atmospheres(
         opt_children,
         opt_aurora,
         opt_diff,
+        opt_spin,
     ) in planets_query.iter()
     {
         if body.body_type.is_star_or_remnant()
@@ -332,6 +336,18 @@ pub fn sync_planetary_atmospheres(
         let atmo_r = visual_r * profile.shell_outer_scale;
         let aurora_params = derive_auroral_params(opt_aurora, opt_diff);
 
+        let spin_axis = opt_spin.map_or(Vec4::new(0.0, 1.0, 0.0, 0.0), |s| {
+            if s.spin_vector.length_squared() > 1e-12
+                && (s.spin_vector.x.abs() > 1e-6 || s.spin_vector.z.abs() > 1e-6)
+            {
+                let n = s.spin_vector.normalize();
+                Vec4::new(n.x as f32, n.y as f32, n.z as f32, 0.0)
+            } else {
+                let tilt = (s.axial_tilt_degrees as f32).to_radians();
+                Vec4::new(tilt.sin(), tilt.cos(), 0.0, 0.0)
+            }
+        });
+
         let uniforms = create_atmosphere_uniforms(
             &profile,
             pressure_bar,
@@ -341,6 +357,7 @@ pub fn sync_planetary_atmospheres(
             star_lum,
             planet_world_pos,
             aurora_params,
+            spin_axis,
         );
 
         let mut found_child = false;

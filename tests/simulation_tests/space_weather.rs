@@ -132,6 +132,7 @@ fn test_cme_shockwave_propagation_and_arrival() {
         elapsed_years: 0.0,
         current_dt_yr: 0.0005, // ~4.38 hours per tick (standard Protostellar timestep)
         step_count: 0,
+        ..Default::default()
     });
     app.insert_resource(TimeWarp {
         multiplier: 1.0,
@@ -235,6 +236,7 @@ fn test_auroral_oval_ecs_update() {
         elapsed_years: 0.0,
         current_dt_yr: 0.001,
         step_count: 0,
+        ..Default::default()
     });
     app.insert_resource(TimeWarp {
         multiplier: 1.0,

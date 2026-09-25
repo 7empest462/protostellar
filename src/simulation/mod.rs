@@ -103,6 +103,7 @@ impl Plugin for SimulationPlugin {
                     handle_save_system_events,
                     handle_load_system_events,
                     update_active_scenarios,
+                    update_simulation_visual_time,
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),
                     apply_pebble_accretion.after(step_physics_simulation),
@@ -117,7 +118,7 @@ impl Plugin for SimulationPlugin {
                     update_late_heavy_bombardment_cascade.after(step_physics_simulation),
                     update_black_hole_star_dynamics.after(step_physics_simulation),
                     dissipate_gas_disk.after(step_physics_simulation),
-                    record_planetary_telemetry.after(step_physics_simulation),
+                    record_planetary_telemetry.after(process_accretion_and_collisions),
                 ),
             )
             .add_systems(
@@ -126,8 +127,8 @@ impl Plugin for SimulationPlugin {
                     update_guided_bombardment_projectiles.after(step_physics_simulation),
                     update_terraforming_atmospheres.after(update_thermodynamics),
                     update_trajectory_predictor,
-                    update_tidal_evolution.after(step_physics_simulation),
-                    update_relativity_evolution.after(step_physics_simulation),
+                    update_tidal_evolution.after(process_accretion_and_collisions),
+                    update_relativity_evolution.after(process_accretion_and_collisions),
                     detect_hierarchical_triples.after(step_physics_simulation),
                     update_kozai_lidov_evolution.after(detect_hierarchical_triples),
                     sync_geological_evolution_system.after(update_thermodynamics),

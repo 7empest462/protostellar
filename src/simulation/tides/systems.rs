@@ -268,7 +268,8 @@ fn step_body_tidal_evolution(
     let tau_sync = calculate_sync_timescale(k2_q, ctx.host_mass, mass_solar, rad_au, a, n);
 
     // 2. Spin-Orbit Synchronization
-    let current_omega = (2.0 * PI) / (spin.rotation_period_hours * 3600.0 / YEAR_SECONDS).max(1.0);
+    let period_yr = (spin.rotation_period_hours * (3600.0 / YEAR_SECONDS)).max(1e-8);
+    let current_omega = (2.0 * PI) / period_yr;
     let (omega_eq, resonance_ratio) = calculate_equilibrium_spin_frequency(n, e, e >= 0.15);
 
     // 3. Internal Viscoelastic Tidal Heating
@@ -289,6 +290,12 @@ fn step_body_tidal_evolution(
         let new_period_hours = ((2.0 * PI) / new_omega.max(1e-6)) * (YEAR_SECONDS / 3600.0);
         spin.rotation_period_hours = new_period_hours.clamp(0.5, 50000.0);
         spin.axial_tilt_degrees = new_tilt.clamp(0.0, 180.0);
+
+        // Keep spin angular momentum vector direction and magnitude synchronized
+        let tilt_rad = new_tilt.to_radians();
+        let spin_dir = DVec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0);
+        let i_moment = 0.33 * mass_solar * rad_au * rad_au;
+        spin.spin_vector = (i_moment * new_omega) * spin_dir;
 
         tide.locking_progress = progress;
         tide.is_tidally_locked = progress >= 0.99;
@@ -322,7 +329,7 @@ fn step_body_tidal_evolution(
 
     if let Some(ref mut t) = opt_tide {
         **t = tide;
-    } else {
-        commands.entity(entity).try_insert(tide);
+    } else if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+        entity_cmd.try_insert(tide);
     }
 }

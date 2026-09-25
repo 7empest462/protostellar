@@ -159,8 +159,9 @@ fn fragment(
     var inner_clear_factor: f32 = 1.0;
     if (shockwave_r > 0.0) {
         if (!is_massive) {
-            if (r_cyl < 2.7) {
-                inner_clear_factor = 0.05;
+            let clear_edge = min(shockwave_r, 2.7);
+            if (r_cyl < clear_edge) {
+                inner_clear_factor = clamp((r_cyl / max(clear_edge, 0.01)) * 0.4, 0.05, 0.4);
             } else if (r_cyl < shockwave_r + 5.0) {
                 let compression = 1.0 + 1.4 * exp(-pow((r_cyl - (shockwave_r + 1.5)) / 2.5, 2.0));
                 inner_clear_factor = compression;

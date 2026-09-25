@@ -33,65 +33,55 @@ struct MagnetosphereParams {
     emissive_color: LinearRgba,
 }
 
-/// Synchronizes 3D volumetric GPU magnetic field loops when DiagnosticOverlayMode::MagneticFields is active.
-///
-/// Intelligently skips the central magnetar (which already renders permanent 3D field loops)
-/// and simulates magnetic induction and distortion on companion stars and orbiting planets.
-#[allow(
-    clippy::type_complexity,
-    reason = "Astrophysical magnetic field overlay GPU synchronization system"
-)]
-pub fn sync_magnetic_field_overlays(
-    mut commands: Commands,
-    time: Res<Time>,
-    player_state: Res<PlayerInteractionState>,
-    visual_assets: Option<Res<VisualAssets>>,
-    config: Res<SimulationConfig>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    body_query: Query<(
-        Entity,
-        &SimPosition,
-        &SimVelocity,
-        &CelestialBody,
-        &Radius,
-        &Composition,
-        Option<&InternalDifferentiation>,
-        Option<&ElectromagneticFieldState>,
-        Option<&SpinState>,
-        Option<&super::MagnetarStructureRoot>,
-    )>,
-    mut root_query: Query<(
-        Entity,
-        &mut Transform,
-        &MagneticFieldOverlayRoot,
-        Option<&Children>,
-    )>,
-    mut part_query: Query<
-        (&mut Transform, &MeshMaterial3d<StandardMaterial>),
-        (
-            With<MagneticFieldLoopsPart>,
-            Without<MagneticFieldOverlayRoot>,
-        ),
-    >,
-) {
-    let is_active_mode = player_state.overlay_mode == DiagnosticOverlayMode::MagneticFields;
+struct MagnetarSource {
+    pos: Vec3,
+    vel: Vec3,
+    b_field: f64,
+}
 
-    // Despawn all overlay roots if not in MagneticFields mode
-    if !is_active_mode {
-        for (root_ent, _, _, _) in root_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(root_ent) {
-                cmd.despawn();
-            }
-        }
-        return;
-    }
+pub type MagnetosphereBodyQueryItem<'a> = (
+    Entity,
+    &'a SimPosition,
+    &'a SimVelocity,
+    &'a CelestialBody,
+    &'a Radius,
+    &'a Composition,
+    Option<&'a InternalDifferentiation>,
+    Option<&'a ElectromagneticFieldState>,
+    Option<&'a SpinState>,
+    Option<&'a super::MagnetarStructureRoot>,
+);
 
-    let Some(assets) = visual_assets else {
-        return;
-    };
+pub type MagnetosphereBodyQuery<'w, 's> =
+    Query<'w, 's, MagnetosphereBodyQueryItem<'static>>;
 
-    // 1. Detect if an ultra-magnetized magnetar or extreme remnant is present in the system
-    let magnetar_source = body_query
+pub type MagnetosphereRootQueryItem<'a> = (
+    Entity,
+    &'a mut Transform,
+    &'a MagneticFieldOverlayRoot,
+    Option<&'a Children>,
+);
+
+pub type MagnetosphereRootQuery<'w, 's> =
+    Query<'w, 's, MagnetosphereRootQueryItem<'static>>;
+
+pub type MagnetospherePartQueryItem<'a> = (
+    &'a mut Transform,
+    &'a MeshMaterial3d<StandardMaterial>,
+);
+
+pub type MagnetospherePartFilter = (
+    With<MagneticFieldLoopsPart>,
+    Without<MagneticFieldOverlayRoot>,
+);
+
+pub type MagnetospherePartQuery<'w, 's> =
+    Query<'w, 's, MagnetospherePartQueryItem<'static>, MagnetospherePartFilter>;
+
+fn find_magnetar_source(
+    body_query: &MagnetosphereBodyQuery,
+) -> Option<MagnetarSource> {
+    body_query
         .iter()
         .find(|(_, _, _, body, _, _, _, opt_em, _, opt_mag_root)| {
             body.body_type == BodyType::Magnetar
@@ -101,22 +91,114 @@ pub fn sync_magnetic_field_overlays(
                     && !body.name.contains("Clump")
                     && !body.name.contains("Ejecta"))
         })
-        .map(|(ent, pos, vel, _, rad, _, _, opt_em, _, _)| {
+        .map(|(_, pos, vel, _, _, _, _, opt_em, _, _)| {
             let p = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let v = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
             let b_field = opt_em.map_or(1.0e15, |em| em.magnetic_field_gauss);
-            (ent, p, v, rad.0 as f32, b_field)
-        });
+            MagnetarSource {
+                pos: p,
+                vel: v,
+                b_field,
+            }
+        })
+}
 
-    let elapsed = time.elapsed_secs();
-    let mut candidate_map: HashMap<Entity, MagnetosphereParams> = HashMap::new();
+fn compute_magnetosphere_params_for_body(
+    world_pos: Vec3,
+    world_vel: Vec3,
+    axis: Vec3,
+    vis_r: f32,
+    b_gauss: f64,
+    body_type: BodyType,
+    is_star: bool,
+    elapsed: f32,
+    magnetar_source: Option<&MagnetarSource>,
+) -> (Vec3, Quat, LinearRgba) {
+    if let Some(mag) = magnetar_source {
+        let to_mag = mag.pos - world_pos;
+        let dist_to_mag = to_mag.length().max(0.05);
+        let from_mag_dir = -to_mag.normalize_or_zero();
 
-    // 2. Map all magnetized objects and companion stars
+        let b_ext = (mag.b_field * 1e-15 * (0.01 / f64::from(dist_to_mag)).powi(3))
+            .clamp(0.001, 100.0) as f32;
+
+        let v_rel = (world_vel - mag.vel).length();
+        let induction_boost = (1.0 + v_rel * b_ext * 3.5).clamp(1.0, 7.5);
+
+        let base_scale = if is_star {
+            vis_r * 2.8
+        } else if body_type == BodyType::GasGiant {
+            vis_r * 3.8
+        } else {
+            (vis_r * (1.8 + 0.6 * (b_gauss as f32).max(0.1).powf(0.3)))
+                .clamp(vis_r * 1.3, vis_r * 4.5)
+        };
+
+        let scale = Vec3::new(base_scale * 0.88, base_scale * 1.20, base_scale * 0.88);
+        let blended_axis = (axis * 0.80 + from_mag_dir * 0.35).normalize();
+        let wake_rot =
+            Quat::from_rotation_arc(Vec3::Y, blended_axis) * Quat::from_rotation_y(elapsed * 0.8);
+
+        let emissive = if is_star {
+            LinearRgba::new(
+                3.5 * induction_boost,
+                9.0 * induction_boost,
+                24.0 * induction_boost,
+                0.88,
+            )
+        } else if body_type == BodyType::GasGiant {
+            LinearRgba::new(
+                16.0 * induction_boost,
+                10.0 * induction_boost,
+                3.0 * induction_boost,
+                0.85,
+            )
+        } else {
+            LinearRgba::new(
+                2.0 * induction_boost,
+                8.5 * induction_boost,
+                18.0 * induction_boost,
+                0.85,
+            )
+        };
+
+        (scale, wake_rot, emissive)
+    } else {
+        let base_scale = if is_star {
+            vis_r * 2.2
+        } else if body_type == BodyType::GasGiant {
+            vis_r * 4.0
+        } else {
+            (vis_r * (1.6 + 1.2 * (b_gauss as f32).max(0.05).powf(0.3)))
+                .clamp(vis_r * 1.3, vis_r * 3.2)
+        };
+
+        let scale = Vec3::splat(base_scale);
+        let rot = Quat::from_rotation_arc(Vec3::Y, axis) * Quat::from_rotation_y(elapsed * 0.4);
+
+        let emissive = if is_star {
+            LinearRgba::new(12.0, 6.0, 1.2, 0.80)
+        } else if body_type == BodyType::GasGiant {
+            LinearRgba::new(16.0, 10.0, 2.5, 0.80)
+        } else {
+            LinearRgba::new(1.5, 7.5, 16.0, 0.80)
+        };
+
+        (scale, rot, emissive)
+    }
+}
+
+fn collect_magnetosphere_candidates(
+    body_query: &MagnetosphereBodyQuery,
+    magnetar_source: Option<&MagnetarSource>,
+    config: &SimulationConfig,
+    elapsed: f32,
+) -> HashMap<Entity, MagnetosphereParams> {
+    let mut candidate_map = HashMap::new();
+
     for (entity, pos, vel, body, radius, comp, opt_diff, opt_em, opt_spin, opt_mag_root) in
         body_query.iter()
     {
-        // SMART MAGNETAR CHECK: Skip the magnetar itself!
-        // The magnetar already possesses permanent 3D field loops rendered by sync_magnetar_structures.
         if body.body_type == BodyType::Magnetar
             || opt_mag_root.is_some()
             || (body.name.to_lowercase().contains("magnetar")
@@ -133,8 +215,6 @@ pub fn sync_magnetic_field_overlays(
         );
         let has_dynamo = b_gauss > 0.01;
 
-        // Orbiting planet candidates: gas giants, terrestrial worlds with iron cores or dynamos,
-        // or worlds under magnetar immersion
         let is_induced_by_magnetar = magnetar_source.is_some()
             && matches!(
                 body.body_type,
@@ -160,7 +240,6 @@ pub fn sync_magnetic_field_overlays(
         let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let world_vel = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
 
-        // Spin / Magnetic dipole orientation
         let spin_axis = opt_spin.map_or(Vec3::Y, |s| {
             let sv = Vec3::new(
                 s.spin_vector.x as f32,
@@ -176,92 +255,17 @@ pub fn sync_magnetic_field_overlays(
         };
 
         let vis_r = config.calc_visual_radius_for_type(radius.0, body.body_type);
-
-        // Dynamic scale, distortion, and unipolar induction
-        let (scale, rotation, emissive_color) =
-            if let Some((_mag_ent, mag_pos, mag_vel, _mag_r, mag_b)) = magnetar_source {
-                let to_mag = mag_pos - world_pos;
-                let dist_to_mag = to_mag.length().max(0.05);
-                let from_mag_dir = -to_mag.normalize_or_zero();
-
-                // External field at body location B_ext = B_0 * (R_mag / d)^3
-                let b_ext = (mag_b * 1e-15 * (0.01 / f64::from(dist_to_mag)).powi(3))
-                    .clamp(0.001, 100.0) as f32;
-
-                // Relative orbital velocity cutting magnetar field lines: v x B induction
-                let v_rel = (world_vel - mag_vel).length();
-                let induction_boost = (1.0 + v_rel * b_ext * 3.5).clamp(1.0, 7.5);
-
-                let base_scale = if is_star {
-                    // Blue Hypergiant companion (LBV 1806-20)
-                    vis_r * 2.8
-                } else if body.body_type == BodyType::GasGiant {
-                    vis_r * 3.8
-                } else {
-                    // Orbiting worlds (Valkyrie, Pyre, etc.)
-                    (vis_r * (1.8 + 0.6 * (b_gauss as f32).max(0.1).powf(0.3)))
-                        .clamp(vis_r * 1.3, vis_r * 4.5)
-                };
-
-                // Asymmetric dayside compression and nightside wake elongation
-                let scale = Vec3::new(base_scale * 0.88, base_scale * 1.20, base_scale * 0.88);
-
-                // Dipole aligned primarily with spin axis, tilted downstream toward magnetic wake
-                let blended_axis = (axis * 0.80 + from_mag_dir * 0.35).normalize();
-                let wake_rot = Quat::from_rotation_arc(Vec3::Y, blended_axis)
-                    * Quat::from_rotation_y(elapsed * 0.8);
-
-                let emissive = if is_star {
-                    // Companion star: incandescent electric azure / ultraviolet-blue
-                    LinearRgba::new(
-                        3.5 * induction_boost,
-                        9.0 * induction_boost,
-                        24.0 * induction_boost,
-                        0.88,
-                    )
-                } else if body.body_type == BodyType::GasGiant {
-                    LinearRgba::new(
-                        16.0 * induction_boost,
-                        10.0 * induction_boost,
-                        3.0 * induction_boost,
-                        0.85,
-                    )
-                } else {
-                    // Terrestrial / metal core world under magnetar immersion
-                    LinearRgba::new(
-                        2.0 * induction_boost,
-                        8.5 * induction_boost,
-                        18.0 * induction_boost,
-                        0.85,
-                    )
-                };
-
-                (scale, wake_rot, emissive)
-            } else {
-                // Normal stellar / planetary systems (e.g. Solar System, TRAPPIST-1)
-                let base_scale = if is_star {
-                    vis_r * 2.2
-                } else if body.body_type == BodyType::GasGiant {
-                    vis_r * 4.0 // Jupiter-scale immense magnetosphere
-                } else {
-                    (vis_r * (1.6 + 1.2 * (b_gauss as f32).max(0.05).powf(0.3)))
-                        .clamp(vis_r * 1.3, vis_r * 3.2)
-                };
-
-                let scale = Vec3::splat(base_scale);
-                let rot =
-                    Quat::from_rotation_arc(Vec3::Y, axis) * Quat::from_rotation_y(elapsed * 0.4);
-
-                let emissive = if is_star {
-                    LinearRgba::new(12.0, 6.0, 1.2, 0.80) // Solar coronal loops
-                } else if body.body_type == BodyType::GasGiant {
-                    LinearRgba::new(16.0, 10.0, 2.5, 0.80) // Jovian golden-amber
-                } else {
-                    LinearRgba::new(1.5, 7.5, 16.0, 0.80) // Terrestrial auroral cyan-blue
-                };
-
-                (scale, rot, emissive)
-            };
+        let (scale, rotation, emissive_color) = compute_magnetosphere_params_for_body(
+            world_pos,
+            world_vel,
+            axis,
+            vis_r,
+            b_gauss,
+            body.body_type,
+            is_star,
+            elapsed,
+            magnetar_source,
+        );
 
         candidate_map.insert(
             entity,
@@ -273,10 +277,18 @@ pub fn sync_magnetic_field_overlays(
             },
         );
     }
+    candidate_map
+}
 
+fn update_existing_magnetospheres(
+    commands: &mut Commands,
+    candidate_map: &HashMap<Entity, MagnetosphereParams>,
+    materials: &mut Assets<StandardMaterial>,
+    root_query: &mut MagnetosphereRootQuery,
+    part_query: &mut MagnetospherePartQuery,
+) -> HashSet<Entity> {
     let mut updated_entities = HashSet::new();
 
-    // 3. Update existing roots or despawn orphans
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
         if let Some(&params) = candidate_map.get(&root.target_entity) {
             root_trans.translation = params.world_pos;
@@ -297,9 +309,17 @@ pub fn sync_magnetic_field_overlays(
             cmd.despawn();
         }
     }
+    updated_entities
+}
 
-    // 4. Spawn missing overlays
-    for (&target, &params) in &candidate_map {
+fn spawn_missing_magnetospheres(
+    commands: &mut Commands,
+    assets: &VisualAssets,
+    materials: &mut Assets<StandardMaterial>,
+    candidate_map: &HashMap<Entity, MagnetosphereParams>,
+    updated_entities: &HashSet<Entity>,
+) {
+    for (&target, &params) in candidate_map {
         if updated_entities.contains(&target) {
             continue;
         }
@@ -331,4 +351,61 @@ pub fn sync_magnetic_field_overlays(
                 ));
             });
     }
+}
+
+/// Synchronizes 3D volumetric GPU magnetic field loops when DiagnosticOverlayMode::MagneticFields is active.
+///
+/// Intelligently skips the central magnetar (which already renders permanent 3D field loops)
+/// and simulates magnetic induction and distortion on companion stars and orbiting planets.
+pub fn sync_magnetic_field_overlays(
+    mut commands: Commands,
+    sim_time: Option<Res<SimTime>>,
+    player_state: Res<PlayerInteractionState>,
+    visual_assets: Option<Res<VisualAssets>>,
+    config: Res<SimulationConfig>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    body_query: MagnetosphereBodyQuery,
+    mut root_query: MagnetosphereRootQuery,
+    mut part_query: MagnetospherePartQuery,
+) {
+    let is_active_mode = player_state.overlay_mode == DiagnosticOverlayMode::MagneticFields;
+
+    if !is_active_mode {
+        for (root_ent, _, _, _) in root_query.iter() {
+            if let Ok(mut cmd) = commands.get_entity(root_ent) {
+                cmd.despawn();
+            }
+        }
+        return;
+    }
+
+    let Some(assets) = visual_assets else {
+        return;
+    };
+
+    let magnetar_source = find_magnetar_source(&body_query);
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+
+    let candidate_map = collect_magnetosphere_candidates(
+        &body_query,
+        magnetar_source.as_ref(),
+        &config,
+        elapsed,
+    );
+
+    let updated_entities = update_existing_magnetospheres(
+        &mut commands,
+        &candidate_map,
+        &mut materials,
+        &mut root_query,
+        &mut part_query,
+    );
+
+    spawn_missing_magnetospheres(
+        &mut commands,
+        &assets,
+        &mut materials,
+        &candidate_map,
+        &updated_entities,
+    );
 }

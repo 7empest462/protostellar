@@ -89,7 +89,6 @@ pub fn setup_gas_cloud_disk(
 
 /// Updates gas cloud animation time, density clearance, and star ignition shockwave.
 pub fn update_gas_cloud_material(
-    time: Res<Time>,
     sim_time: Res<SimTime>,
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
@@ -135,7 +134,7 @@ pub fn update_gas_cloud_material(
         config.gas_density_scale
     };
 
-    let anim_time = (sim_time.elapsed_years * 60.0) as f32 + time.elapsed_secs() * 0.40;
+    let anim_time = (sim_time.elapsed_years * 60.0) as f32 + sim_time.visual_time_secs * 0.40;
 
     for handle in gas_query.iter() {
         if let Some(mut mat) = materials.get_mut(handle) {
@@ -184,6 +183,10 @@ impl Plugin for GasCloudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<GasCloudMaterial>::default())
             .add_systems(Startup, setup_gas_cloud_disk)
-            .add_systems(Update, update_gas_cloud_material);
+            .add_systems(
+                Update,
+                update_gas_cloud_material
+                    .after(crate::simulation::physics::update_simulation_visual_time),
+            );
     }
 }

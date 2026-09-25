@@ -182,13 +182,20 @@ fn step_protostar_ignition_and_limits(
     ignition_events: &mut MessageWriter<StarIgnitionEvent>,
     supernova_events: &mut MessageWriter<SupernovaEvent>,
 ) {
+    let is_genesis = body.name.contains("Genesis") || body.name.contains("T-Tauri");
     if ignition.is_ignited {
         let blast_speed = 0.65;
         ignition.shockwave_radius = (ignition.shockwave_radius + blast_speed * dt_yr).min(30.0);
-        let time_decay = (1.0 - (elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
-        config.gas_density_scale = config.gas_density_scale.min(time_decay);
+        if !is_genesis {
+            let time_decay = (1.0 - (elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
+            config.gas_density_scale = config.gas_density_scale.min(time_decay);
+        }
     } else {
-        let heating_rate_per_yr = 2.0e5 * mass.0;
+        let heating_rate_per_yr = if is_genesis {
+            2.0e5 * mass.0 * 1e-4
+        } else {
+            2.0e5 * mass.0
+        };
         ignition.core_temperature += heating_rate_per_yr * dt_yr;
 
         let ignition_threshold = 1.0e7;
@@ -197,20 +204,24 @@ fn step_protostar_ignition_and_limits(
 
         let ff = f64::from(ignition.fusion_fraction);
         let target_surface_temp = if mass.0 < 0.08 {
-            1800.0 + (2800.0 - 1800.0) * ff
+            1800.0 + 1000.0 * ff
         } else if mass.0 < 0.50 {
-            2600.0 + (3800.0 - 2600.0) * ff
+            2600.0 + 1200.0 * ff
         } else if mass.0 < 8.0 {
-            3200.0 + (5778.0 - 3200.0) * ff
+            if is_genesis { 4800.0 } else { 3200.0 + 2578.0 * ff }
         } else {
-            8000.0 + (28000.0 - 8000.0) * ff
+            8000.0 + 20000.0 * ff
         };
         temp.0 = target_surface_temp;
+        radius.0 = if is_genesis { radius.0 } else { SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ff)) };
 
-        let target_radius = SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ff));
-        radius.0 = target_radius;
+        let should_ignite = if is_genesis {
+            ignition.core_temperature >= ignition_threshold
+        } else {
+            ignition.core_temperature >= ignition_threshold || elapsed_years >= 30.0
+        };
 
-        if ignition.core_temperature >= ignition_threshold || elapsed_years >= 30.0 {
+        if should_ignite {
             ignition.is_ignited = true;
             ignition.fusion_fraction = 1.0;
             ignition.core_temperature = ignition.core_temperature.max(ignition_threshold);
@@ -225,16 +236,15 @@ fn step_protostar_ignition_and_limits(
             } else if mass.0 < 8.0 {
                 (BodyType::BlueGiant, "The Star (Blue Giant - B Type)")
             } else if mass.0 < 25.0 {
-                (
-                    BodyType::BlueSupergiant,
-                    "The Star (Blue Supergiant - O Type)",
-                )
+                (BodyType::BlueSupergiant, "The Star (Blue Supergiant - O Type)")
             } else {
                 (BodyType::Hypergiant, "The Star (Luminous Hypergiant)")
             };
 
             body.body_type = assigned_type;
-            body.name = name_str.to_string();
+            if !is_genesis {
+                body.name = name_str.to_string();
+            }
 
             let main_seq_lum = mass.0.powf(3.5);
             lum.0 = main_seq_lum;
@@ -265,6 +275,30 @@ fn step_protostar_ignition_and_limits(
         }
     }
 
+    apply_stellar_collapse_limits(
+        entity,
+        mass,
+        radius,
+        temp,
+        lum,
+        body,
+        opt_evo,
+        opt_em,
+        supernova_events,
+    );
+}
+
+fn apply_stellar_collapse_limits(
+    entity: Entity,
+    mass: &mut Mass,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    body: &mut CelestialBody,
+    opt_evo: &mut Option<Mut<'_, StellarEvolutionState>>,
+    opt_em: Option<Mut<'_, ElectromagneticFieldState>>,
+    supernova_events: &mut MessageWriter<SupernovaEvent>,
+) {
     if body.body_type == BodyType::WhiteDwarf && mass.0 > 1.44 {
         body.body_type = BodyType::Pulsar;
         body.name = "The Star (Pulsar Remnant)".to_string();
@@ -291,10 +325,8 @@ fn step_protostar_ignition_and_limits(
             shockwave_velocity_km_s: 12_000.0,
         });
         mass.0 = 1.40;
-    } else if matches!(
-        body.body_type,
-        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
-    ) && mass.0 > 2.17
+    } else if matches!(body.body_type, BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar)
+        && mass.0 > 2.17
     {
         body.body_type = BodyType::BlackHole;
         body.name = "The Star (Stellar-Mass Black Hole)".to_string();
@@ -531,20 +563,32 @@ fn update_body_thermodynamics(
     elapsed_years: f64,
     engulfment_events: &mut MessageWriter<PlanetaryEngulfmentEvent>,
 ) {
-    let r = pos.length().max(0.1);
+    let r = pos.length().max(1e-4);
     let period_hrs = opt_spin.map_or(24.0, |s| s.rotation_period_hours);
 
-    if star_r > 0.15 && r < star_r {
-        vel.0 *= 1.0 - (0.05 * dt_yr).min(0.5);
+    // Stellar envelope drag and engulfment for all stars (Main Sequence, Red Giants, etc.)
+    if r < star_r * 2.0 {
+        let drag_coeff = if r < star_r { 0.25 } else { 0.08 };
+        vel.0 *= 1.0 - (drag_coeff * dt_yr).min(0.8);
 
-        if r < 0.18 || r < star_r * 0.20 {
+        let is_deep_engulfment = if star_r > 0.15 {
+            // For giant envelopes, deep plunge or inner core boundary
+            r < 0.18 || r < star_r * 0.20
+        } else {
+            // For main-sequence / compact stars, penetration into or inside the stellar body
+            r <= star_r || r < 0.005
+        };
+
+        if is_deep_engulfment {
             engulfment_events.write(PlanetaryEngulfmentEvent {
                 planet_entity: body_ent,
                 planet_name: b_body.name.clone(),
                 distance_au: r,
                 planet_mass_earth: b_mass_solar / EARTH_MASS_SOLAR,
             });
-            commands.entity(body_ent).despawn();
+            if let Ok(mut cmd) = commands.get_entity(body_ent) {
+                cmd.despawn();
+            }
             return;
         }
     }
@@ -711,7 +755,7 @@ fn update_volatile_condensation(
     if let Some(ref mut vol) = opt_vol {
         if has_water_volatiles {
             let max_ocean = if vol.delivered_water_m_earth > 1e-6 {
-                (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.85) as f32
+                ((vol.delivered_water_m_earth / 0.0006) * 0.71).clamp(0.0, 0.85) as f32
             } else {
                 vol.ocean_coverage_frac
                     .max((current_ice * 3.0).clamp(0.0, 0.85))

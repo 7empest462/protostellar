@@ -173,7 +173,25 @@ fn update_promoted_name(name: &mut String, old_type: BodyType, new_type: BodyTyp
             .replace("Planetesimal", "Embryo")
             .replace("Asteroid", "Embryo");
     } else if new_type == BodyType::TerrestrialPlanet {
-        *name = format!("Planet ({name})");
+        let lower = name.to_lowercase();
+        let is_named = lower.contains("earth")
+            || lower.contains("theia")
+            || lower.contains("mars")
+            || lower.contains("venus")
+            || lower.contains("mercury")
+            || lower.contains("moon")
+            || lower.contains("ceres")
+            || lower.contains("vesta")
+            || lower.contains("psyche")
+            || lower.contains("pluto")
+            || lower.contains("jupiter")
+            || lower.contains("saturn")
+            || lower.contains("uranus")
+            || lower.contains("neptune")
+            || name.starts_with("Planet");
+        if !is_named {
+            *name = format!("Planet ({name})");
+        }
     }
 }
 

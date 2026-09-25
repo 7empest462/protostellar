@@ -17,8 +17,8 @@ pub use promotions::{check_clump_promotions, replenish_cleared_particles, spawn_
 pub use setup::{create_soft_particle_texture, reseed_particle_swarm, setup_particle_swarm};
 pub use simulation::{
     apply_particle_accretion_to_bodies, build_spatial_hash_bins,
-    integrate_particles_and_collect_accretions, process_particle_collisions_and_sticking,
-    ParticleIntegrationParams,
+    compute_gas_aerodynamic_drift, integrate_particles_and_collect_accretions,
+    process_particle_collisions_and_sticking, ParticleIntegrationParams,
 };
 
 /// Marker component for the 50,000 particle visual swarm mesh.
@@ -47,6 +47,7 @@ pub struct ParticleSwarmData {
 
 pub fn update_particle_swarm(
     mut commands: Commands,
+    sim_time: Res<SimTime>,
     time_warp: Res<TimeWarp>,
     mut config: ResMut<SimulationConfig>,
     disk_params: Res<DiskParameters>,
@@ -144,6 +145,7 @@ pub fn update_particle_swarm(
         lhb_resonance,
         disk_params: &disk_params,
         massive_bodies: &massive_bodies,
+        base_mass: data.base_mass,
     };
 
     let accreted_events = integrate_particles_and_collect_accretions(&mut data, &params);
@@ -163,8 +165,13 @@ pub fn update_particle_swarm(
 
     let current_ecs_count = massive_bodies.len();
     let is_massive_disk = star_mass.0 > 10.0;
-    let (promotions, active_count) =
-        check_clump_promotions(&mut data, &disk_params, current_ecs_count, is_massive_disk);
+    let (promotions, active_count) = check_clump_promotions(
+        &mut data,
+        &disk_params,
+        current_ecs_count,
+        is_massive_disk,
+        sim_time.elapsed_years,
+    );
     spawn_promoted_bodies(&mut commands, promotions, &disk_params, is_massive_disk);
 
     replenish_cleared_particles(

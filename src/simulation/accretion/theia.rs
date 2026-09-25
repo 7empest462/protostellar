@@ -83,6 +83,16 @@ pub fn is_explicit_earth(name: &str) -> bool {
     is_earth && !is_excluded
 }
 
+pub fn is_explicit_theia(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains("theia")
+        && !lower.contains("earth")
+        && !lower.contains("moon")
+        && !lower.contains("venus")
+        && !lower.contains("planet nine")
+        && !lower.contains("planet 9")
+}
+
 fn locate_or_spawn_earth(
     commands: &mut Commands,
     theia_state: &mut TheiaImpactState,
@@ -191,18 +201,19 @@ fn locate_or_spawn_theia(
 ) -> Entity {
     let theia_opt = bodies_query
         .iter()
-        .filter(|(_, _, _, _, _, body, ..)| {
-            let n = body.name.as_str();
-            (n == "Theia" || n.starts_with("Theia"))
-                && !n.contains("Earth")
-                && !n.contains("Moon")
-                && !n.contains("Planet Nine")
-                && !n.contains("Venus")
-        })
+        .filter(|(_, _, _, _, _, body, ..)| is_explicit_theia(body.name.as_str()))
         .max_by(|(_, _, _, mass_a, ..), (_, _, _, mass_b, ..)| mass_a.0.total_cmp(&mass_b.0))
         .map(|(e, ..)| e);
 
     if let Some(t) = theia_opt {
+        // Despawn any redundant duplicate Theias in the world
+        for (other_e, _, _, _, _, other_b, ..) in bodies_query.iter() {
+            if other_e != t && is_explicit_theia(other_b.name.as_str()) {
+                if let Ok(mut cmd) = commands.get_entity(other_e) {
+                    cmd.despawn();
+                }
+            }
+        }
         t
     } else {
         let earth_pos = bodies_query
@@ -285,7 +296,8 @@ fn resolve_giant_impact_moon(
 
     // 2. The Moon state update
     let moon_mass = 0.0123 * EARTH_MASS_SOLAR;
-    let orbit_dist_au: f64 = 0.0075; // Outside visual mesh & atmosphere (~1,120,000 km)
+    // Generous visual separation (~1,800,000 km) so Earth and Moon meshes never overlap or touch
+    let orbit_dist_au: f64 = 0.0120;
     let p_moon_yr = 2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * total_primary_mass)).sqrt();
     let v_moon_circ = (G_ASTRO * total_primary_mass / orbit_dist_au).sqrt();
 
@@ -425,6 +437,14 @@ pub fn update_theia_rendezvous(
         theia_state.moon_formed = true;
         theia_state.intercept_active = false;
         theia_state.target_primary = None;
+        // Purge any rogue extra Theias if The Moon already exists
+        for (extra_e, _, _, _, _, extra_b, ..) in bodies_query.iter() {
+            if is_explicit_theia(extra_b.name.as_str()) {
+                if let Ok(mut cmd) = commands.get_entity(extra_e) {
+                    cmd.despawn();
+                }
+            }
+        }
         return;
     }
 

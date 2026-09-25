@@ -137,12 +137,18 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                     BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
                 ))
                 .with_children(|scenario_row| {
-                    const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 9] = [
+                    const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 10] = [
                         (
                             UiButtonAction::LoadScenarioSolar,
                             "Solar [F1]",
                             Color::srgba(0.18, 0.14, 0.04, 0.9),
                             Color::srgb(0.9, 0.75, 0.3),
+                        ),
+                        (
+                            UiButtonAction::LoadScenarioGenesis,
+                            "Genesis [Disk]",
+                            Color::srgba(0.04, 0.18, 0.16, 0.9),
+                            Color::srgb(0.25, 0.95, 0.8),
                         ),
                         (
                             UiButtonAction::LoadScenarioTrappist,
@@ -381,6 +387,48 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
         "⏳ Epochs [F11]",
         Color::srgba(0.18, 0.14, 0.05, 0.90),
         Color::srgb(1.0, 0.85, 0.40),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::TriggerLhb,
+        "☄️ LHB [G]",
+        Color::srgba(0.24, 0.12, 0.04, 0.90),
+        Color::srgb(1.0, 0.65, 0.20),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::TriggerBlowoutCocoon,
+        "💥 Blowout [B]",
+        Color::srgba(0.26, 0.08, 0.22, 0.90),
+        Color::srgb(1.0, 0.45, 0.95),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::ToggleSuperEddington,
+        "⚡ Accrete [X]",
+        Color::srgba(0.24, 0.06, 0.08, 0.90),
+        Color::srgb(1.0, 0.40, 0.50),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::AccelerateInspiral,
+        "⚡ Inspiral",
+        Color::srgba(0.18, 0.08, 0.24, 0.90),
+        Color::srgb(0.85, 0.50, 1.0),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::TriggerCoronalMassEjection,
+        "⚡ Flare",
+        Color::srgba(0.28, 0.14, 0.02, 0.90),
+        Color::srgb(1.0, 0.70, 0.15),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::SpawnInfallPop3Star,
+        "🌟 Pop-III [T]",
+        Color::srgba(0.08, 0.16, 0.28, 0.90),
+        Color::srgb(0.40, 0.85, 1.0),
     );
     create_compact_button(
         col,

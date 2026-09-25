@@ -169,6 +169,7 @@ fn test_telemetry_ecs_recording_system() {
         elapsed_years: 500.0,
         current_dt_yr: 1.0,
         step_count: 500,
+        ..Default::default()
     });
     app.insert_resource(TimeWarp {
         multiplier: 1.0,

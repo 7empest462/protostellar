@@ -6,6 +6,7 @@ pub mod jets;
 pub mod magnetospheres;
 pub mod meshes;
 pub mod palettes;
+pub mod shadows;
 pub mod spawner;
 pub mod structures;
 pub mod transforms;
@@ -27,6 +28,9 @@ pub use palettes::{
     calc_ring_color, compute_gas_giant_palette, compute_ice_giant_palette, compute_stellar_palette,
     star_subtype_from_body_type,
 };
+pub use shadows::{
+    compute_moon_eclipse_shadow, compute_planetary_ring_shadow, compute_ring_shadow_on_planet,
+};
 pub use spawner::spawn_missing_visuals;
 pub use structures::{
     sync_magnetar_structures, sync_planetary_rings, sync_pulsar_beams, sync_quasar_beams,
@@ -34,8 +38,7 @@ pub use structures::{
     QuasarBeamRoot, VisualRingChild,
 };
 pub use transforms::{
-    compute_magma_incandescence, compute_magma_ocean_crust_fraction, compute_moon_eclipse_shadow,
-    compute_planetary_ring_shadow, compute_ring_shadow_on_planet, sync_celestial_transforms,
+    compute_magma_incandescence, compute_magma_ocean_crust_fraction, sync_celestial_transforms,
 };
 
 /// Marker for an entity that has its visual mesh and material spawned.

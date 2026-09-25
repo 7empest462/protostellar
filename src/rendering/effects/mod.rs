@@ -4,6 +4,7 @@ pub mod orbits;
 pub mod planetary;
 pub mod relativistic;
 pub mod shockwaves;
+pub mod supernova;
 pub mod tools;
 
 use bevy::math::DVec3;
@@ -31,6 +32,10 @@ pub use relativistic::{
 pub use shockwaves::{
     draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
     update_impact_shockwaves, update_roche_debris_streams,
+};
+pub use supernova::{
+    draw_supernova_explosions, update_supernova_explosions, EjectaLayer, SupernovaDebrisPool,
+    SupernovaEjectaFragment, SupernovaExplosionInstance, SupernovaType,
 };
 pub use tools::{
     draw_bombardment_projectiles_gizmo, draw_planet_builder_preview, draw_slingshot_preview,
@@ -319,7 +324,8 @@ pub fn draw_orbital_effects_and_gizmos(
     player_state: Res<PlayerInteractionState>,
     shockwave_pool: Res<ImpactShockwavePool>,
     debris_pool: Res<RocheDebrisPool>,
-    time: Res<Time>,
+    supernova_pool: Option<Res<SupernovaDebrisPool>>,
+    sim_time: Option<Res<SimTime>>,
     camera_query: Query<&Transform, With<Camera3d>>,
     star_query: Query<
         (
@@ -352,10 +358,14 @@ pub fn draw_orbital_effects_and_gizmos(
     opt_slingshot: Option<Res<crate::simulation::resources::SlingshotState>>,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
+    let has_supernova = supernova_pool
+        .as_deref()
+        .is_some_and(|p| !p.explosions.is_empty());
     if should_skip_orbital_gizmos(
         &player_state,
         &shockwave_pool,
         &debris_pool,
+        has_supernova,
         opt_builder.as_deref(),
         opt_slingshot.as_deref(),
         opt_predictor.as_deref(),
@@ -373,7 +383,7 @@ pub fn draw_orbital_effects_and_gizmos(
         (DVec3::ZERO, 1.0, Vec3::ZERO)
     };
 
-    let elapsed = time.elapsed_secs();
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let cam_pos = camera_query.iter().next().map(|tf| tf.translation);
 
     if let Some((_, s_mass, s_rad, opt_ign, s_body, opt_evo, _, opt_quasi)) = opt_star {
@@ -395,6 +405,9 @@ pub fn draw_orbital_effects_and_gizmos(
     if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
         draw_impact_shockwaves(&mut gizmos, &shockwave_pool);
         draw_roche_debris_streamers(&mut gizmos, &debris_pool);
+    }
+    if let Some(ref pool) = supernova_pool {
+        draw_supernova_explosions(&mut gizmos, pool);
     }
     // AU distance guides look like planetary orbits — hide them with orbit trails.
     if player_state.orbit_mode != OrbitVisualizationMode::Off
@@ -450,11 +463,12 @@ fn should_skip_orbital_gizmos(
     player_state: &PlayerInteractionState,
     shockwave_pool: &ImpactShockwavePool,
     debris_pool: &RocheDebrisPool,
+    has_supernova: bool,
     opt_builder: Option<&crate::game::ui::PlanetBuilderState>,
     opt_slingshot: Option<&crate::simulation::resources::SlingshotState>,
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
 ) -> bool {
-    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
+    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden && !has_supernova {
         return true;
     }
 
@@ -466,6 +480,7 @@ fn should_skip_orbital_gizmos(
     player_state.orbit_mode == OrbitVisualizationMode::Off
         && shockwave_pool.shockwaves.is_empty()
         && debris_pool.streams.is_empty()
+        && !has_supernova
         && opt_builder.is_none()
         && !slingshot_dragging
         && !has_predictor
@@ -509,16 +524,17 @@ pub fn draw_bombardment_gizmos(
         &crate::simulation::terraforming::BombardmentProjectile,
     )>,
     targets_query: Query<(&SimPosition, &Radius)>,
-    time: Res<Time>,
+    sim_time: Option<Res<SimTime>>,
     player_state: Res<PlayerInteractionState>,
 ) {
     if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
         return;
     }
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     draw_bombardment_projectiles_gizmo(
         &mut gizmos,
         &projectiles_query,
         &targets_query,
-        time.elapsed_secs(),
+        elapsed,
     );
 }

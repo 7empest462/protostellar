@@ -125,3 +125,124 @@ pub fn calc_ring_color(ice_fraction: f32) -> Vec4 {
         Vec4::new(0.38, 0.35, 0.32, 0.65)
     }
 }
+
+pub fn compute_asteroid_spectral_palette(name: &str, comp: &Composition) -> Color {
+    let lower = name.to_lowercase();
+    if lower.contains("psyche") {
+        return Color::srgb(0.48, 0.47, 0.49);
+    } else if lower.contains("vesta") {
+        return Color::srgb(0.44, 0.42, 0.36);
+    } else if lower.contains("ceres") {
+        return Color::srgb(0.12, 0.12, 0.13);
+    } else if lower.contains("pallas")
+        || lower.contains("hygiea")
+        || lower.contains("mathilde")
+        || lower.contains("bennu")
+        || lower.contains("ryugu")
+    {
+        return Color::srgb(0.09, 0.095, 0.105);
+    } else if lower.contains("ida") || lower.contains("gaspra") || lower.contains("eros") {
+        return Color::srgb(0.34, 0.28, 0.20);
+    }
+
+    let norm = comp.normalized();
+    if norm.metal_frac > 0.40 {
+        Color::srgb(0.45, 0.44, 0.46)
+    } else if norm.organics_frac > 0.18 {
+        Color::srgb(0.24, 0.15, 0.11)
+    } else if norm.silicate_frac > 0.60 {
+        let hash = name.bytes().fold(0usize, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(b as usize)
+        });
+        if hash.is_multiple_of(3) {
+            Color::srgb(0.40, 0.38, 0.34)
+        } else {
+            Color::srgb(0.32, 0.26, 0.19)
+        }
+    } else if norm.ice_frac > 0.15 {
+        Color::srgb(0.16, 0.19, 0.23)
+    } else {
+        Color::srgb(0.10, 0.10, 0.11)
+    }
+}
+
+pub fn compute_comet_spectral_palette(name: &str, _comp: &Composition) -> Color {
+    let lower = name.to_lowercase();
+    if lower.contains("67p") || lower.contains("arrokoth") {
+        Color::srgb(0.062, 0.045, 0.038)
+    } else if lower.contains("hale-bopp") || lower.contains("swift") {
+        Color::srgb(0.045, 0.055, 0.070)
+    } else if lower.contains("halley") || lower.contains("tempel") {
+        Color::srgb(0.048, 0.042, 0.038)
+    } else {
+        let hash = name.bytes().fold(0usize, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(b as usize)
+        });
+        match hash % 4 {
+            0 => Color::srgb(0.040, 0.040, 0.042),
+            1 => Color::srgb(0.058, 0.044, 0.036),
+            2 => Color::srgb(0.042, 0.052, 0.065),
+            _ => Color::srgb(0.052, 0.046, 0.038),
+        }
+    }
+}
+
+pub fn compute_terrestrial_body_palette(
+    name: &str,
+    comp: &Composition,
+    temp_k: f64,
+    opt_tidal: Option<&crate::simulation::tides::TidalState>,
+) -> Color {
+    let lower = name.to_lowercase();
+    let norm = comp.normalized();
+
+    if lower == "the moon" || lower == "moon" || lower.contains("the moon") {
+        Color::srgb(0.52, 0.52, 0.54)
+    } else if lower.contains("mercury") {
+        Color::srgb(0.32, 0.33, 0.35)
+    } else if lower.contains("mars") {
+        Color::srgb(0.66, 0.36, 0.20)
+    } else if lower.contains("theia") {
+        Color::srgb(0.42, 0.39, 0.35)
+    } else if lower.contains("venus") {
+        Color::srgb(0.46, 0.40, 0.32)
+    } else if lower.contains("titan") {
+        Color::srgb(0.72, 0.48, 0.22)
+    } else if lower.contains("callisto") || lower.contains("ganymede") {
+        Color::srgb(0.30, 0.32, 0.36)
+    } else if lower.contains("europa") {
+        Color::srgb(0.88, 0.86, 0.82)
+    } else {
+        let tidal_heating = opt_tidal.map_or(0.0, |t| t.tidal_heating_flux_w_m2);
+        if tidal_heating > 0.4
+            || (temp_k > 420.0 && norm.silicate_frac > 0.6 && norm.gas_frac < 0.05)
+        {
+            let hash = name.bytes().fold(0usize, |acc, b| {
+                acc.wrapping_mul(31).wrapping_add(b as usize)
+            });
+            if hash.is_multiple_of(2) {
+                Color::srgb(0.74, 0.64, 0.26)
+            } else {
+                Color::srgb(0.35, 0.28, 0.22)
+            }
+        } else if norm.metal_frac > 0.38 {
+            Color::srgb(0.42, 0.44, 0.48)
+        } else if norm.organics_frac > 0.15 {
+            Color::srgb(0.26, 0.20, 0.16)
+        } else if norm.ice_frac > 0.30 {
+            Color::srgb(0.55, 0.62, 0.70)
+        } else {
+            let hash = name.bytes().fold(0usize, |acc, b| {
+                acc.wrapping_mul(31).wrapping_add(b as usize)
+            });
+            match hash % 6 {
+                0 => Color::srgb(0.52, 0.52, 0.54),
+                1 => Color::srgb(0.28, 0.28, 0.30),
+                2 => Color::srgb(0.62, 0.38, 0.22),
+                3 => Color::srgb(0.38, 0.42, 0.34),
+                4 => Color::srgb(0.54, 0.46, 0.34),
+                _ => Color::srgb(0.36, 0.38, 0.42),
+            }
+        }
+    }
+}

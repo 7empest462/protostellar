@@ -66,14 +66,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
         let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
         let drag_rate = min(0.000005 * gas_density, 0.0005);
-        let migration = min(r * drag_rate * uniforms.dt, r * 0.005);
-        r = max(r - migration, uniforms.inner_radius * 0.8);
+        // Inner terrestrial silicate sublimation front & aerodynamic trap (~0.35 AU)
+        let inner_trap_boundary = max(uniforms.inner_radius * 2.0, 0.35);
+        let inner_retention = clamp((r - inner_trap_boundary) / 0.85, -0.25, 1.0);
+        let max_mig = select(r * 0.005, r * 0.0012, r < 2.0);
+        let migration = clamp(r * drag_rate * uniforms.dt * inner_retention, -r * 0.001, max_mig);
+        r = max(r - migration, uniforms.inner_radius * 0.95);
     }
 
     // Stellar Blast Shockwave & Photo-evaporative Dust Clearing
     if (uniforms.shockwave_radius > 0.0) {
         if (r < uniforms.shockwave_radius) {
-            if (r < 1.6 || r < uniforms.shockwave_radius * 0.85) {
+            if (r < min(uniforms.shockwave_radius * 0.85, 1.6)) {
                 p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, 0.0);
                 particles[idx] = p;
                 return;

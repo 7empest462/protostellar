@@ -49,6 +49,7 @@ impl Plugin for GamePlugin {
                     handle_inspector_scroll,
                     reset_inspector_scroll_on_target_change,
                     update_hud_visibility,
+                    update_scenario_contextual_ui,
                     update_hud,
                 ),
             );

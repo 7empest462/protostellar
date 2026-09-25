@@ -62,6 +62,7 @@ fn test_scenario_preset_definitions() {
 
     let presets = [
         ScenarioPreset::SolarNebulaMmsn,
+        ScenarioPreset::AccretionDiskGenesis,
         ScenarioPreset::Trappist1System,
         ScenarioPreset::Kepler16Circumbinary,
         ScenarioPreset::HotJupiterMigration,
@@ -791,3 +792,202 @@ fn test_uranus_and_neptune_retain_ice_giant_classification_and_blue_palette() {
         "Uranus palette must be predominantly aquamarine/cyan: {uranus_linear:?}"
     );
 }
+
+#[test]
+fn test_trappist1_long_term_coplanar_stability() {
+    use bevy::math::DVec3;
+    use protostellar::game::phases::LateHeavyBombardmentState;
+    use protostellar::simulation::accretion::collisions::process_accretion_and_collisions;
+    use protostellar::simulation::accretion::events::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::scenarios::trappist::spawn_trappist_1_system;
+    use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
+
+    let mut app = App::new();
+    let mut config = SimulationConfig::default();
+    config.gas_density_scale = 0.0;
+    app.insert_resource(config)
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<ActiveScenarioState>()
+        .init_resource::<LateHeavyBombardmentState>()
+        .init_resource::<PlayerInteractionState>()
+        .add_message::<protostellar::simulation::thermodynamics::StarIgnitionEvent>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .add_message::<RocheDisruptionEvent>()
+        .add_message::<MoonFormationEvent>()
+        .add_systems(
+            Update,
+            (
+                step_physics_simulation,
+                process_accretion_and_collisions.after(step_physics_simulation),
+            ),
+        );
+
+    let mut disk_params = DiskParameters::default();
+    let _star_entity = spawn_trappist_1_system(&mut app.world_mut().commands(), &mut disk_params);
+    *app.world_mut().resource_mut::<DiskParameters>() = disk_params;
+    app.world_mut()
+        .resource_mut::<ActiveScenarioState>()
+        .current_preset = ScenarioPreset::Trappist1System;
+
+    // Run for 300 steps (equivalent to multiple orbits of all 7 planets)
+    for _ in 0..300 {
+        app.update();
+    }
+
+    // Verify all 7 planets and star survive
+    let mut planets_query = app
+        .world_mut()
+        .query::<(&CelestialBody, &SimPosition, &SimVelocity)>();
+    let bodies: Vec<(String, DVec3, DVec3)> = planets_query
+        .iter(app.world())
+        .map(|(b, pos, vel)| (b.name.clone(), pos.0, vel.0))
+        .collect();
+
+    assert_eq!(
+        bodies.len(),
+        8,
+        "All 7 planets and the central star must survive"
+    );
+
+    // Verify orbits remain strictly coplanar (y ~ 0) and bounded within authentic semi-major axes
+    for (name, pos, _vel) in bodies {
+        if name.contains("TRAPPIST-1b")
+            || name.contains("TRAPPIST-1c")
+            || name.contains("TRAPPIST-1d")
+            || name.contains("TRAPPIST-1e")
+            || name.contains("TRAPPIST-1f")
+            || name.contains("TRAPPIST-1g")
+            || name.contains("TRAPPIST-1h")
+        {
+            assert!(
+                pos.y.abs() < 1e-4,
+                "Planet {name} must remain strictly coplanar (y={:.6} AU)",
+                pos.y
+            );
+            let r = (pos.x * pos.x + pos.z * pos.z).sqrt();
+            assert!(
+                (0.008..0.08).contains(&r),
+                "Planet {name} orbit must remain stable inside TRAPPIST-1 system (r={:.4} AU)",
+                r
+            );
+        }
+    }
+}
+
+#[test]
+fn test_trappist1_visual_hierarchy_and_spacing() {
+    use protostellar::simulation::components::BodyType;
+    use protostellar::simulation::resources::SimulationConfig;
+    use protostellar::utils::constants::EARTH_RADIUS_AU;
+
+    let config = SimulationConfig::default();
+    let min_orbit_au = 0.01154f32; // TRAPPIST-1b orbit
+
+    // Star: TRAPPIST-1 (R = 0.121 R_sun = 0.000563 AU)
+    let star_phys_r = 0.000563f64;
+    let star_vis_r = config.calc_visual_radius_with_orbit(
+        star_phys_r,
+        BodyType::RedDwarf,
+        0.0,
+        min_orbit_au,
+    );
+
+    // Planet b: R = 1.116 R_earth, a = 0.01154 AU
+    let b_phys_r = 1.116 * EARTH_RADIUS_AU;
+    let b_vis_r = config.calc_visual_radius_with_orbit(
+        b_phys_r,
+        BodyType::TerrestrialPlanet,
+        min_orbit_au,
+        min_orbit_au,
+    );
+
+    // Planet c: R = 1.097 R_earth, a = 0.01580 AU
+    let c_phys_r = 1.097 * EARTH_RADIUS_AU;
+    let c_vis_r = config.calc_visual_radius_with_orbit(
+        c_phys_r,
+        BodyType::TerrestrialPlanet,
+        0.01580,
+        min_orbit_au,
+    );
+
+    // Planet d: R = 0.788 R_earth, a = 0.02227 AU
+    let d_phys_r = 0.788 * EARTH_RADIUS_AU;
+    let d_vis_r = config.calc_visual_radius_with_orbit(
+        d_phys_r,
+        BodyType::TerrestrialPlanet,
+        0.02227,
+        min_orbit_au,
+    );
+
+    // Planet g: R = 1.129 R_earth, a = 0.04686 AU
+    let g_phys_r = 1.129 * EARTH_RADIUS_AU;
+    let g_vis_r = config.calc_visual_radius_with_orbit(
+        g_phys_r,
+        BodyType::TerrestrialPlanet,
+        0.04686,
+        min_orbit_au,
+    );
+
+    // 1. Star must be visibly dominant over planets (at least 4.0x larger in visual diameter)
+    let ratio_star_to_b = star_vis_r / b_vis_r;
+    let ratio_star_to_g = star_vis_r / g_vis_r;
+    let ratio_star_to_d = star_vis_r / d_vis_r;
+
+    assert!(
+        ratio_star_to_b >= 4.0,
+        "Star must be at least 4.0x wider than planet b (ratio: {:.2}x)",
+        ratio_star_to_b
+    );
+    assert!(
+        ratio_star_to_g >= 4.0,
+        "Star must be at least 4.0x wider than largest planet g (ratio: {:.2}x)",
+        ratio_star_to_g
+    );
+    assert!(
+        ratio_star_to_d >= 5.0,
+        "Star must be at least 5.0x wider than small planet d (ratio: {:.2}x)",
+        ratio_star_to_d
+    );
+
+    // 2. Relative physical size differences between planets must be preserved
+    assert!(
+        g_vis_r > d_vis_r,
+        "Planet g (1.13 R_earth) must be visibly larger than planet d (0.79 R_earth)"
+    );
+    assert!(
+        b_vis_r > d_vis_r,
+        "Planet b (1.12 R_earth) must be visibly larger than planet d (0.79 R_earth)"
+    );
+
+    // 3. Clear, dark space between adjacent planetary orbits
+    // Distance between orbit b (0.01154) and orbit c (0.01580) is 0.00426 AU
+    let orbit_gap_bc = 0.01580 - 0.01154;
+    let surface_gap_bc = orbit_gap_bc - (b_vis_r + c_vis_r);
+    assert!(
+        surface_gap_bc > 2.0 * b_vis_r,
+        "Surface gap between b and c must be at least 2x the planet diameter (surface gap: {:.5} AU vs 2*r={:.5} AU)",
+        surface_gap_bc,
+        2.0 * b_vis_r
+    );
+
+    // 4. Solar system planets (e.g. Earth at 1.0 AU, Mercury at 0.387 AU) must NOT be modified by compact scaling
+    let earth_normal = config.calc_visual_radius_for_type(EARTH_RADIUS_AU, BodyType::TerrestrialPlanet);
+    let earth_with_orbit = config.calc_visual_radius_with_orbit(
+        EARTH_RADIUS_AU,
+        BodyType::TerrestrialPlanet,
+        1.0,
+        0.387,
+    );
+    assert_eq!(
+        earth_normal, earth_with_orbit,
+        "Solar system planets must retain standard visual scaling"
+    );
+}
+

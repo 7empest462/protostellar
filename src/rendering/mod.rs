@@ -25,6 +25,7 @@ impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ImpactShockwavePool>()
             .init_resource::<RocheDebrisPool>()
+            .init_resource::<SupernovaDebrisPool>()
             .add_plugins((
                 GasCloudPlugin,
                 ParticleSwarmPlugin,
@@ -48,6 +49,7 @@ impl Plugin for RenderingPlugin {
                 Update,
                 (
                     sync_celestial_transforms
+                        .after(crate::simulation::physics::update_simulation_visual_time)
                         .after(crate::simulation::physics::step_physics_simulation)
                         .after(crate::simulation::thermodynamics::update_thermodynamics)
                         .after(crate::simulation::geology::sync_geological_evolution_system),
@@ -72,6 +74,8 @@ impl Plugin for RenderingPlugin {
                         .after(crate::simulation::physics::step_physics_simulation),
                     update_roche_debris_streams
                         .after(crate::simulation::physics::step_physics_simulation),
+                    update_supernova_explosions
+                        .after(crate::simulation::thermodynamics::update_thermodynamics),
                 ),
             );
     }

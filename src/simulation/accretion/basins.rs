@@ -101,6 +101,13 @@ pub fn deliver_volatiles_and_crater(
                     atmospheric_pressure_bar: (d_gas_earth * 120.0).clamp(0.01, 90.0) as f32,
                     cometary_impact_count: 1,
                 });
+
+            p_cmd
+                .entry::<crate::simulation::terraforming::TerraformingAtmosphere>()
+                .and_modify(move |mut terra| {
+                    terra.surface_liquid_water_m_earth += d_water_earth;
+                    terra.atmospheric_water_m_earth += d_water_earth * 0.05;
+                });
         }
 
         let norm = (s_pos - p_pos).normalize_or_zero();

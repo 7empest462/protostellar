@@ -15,6 +15,7 @@ pub fn check_clump_promotions(
     disk_params: &DiskParameters,
     current_ecs_count: usize,
     is_massive_disk: bool,
+    sim_time_years: f64,
 ) -> (Vec<(DVec3, DVec3, f64, f64, Composition)>, u32) {
     let n = data.count;
     let b_mass = data.base_mass;
@@ -22,10 +23,19 @@ pub fn check_clump_promotions(
     let promo_threshold = if is_massive_disk {
         (64.0 * b_mass).max(0.5 * JUPITER_MASS_SOLAR as f32)
     } else {
-        4.0 * b_mass
+        (16.0 * b_mass).max(0.003 * EARTH_MASS_SOLAR as f32)
     };
     let mut promotions: Vec<(DVec3, DVec3, f64, f64, Composition)> = Vec::new();
     let mut active_count = 0u32;
+
+    // Early disk settling: Dust grains require at least ~15 simulation years of aerodynamic drag
+    // and midplane settling before forming dense self-gravitating planetesimals.
+    // This guarantees Genesis launches cleanly with 0 starter bodies.
+    let can_promote = sim_time_years >= 15.0 && b_mass > 0.0;
+
+    let snow_line = disk_params.snow_line_au as f32;
+    let snow_min = (snow_line - 0.45).max(0.5);
+    let snow_max = snow_line + 0.45;
 
     for i in 0..n {
         let Some(&m) = data.masses.get(i) else {
@@ -41,20 +51,27 @@ pub fn check_clump_promotions(
         let r_sq = pos[0] * pos[0] + pos[2] * pos[2];
         let r = r_sq.sqrt();
 
+        if !can_promote {
+            continue;
+        }
+
         let threshold = if is_massive_disk {
             promo_threshold
-        } else if (2.1..=3.8).contains(&r) || r >= 15.0 {
-            // Belts: particles readily coalesce into minor bodies (asteroids and comets)
-            2.2 * b_mass
+        } else if (snow_min..=snow_max).contains(&r) {
+            // Snow line condensation trap: high local density facilitates planetesimal formation
+            (12.0 * b_mass).max(0.002 * EARTH_MASS_SOLAR as f32)
+        } else if (2.0..=4.5).contains(&r) || r >= 15.0 {
+            // Belts: particles coalesce into minor bodies (asteroids and comets)
+            (16.0 * b_mass).max(0.003 * EARTH_MASS_SOLAR as f32)
         } else if r < 2.0 {
-            // Inner disk: suppress hundreds of tiny embryo spawns, require substantial mass
-            (24.0 * b_mass).max(0.02 * EARTH_MASS_SOLAR as f32)
+            // Inner disk: electrostatic coagulation into terrestrial planetesimals and embryos
+            (12.0 * b_mass).max(0.002 * EARTH_MASS_SOLAR as f32)
         } else {
-            12.0 * b_mass
+            32.0 * b_mass
         };
 
         if m >= threshold
-            && promotions.len() < 16
+            && promotions.len() < 3
             && current_ecs_count + promotions.len() < max_ecs_bodies
         {
             let min_r = if is_massive_disk { 65.0 } else { 0.15 };
@@ -112,30 +129,37 @@ fn determine_promoted_body_type_and_name(
     comp: &Composition,
     is_massive_disk: bool,
 ) -> (BodyType, String) {
-    let body_type = if is_massive_disk {
+    let mass_earth = mass / EARTH_MASS_SOLAR;
+    let body_type = if is_massive_disk || mass_earth >= 0.40 {
         crate::simulation::components::classify_body_by_mass_and_comp(mass, comp, false)
+    } else if mass_earth >= 0.02 {
+        BodyType::Protoplanet
+    } else if mass_earth >= 0.0005 {
+        BodyType::Planetesimal
     } else if (2.0..=3.8).contains(&radius_au) {
         BodyType::Asteroid
     } else if radius_au >= 15.0 || comp.ice_frac > 0.35 {
         BodyType::Comet
-    } else if radius_au < 2.0 {
-        if mass >= EARTH_MASS_SOLAR * 0.05 {
-            BodyType::Protoplanet
-        } else {
-            BodyType::Asteroid
-        }
     } else {
-        crate::simulation::components::classify_body_by_mass_and_comp(mass, comp, false)
+        BodyType::Planetesimal
     };
 
     let name = match body_type {
         BodyType::BrownDwarf => format!("Brown Dwarf ({:.1} M_J)", mass / JUPITER_MASS_SOLAR),
-        BodyType::GasGiant => format!("Planet-{radius_au:.0}AU (Gas Giant)"),
-        BodyType::IceGiant => format!("Planet-{radius_au:.0}AU (Ice Giant)"),
-        BodyType::SuperEarth => format!("Planet-{radius_au:.0}AU (Super-Earth)"),
-        BodyType::TerrestrialPlanet => format!("Planet-{radius_au:.0}AU (Terrestrial)"),
+        BodyType::GasGiant => format!("Planet-{radius_au:.1}AU (Gas Giant)"),
+        BodyType::IceGiant => format!("Planet-{radius_au:.1}AU (Ice Giant)"),
+        BodyType::SuperEarth => format!("Planet-{radius_au:.1}AU (Super-Earth)"),
+        BodyType::TerrestrialPlanet => format!("Planet-{radius_au:.1}AU (Terrestrial)"),
         BodyType::Protoplanet => format!("Embryo-{radius_au:.1}AU"),
-        BodyType::Planetesimal => format!("Planetesimal-{radius_au:.1}AU"),
+        BodyType::Planetesimal => {
+            if (2.4..=3.2).contains(&radius_au) {
+                format!("Snowline Planetesimal-{radius_au:.1}AU")
+            } else if radius_au < 2.0 {
+                format!("Rocky Planetesimal-{radius_au:.1}AU")
+            } else {
+                format!("Planetesimal-{radius_au:.1}AU")
+            }
+        }
         BodyType::Comet => format!("Comet-{radius_au:.1}AU"),
         _ => format!("Asteroid-{radius_au:.1}AU"),
     };

@@ -142,8 +142,8 @@ fn test_system_save_data_serialization_round_trip() {
 
 #[test]
 fn test_save_and_load_file_io() {
-    let test_dir = "target/test_saves";
-    let file_path = "target/test_saves/io_roundtrip.json";
+    let test_dir = "target/test_saves_io";
+    let file_path = "target/test_saves_io/io_roundtrip.json";
 
     let body = CelestialBodySave {
         name: "Test World".to_string(),
@@ -199,7 +199,7 @@ fn test_save_and_load_file_io() {
 
 #[test]
 fn test_bevy_save_system_event_handling() {
-    let save_path = "target/test_saves/bevy_save_test.json";
+    let save_path = "target/test_saves_bevy/bevy_save_test.json";
 
     let mut app = App::new();
     app.init_resource::<SimulationConfig>()
@@ -266,7 +266,7 @@ fn test_bevy_save_system_event_handling() {
 
 #[test]
 fn test_bevy_load_system_event_satellite_resolution() {
-    let load_path = "target/test_saves/bevy_load_test.json";
+    let load_path = "target/test_saves_load/bevy_load_test.json";
 
     let earth_save = CelestialBodySave {
         name: "Earth".to_string(),

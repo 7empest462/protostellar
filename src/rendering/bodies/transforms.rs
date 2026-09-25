@@ -6,9 +6,9 @@ use crate::simulation::geology::GeologicalState;
 use crate::simulation::resources::*;
 use crate::simulation::space_weather::{AuroralOvalState, StellarFlareState};
 use crate::simulation::tides::TidalState;
-use crate::utils::constants::*;
 
 use super::palettes::*;
+use super::shadows::*;
 use super::VisualAssets;
 
 /// Calculates the fraction of solid crust covering a magma ocean at temperature `temp_k`.
@@ -258,76 +258,14 @@ fn apply_impact_basins(mat: &mut PlanetMaterial, opt_basins: Option<&PlanetaryBa
     mat.extension.uniforms.impact_basins_data = basins_data;
 }
 
-fn compute_asteroid_spectral_palette(name: &str, comp: &Composition) -> Color {
-    let lower = name.to_lowercase();
-    if lower.contains("psyche") {
-        return Color::srgb(0.48, 0.47, 0.49);
-    } else if lower.contains("vesta") {
-        return Color::srgb(0.44, 0.42, 0.36);
-    } else if lower.contains("ceres") {
-        return Color::srgb(0.12, 0.12, 0.13);
-    } else if lower.contains("pallas")
-        || lower.contains("hygiea")
-        || lower.contains("mathilde")
-        || lower.contains("bennu")
-        || lower.contains("ryugu")
-    {
-        return Color::srgb(0.09, 0.095, 0.105);
-    } else if lower.contains("ida") || lower.contains("gaspra") || lower.contains("eros") {
-        return Color::srgb(0.34, 0.28, 0.20);
-    }
-
-    let norm = comp.normalized();
-    if norm.metal_frac > 0.40 {
-        Color::srgb(0.45, 0.44, 0.46)
-    } else if norm.organics_frac > 0.18 {
-        Color::srgb(0.24, 0.15, 0.11)
-    } else if norm.silicate_frac > 0.60 {
-        let hash = name.bytes().fold(0usize, |acc, b| {
-            acc.wrapping_mul(31).wrapping_add(b as usize)
-        });
-        if hash.is_multiple_of(3) {
-            Color::srgb(0.40, 0.38, 0.34)
-        } else {
-            Color::srgb(0.32, 0.26, 0.19)
-        }
-    } else if norm.ice_frac > 0.15 {
-        Color::srgb(0.16, 0.19, 0.23)
-    } else {
-        Color::srgb(0.10, 0.10, 0.11)
-    }
-}
-
-fn compute_comet_spectral_palette(name: &str, _comp: &Composition) -> Color {
-    let lower = name.to_lowercase();
-    if lower.contains("67p") || lower.contains("arrokoth") {
-        Color::srgb(0.062, 0.045, 0.038)
-    } else if lower.contains("hale-bopp") || lower.contains("swift") {
-        Color::srgb(0.045, 0.055, 0.070)
-    } else if lower.contains("halley") || lower.contains("tempel") {
-        Color::srgb(0.048, 0.042, 0.038)
-    } else {
-        let hash = name.bytes().fold(0usize, |acc, b| {
-            acc.wrapping_mul(31).wrapping_add(b as usize)
-        });
-        match hash % 4 {
-            0 => Color::srgb(0.040, 0.040, 0.042),
-            1 => Color::srgb(0.058, 0.044, 0.036),
-            2 => Color::srgb(0.042, 0.052, 0.065),
-            _ => Color::srgb(0.052, 0.046, 0.038),
-        }
-    }
-}
 
 fn compute_body_color(
     body: &CelestialBody,
     mass: &Mass,
     temp: &Temperature,
     comp: &Composition,
+    opt_tidal: Option<&TidalState>,
 ) -> Color {
-    let (br, bg, bb) = blackbody_to_srgb(temp.0);
-    let (cr, cg, cb) = comp.visual_color_tint();
-
     let lower = body.name.to_lowercase();
     let is_star_like = body.body_type.is_star_or_remnant();
     let is_ice_giant = body.body_type == BodyType::IceGiant
@@ -346,11 +284,7 @@ fn compute_body_color(
     } else if body.body_type == BodyType::Comet {
         compute_comet_spectral_palette(&body.name, comp)
     } else {
-        Color::srgb(
-            (br * 0.25 + cr * 0.75).clamp(0.1, 1.0),
-            (bg * 0.25 + cg * 0.75).clamp(0.1, 1.0),
-            (bb * 0.25 + cb * 0.75).clamp(0.1, 1.0),
-        )
+        compute_terrestrial_body_palette(&body.name, comp, temp.0, opt_tidal)
     }
 }
 
@@ -477,7 +411,9 @@ fn compute_body_material_parameters(
 fn compute_spin_axis(opt_spin: Option<&SpinState>, opt_geo: Option<&GeologicalState>) -> Vec4 {
     let drift_phase = opt_geo.map_or(0.0, |g| g.continental_drift_phase);
     if let Some(spin) = opt_spin {
-        if spin.spin_vector.length_squared() > 1e-16 {
+        if spin.spin_vector.length_squared() > 1e-12
+            && (spin.spin_vector.x.abs() > 1e-6 || spin.spin_vector.z.abs() > 1e-6)
+        {
             let n = spin.spin_vector.normalize();
             Vec4::new(n.x as f32, n.y as f32, n.z as f32, drift_phase)
         } else {
@@ -487,6 +423,64 @@ fn compute_spin_axis(opt_spin: Option<&SpinState>, opt_geo: Option<&GeologicalSt
     } else {
         Vec4::new(0.0, 1.0, 0.0, drift_phase)
     }
+}
+
+fn compute_aurora_uniforms(opt_aurora: Option<&AuroralOvalState>, mag_gauss: f32) -> Vec4 {
+    opt_aurora.map_or_else(
+        || {
+            if mag_gauss > 0.1 {
+                Vec4::new(0.315, 0.065, (mag_gauss * 0.8).clamp(0.2, 2.5), 1.5)
+            } else {
+                Vec4::ZERO
+            }
+        },
+        |a| {
+            Vec4::new(
+                a.oval_colatitude_rad,
+                a.oval_width_rad,
+                a.auroral_intensity,
+                a.geomagnetic_kp_index,
+            )
+        },
+    )
+}
+
+fn compute_storm_uniforms(
+    opt_storm: Option<&AtmosphericStormState>,
+    body_name: &str,
+) -> (Vec4, Vec4) {
+    let lower_name = body_name.to_lowercase();
+    let storm = opt_storm.copied().or_else(|| {
+        if lower_name.contains("saturn") {
+            Some(AtmosphericStormState::saturn())
+        } else if lower_name.contains("jupiter") {
+            Some(AtmosphericStormState::jupiter())
+        } else if lower_name.contains("neptune") {
+            Some(AtmosphericStormState::neptune())
+        } else {
+            None
+        }
+    });
+
+    storm.map_or_else(
+        || (Vec4::ZERO, Vec4::new(0.0, 1.0, 0.0, 0.5)),
+        |s| {
+            (
+                Vec4::new(
+                    s.polar_hexagon_amplitude,
+                    s.polar_hexagon_wavenumber,
+                    s.great_spot_size,
+                    s.great_spot_latitude_rad,
+                ),
+                Vec4::new(
+                    s.great_spot_longitude_rad,
+                    s.vortex_spin_rate,
+                    s.secondary_oval_count as f32,
+                    s.zonal_shear_turbulence,
+                ),
+            )
+        },
+    )
 }
 
 #[allow(clippy::too_many_arguments, reason = "Material sync system helper")]
@@ -514,9 +508,9 @@ fn update_body_material_properties(
 ) {
     apply_impact_basins(mat, opt_basins);
 
-    let color = compute_body_color(body, mass, temp, comp);
-    let spin_rate = opt_spin.map_or(0.15, |s| {
-        (24.0 / s.rotation_period_hours.max(0.1)) as f32 * 0.15
+    let color = compute_body_color(body, mass, temp, comp, opt_tidal);
+    let spin_rate = opt_spin.map_or(0.22, |s| {
+        (24.0 / s.rotation_period_hours.max(0.1)) as f32 * 0.22
     });
     let axial_tilt = opt_spin.map_or(0.08, |s| (s.axial_tilt_degrees as f32).to_radians());
 
@@ -558,7 +552,7 @@ fn update_body_material_properties(
         profile.mie_asymmetry_g,
     );
     mat.extension.uniforms.spin_axis = compute_spin_axis(opt_spin, opt_geo);
-    let geo_params = opt_geo.map_or(Vec4::ZERO, |g| {
+    mat.extension.uniforms.geological_params = opt_geo.map_or(Vec4::ZERO, |g| {
         Vec4::new(
             g.geological_age_gyr,
             g.supercontinent_aggregation,
@@ -566,100 +560,10 @@ fn update_body_material_properties(
             g.terrestrial_vegetation_fraction,
         )
     });
-    mat.extension.uniforms.geological_params = geo_params;
 
-    let aurora_params = opt_aurora.map_or_else(
-        || {
-            if params.mag_gauss > 0.1 {
-                Vec4::new(0.315, 0.065, (params.mag_gauss * 0.8).clamp(0.2, 2.5), 1.5)
-            } else {
-                Vec4::ZERO
-            }
-        },
-        |a| {
-            Vec4::new(
-                a.oval_colatitude_rad,
-                a.oval_width_rad,
-                a.auroral_intensity,
-                a.geomagnetic_kp_index,
-            )
-        },
-    );
-    mat.extension.uniforms.aurora_params = aurora_params;
+    mat.extension.uniforms.aurora_params = compute_aurora_uniforms(opt_aurora, params.mag_gauss);
 
-    // Feature 3.4: Atmospheric Storm Hexagons & Cloud Vortices (GRS, Saturn Hexagon, Oval BA)
-    let (storm_features, storm_dynamics) = opt_storm.map_or_else(
-        || {
-            let lower_name = body.name.to_lowercase();
-            if lower_name.contains("saturn") {
-                let s = AtmosphericStormState::saturn();
-                (
-                    Vec4::new(
-                        s.polar_hexagon_amplitude,
-                        s.polar_hexagon_wavenumber,
-                        s.great_spot_size,
-                        s.great_spot_latitude_rad,
-                    ),
-                    Vec4::new(
-                        s.great_spot_longitude_rad,
-                        s.vortex_spin_rate,
-                        s.secondary_oval_count as f32,
-                        s.zonal_shear_turbulence,
-                    ),
-                )
-            } else if lower_name.contains("jupiter") {
-                let j = AtmosphericStormState::jupiter();
-                (
-                    Vec4::new(
-                        j.polar_hexagon_amplitude,
-                        j.polar_hexagon_wavenumber,
-                        j.great_spot_size,
-                        j.great_spot_latitude_rad,
-                    ),
-                    Vec4::new(
-                        j.great_spot_longitude_rad,
-                        j.vortex_spin_rate,
-                        j.secondary_oval_count as f32,
-                        j.zonal_shear_turbulence,
-                    ),
-                )
-            } else if lower_name.contains("neptune") {
-                let n = AtmosphericStormState::neptune();
-                (
-                    Vec4::new(
-                        n.polar_hexagon_amplitude,
-                        n.polar_hexagon_wavenumber,
-                        n.great_spot_size,
-                        n.great_spot_latitude_rad,
-                    ),
-                    Vec4::new(
-                        n.great_spot_longitude_rad,
-                        n.vortex_spin_rate,
-                        n.secondary_oval_count as f32,
-                        n.zonal_shear_turbulence,
-                    ),
-                )
-            } else {
-                (Vec4::ZERO, Vec4::new(0.0, 1.0, 0.0, 0.5))
-            }
-        },
-        |s| {
-            (
-                Vec4::new(
-                    s.polar_hexagon_amplitude,
-                    s.polar_hexagon_wavenumber,
-                    s.great_spot_size,
-                    s.great_spot_latitude_rad,
-                ),
-                Vec4::new(
-                    s.great_spot_longitude_rad,
-                    s.vortex_spin_rate,
-                    s.secondary_oval_count as f32,
-                    s.zonal_shear_turbulence,
-                ),
-            )
-        },
-    );
+    let (storm_features, storm_dynamics) = compute_storm_uniforms(opt_storm, &body.name);
     mat.extension.uniforms.storm_features = storm_features;
     mat.extension.uniforms.storm_dynamics = storm_dynamics;
 
@@ -681,224 +585,108 @@ fn update_body_material_properties(
     }
 }
 
-/// Calculates the planetary shadow factor on a ring fragment (0.0 = full umbra, 1.0 = full sunlight).
-pub fn compute_planetary_ring_shadow(
-    ring_pos_norm: Vec2,
-    star_dir_local: Vec3,
-    planet_rad_norm: f32,
-) -> f32 {
-    let p_ring = Vec3::new(ring_pos_norm.x, 0.0, ring_pos_norm.y);
-    let s_closest = -p_ring.dot(star_dir_local);
-    if s_closest <= 0.0 {
-        return 1.0;
-    }
-    let p_closest = p_ring + s_closest * star_dir_local;
-    let d_closest = p_closest.length();
-    let penumbra = 0.022f32;
-    let umbra_r = (planet_rad_norm - penumbra).max(0.0);
-    let penumbra_r = planet_rad_norm + penumbra;
-    if d_closest <= umbra_r {
-        0.0
-    } else if d_closest >= penumbra_r {
-        1.0
-    } else {
-        let t = (d_closest - umbra_r) / (penumbra_r - umbra_r);
-        t * t * (3.0 - 2.0 * t)
-    }
-}
+pub type CelestialEnvironmentOptions<'a> = (
+    Option<&'a PlanetaryClimate>,
+    Option<&'a BiosphereState>,
+    Option<&'a VolatileInventory>,
+    Option<&'a PlanetaryRingSystem>,
+    Option<&'a TidalState>,
+    Option<&'a GeologicalState>,
+);
 
-/// Calculates ring shadow attenuation on a planet surface point (1.0 = unshadowed, 0.0 = total darkness).
-pub fn compute_ring_shadow_on_planet(
-    surf_norm: Vec3,
-    star_dir: Vec3,
-    spin_axis: Vec3,
-    r_inner: f32,
-    r_outer: f32,
-    opt_depth: f32,
-) -> f32 {
-    let l_dot_s = star_dir.dot(spin_axis);
-    let p_dot_s = surf_norm.dot(spin_axis);
-    if l_dot_s.abs() <= 1e-4 {
-        return 1.0;
-    }
-    let t_ring = -p_dot_s / l_dot_s;
-    let n_dot_l = surf_norm.dot(star_dir);
-    if t_ring <= 0.0 || n_dot_l <= 0.0 {
-        return 1.0;
-    }
-    let p_int = surf_norm + t_ring * star_dir;
-    let r_int = p_int.length();
-    if r_int < r_inner || r_int > r_outer {
-        return 1.0;
-    }
-    let u = (r_int - r_inner) / (r_outer - r_inner);
-    let ring_density = if u < 0.22 {
-        0.10 + 0.25 * (u / 0.22)
-    } else if u < 0.65 {
-        0.95 // B-Ring
-    } else if u < 0.72 {
-        let gap_t = (u - 0.65) / (0.72 - 0.65);
-        (1.0 - (gap_t * std::f32::consts::PI).sin()) * 0.12 // Cassini division
-    } else if u < 0.96 {
-        0.75 // A-Ring
-    } else {
-        (1.0 - (u - 0.96) / 0.04) * 0.35
-    };
-    let edge_feather =
-        ((r_int - r_inner) / 0.03).clamp(0.0, 1.0) * ((r_outer - r_int) / 0.03).clamp(0.0, 1.0);
-    let shadow_atten = (ring_density * opt_depth * edge_feather).clamp(0.0, 0.96);
-    1.0 - shadow_atten
-}
+pub type CelestialDynamicsOptions<'a> = (
+    Option<&'a SpinState>,
+    Option<&'a ElectromagneticFieldState>,
+    Option<&'a BlackHoleStarState>,
+    Option<&'a Children>,
+    Option<&'a PlanetaryBasins>,
+    Option<&'a SatelliteOf>,
+);
 
-/// Calculates moon solar eclipse illumination on a planet surface point (1.0 = daylight, 0.0 = total umbra).
-pub fn compute_moon_eclipse_shadow(
-    surf_norm: Vec3,
-    star_dir: Vec3,
-    moon_rel_pos_norm: Vec3,
-    moon_rad_norm: f32,
-) -> f32 {
-    let v = moon_rel_pos_norm - surf_norm;
-    let t_close = v.dot(star_dir);
-    if t_close <= 0.0 {
-        return 1.0;
-    }
-    let d_sq = v.length_squared() - t_close * t_close;
-    let max_r = moon_rad_norm * 1.45;
-    if d_sq >= max_r * max_r {
-        return 1.0;
-    }
-    let d_perp = d_sq.max(0.0).sqrt();
-    let umbra_r = moon_rad_norm * 0.70;
-    let penumbra_r = moon_rad_norm * 1.25;
-    if d_perp <= umbra_r {
-        0.04
-    } else if d_perp >= penumbra_r {
-        1.0
-    } else {
-        let t = (d_perp - umbra_r) / (penumbra_r - umbra_r);
-        let smooth_t = t * t * (3.0 - 2.0 * t);
-        0.04 + 0.96 * smooth_t
-    }
-}
+pub type CelestialInternalOptions<'a> = (
+    Option<&'a AuroralOvalState>,
+    Option<&'a StellarFlareState>,
+    Option<&'a InternalDifferentiation>,
+    Option<&'a AtmosphericStormState>,
+);
 
-fn compute_ring_shadow_params(opt_rings: Option<&PlanetaryRingSystem>, radius_au: f64) -> Vec4 {
-    if let Some(ring_sys) = opt_rings {
-        let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius_au > 0.0 {
-            (ring_sys.outer_radius_au / radius_au as f32).clamp(2.0, 3.5)
-        } else {
-            2.85
-        };
-        let inner_ratio = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
-            (ring_sys.inner_radius_au / radius_au as f32).clamp(1.1, ring_ratio - 0.1)
-        } else {
-            1.25
-        };
-        Vec4::new(inner_ratio, ring_ratio, ring_sys.optical_depth, 1.0)
-    } else {
-        Vec4::ZERO
-    }
-}
+pub type CelestialBodyQueryItem<'a> = (
+    Entity,
+    &'a SimPosition,
+    &'a Mass,
+    &'a Radius,
+    &'a Temperature,
+    &'a Composition,
+    &'a CelestialBody,
+    &'a mut Transform,
+    &'a MeshMaterial3d<PlanetMaterial>,
+    &'a mut Mesh3d,
+    CelestialEnvironmentOptions<'a>,
+    CelestialDynamicsOptions<'a>,
+    CelestialInternalOptions<'a>,
+);
 
-fn compute_eclipse_moons_data(
-    entity: Entity,
-    planet_pos: Vec3,
-    visual_radius: f32,
-    star_dir: Vec3,
-    all_moons: &[(Entity, Vec3, f32, Option<Entity>)],
-) -> ([Vec4; 2], [Vec4; 2]) {
-    let mut moons_pos = [Vec4::ZERO; 2];
-    let mut moons_data = [Vec4::ZERO; 2];
-    let mut slot = 0;
-    for &(m_ent, m_pos, m_rad, opt_parent) in all_moons {
-        if slot >= 2 {
+pub type CelestialBodyQuery<'w, 's> = Query<'w, 's, CelestialBodyQueryItem<'static>>;
+
+fn find_star_position_and_min_orbit(
+    query: &CelestialBodyQuery,
+) -> (Vec3, Option<Entity>, f32) {
+    let mut s_pos = Vec3::ZERO;
+    let mut s_ent = None;
+    for (e, p, _, _, _, _, b, ..) in query.iter() {
+        if b.body_type.is_star_or_remnant() {
+            s_pos = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+            s_ent = Some(e);
             break;
         }
-        if m_ent == entity {
-            continue;
-        }
-        let is_child_moon = opt_parent == Some(entity)
-            || (opt_parent.is_none() && (m_pos - planet_pos).length() < visual_radius * 40.0);
-        if is_child_moon {
-            let d_vec = m_pos - planet_pos;
-            let s = d_vec.dot(star_dir);
-            if s > 0.0 {
-                let d_perp_sq = d_vec.length_squared() - s * s;
-                let max_touch_dist = visual_radius + m_rad * 1.5;
-                if d_perp_sq < max_touch_dist * max_touch_dist {
-                    let norm_pos = d_vec / visual_radius.max(1e-5);
-                    let norm_rad = (m_rad / visual_radius.max(1e-5)).clamp(0.01, 1.0);
-                    if let (Some(pos_slot), Some(data_slot)) =
-                        (moons_pos.get_mut(slot), moons_data.get_mut(slot))
-                    {
-                        *pos_slot = Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad);
-                        *data_slot = Vec4::new(1.0, 0.25, 0.96, 0.0);
-                        slot += 1;
-                    }
-                }
+    }
+    let mut min_r = f32::MAX;
+    for (e, p, _, _, _, _, b, ..) in query.iter() {
+        if Some(e) != s_ent && !b.body_type.is_star_or_remnant() && b.body_type != BodyType::Moon {
+            let r = (Vec3::new(p.x as f32, p.y as f32, p.z as f32) - s_pos).length();
+            if r > 0.001 && r < min_r {
+                min_r = r;
             }
         }
     }
-    (moons_pos, moons_data)
+    (s_pos, s_ent, if min_r < f32::MAX { min_r } else { 0.4 })
 }
 
-#[allow(clippy::type_complexity, reason = "Celestial Transform Sync")]
-pub fn sync_celestial_transforms(
-    time: Res<Time>,
-    config: Res<SimulationConfig>,
-    visual_assets: Res<VisualAssets>,
-    mut materials: ResMut<Assets<PlanetMaterial>>,
-    mut light_query: Query<&mut PointLight>,
-    mut query: Query<(
-        Entity,
-        &SimPosition,
-        &Mass,
-        &Radius,
-        &Temperature,
-        &Composition,
-        &CelestialBody,
-        &mut Transform,
-        &MeshMaterial3d<PlanetMaterial>,
-        &mut Mesh3d,
-        (
-            Option<&PlanetaryClimate>,
-            Option<&BiosphereState>,
-            Option<&VolatileInventory>,
-            Option<&PlanetaryRingSystem>,
-            Option<&TidalState>,
-            Option<&GeologicalState>,
-        ),
-        (
-            Option<&SpinState>,
-            Option<&ElectromagneticFieldState>,
-            Option<&BlackHoleStarState>,
-            Option<&Children>,
-            Option<&PlanetaryBasins>,
-            Option<&SatelliteOf>,
-        ),
-        (
-            Option<&AuroralOvalState>,
-            Option<&StellarFlareState>,
-            Option<&InternalDifferentiation>,
-            Option<&AtmosphericStormState>,
-        ),
-    )>,
-) {
-    let star_pos = query
-        .iter()
-        .find(|(_, _, _, _, _, _, b, _, _, _, _, _, _)| b.body_type.is_star_or_remnant())
-        .map_or(Vec3::ZERO, |(_, p, _, _, _, _, _, _, _, _, _, _, _)| {
-            Vec3::new(p.x as f32, p.y as f32, p.z as f32)
-        });
-
+fn collect_system_moons(
+    query: &CelestialBodyQuery,
+    config: &SimulationConfig,
+    star_pos: Vec3,
+    min_orbit_r: f32,
+) -> Vec<(Entity, Vec3, f32, Option<Entity>)> {
     let mut all_moons = Vec::with_capacity(8);
     for (m_ent, pos, _, radius, _, _, body, _, _, _, _, (_, _, _, _, _, opt_sat), _) in query.iter()
     {
         if opt_sat.is_some() || body.body_type == BodyType::Moon {
-            let m_vis_rad = config.calc_visual_radius_for_type(radius.0, body.body_type);
             let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let r_orb = (m_pos - star_pos).length();
+            let m_vis_rad = config.calc_visual_radius_with_orbit(
+                radius.0,
+                body.body_type,
+                r_orb,
+                min_orbit_r,
+            );
             all_moons.push((m_ent, m_pos, m_vis_rad, opt_sat.map(|s| s.parent)));
         }
     }
+    all_moons
+}
+
+pub fn sync_celestial_transforms(
+    sim_time: Option<Res<SimTime>>,
+    config: Res<SimulationConfig>,
+    visual_assets: Res<VisualAssets>,
+    mut materials: ResMut<Assets<PlanetMaterial>>,
+    mut light_query: Query<&mut PointLight>,
+    mut query: CelestialBodyQuery,
+) {
+    let (star_pos, _star_entity, min_orbit_r) = find_star_position_and_min_orbit(&query);
+    let all_moons = collect_system_moons(&query, &config, star_pos, min_orbit_r);
+    let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
     for (
         entity,
@@ -924,20 +712,28 @@ pub fn sync_celestial_transforms(
             &mut light_query,
             body.body_type,
             is_blown_out,
-            time.elapsed_secs(),
+            visual_time,
         );
 
-        let visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
+        let r_orb = (transform.translation - star_pos).length();
+        let visual_radius = config.calc_visual_radius_with_orbit(
+            radius.0,
+            body.body_type,
+            r_orb,
+            min_orbit_r,
+        );
         transform.scale = Vec3::splat(visual_radius);
 
         if let Some(spin) = opt_spin {
-            if spin.spin_vector.length_squared() > 1e-12 {
-                let spin_dir = spin.spin_vector.normalize().as_vec3();
-                transform.rotation = Quat::from_rotation_arc(Vec3::Y, spin_dir);
+            let spin_dir = if spin.spin_vector.length_squared() > 1e-12
+                && (spin.spin_vector.x.abs() > 1e-6 || spin.spin_vector.z.abs() > 1e-6)
+            {
+                spin.spin_vector.normalize().as_vec3()
             } else {
                 let tilt_rad = (spin.axial_tilt_degrees as f32).to_radians();
-                transform.rotation = Quat::from_rotation_z(tilt_rad);
-            }
+                Vec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0)
+            };
+            transform.rotation = Quat::from_rotation_arc(Vec3::Y, spin_dir);
         }
 
         let target_mesh = select_body_mesh(body, &visual_assets);
@@ -952,7 +748,7 @@ pub fn sync_celestial_transforms(
                 mass,
                 temp,
                 comp,
-                time.elapsed_secs(),
+                visual_time,
                 star_dir,
                 opt_climate,
                 opt_bio,

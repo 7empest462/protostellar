@@ -766,3 +766,168 @@ fn test_no_overlay_mode_and_comet_asteroid_line_gating() {
 
     let _ = star_ent;
 }
+
+#[test]
+fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
+    use bevy::prelude::*;
+    use protostellar::simulation::physics::update_simulation_visual_time;
+    use protostellar::simulation::resources::{SimTime, TimeWarp};
+    use std::time::Duration;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<TimeWarp>();
+
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(Duration::from_millis(50));
+    }
+
+    let mut sched = Schedule::default();
+    sched.add_systems(update_simulation_visual_time);
+
+    // 1. Unpaused: visual_time_secs advances with delta_secs
+    sched.run(app.world_mut());
+    let t1 = app.world().resource::<SimTime>().visual_time_secs;
+    assert!(t1 > 0.045 && t1 < 0.055, "Visual time should advance when unpaused: {t1}");
+
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(Duration::from_millis(50));
+    }
+    sched.run(app.world_mut());
+    let t2 = app.world().resource::<SimTime>().visual_time_secs;
+    assert!(t2 > t1 + 0.045, "Visual time should continue advancing: {t2}");
+
+    // 2. Paused: visual_time_secs freezes completely regardless of delta_secs
+    app.world_mut().resource_mut::<TimeWarp>().is_paused = true;
+    for _ in 0..5 {
+        {
+            let mut t = app.world_mut().resource_mut::<Time>();
+            t.advance_by(Duration::from_millis(100));
+        }
+        sched.run(app.world_mut());
+        let t_paused = app.world().resource::<SimTime>().visual_time_secs;
+        assert_eq!(t_paused, t2, "Visual time must freeze 100% when time is paused");
+    }
+
+    // 3. Step Once while paused: visual_time_secs advances by exactly one frame
+    app.world_mut().resource_mut::<TimeWarp>().step_once = true;
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(Duration::from_millis(16));
+    }
+    sched.run(app.world_mut());
+    let t_step = app.world().resource::<SimTime>().visual_time_secs;
+    assert!(t_step > t2 + 0.015, "Visual time should advance when step_once is true");
+
+    // 4. Resumed: visual_time_secs resumes seamlessly without jumps
+    app.world_mut().resource_mut::<TimeWarp>().is_paused = false;
+    app.world_mut().resource_mut::<TimeWarp>().step_once = false;
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(Duration::from_millis(20));
+    }
+    sched.run(app.world_mut());
+    let t_resumed = app.world().resource::<SimTime>().visual_time_secs;
+    assert!(t_resumed > t_step + 0.018 && t_resumed < t_step + 0.025,
+        "Visual time resumes smoothly from paused angle: {t_resumed} (expected ~{})", t_step + 0.020);
+}
+
+#[test]
+fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_paused() {
+    use bevy::pbr::ExtendedMaterial;
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
+    use protostellar::rendering::bodies::VisualAssets;
+    use protostellar::rendering::materials::{PlanetMaterial, PlanetMaterialExtension, PlanetUniforms};
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::physics::update_simulation_visual_time;
+    use protostellar::simulation::resources::{SimTime, SimulationConfig, TimeWarp};
+    use std::time::Duration;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<Assets<PlanetMaterial>>();
+    app.init_resource::<Assets<Mesh>>();
+
+    let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+    let default_mesh = meshes.add(Sphere::new(1.0).mesh().ico(5).unwrap());
+    drop(meshes);
+
+    app.insert_resource(VisualAssets::dummy(default_mesh.clone()));
+
+    let mut materials = app.world_mut().resource_mut::<Assets<PlanetMaterial>>();
+    let mat_handle = materials.add(ExtendedMaterial {
+        base: StandardMaterial::default(),
+        extension: PlanetMaterialExtension {
+            uniforms: PlanetUniforms::default(),
+        },
+    });
+    drop(materials);
+
+    // Spawn a planet entity
+    let _planet_ent = app.world_mut().spawn((
+        SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+        Mass(1e-6),
+        Radius(0.0001),
+        Temperature(288.0),
+        Composition::default(),
+        CelestialBody {
+            name: "Earth".to_string(),
+            body_type: BodyType::TerrestrialPlanet,
+        },
+        Transform::default(),
+        MeshMaterial3d(mat_handle.clone()),
+        Mesh3d(default_mesh.clone()),
+    )).id();
+
+    let mut sched = Schedule::default();
+    sched.add_systems((
+        update_simulation_visual_time,
+        sync_celestial_transforms.after(update_simulation_visual_time),
+    ));
+
+    // 1. Unpaused: Advance time by 0.1s
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(Duration::from_millis(100));
+    }
+    sched.run(app.world_mut());
+
+    let materials = app.world().resource::<Assets<PlanetMaterial>>();
+    let mat = materials.get(&mat_handle).unwrap();
+    let unpaused_time = mat.extension.uniforms.time;
+    assert!(unpaused_time > 0.09, "Material time should match visual time: {unpaused_time}");
+
+    // 2. Paused: Advance time by 0.5s over 5 frames
+    app.world_mut().resource_mut::<TimeWarp>().is_paused = true;
+    for _ in 0..5 {
+        {
+            let mut t = app.world_mut().resource_mut::<Time>();
+            t.advance_by(Duration::from_millis(100));
+        }
+        sched.run(app.world_mut());
+        let materials = app.world().resource::<Assets<PlanetMaterial>>();
+        let mat = materials.get(&mat_handle).unwrap();
+        assert_eq!(mat.extension.uniforms.time, unpaused_time,
+            "Shader material time must freeze 100% when time is paused");
+    }
+
+    // 3. Unpaused again: Resumes smoothly without time skipping or rewind
+    app.world_mut().resource_mut::<TimeWarp>().is_paused = false;
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(Duration::from_millis(50));
+    }
+    sched.run(app.world_mut());
+
+    let materials = app.world().resource::<Assets<PlanetMaterial>>();
+    let mat = materials.get(&mat_handle).unwrap();
+    assert!(mat.extension.uniforms.time > unpaused_time + 0.045 && mat.extension.uniforms.time < unpaused_time + 0.055,
+        "Material time resumes smoothly: {}", mat.extension.uniforms.time);
+}

@@ -93,13 +93,18 @@ pub fn classify_impact(p: ImpactParams, roche_limit_au: f64) -> ImpactRegime {
 
     // 1. Roche disruption: small minor body or low-mass secondary (gamma <= 0.05)
     // torn apart by tidal shear into planetary rings when within the fluid Roche limit.
+    // Confined to massive gas/ice giants; terrestrial worlds directly accrete/merge comets and asteroids.
     let is_minor_disruptor = matches!(
         p.secondary_type,
         BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
     ) || gamma <= 0.05;
 
+    let is_giant_primary = p.primary_type == BodyType::GasGiant
+        || p.primary_type == BodyType::IceGiant
+        || p.primary_mass >= EARTH_MASS_SOLAR * 2.5;
+
     let can_disrupt = !p.secondary_type.is_star_or_remnant()
-        && p.primary_mass >= EARTH_MASS_SOLAR * 0.05
+        && is_giant_primary
         && is_minor_disruptor
         && p.min_dist <= roche_limit_au
         && p.min_dist >= p.primary_radius_au * 0.5
@@ -113,9 +118,6 @@ pub fn classify_impact(p: ImpactParams, roche_limit_au: f64) -> ImpactRegime {
     // When a small icy or rocky body approaches a giant planet OUTSIDE its Roche limit
     // and outside its visible surface (min_dist > max(roche, R_primary * 1.15)) with moderate speed (u < 2.5),
     // the giant's deep gravitational well captures it into a stable circumplanetary moon orbit.
-    let is_giant_primary = p.primary_type == BodyType::GasGiant
-        || p.primary_type == BodyType::IceGiant
-        || p.primary_mass >= EARTH_MASS_SOLAR * 2.5;
     let can_giant_capture_moon = is_giant_primary
         && !p.secondary_type.is_star_or_remnant()
         && gamma <= 0.08

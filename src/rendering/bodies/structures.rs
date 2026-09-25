@@ -44,7 +44,7 @@ pub fn sync_planetary_rings(
             Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
         });
 
-    for (planet_entity, ring_sys, radius, _body, planet_trans, opt_spin, opt_children) in
+    for (planet_entity, ring_sys, radius, _body, planet_trans, _opt_spin, opt_children) in
         planets_with_rings_query.iter()
     {
         let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
@@ -58,8 +58,10 @@ pub fn sync_planetary_rings(
         // extends the ring mesh to exactly ring_ratio times the planet's visual radius.
         let ring_outer_scale = ring_ratio * 2.0;
 
-        let tilt_degrees = opt_spin.map_or(26.7, |s| s.axial_tilt_degrees as f32);
-        let ring_rotation = Quat::from_rotation_z(tilt_degrees.to_radians());
+        // Planetary rings physically form in the planet's equatorial plane (perpendicular to spin axis).
+        // Since the parent planet entity's transform is already rotated to align with spin_dir,
+        // the child ring mesh (Plane3d with normal +Y) naturally sits in the equator with Quat::IDENTITY.
+        let ring_rotation = Quat::IDENTITY;
 
         let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
         let star_dir_world = if star_dir_world.length_squared() < 0.01 {
@@ -67,7 +69,7 @@ pub fn sync_planetary_rings(
         } else {
             star_dir_world
         };
-        let ring_world_rot = planet_trans.rotation * ring_rotation;
+        let ring_world_rot = planet_trans.rotation;
         let star_dir_local = (ring_world_rot.inverse() * star_dir_world).normalize_or_zero();
         let planet_radius_ratio = 1.0 / ring_ratio;
 
@@ -386,7 +388,7 @@ pub enum PulsarBeamPart {
 #[allow(clippy::type_complexity, reason = "Pulsar Beam Sync")]
 pub fn sync_pulsar_beams(
     mut commands: Commands,
-    time: Res<Time>,
+    sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
     config: Res<SimulationConfig>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -415,7 +417,7 @@ pub fn sync_pulsar_beams(
     };
 
     let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let elapsed = time.elapsed_secs();
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let spin_rate = 24.0;
     let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.38);
 
@@ -488,7 +490,7 @@ pub enum MagnetarStructurePart {
 #[allow(clippy::type_complexity, reason = "Magnetar Structure Sync")]
 pub fn sync_magnetar_structures(
     mut commands: Commands,
-    time: Res<Time>,
+    sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
     _config: Res<SimulationConfig>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -533,7 +535,7 @@ pub fn sync_magnetar_structures(
     };
 
     let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let elapsed = time.elapsed_secs();
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let spin_rate = 1.2;
     let mag_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.26);
 

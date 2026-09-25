@@ -6,12 +6,11 @@ use protostellar::rendering::bodies::{
 use protostellar::rendering::materials::CometTailMaterial;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::{
-    DiagnosticOverlayMode, PlayerInteractionState, SimTime, SimulationConfig,
+    PlayerInteractionState, SimTime, SimulationConfig,
 };
 use protostellar::utils::constants::*;
 
-#[test]
-fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
+fn setup_comet_test_app() -> App {
     let mut app = App::new();
     app.init_resource::<Time>();
     app.init_resource::<Assets<Mesh>>();
@@ -23,23 +22,27 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
     let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
     let fallback_mesh = meshes.add(Mesh::from(Cuboid::new(1.0, 1.0, 1.0)));
     app.insert_resource(VisualAssets::dummy(fallback_mesh));
+    app.add_systems(Update, sync_cometary_tails);
+    app
+}
+
+#[test]
+fn test_comet_tails_exclude_planets_and_moons() {
+    let mut app = setup_comet_test_app();
 
     // 1. Central Star
-    let star_ent = app
-        .world_mut()
-        .spawn((
-            CelestialBody {
-                body_type: BodyType::MainSequenceStar,
-                name: "Sol".to_string(),
-            },
-            SimPosition(DVec3::ZERO),
-            Transform::from_xyz(0.0, 0.0, 0.0),
-            CentralStar,
-        ))
-        .id();
+    app.world_mut().spawn((
+        CelestialBody {
+            body_type: BodyType::MainSequenceStar,
+            name: "Sol".to_string(),
+        },
+        SimPosition(DVec3::ZERO),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        CentralStar,
+    ));
 
-    // 2. Large Ice-Rich Comet (Hale-Bopp: 30 km nucleus, 80% ice, at 1.2 AU)
-    let large_comet = app
+    // 2. Active Comet
+    let comet = app
         .world_mut()
         .spawn((
             CelestialBody {
@@ -61,30 +64,7 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
         ))
         .id();
 
-    // 3. Small Dusty Comet (Encke: 2 km nucleus, 25% ice, at 2.2 AU)
-    let small_comet = app
-        .world_mut()
-        .spawn((
-            CelestialBody {
-                body_type: BodyType::Comet,
-                name: "2P/Encke".to_string(),
-            },
-            Mass(1e-11 * EARTH_MASS_SOLAR),
-            SimPosition(DVec3::new(2.2, 0.0, 0.0)),
-            SimVelocity(DVec3::new(0.0, 0.0, 5.0)),
-            Radius(2.0 / AU_TO_KM),
-            Composition {
-                ice_frac: 0.25,
-                silicate_frac: 0.65,
-                metal_frac: 0.05,
-                gas_frac: 0.0,
-                organics_frac: 0.05,
-            },
-            Transform::from_xyz(2.2, 0.0, 0.0),
-        ))
-        .id();
-
-    // 4. Rocky Asteroid (Vesta: rocky, no ice)
+    // 3. Rocky Asteroid (Vesta)
     let asteroid = app
         .world_mut()
         .spawn((
@@ -101,8 +81,7 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
         ))
         .id();
 
-    // 5. Gas Giant Super-Jupiter (with active atmospheric escape tail)
-    // Must NEVER receive a cometary tail!
+    // 4. Gas Giant Super-Jupiter (with atmospheric escape tail)
     let super_jupiter = app
         .world_mut()
         .spawn((
@@ -125,8 +104,7 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
         ))
         .id();
 
-    // 6. Moon (Io with volcanic / atmospheric escape)
-    // Must NEVER receive a cometary tail!
+    // 5. Moon (Io with volcanic escape)
     let moon = app
         .world_mut()
         .spawn((
@@ -149,17 +127,8 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
         ))
         .id();
 
-    app.add_systems(Update, sync_cometary_tails);
-
-    // Test under "No Overlay" mode
-    {
-        let mut player_state = app.world_mut().resource_mut::<PlayerInteractionState>();
-        player_state.overlay_mode = DiagnosticOverlayMode::Hidden;
-    }
-
     app.update();
 
-    // Collect all spawned CometTailRoot entities
     let roots: Vec<(Entity, CometTailRoot)> = app
         .world_mut()
         .query::<(Entity, &CometTailRoot)>()
@@ -167,38 +136,86 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
         .map(|(e, r)| (e, *r))
         .collect();
 
-    // 1. Assert exactly the two comets have tail roots
-    assert_eq!(
-        roots.len(),
-        2,
-        "Exactly 2 comets must have CometTailRoot entities spawned"
-    );
+    assert_eq!(roots.len(), 1, "Exactly the 1 comet must have a CometTailRoot entity spawned");
+    assert_eq!(roots[0].1.comet_entity, comet);
+    assert!(!roots.iter().any(|(_, r)| r.comet_entity == super_jupiter), "Gas giants must not have cometary tails");
+    assert!(!roots.iter().any(|(_, r)| r.comet_entity == moon), "Moons must not have cometary tails");
+    assert!(!roots.iter().any(|(_, r)| r.comet_entity == asteroid), "Rocky asteroids must not have cometary tails");
+}
 
-    // 2. Assert Planets and Moons NEVER receive comet tail roots
-    assert!(
-        !roots.iter().any(|(_, r)| r.comet_entity == super_jupiter),
-        "Gas giant planets must NEVER have cometary tails!"
-    );
-    assert!(
-        !roots.iter().any(|(_, r)| r.comet_entity == moon),
-        "Moons must NEVER have cometary tails!"
-    );
-    assert!(
-        !roots.iter().any(|(_, r)| r.comet_entity == asteroid),
-        "Rocky asteroids must not have cometary tails"
-    );
+#[test]
+fn test_comet_tails_scale_with_physics_and_despawn() {
+    let mut app = setup_comet_test_app();
 
-    // 3. Verify physical scaling between large and small comet
-    let large_root = roots
-        .iter()
-        .find(|(_, r)| r.comet_entity == large_comet)
-        .unwrap()
-        .0;
-    let small_root = roots
-        .iter()
-        .find(|(_, r)| r.comet_entity == small_comet)
-        .unwrap()
-        .0;
+    app.world_mut().spawn((
+        CelestialBody {
+            body_type: BodyType::MainSequenceStar,
+            name: "Sol".to_string(),
+        },
+        SimPosition(DVec3::ZERO),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        CentralStar,
+    ));
+
+    // Large Ice-Rich Comet (Hale-Bopp: 30 km nucleus, 80% ice, at 1.2 AU)
+    let large_comet = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Comet,
+                name: "C/1995 O1 (Hale-Bopp)".to_string(),
+            },
+            Mass(1e-9 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.2, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 6.5)),
+            Radius(30.0 / AU_TO_KM),
+            Composition {
+                ice_frac: 0.80,
+                silicate_frac: 0.15,
+                metal_frac: 0.0,
+                gas_frac: 0.0,
+                organics_frac: 0.05,
+            },
+            Transform::from_xyz(1.2, 0.0, 0.0),
+        ))
+        .id();
+
+    // Small Dusty Comet (Encke: 2 km nucleus, 25% ice, at 2.2 AU)
+    let small_comet = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Comet,
+                name: "2P/Encke".to_string(),
+            },
+            Mass(1e-11 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(2.2, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 5.0)),
+            Radius(2.0 / AU_TO_KM),
+            Composition {
+                ice_frac: 0.25,
+                silicate_frac: 0.65,
+                metal_frac: 0.05,
+                gas_frac: 0.0,
+                organics_frac: 0.05,
+            },
+            Transform::from_xyz(2.2, 0.0, 0.0),
+        ))
+        .id();
+
+    app.update();
+
+    let roots: Vec<(Entity, CometTailRoot)> = app
+        .world_mut()
+        .query::<(Entity, &CometTailRoot)>()
+        .iter(app.world())
+        .map(|(e, r)| (e, *r))
+        .collect();
+
+    assert_eq!(roots.len(), 2);
+
+    let large_root = roots.iter().find(|(_, r)| r.comet_entity == large_comet).unwrap().0;
+    let small_root = roots.iter().find(|(_, r)| r.comet_entity == small_comet).unwrap().0;
 
     let large_children = app.world().get::<Children>(large_root).unwrap();
     let small_children = app.world().get::<Children>(small_root).unwrap();
@@ -210,53 +227,30 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
 
     for part in large_children.iter() {
         if app.world().get::<CometTailPart>(part).is_some() {
-            let trans = app.world().get::<Transform>(part).unwrap();
-            large_tail_len = trans.scale.y;
+            large_tail_len = app.world().get::<Transform>(part).unwrap().scale.y;
         }
         if app.world().get::<CometComaPart>(part).is_some() {
-            let trans = app.world().get::<Transform>(part).unwrap();
-            large_coma_r = trans.scale.x;
+            large_coma_r = app.world().get::<Transform>(part).unwrap().scale.x;
         }
     }
 
     for part in small_children.iter() {
         if app.world().get::<CometTailPart>(part).is_some() {
-            let trans = app.world().get::<Transform>(part).unwrap();
-            small_tail_len = trans.scale.y;
+            small_tail_len = app.world().get::<Transform>(part).unwrap().scale.y;
         }
         if app.world().get::<CometComaPart>(part).is_some() {
-            let trans = app.world().get::<Transform>(part).unwrap();
-            small_coma_r = trans.scale.x;
+            small_coma_r = app.world().get::<Transform>(part).unwrap().scale.x;
         }
     }
 
-    assert!(
-        large_tail_len > small_tail_len * 1.5,
-        "Large comet tail length ({:.2}) must be substantially greater than small comet ({:.2})",
-        large_tail_len,
-        small_tail_len
-    );
-    assert!(
-        large_coma_r > small_coma_r,
-        "Large comet coma radius ({:.4}) must be greater than small comet coma ({:.4})",
-        large_coma_r,
-        small_coma_r
-    );
+    assert!(large_tail_len > small_tail_len * 1.5);
+    assert!(large_coma_r > small_coma_r);
 
-    // 4. Verify procedural mesh has closed apex at (0, 0, 0)
     let envelope = protostellar::rendering::bodies::meshes::generate_comet_tail_envelope_mesh();
-    let positions = envelope
-        .attribute(Mesh::ATTRIBUTE_POSITION)
-        .unwrap()
-        .as_float3()
-        .unwrap();
-    assert_eq!(
-        positions[0],
-        [0.0, 0.0, 0.0],
-        "Comet tail envelope mesh apex must be at (0, 0, 0) with zero radius"
-    );
+    let positions = envelope.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap();
+    assert_eq!(positions[0], [0.0, 0.0, 0.0]);
 
-    // 5. Inactive comets beyond 6 AU despawn their roots
+    // Inactive comets beyond 6 AU despawn their roots
     if let Some(mut pos) = app.world_mut().get_mut::<SimPosition>(large_comet) {
         pos.0 = DVec3::new(10.0, 0.0, 0.0);
     }
@@ -270,12 +264,7 @@ fn test_comet_tails_exclude_planets_and_moons_and_scale_with_physics() {
         .query_filtered::<Entity, With<CometTailRoot>>()
         .iter(app.world())
         .collect();
-    assert!(
-        post_roots.is_empty(),
-        "All comet tail roots must be despawned once comets move beyond sublimation boundary"
-    );
-
-    let _ = star_ent;
+    assert!(post_roots.is_empty(), "All comet tail roots must be despawned beyond sublimation boundary");
 }
 
 #[test]

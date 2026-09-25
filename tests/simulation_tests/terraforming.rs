@@ -432,3 +432,111 @@ fn test_guided_bombardment_projectiles_retain_minor_body_identity_and_mesh() {
         "Carbonaceous Chondrite must maintain BodyType::Asteroid during flight"
     );
 }
+
+#[test]
+fn test_guided_bombardment_orbiting_target_zero_miss() {
+    let mut app = App::new();
+    app.init_resource::<SimTime>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_message::<BombardmentEvent>();
+
+    // Spawn central star
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration::default(),
+        Radius(SOLAR_RADIUS_AU),
+    ));
+
+    // Spawn orbiting planet (Earth at 1.0 AU in Keplerian orbit)
+    let v_circ = (G_ASTRO * 1.0 / 1.0).sqrt(); // 2*PI AU/yr
+    let target_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Target-Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_circ)),
+            SimAcceleration::default(),
+            Temperature(288.0),
+            Composition::rocky(),
+            VolatileInventory::default(),
+            TerraformingAtmosphere::default(),
+            PlanetaryClimate::default(),
+            InternalDifferentiation::default(),
+        ))
+        .id();
+
+    // Launch targeted bombardment at orbiting Earth
+    let proj_ent = launch_targeted_bombardment(
+        &mut app.world_mut().commands(),
+        target_ent,
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, v_circ),
+        EARTH_MASS_SOLAR,
+        EARTH_RADIUS_AU,
+        "Target-Earth",
+        BombardmentType::IcyComet,
+        0.0,
+    );
+
+    app.add_systems(
+        Update,
+        (
+            protostellar::simulation::physics::step_physics_simulation,
+            update_guided_bombardment_projectiles,
+        )
+            .chain(),
+    );
+
+    // Step simulation across the ~0.0035 year flight duration
+    let dt = 0.0005f64; // ~4.3 hours per step
+    for _ in 0..15 {
+        {
+            let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+            sim_time.elapsed_years += dt;
+            sim_time.current_dt_yr = dt;
+        }
+        app.update();
+
+        // When the projectile impacts the target, it delivers its payload and despawns
+        if app.world().get::<BombardmentProjectile>(proj_ent).is_none() {
+            break;
+        }
+    }
+
+    // Verify guaranteed zero-miss impact occurred and projectile was consumed
+    assert!(
+        app.world().get::<BombardmentProjectile>(proj_ent).is_none(),
+        "Guided bombardment projectile must successfully impact orbiting planet and be consumed"
+    );
+
+    let vol = app
+        .world()
+        .get::<VolatileInventory>(target_ent)
+        .expect("Target VolatileInventory must exist");
+    assert!(
+        vol.delivered_water_m_earth > 0.0,
+        "Icy comet must deliver water to target upon zero-miss impact"
+    );
+    assert_eq!(
+        vol.cometary_impact_count, 1,
+        "Cometary impact count must increment by 1"
+    );
+}
+

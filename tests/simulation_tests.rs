@@ -10,6 +10,10 @@ mod atmospheres;
 mod camera;
 #[path = "simulation_tests/comets.rs"]
 mod comets;
+#[path = "simulation_tests/engulfment.rs"]
+mod engulfment;
+#[path = "simulation_tests/genesis_scenario.rs"]
+mod genesis_scenario;
 #[path = "simulation_tests/geological_epochs.rs"]
 mod geological_epochs;
 #[path = "simulation_tests/gpu_and_particles.rs"]
@@ -54,6 +58,8 @@ mod slingshot;
 mod space_weather;
 #[path = "simulation_tests/storms.rs"]
 mod storms;
+#[path = "simulation_tests/supernova_explosion.rs"]
+mod supernova_explosion;
 #[path = "simulation_tests/telemetry.rs"]
 mod telemetry;
 #[path = "simulation_tests/terraforming.rs"]

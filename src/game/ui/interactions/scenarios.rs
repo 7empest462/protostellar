@@ -44,6 +44,14 @@ fn handle_scenario_preset_load(
             toast.timer = 5.0;
             true
         }
+        UiButtonAction::LoadScenarioGenesis => {
+            scenario_events.write(LoadScenarioEvent(ScenarioPreset::AccretionDiskGenesis));
+            toast.message =
+                "🌌 Loaded Scenario: Protoplanetary Disk Genesis (Zero Planets, SPH Gas Drag & Organic Accretion)"
+                    .to_string();
+            toast.timer = 5.0;
+            true
+        }
         UiButtonAction::LoadScenarioTrappist => {
             scenario_events.write(LoadScenarioEvent(ScenarioPreset::Trappist1System));
             toast.message =

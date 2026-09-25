@@ -39,6 +39,7 @@ pub use types::{
     QuickBodySelectorBar, ScrollableInspector, SystemWorld, TelemetryExportStatusText,
     TelemetryGraphBodyTitleText, TelemetryGraphPanel, TelemetryGraphReadoutText,
     TelemetryGraphSparklineText, TelemetryMetricButton, TelemetryPanelState, UiButtonAction,
+    InspectorExoticHeader, InspectorSection,
 };
 pub use update::{handle_roche_disruption_toasts, update_hud};
-pub use visibility::update_hud_visibility;
+pub use visibility::{update_hud_visibility, update_scenario_contextual_ui};

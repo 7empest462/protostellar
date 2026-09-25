@@ -278,6 +278,49 @@ fn apply_body_mass_and_orbit_edits(
     }
 }
 
+pub fn trigger_star_ignition_or_flare(
+    commands: &mut Commands,
+    star_ent: Entity,
+    body: &mut CelestialBody,
+    ignition: &mut IgnitionState,
+    shift: bool,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if shift {
+        commands
+            .entity(star_ent)
+            .insert(crate::simulation::space_weather::StellarFlareState {
+                flare_frequency: 1.5,
+                current_flare_intensity: 6.5,
+                flare_decay_timer_years: 0.15,
+                cme_front_radius_au: 0.05,
+                cme_speed_au_day: 0.35,
+                cme_density_multiplier: 25.0,
+                cme_active: true,
+            });
+        ignition.shockwave_radius = 0.1;
+        toast.message = "☀️ CME Coronal Mass Ejection Erupted! Expanding Shockwave!".to_string();
+    } else if ignition.is_ignited {
+        ignition.shockwave_radius = 1.6;
+        toast.message = "☀️ Coronal Mass Ejection & Solar Blast Triggered!".to_string();
+    } else {
+        ignition.core_temperature = 1.0e7;
+        ignition.is_ignited = true;
+        ignition.fusion_fraction = 1.0;
+        ignition.shockwave_radius = 1.6;
+        body.body_type = BodyType::MainSequenceStar;
+        if body.name.contains("Genesis") {
+            body.name = "Genesis Star (Main Sequence)".to_string();
+        } else {
+            body.name = "The Star (Main Sequence)".to_string();
+        }
+        toast.message =
+            "⭐ Hydrogen Core Fusion Ignited! Solar Wind Shockwave Sweeping the System!"
+                .to_string();
+    }
+    toast.timer = 5.0;
+}
+
 fn handle_star_interaction_actions(
     commands: &mut Commands,
     keyboard: &ButtonInput<KeyCode>,
@@ -289,30 +332,8 @@ fn handle_star_interaction_actions(
 ) {
     if keyboard.just_pressed(KeyCode::KeyI) {
         let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-        if shift {
-            commands
-                .entity(entity)
-                .insert(crate::simulation::space_weather::StellarFlareState {
-                    flare_frequency: 1.5,
-                    current_flare_intensity: 6.5,
-                    flare_decay_timer_years: 0.15,
-                    cme_front_radius_au: 0.05,
-                    cme_speed_au_day: 0.35,
-                    cme_density_multiplier: 25.0,
-                    cme_active: true,
-                });
-            if let Some(ref mut ignition) = ignition_opt {
-                ignition.shockwave_radius = 0.1;
-            }
-            toast.message =
-                "☀️ CME Coronal Mass Ejection Erupted! Expanding Shockwave!".to_string();
-            toast.timer = 5.0;
-        } else if let Some(ref mut ignition) = ignition_opt {
-            if ignition.is_ignited {
-                ignition.shockwave_radius = 1.6;
-            } else {
-                ignition.core_temperature = 1.0e7;
-            }
+        if let Some(ref mut ignition) = ignition_opt {
+            trigger_star_ignition_or_flare(commands, entity, body, ignition, shift, toast);
         }
     }
     if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
@@ -358,7 +379,7 @@ fn handle_planet_interaction_actions(
     comp: &mut Composition,
     player_state: &mut PlayerInteractionState,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyI) || keyboard.just_pressed(KeyCode::KeyB) {
+    if keyboard.just_pressed(KeyCode::KeyB) {
         let speed = vel.0.length();
         if speed > 0.0 {
             vel.0 += (vel.0 / speed) * (speed * 0.15);
@@ -483,20 +504,37 @@ fn handle_scenario_and_system_hotkeys(
     mut save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
     mut load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
     toast: &mut crate::game::ui::NotificationToast,
+    scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyG) {
-        lhb_state.is_active = true;
-        lhb_state.manual_trigger_requested = true;
-        toast.message =
-            "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
-                .to_string();
-        toast.timer = 8.0;
+        let is_mmsn = scenario_state.is_none_or(|s| {
+            s.current_preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+        });
+        if is_mmsn {
+            lhb_state.is_active = true;
+            lhb_state.manual_trigger_requested = true;
+            toast.message =
+                "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
+                    .to_string();
+            toast.timer = 8.0;
+        } else {
+            toast.message =
+                "ℹ️ Late Heavy Bombardment epoch is exclusive to the Solar Nebula (MMSN) scenario."
+                    .to_string();
+            toast.timer = 5.0;
+        }
+    }
+    if keyboard.just_pressed(KeyCode::F1) {
+        let is_shift =
+            keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+        let preset = if is_shift {
+            crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
+        } else {
+            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+        };
+        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(preset));
     }
     let preset_map = [
-        (
-            KeyCode::F1,
-            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
-        ),
         (
             KeyCode::F2,
             crate::simulation::scenarios::ScenarioPreset::Trappist1System,
@@ -588,6 +626,7 @@ pub fn handle_player_tools(
     mut toast: ResMut<crate::game::ui::NotificationToast>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut opt_predictor: Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     mut selected_query: Query<
         (
             Entity,
@@ -637,6 +676,26 @@ pub fn handle_player_tools(
         &mut camera_query,
         &selected_query,
     );
+
+    if keyboard.just_pressed(KeyCode::KeyI) && !is_star_selected {
+        let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+        if let Some((star_ent, _, _, _, _, _, _, mut body, _, _, Some(mut ignition), _, _)) =
+            selected_query
+                .iter_mut()
+                .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star)| {
+                    opt_star.is_some() || body.body_type.is_star_or_remnant()
+                })
+        {
+            trigger_star_ignition_or_flare(
+                &mut commands,
+                star_ent,
+                &mut body,
+                &mut ignition,
+                shift,
+                &mut toast,
+            );
+        }
+    }
 
     if let Some(selected_ent) = player_state.selected_entity {
         if let Ok((
@@ -704,6 +763,7 @@ pub fn handle_player_tools(
         save_events.as_mut(),
         load_events.as_mut(),
         &mut toast,
+        scenario_state.as_deref(),
     );
 }
 

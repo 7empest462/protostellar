@@ -27,6 +27,7 @@ pub struct ParticleIntegrationParams<'a> {
     pub lhb_resonance: bool,
     pub disk_params: &'a DiskParameters,
     pub massive_bodies: &'a [(Entity, DVec3, f64, BodyType)],
+    pub base_mass: f32,
 }
 
 #[inline]
@@ -131,6 +132,57 @@ fn step_particle_gpu_mode(
     col_slot[2] = (bb * 0.4 + col_slot[2] * 0.6).clamp(0.2, 1.0);
 }
 
+#[inline]
+pub fn compute_gas_aerodynamic_drift(
+    r: f32,
+    v_k: f32,
+    m: f32,
+    b_mass: f32,
+    snow_line_au: f32,
+    gas_scale: f32,
+) -> f32 {
+    let r_norm = (r / 1.0).max(0.01);
+    let h = 0.033 * r_norm.powf(0.25);
+    let eta_0 = 0.5 * h * h * 3.25;
+
+    // Cold-finger water vapor condensation front pressure bump at the snow line (2.7 AU).
+    // Creates a localized aerodynamic particle trap where sub-Keplerian headwind reverses (eta <= 0),
+    // halting the inward drift and producing the canonical dust ring / pebble traffic jam.
+    let dr = r - snow_line_au;
+    let trap_factor = 1.0 - 1.80 * (-dr * dr / (2.0 * 0.25 * 0.25)).exp();
+
+    // Inner disk silicate sublimation & magnetospheric pressure trap (~0.35 AU).
+    // Halts rapid drain of terrestrial dust and pebbles into the central star,
+    // retaining gas and solid material in the inner solar system long enough to form terrestrial worlds.
+    let dr_inner = r - 0.35;
+    let inner_trap_factor = if r < 1.8 {
+        1.0 - 1.60 * (-dr_inner * dr_inner / (2.0 * 0.18 * 0.18)).exp()
+    } else {
+        1.0
+    };
+
+    let eta_eff = eta_0 * trap_factor * inner_trap_factor;
+
+    let mass_ratio = if b_mass > 0.0 {
+        (m / b_mass).cbrt().clamp(0.5, 8.0)
+    } else {
+        1.0
+    };
+    let stokes = (0.045 * mass_ratio).clamp(0.005, 0.40);
+    let drift_factor = (2.0 * stokes) / (1.0 + stokes * stokes);
+
+    // Sub-Keplerian headwind drag + viscous gas inflow
+    let alpha_visc = if r < 1.8 { 0.0008 } else { 0.003 };
+    let v_visc = if eta_eff <= 0.0 {
+        0.0
+    } else {
+        1.5 * alpha_visc * h * h * v_k
+    };
+    let v_drift = -drift_factor * eta_eff * v_k - v_visc;
+
+    v_drift * gas_scale
+}
+
 fn step_particle_cpu_mode(
     mut pos: [f32; 3],
     mut vel: [f32; 3],
@@ -156,10 +208,17 @@ fn step_particle_cpu_mode(
         phi += 2.0 * PI as f32;
     }
     if params.enable_gas_drag && params.gas_scale > 0.001 {
-        let gas_density = 1.0e-4 * (r / 1.0).powf(-2.25) * params.gas_scale;
-        let drag_rate = (0.000_005 * gas_density).min(0.0005);
-        let migration = (r * drag_rate * params.visual_flow_dt).min(r * 0.005);
-        r = (r - migration).max(params.disk_params.inner_radius_au as f32 * 0.8);
+        let v_drift = compute_gas_aerodynamic_drift(
+            r,
+            v_k,
+            m,
+            params.base_mass,
+            params.disk_params.snow_line_au as f32,
+            params.gas_scale,
+        );
+        let max_inward = if r < 1.8 { -r * 0.002 } else { -r * 0.008 };
+        let migration = (v_drift * params.visual_flow_dt).clamp(max_inward, r * 0.004);
+        r = (r + migration).max(params.disk_params.inner_radius_au as f32 * 0.8);
     }
     if params.quasar_blown_out && r < 25.0 {
         *mass_slot = 0.0;
@@ -232,7 +291,14 @@ fn step_particle_cpu_mode(
     );
     pos[0] = params.star_pos_f32[0] + r * phi.cos();
     let h_disk = (0.030f32 * r * (r / 1.0f32).powf(0.25f32)).max(0.0002f32);
-    pos[1] = (pos[1] * (-0.02 * params.visual_flow_dt).exp()).clamp(-h_disk * 2.5, h_disk * 2.5);
+    let mass_ratio = if params.base_mass > 0.0 {
+        (m / params.base_mass).cbrt().clamp(0.5, 8.0)
+    } else {
+        1.0
+    };
+    let stokes = (0.045 * mass_ratio).clamp(0.005, 0.40);
+    let settle = (-stokes * omega * params.visual_flow_dt).exp();
+    pos[1] = (pos[1] * settle).clamp(-h_disk * 2.5, h_disk * 2.5);
     pos[2] = params.star_pos_f32[2] + r * phi.sin();
     vel[0] = -v_k * phi.sin();
     vel[1] = 0.0;
@@ -592,18 +658,36 @@ pub fn process_particle_collisions_and_sticking(
                                 let is_beyond_snowline = r_body > disk_params.snow_line_au as f32;
 
                                 let comp_a_val = data.compositions.get(idx_a).copied();
+                                let dist_to_snow =
+                                    (r_body - disk_params.snow_line_au as f32).abs();
+                                let snow_trap_boost = if dist_to_snow < 0.45 {
+                                    2.2 * (1.0 - dist_to_snow / 0.45)
+                                } else {
+                                    0.0
+                                };
+                                let inner_electrostatic_boost = if r_body < 2.0 {
+                                    // Warm dense inner disk: electrostatic dipole sticking and high silicate/iron surface energy
+                                    2.4 * (1.0 - (r_body / 2.0).clamp(0.0, 1.0)) + 1.2
+                                } else {
+                                    0.0
+                                };
                                 let sticky_boost = if is_beyond_snowline {
                                     2.5 * (1.0
                                         + comp_a_val.map_or(0.0, |c| c.ice_frac as f32) * 1.5)
+                                        + snow_trap_boost
                                 } else {
-                                    1.0
+                                    1.0 + snow_trap_boost + inner_electrostatic_boost
                                 };
                                 let r_body_safe = if r_body.is_finite() && r_body > 0.0 {
                                     r_body
                                 } else {
                                     1.0
                                 };
-                                let zone_boost = (r_body_safe / 1.0).powf(0.55).clamp(1.0, 4.5);
+                                let zone_boost = if r_body_safe < 2.0 {
+                                    (2.0 / r_body_safe).powf(0.35).clamp(1.2, 2.5)
+                                } else {
+                                    (r_body_safe / 1.0).powf(0.55).clamp(1.0, 4.5)
+                                };
                                 let m_a_safe = if m_a.is_finite() && m_a > 0.0 {
                                     m_a
                                 } else {

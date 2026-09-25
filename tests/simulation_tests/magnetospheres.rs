@@ -35,8 +35,14 @@ fn test_magnetic_field_overlay_mode_cycle_and_names() {
     assert_eq!(mode, DiagnosticOverlayMode::Realistic);
 }
 
-#[test]
-fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds() {
+struct MagnetosphereTestEntities {
+    magnetar: Entity,
+    companion_star: Entity,
+    valkyrie: Entity,
+    asteroid: Entity,
+}
+
+fn setup_magnetosphere_test_app() -> (App, MagnetosphereTestEntities) {
     let mut app = App::new();
     app.init_resource::<Time>();
     app.init_resource::<Assets<Mesh>>();
@@ -57,7 +63,7 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
     app.add_systems(Update, sync_magnetic_field_overlays);
 
     // 1. Central SGR 1806-20 Magnetar (already has permanent 3D field loops)
-    let magnetar_ent = app
+    let magnetar = app
         .world_mut()
         .spawn((
             CelestialBody {
@@ -82,7 +88,7 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
         .id();
 
     // 2. LBV 1806-20 Hypergiant Companion Star (orbiting at 18 AU)
-    let companion_star_ent = app
+    let companion_star = app
         .world_mut()
         .spawn((
             CelestialBody {
@@ -106,7 +112,7 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
         .id();
 
     // 3. Valkyrie (Magnetized Terrestrial Planet at 0.48 AU)
-    let valkyrie_ent = app
+    let valkyrie = app
         .world_mut()
         .spawn((
             CelestialBody {
@@ -135,7 +141,7 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
         .id();
 
     // 4. Undifferentiated rocky asteroid (no dynamo, no magnetic field)
-    let asteroid_ent = app
+    let asteroid = app
         .world_mut()
         .spawn((
             CelestialBody {
@@ -151,6 +157,20 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
         ))
         .id();
 
+    (
+        app,
+        MagnetosphereTestEntities {
+            magnetar,
+            companion_star,
+            valkyrie,
+            asteroid,
+        },
+    )
+}
+
+#[test]
+fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds() {
+    let (mut app, ents) = setup_magnetosphere_test_app();
     app.update();
 
     let roots: Vec<(Entity, &MagneticFieldOverlayRoot)> = app
@@ -160,7 +180,7 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
         .collect();
 
     // 1. Assert the magnetar itself is NOT overlaid (no duplicate geometry!)
-    let magnetar_overlay = roots.iter().find(|(_, r)| r.target_entity == magnetar_ent);
+    let magnetar_overlay = roots.iter().find(|(_, r)| r.target_entity == ents.magnetar);
     assert!(
         magnetar_overlay.is_none(),
         "The central magnetar must be skipped by the magnetic field overlay since it already has permanent 3D field loops!"
@@ -169,21 +189,21 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
     // 2. Assert the companion star LBV 1806-20 HAS a magnetic field overlay
     let star_overlay = roots
         .iter()
-        .find(|(_, r)| r.target_entity == companion_star_ent);
+        .find(|(_, r)| r.target_entity == ents.companion_star);
     assert!(
         star_overlay.is_some(),
         "Companion star LBV 1806-20 must have a GPU magnetic field overlay!"
     );
 
     // 3. Assert Valkyrie HAS a magnetic field overlay
-    let valkyrie_overlay = roots.iter().find(|(_, r)| r.target_entity == valkyrie_ent);
+    let valkyrie_overlay = roots.iter().find(|(_, r)| r.target_entity == ents.valkyrie);
     assert!(
         valkyrie_overlay.is_some(),
         "Magnetized world Valkyrie must have a GPU magnetic field overlay!"
     );
 
     // 4. Assert non-magnetized asteroid does NOT have an overlay
-    let asteroid_overlay = roots.iter().find(|(_, r)| r.target_entity == asteroid_ent);
+    let asteroid_overlay = roots.iter().find(|(_, r)| r.target_entity == ents.asteroid);
     assert!(
         asteroid_overlay.is_none(),
         "Non-magnetized asteroid should not have a magnetic field overlay!"
@@ -200,8 +220,14 @@ fn test_magnetic_field_overlay_skips_magnetar_and_empowers_companion_and_worlds(
         2,
         "Should have exactly 2 field loop meshes (companion star and Valkyrie)"
     );
+}
 
-    // 6. Test Lifecycle & Despawn when switching away from MagneticFields mode
+#[test]
+fn test_magnetic_field_overlay_despawn_on_mode_change() {
+    let (mut app, _) = setup_magnetosphere_test_app();
+    app.update();
+
+    // Test Lifecycle & Despawn when switching away from MagneticFields mode
     app.world_mut()
         .resource_mut::<PlayerInteractionState>()
         .overlay_mode = DiagnosticOverlayMode::Hidden;

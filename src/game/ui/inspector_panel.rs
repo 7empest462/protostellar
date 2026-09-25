@@ -177,51 +177,61 @@ fn spawn_inspector_toolbar_rows(actions: &mut ChildSpawnerCommands) {
 }
 
 fn spawn_terraforming_bombardment_row(actions: &mut ChildSpawnerCommands) {
-    actions.spawn((
-        Text::new("TERRAFORMING & BOMBARDMENT:"),
-        TextFont {
-            font_size: FontSize::Px(9.0),
-            ..default()
-        },
-        TextColor(Color::srgb(0.35, 0.90, 0.95)),
-    ));
     actions
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            margin: UiRect::bottom(Val::Px(2.0)),
-            flex_wrap: FlexWrap::Wrap,
-            ..default()
-        })
-        .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 4] = [
-                (
-                    UiButtonAction::BombardComet,
-                    "Comet (H₂O)",
-                    Color::srgba(0.06, 0.18, 0.24, 0.9),
-                    Color::srgb(0.35, 0.85, 1.0),
-                ),
-                (
-                    UiButtonAction::BombardChondrite,
-                    "Chondrite (Atm)",
-                    Color::srgba(0.22, 0.14, 0.06, 0.9),
-                    Color::srgb(1.0, 0.65, 0.25),
-                ),
-                (
-                    UiButtonAction::BombardSalvo,
-                    "Volatile Salvo",
-                    Color::srgba(0.18, 0.08, 0.24, 0.9),
-                    Color::srgb(0.80, 0.50, 1.0),
-                ),
-                (
-                    UiButtonAction::BombardCore,
-                    "Core Impactor",
-                    Color::srgba(0.24, 0.08, 0.06, 0.9),
-                    Color::srgb(1.0, 0.35, 0.25),
-                ),
-            ];
-            for (act, label, bg, border) in BUTTONS {
-                create_compact_button(row, act, label, bg, border);
-            }
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            InspectorSection::TerraformingBombardment,
+        ))
+        .with_children(|section| {
+            section.spawn((
+                Text::new("TERRAFORMING & BOMBARDMENT:"),
+                TextFont {
+                    font_size: FontSize::Px(9.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.35, 0.90, 0.95)),
+            ));
+            section
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    margin: UiRect::bottom(Val::Px(2.0)),
+                    flex_wrap: FlexWrap::Wrap,
+                    ..default()
+                })
+                .with_children(|row| {
+                    const BUTTONS: [(UiButtonAction, &str, Color, Color); 4] = [
+                        (
+                            UiButtonAction::BombardComet,
+                            "Comet (H₂O)",
+                            Color::srgba(0.06, 0.18, 0.24, 0.9),
+                            Color::srgb(0.35, 0.85, 1.0),
+                        ),
+                        (
+                            UiButtonAction::BombardChondrite,
+                            "Chondrite (Atm)",
+                            Color::srgba(0.22, 0.14, 0.06, 0.9),
+                            Color::srgb(1.0, 0.65, 0.25),
+                        ),
+                        (
+                            UiButtonAction::BombardSalvo,
+                            "Volatile Salvo",
+                            Color::srgba(0.18, 0.08, 0.24, 0.9),
+                            Color::srgb(0.80, 0.50, 1.0),
+                        ),
+                        (
+                            UiButtonAction::BombardCore,
+                            "Core Impactor",
+                            Color::srgba(0.24, 0.08, 0.06, 0.9),
+                            Color::srgb(1.0, 0.35, 0.25),
+                        ),
+                    ];
+                    for (act, label, bg, border) in BUTTONS {
+                        create_compact_button(row, act, label, bg, border);
+                    }
+                });
         });
 }
 
@@ -475,45 +485,56 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
 }
 
 fn spawn_exotic_experiments_row(actions: &mut ChildSpawnerCommands) {
-    actions.spawn((
-        Text::new("EXOTIC / LITTLE RED DOT:"),
-        TextFont {
-            font_size: FontSize::Px(9.0),
-            ..default()
-        },
-        TextColor(Color::srgb(1.0, 0.4, 0.6)),
-    ));
     actions
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            margin: UiRect::bottom(Val::Px(2.0)),
-            flex_wrap: FlexWrap::Wrap,
-            ..default()
-        })
-        .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 3] = [
-                (
-                    UiButtonAction::ToggleSuperEddington,
-                    "Hyper-Accretion [X]",
-                    Color::srgba(0.24, 0.06, 0.08, 0.9),
-                    Color::srgb(1.0, 0.4, 0.5),
-                ),
-                (
-                    UiButtonAction::TriggerBlowoutCocoon,
-                    "Quasar Blowout [B]",
-                    Color::srgba(0.26, 0.08, 0.22, 0.9),
-                    Color::srgb(1.0, 0.45, 0.95),
-                ),
-                (
-                    UiButtonAction::SpawnInfallPop3Star,
-                    "Pop-III TDE [T]",
-                    Color::srgba(0.08, 0.16, 0.28, 0.9),
-                    Color::srgb(0.4, 0.85, 1.0),
-                ),
-            ];
-            for (act, label, bg, border) in BUTTONS {
-                create_compact_button(row, act, label, bg, border);
-            }
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            InspectorSection::ExoticExperiments,
+        ))
+        .with_children(|section| {
+            section.spawn((
+                Text::new("EXOTIC / LITTLE RED DOT:"),
+                TextFont {
+                    font_size: FontSize::Px(9.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.4, 0.6)),
+                InspectorExoticHeader,
+            ));
+            section
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    margin: UiRect::bottom(Val::Px(2.0)),
+                    flex_wrap: FlexWrap::Wrap,
+                    ..default()
+                })
+                .with_children(|row| {
+                    const BUTTONS: [(UiButtonAction, &str, Color, Color); 3] = [
+                        (
+                            UiButtonAction::ToggleSuperEddington,
+                            "Hyper-Accretion [X]",
+                            Color::srgba(0.24, 0.06, 0.08, 0.9),
+                            Color::srgb(1.0, 0.4, 0.5),
+                        ),
+                        (
+                            UiButtonAction::TriggerBlowoutCocoon,
+                            "Quasar Blowout [B]",
+                            Color::srgba(0.26, 0.08, 0.22, 0.9),
+                            Color::srgb(1.0, 0.45, 0.95),
+                        ),
+                        (
+                            UiButtonAction::SpawnInfallPop3Star,
+                            "Pop-III TDE [T]",
+                            Color::srgba(0.08, 0.16, 0.28, 0.9),
+                            Color::srgb(0.4, 0.85, 1.0),
+                        ),
+                    ];
+                    for (act, label, bg, border) in BUTTONS {
+                        create_compact_button(row, act, label, bg, border);
+                    }
+                });
         });
 }
 

@@ -10,6 +10,7 @@ struct AtmosphereUniforms {
     star_dir_and_intensity: vec4<f32>, // xyz = unit star dir in world space, w = star intensity factor
     planet_center: vec4<f32>,   // xyz = planet world pos, w = outer shell scale factor
     aurora_params: vec4<f32>,   // x = oval_colatitude_rad, y = oval_width_rad, z = auroral_intensity, w = geomagnetic_kp_index
+    spin_axis: vec4<f32>,       // xyz = unit 3D spin axis in world coordinates, w = reserved
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -141,8 +142,16 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         // Volumetric polar auroral curtain emission (Ionospheric layer)
         if (aurora_int > 0.05) {
             let norm_p = p_rel / max(sample_dist, 0.0001);
-            let polar_co = min(acos(clamp(norm_p.y, -1.0, 1.0)), acos(clamp(-norm_p.y, -1.0, 1.0)));
-            let d_oval = abs(polar_co - oval_colat);
+            var s_axis = atmo.spin_axis.xyz;
+            if (length(s_axis) < 0.1) {
+                s_axis = vec3<f32>(0.0, 1.0, 0.0);
+            } else {
+                s_axis = normalize(s_axis);
+            }
+            let sin_lat = dot(norm_p, s_axis);
+            let polar_co = acos(clamp(abs(sin_lat), 0.0, 1.0));
+            let effective_colat = clamp(oval_colat, 0.16, 0.44);
+            let d_oval = abs(polar_co - effective_colat);
             let oval_ring = exp(-0.5 * (d_oval * d_oval) / (oval_width * oval_width));
             
             let atmo_thickness = max(r_atmo - r_planet, 0.001);
@@ -156,7 +165,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             let sun_alignment = dot(norm_p, star_dir);
             let night_mult = mix(2.2, 0.35, clamp(sun_alignment * 0.5 + 0.5, 0.0, 1.0));
 
-            aurora_emission += auroral_rgb * (oval_ring * iono_layer * aurora_int * night_mult * (step_size / atmo_thickness) * 3.0);
+            // Strictly polar factor
+            let polar_factor = smoothstep(0.65, 0.88, abs(sin_lat));
+
+            aurora_emission += auroral_rgb * (oval_ring * iono_layer * aurora_int * night_mult * polar_factor * (step_size / atmo_thickness) * 3.0);
         }
     }
 

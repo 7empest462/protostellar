@@ -134,17 +134,28 @@ fn is_little_red_dot(body: &CelestialBody) -> bool {
 fn update_camera_min_zoom_bounds(
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
-    targets_query: &Query<(Entity, &SimPosition, &Radius, &CelestialBody, &Mass)>,
+    targets_query: &Query<
+        (
+            Entity,
+            &SimPosition,
+            &Radius,
+            &CelestialBody,
+            &Mass,
+            Option<&Transform>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
 ) {
     let focused_info = if let Some(target_ent) = camera.target_entity {
-        if let Ok((_, pos, radius, body, _mass)) = targets_query.get(target_ent) {
+        if let Ok((_, pos, radius, body, _mass, opt_t)) = targets_query.get(target_ent) {
             let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             camera.target_focus = target_vec;
             let is_lrd = is_little_red_dot(body);
-            Some((
-                config.calc_visual_radius_for_type(radius.0, body.body_type),
-                is_lrd,
-            ))
+            let vis_rad = opt_t.map_or_else(
+                || config.calc_visual_radius_for_type(radius.0, body.body_type),
+                |t| t.scale.x,
+            );
+            Some((vis_rad, is_lrd))
         } else {
             camera.target_entity = None;
             None
@@ -158,10 +169,13 @@ fn update_camera_min_zoom_bounds(
     } else {
         targets_query
             .iter()
-            .map(|(_, pos, radius, body, _)| {
+            .map(|(_, pos, radius, body, _, opt_t)| {
                 let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
                 let dist = camera.target_focus.distance(center);
-                let vis_rad = config.calc_visual_radius_for_type(radius.0, body.body_type);
+                let vis_rad = opt_t.map_or_else(
+                    || config.calc_visual_radius_for_type(radius.0, body.body_type),
+                    |t| t.scale.x,
+                );
                 let is_lrd = is_little_red_dot(body);
                 (dist, vis_rad, is_lrd)
             })
@@ -190,7 +204,17 @@ fn handle_camera_target_picking(
     window: &Window,
     camera_comp: &Camera,
     global_transform: &GlobalTransform,
-    targets_query: &Query<(Entity, &SimPosition, &Radius, &CelestialBody, &Mass)>,
+    targets_query: &Query<
+        (
+            Entity,
+            &SimPosition,
+            &Radius,
+            &CelestialBody,
+            &Mass,
+            Option<&Transform>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
     player_state: &mut PlayerInteractionState,
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
@@ -215,15 +239,13 @@ fn handle_camera_target_picking(
     let mut best_score = f32::MAX;
 
     if let Ok(ray) = camera_comp.viewport_to_world(global_transform, cursor_pos) {
-        for (entity, pos, _rad, body, _mass) in targets_query.iter() {
+        for (entity, pos, rad, body, _mass, opt_t) in targets_query.iter() {
             let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-            let hit_radius = if body.body_type.is_star_or_remnant() {
-                4.50f32
-            } else if matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant) {
-                2.50f32
-            } else {
-                1.50f32
-            };
+            let vis_r = opt_t.map_or_else(
+                || config.calc_visual_radius_for_type(rad.0, body.body_type),
+                |t| t.scale.x,
+            );
+            let hit_radius = (vis_r * 4.0).clamp(0.005, 3.0);
             let to_center = center - ray.origin;
             let proj = to_center.dot(*ray.direction);
             if proj > 0.0 {
@@ -239,7 +261,7 @@ fn handle_camera_target_picking(
 
     if best_target.is_none() {
         let mut min_screen_dist = 220.0f32;
-        for (entity, pos, _rad, _body, _mass) in targets_query.iter() {
+        for (entity, pos, _rad, _body, _mass, _opt_t) in targets_query.iter() {
             let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             if let Ok(screen_pos) = camera_comp.world_to_viewport(global_transform, center) {
                 let dist = cursor_pos.distance(screen_pos);
@@ -254,8 +276,11 @@ fn handle_camera_target_picking(
     if let Some(hit_entity) = best_target {
         player_state.selected_entity = Some(hit_entity);
         camera.target_entity = Some(hit_entity);
-        if let Ok((_, _, radius, body, _)) = targets_query.get(hit_entity) {
-            let visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
+        if let Ok((_, _, radius, body, _, opt_t)) = targets_query.get(hit_entity) {
+            let visual_radius = opt_t.map_or_else(
+                || config.calc_visual_radius_for_type(radius.0, body.body_type),
+                |t| t.scale.x,
+            );
             camera.target_radius = config.calc_camera_framing_radius(visual_radius);
         }
     }
@@ -266,14 +291,27 @@ fn handle_camera_keyboard_flight(
     transform: &Transform,
     camera: &mut PanOrbitCamera,
     player_state: &mut PlayerInteractionState,
-    targets_query: &Query<(Entity, &SimPosition, &Radius, &CelestialBody, &Mass)>,
+    targets_query: &Query<
+        (
+            Entity,
+            &SimPosition,
+            &Radius,
+            &CelestialBody,
+            &Mass,
+            Option<&Transform>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
     config: &SimulationConfig,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         if let Some(target) = player_state.selected_entity {
             camera.target_entity = Some(target);
-            if let Ok((_, _, radius, body, _)) = targets_query.get(target) {
-                let visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
+            if let Ok((_, _, radius, body, _, opt_t)) = targets_query.get(target) {
+                let visual_radius = opt_t.map_or_else(
+                    || config.calc_visual_radius_for_type(radius.0, body.body_type),
+                    |t| t.scale.x,
+                );
                 camera.target_radius = config.calc_camera_framing_radius(visual_radius);
             }
         } else {
@@ -402,7 +440,17 @@ pub fn update_pan_orbit_camera(
     mut mouse_motion_events: MessageReader<MouseMotion>,
     mut mouse_wheel_events: MessageReader<MouseWheel>,
     mut player_state: ResMut<PlayerInteractionState>,
-    targets_query: Query<(Entity, &SimPosition, &Radius, &CelestialBody, &Mass)>,
+    targets_query: Query<
+        (
+            Entity,
+            &SimPosition,
+            &Radius,
+            &CelestialBody,
+            &Mass,
+            Option<&Transform>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
     mut camera_query: Query<
         (
             &Camera,

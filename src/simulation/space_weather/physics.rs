@@ -2,7 +2,6 @@
 //! geomagnetic Kp indices, and multi-spectral ionospheric emission profiles.
 
 use bevy::prelude::*;
-use std::f32::consts::PI;
 
 use crate::simulation::components::Composition;
 use crate::simulation::space_weather::types::GeomagneticStormLevel;
@@ -19,10 +18,12 @@ use crate::simulation::space_weather::types::GeomagneticStormLevel;
 pub fn calculate_auroral_oval_geometry(standoff_rp: f32) -> (f32, f32) {
     let rp_ratio = (1.0 / standoff_rp.max(1.05)).clamp(0.01, 0.95);
     let sin_theta = rp_ratio.sqrt();
-    let colatitude = sin_theta.asin().clamp(0.10, PI * 0.48);
+    // Clamp to maximum 0.45 rad (~25.8° colatitude, or 64.2° latitude).
+    // Ensures auroras remain strictly polar and sub-polar even under severe solar/stellar wind compression.
+    let colatitude = sin_theta.asin().clamp(0.10, 0.45);
 
-    // Oval half-width broadens as the oval expands equatorward during storms
-    let half_width = (0.05 + 0.08 * (colatitude / 0.50)).clamp(0.04, 0.16);
+    // Oval half-width broadens slightly during storms (from ~2.0° up to ~4.2° / 0.035 to 0.075 rad)
+    let half_width = (0.040 + 0.035 * (colatitude / 0.45)).clamp(0.035, 0.075);
 
     (colatitude, half_width)
 }

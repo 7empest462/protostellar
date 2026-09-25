@@ -114,8 +114,51 @@ impl SimulationConfig {
                 | crate::simulation::components::BodyType::DustGrain
         ) {
             (base_rad * 0.35).max(0.0003)
+        } else if body_type == crate::simulation::components::BodyType::Moon {
+            (base_rad * 0.55).max(0.0004)
         } else if body_type == crate::simulation::components::BodyType::BlackHole {
             (base_rad * 2.8).clamp(0.35, 3.50)
+        } else {
+            base_rad
+        }
+    }
+
+    /// Computes the visual render radius taking into account orbital scale and distance to prevent
+    /// visual overlap in compact multi-planet systems (e.g. TRAPPIST-1).
+    pub fn calc_visual_radius_with_orbit(
+        &self,
+        physical_radius_au: f64,
+        body_type: crate::simulation::components::BodyType,
+        r_orb: f32,
+        min_planetary_orbit_au: f32,
+    ) -> f32 {
+        let base_rad = self.calc_visual_radius_for_type(physical_radius_au, body_type);
+        if min_planetary_orbit_au < 0.15 && min_planetary_orbit_au > 0.0 {
+            if body_type.is_star_or_remnant() {
+                // For compact systems (where inner planet orbits within 0.15 AU, e.g. TRAPPIST-1),
+                // scale the star so it does not engulf the inner planetary orbits.
+                if physical_radius_au < 0.002 {
+                    let max_star_r = (min_planetary_orbit_au * 0.28).max(0.001) * self.size_exaggeration;
+                    base_rad.min(max_star_r)
+                } else {
+                    base_rad
+                }
+            } else if body_type.is_planet() || body_type == crate::simulation::components::BodyType::Moon {
+                // In compact systems, scale planets down proportionally with the compact star
+                // so the star is always visibly dominant (~4.5-5.5x wider in diameter) and planets
+                // have spacious dark voids between their orbits.
+                let compact_star_r = (min_planetary_orbit_au * 0.28).max(0.001);
+                // Standard red dwarf base visual radius ~0.00965 AU:
+                let ref_star_vis_r = self.calc_visual_radius(0.00056);
+                let star_scale_ratio = (compact_star_r / ref_star_vis_r).clamp(0.05, 1.0);
+                // Apply proportional scale factor with 0.70 hierarchy factor so star is prominent
+                let compact_planet_r = base_rad * star_scale_ratio * 0.70;
+                // Also guarantee planet visual radius does not exceed 7% of its orbital distance
+                let max_orbit_r = (r_orb * 0.07).max(0.00025);
+                compact_planet_r.min(max_orbit_r).max(0.00025)
+            } else {
+                base_rad
+            }
         } else {
             base_rad
         }
@@ -125,7 +168,7 @@ impl SimulationConfig {
     /// Provides a spectacular, cinematic close-up view occupying ~75-80% of screen height while
     /// guaranteeing safe surface clearance so the camera never penetrates or near-clips through the body.
     pub fn calc_camera_min_zoom_radius(&self, visual_radius: f32) -> f32 {
-        (visual_radius * 1.55).max(visual_radius + 0.0015)
+        (visual_radius * 1.55).max(visual_radius + 0.0004)
     }
 
     /// Computes the optimal camera framing distance when focusing or locking onto a celestial body.
@@ -295,6 +338,10 @@ pub struct SimTime {
     pub current_dt_yr: f64,
     /// Total physics integration steps executed.
     pub step_count: u64,
+    /// Accumulated visual simulation time in seconds for shaders and rendering animations.
+    /// Pauses when time_warp is paused, freezing planetary rotation, clouds, and stellar boiling.
+    #[serde(default)]
+    pub visual_time_secs: f32,
 }
 
 /// Real-time diagnostic monitor for total energy conservation ($E = K + U$).

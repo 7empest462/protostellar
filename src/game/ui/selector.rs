@@ -92,6 +92,8 @@ pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> S
         "Kuiper".to_string()
     } else if lower.contains("ceres") {
         "Ceres".to_string()
+    } else if lower.contains("genesis") {
+        "Genesis Protostar".to_string()
     } else if lower.contains("protostar") || (is_star && lower.contains("sun")) {
         "Sun".to_string()
     } else if lower.contains("host star") {

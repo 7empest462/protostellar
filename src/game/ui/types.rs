@@ -252,6 +252,20 @@ pub enum HudDynamicText {
     TrajectoryPredictorBadge,
 }
 
+/// Discriminant component for action categories within the Target Inspector toolbar.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectorSection {
+    OrbitTracking,
+    MassComposition,
+    TerraformingBombardment,
+    Astrophysics,
+    ExoticExperiments,
+}
+
+/// Marker component for the dynamic header text in the Exotic Experiments section.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InspectorExoticHeader;
+
 /// Marker for the bottom-center live telemetry and toast container.
 #[derive(Component)]
 pub struct HudToastContainer;
@@ -619,6 +633,7 @@ pub enum UiButtonAction {
     StripAtmosphere,
     // Sandbox Scenarios & System Presets
     LoadScenarioSolar,
+    LoadScenarioGenesis,
     LoadScenarioTrappist,
     LoadScenarioKepler16,
     LoadScenarioHotJupiter,
@@ -729,6 +744,7 @@ impl UiButtonAction {
             UiButtonAction::AccelerateInspiral => "Accelerate gravitational wave inspiral decay for selected compact binary pair.",
             UiButtonAction::StripAtmosphere => "Trigger extreme photoevaporative XUV burst to strip volatile envelope down to bare rocky core.",
             UiButtonAction::LoadScenarioSolar => "[F1]: Reset to standard 4.5 Gyr Hayashi Solar Nebula MMSN with central protostar and 10 embryos.",
+            UiButtonAction::LoadScenarioGenesis => "[S-F1]: Load Protoplanetary Disk Genesis: SPH viscous gas, aerodynamic drag, snow line trap & organic planet formation.",
             UiButtonAction::LoadScenarioTrappist => "[F2]: Load TRAPPIST-1 ultracool red dwarf system with 7 resonant Earths (3 in Habitable Zone).",
             UiButtonAction::LoadScenarioKepler16 => "[F3]: Load Kepler-16 'Tatooine' circumbinary system with K/M binary star pair and giant planet.",
             UiButtonAction::LoadScenarioHotJupiter => "[F4]: Load Hot Jupiter inward migration scenario (Type II disk migration from 5.2 AU -> 0.045 AU).",

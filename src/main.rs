@@ -1,6 +1,6 @@
 //! Protostellar — Application Entry Point.
 
-use bevy::ecs::error::{warn as bevy_warn_handler, FallbackErrorHandler};
+use bevy::ecs::error::{BevyError, ErrorContext, FallbackErrorHandler};
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 
@@ -9,13 +9,20 @@ use protostellar::gpu::GpuSimPlugin;
 use protostellar::rendering::RenderingPlugin;
 use protostellar::simulation::SimulationPlugin;
 
+fn protostellar_error_handler(error: BevyError, ctx: ErrorContext) {
+    let msg = error.to_string();
+    if msg.contains("Entity despawned") || msg.contains("is invalid; its index now has generation") {
+        bevy::log::debug!("Benign accretion collision entity despawn: {error} ({ctx})");
+    } else {
+        bevy::ecs::error::warn(error, ctx);
+    }
+}
+
 fn main() {
     App::new()
         // Project-wide error policy: downgrade all entity-command errors (e.g. inserting
-        // on a just-despawned entity) to WARN instead of panicking. Individual hot-paths
-        // also use `.try_insert()` explicitly for clarity, but this acts as the final
-        // safety net for any future call sites.
-        .insert_resource(FallbackErrorHandler(bevy_warn_handler))
+        // on a just-despawned entity) to DEBUG instead of panicking or polluting the console.
+        .insert_resource(FallbackErrorHandler(protostellar_error_handler))
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {

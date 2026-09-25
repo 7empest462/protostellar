@@ -100,6 +100,8 @@ pub struct AtmosphereUniforms {
     pub planet_center: Vec4,
     /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
     pub aurora_params: Vec4,
+    /// x, y, z: unit 3D spin axis in world coordinates, w: reserved
+    pub spin_axis: Vec4,
 }
 
 impl Default for AtmosphereUniforms {
@@ -111,6 +113,7 @@ impl Default for AtmosphereUniforms {
             star_dir_and_intensity: Vec4::new(0.0, 1.0, 0.0, 1.0),
             planet_center: Vec4::ZERO,
             aurora_params: Vec4::ZERO,
+            spin_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
         }
     }
 }

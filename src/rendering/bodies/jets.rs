@@ -4,6 +4,7 @@ use hashbrown::{HashMap, HashSet};
 
 use crate::rendering::materials::{RelativisticJetMaterial, RelativisticJetUniforms};
 use crate::simulation::components::*;
+use crate::simulation::resources::SimTime;
 
 use super::VisualAssets;
 
@@ -195,7 +196,9 @@ fn auto_provision_relativistic_jet_states(
             _ => None,
         };
         if let Some(state) = auto_state {
-            commands.entity(entity).try_insert(state);
+            if let Ok(mut cmd) = commands.get_entity(entity) {
+                cmd.try_insert(state);
+            }
         }
     }
 }
@@ -289,7 +292,7 @@ fn spawn_missing_jet_hierarchies(
 )]
 pub fn sync_relativistic_jets(
     mut commands: Commands,
-    time: Res<Time>,
+    sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
     mut jet_materials: ResMut<Assets<RelativisticJetMaterial>>,
     compact_candidates: Query<
@@ -346,7 +349,7 @@ pub fn sync_relativistic_jets(
         .collect();
 
     let mut updated_targets = HashSet::new();
-    let elapsed = time.elapsed_secs();
+    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
     // 3. Update existing roots or despawn orphans
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {

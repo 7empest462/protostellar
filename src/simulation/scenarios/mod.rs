@@ -8,11 +8,13 @@
 //! - Hayashi Minimum Mass Solar Nebula (Default Solar System)
 
 pub mod exotic;
+pub mod genesis;
 pub mod kepler;
 pub mod solar;
 pub mod trappist;
 
 pub use exotic::*;
+pub use genesis::*;
 pub use kepler::*;
 pub use solar::*;
 pub use trappist::*;
@@ -27,6 +29,7 @@ use crate::simulation::resources::*;
 pub enum ScenarioPreset {
     #[default]
     SolarNebulaMmsn,
+    AccretionDiskGenesis,
     Trappist1System,
     Kepler16Circumbinary,
     HotJupiterMigration,
@@ -42,6 +45,7 @@ impl ScenarioPreset {
     pub fn display_name(&self) -> &'static str {
         match self {
             ScenarioPreset::SolarNebulaMmsn => "Hayashi Solar Nebula",
+            ScenarioPreset::AccretionDiskGenesis => "Disk Genesis (Organic Planet Formation)",
             ScenarioPreset::Trappist1System => "TRAPPIST-1 (7 Resonant Earths)",
             ScenarioPreset::Kepler16Circumbinary => "Kepler-16 (Circumbinary Binary)",
             ScenarioPreset::HotJupiterMigration => "Hot Jupiter Migration",
@@ -58,6 +62,9 @@ impl ScenarioPreset {
         match self {
             ScenarioPreset::SolarNebulaMmsn => {
                 "Default 4.5 Gyr Hayashi Minimum Mass Solar Nebula (MMSN) with central protostar and 10 protoplanetary embryos."
+            }
+            ScenarioPreset::AccretionDiskGenesis => {
+                "Pristine Class II T-Tauri disk without starter planets. SPH viscous gas aerodynamic drag, water ice snow line trap (2.7 AU), and electrostatic coagulation build planets organically."
             }
             ScenarioPreset::Trappist1System => {
                 "Ultracool M-dwarf (0.09 M☉) with 7 Earth-sized terrestrial worlds in a compact resonant Laplace chain (3 habitable)."
@@ -109,6 +116,7 @@ fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
         ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
         ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
         ScenarioPreset::SolarNebulaMmsn => (16.0, 0.785, 0.62),
+        ScenarioPreset::AccretionDiskGenesis => (24.0, 0.785, 0.65),
         ScenarioPreset::HotJupiterMigration => (10.0, 0.785, 0.62),
         ScenarioPreset::RoguePlanetFlyby => (35.0, 0.785, 0.62),
         ScenarioPreset::LittleRedDot => (160.0, 0.785, 0.62),
@@ -127,6 +135,7 @@ fn spawn_scenario_preset(
 ) -> Entity {
     match preset {
         ScenarioPreset::SolarNebulaMmsn => spawn_solar_nebula_mmsn(commands, disk_params),
+        ScenarioPreset::AccretionDiskGenesis => spawn_accretion_disk_genesis(commands, disk_params),
         ScenarioPreset::Trappist1System => spawn_trappist_1_system(commands, disk_params),
         ScenarioPreset::Kepler16Circumbinary => spawn_kepler_16_system(commands, disk_params),
         ScenarioPreset::HotJupiterMigration => {
@@ -153,6 +162,141 @@ fn spawn_scenario_preset(
     }
 }
 
+fn reset_scenario_simulation_state(
+    sim_time: &mut SimTime,
+    time_warp: &mut TimeWarp,
+    energy_monitor: &mut EnergyMonitor,
+    lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
+    player_state: &mut PlayerInteractionState,
+    opt_scrubber: &mut Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
+) {
+    if let Some(ref mut scrubber) = opt_scrubber {
+        **scrubber = crate::simulation::geology::types::TimelineScrubber::default();
+    }
+    player_state.hovered_entity = None;
+    player_state.impulse_target_entity = None;
+    player_state.tractor_position = None;
+    player_state.impulse_delta_v = None;
+
+    sim_time.elapsed_years = 0.0;
+    sim_time.current_dt_yr = 0.001;
+    sim_time.visual_time_secs = 0.0;
+    time_warp.multiplier = 1.0;
+    time_warp.is_paused = false;
+    energy_monitor.initial_total_energy = 0.0;
+    energy_monitor.kinetic_energy = 0.0;
+    energy_monitor.potential_energy = 0.0;
+    energy_monitor.total_energy = 0.0;
+    energy_monitor.relative_energy_drift = 0.0;
+    energy_monitor.initialized = false;
+    lhb_state.is_active = false;
+    lhb_state.migration_progress = 0.0;
+    lhb_state.resonance_crossed = false;
+    lhb_state.manual_trigger_requested = false;
+    lhb_state.comets_scattered = 0;
+    lhb_state.time_active_years = 0.0;
+}
+
+fn update_scenario_system_phase(
+    preset: ScenarioPreset,
+    phase_mgr: &mut Option<ResMut<crate::game::phases::PhaseManager>>,
+    next_phase: &mut Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
+) {
+    if let Some(ref mut pm) = phase_mgr {
+        let (target_phase, desc) = match preset {
+            ScenarioPreset::SolarNebulaMmsn => (
+                crate::game::phases::SystemPhase::ProtoplanetaryDisk,
+                "Dense protoplanetary disk orbiting young protostar. Dust and pebbles are accreting.",
+            ),
+            ScenarioPreset::AccretionDiskGenesis => (
+                crate::game::phases::SystemPhase::ProtoplanetaryDisk,
+                "🌌 Protoplanetary Disk Genesis: SPH viscous gas fluid, aerodynamic drag, snow line trap & electrostatic coagulation.",
+            ),
+            ScenarioPreset::Trappist1System => (
+                crate::game::phases::SystemPhase::MatureSolarSystem,
+                "🌟 TRAPPIST-1: Resonant 7-planet architecture orbiting ultracool red dwarf.",
+            ),
+            ScenarioPreset::Kepler16Circumbinary => (
+                crate::game::phases::SystemPhase::MatureSolarSystem,
+                "🌟 Kepler-16: Circumbinary gas giant orbiting close stellar pair.",
+            ),
+            ScenarioPreset::PulsarSystem => (
+                crate::game::phases::SystemPhase::MatureSolarSystem,
+                "🌟 Pulsar System: Diamond and rocky worlds surviving extreme pulsar wind.",
+            ),
+            _ => (
+                crate::game::phases::SystemPhase::MatureSolarSystem,
+                "🌟 Mature stellar and planetary system.",
+            ),
+        };
+        pm.current_phase = target_phase;
+        pm.phase_description = desc;
+        if let Some(ref mut np) = next_phase {
+            np.set(target_phase);
+        }
+    }
+}
+
+fn configure_scenario_particles_and_swarm(
+    preset: ScenarioPreset,
+    disk_params: &DiskParameters,
+    config: &mut SimulationConfig,
+    swarm_mesh_query: &mut Query<
+        &mut Visibility,
+        With<crate::rendering::particle_swarm::ParticleSwarmMesh>,
+    >,
+    swarm: &mut Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
+) {
+    let is_empty_swarm = matches!(
+        preset,
+        ScenarioPreset::PulsarSystem
+            | ScenarioPreset::MagnetarOutburst
+            | ScenarioPreset::RelativisticBinary
+            | ScenarioPreset::KozaiLidovTriple
+    ) || disk_params.disk_mass <= 0.0;
+
+    config.active_particles = if is_empty_swarm {
+        0
+    } else {
+        config.target_particle_count as u32
+    };
+
+    for mut vis in swarm_mesh_query.iter_mut() {
+        *vis = if is_empty_swarm {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+
+    if let Some(ref mut swarm_data) = swarm {
+        crate::rendering::particle_swarm::reseed_particle_swarm(
+            swarm_data,
+            disk_params,
+            config,
+        );
+    }
+}
+
+fn align_camera_to_scenario(
+    preset: ScenarioPreset,
+    central_star_ent: Entity,
+    camera_query: &mut Query<&mut crate::rendering::camera::PanOrbitCamera>,
+) {
+    if let Some(mut cam) = camera_query.iter_mut().next() {
+        cam.focus = Vec3::ZERO;
+        cam.target_focus = Vec3::ZERO;
+        cam.target_entity = Some(central_star_ent);
+        let (target_r, target_yaw, target_pitch) = scenario_preset_camera_pose(preset);
+        cam.radius = target_r;
+        cam.target_radius = target_r;
+        cam.yaw = target_yaw;
+        cam.target_yaw = target_yaw;
+        cam.pitch = target_pitch;
+        cam.target_pitch = target_pitch;
+    }
+}
+
 /// System that listens for `LoadScenarioEvent` and reinitializes the entire simulation.
 pub fn handle_load_scenario_events(
     mut commands: Commands,
@@ -173,6 +317,10 @@ pub fn handle_load_scenario_events(
         With<crate::rendering::particle_swarm::ParticleSwarmMesh>,
     >,
     mut opt_scrubber: Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
+    (mut phase_mgr, mut next_phase): (
+        Option<ResMut<crate::game::phases::PhaseManager>>,
+        Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
+    ),
 ) {
     for event in events.read() {
         let preset = event.0;
@@ -184,27 +332,16 @@ pub fn handle_load_scenario_events(
             }
         }
 
-        if let Some(ref mut scrubber) = opt_scrubber {
-            **scrubber = crate::simulation::geology::types::TimelineScrubber::default();
-        }
-        player_state.hovered_entity = None;
-        player_state.impulse_target_entity = None;
-        player_state.tractor_position = None;
-        player_state.impulse_delta_v = None;
+        reset_scenario_simulation_state(
+            &mut sim_time,
+            &mut time_warp,
+            &mut energy_monitor,
+            &mut lhb_state,
+            &mut player_state,
+            &mut opt_scrubber,
+        );
 
-        sim_time.elapsed_years = 0.0;
-        sim_time.current_dt_yr = 0.001;
-        time_warp.multiplier = 1.0;
-        time_warp.is_paused = false;
-        energy_monitor.initial_total_energy = 0.0;
-        energy_monitor.kinetic_energy = 0.0;
-        energy_monitor.potential_energy = 0.0;
-        energy_monitor.total_energy = 0.0;
-        energy_monitor.relative_energy_drift = 0.0;
-        energy_monitor.initialized = false;
-        lhb_state.is_active = false;
-        lhb_state.migration_progress = 0.0;
-        lhb_state.resonance_crossed = false;
+        update_scenario_system_phase(preset, &mut phase_mgr, &mut next_phase);
 
         scenario_state.current_preset = preset;
         scenario_state.scenario_time_years = 0.0;
@@ -218,7 +355,7 @@ pub fn handle_load_scenario_events(
                 config.gas_density_scale = 0.0;
                 disk_params.gas_disk_lifetime_yr = 0.0;
             }
-            ScenarioPreset::SolarNebulaMmsn => {
+            ScenarioPreset::SolarNebulaMmsn | ScenarioPreset::AccretionDiskGenesis => {
                 config.gas_density_scale = 1.0;
                 disk_params.gas_disk_lifetime_yr = 5.0e6;
             }
@@ -230,48 +367,15 @@ pub fn handle_load_scenario_events(
 
         player_state.selected_entity = Some(central_star_ent);
 
-        let is_empty_swarm = matches!(
+        configure_scenario_particles_and_swarm(
             preset,
-            ScenarioPreset::PulsarSystem
-                | ScenarioPreset::MagnetarOutburst
-                | ScenarioPreset::RelativisticBinary
-                | ScenarioPreset::KozaiLidovTriple
-        ) || disk_params.disk_mass <= 0.0;
+            &disk_params,
+            &mut config,
+            &mut swarm_mesh_query,
+            &mut swarm,
+        );
 
-        config.active_particles = if is_empty_swarm {
-            0
-        } else {
-            config.target_particle_count as u32
-        };
-
-        for mut vis in swarm_mesh_query.iter_mut() {
-            *vis = if is_empty_swarm {
-                Visibility::Hidden
-            } else {
-                Visibility::Inherited
-            };
-        }
-
-        if let Some(ref mut swarm_data) = swarm {
-            crate::rendering::particle_swarm::reseed_particle_swarm(
-                swarm_data,
-                &disk_params,
-                &config,
-            );
-        }
-
-        if let Some(mut cam) = camera_query.iter_mut().next() {
-            cam.focus = Vec3::ZERO;
-            cam.target_focus = Vec3::ZERO;
-            cam.target_entity = Some(central_star_ent);
-            let (target_r, target_yaw, target_pitch) = scenario_preset_camera_pose(preset);
-            cam.radius = target_r;
-            cam.target_radius = target_r;
-            cam.yaw = target_yaw;
-            cam.target_yaw = target_yaw;
-            cam.pitch = target_pitch;
-            cam.target_pitch = target_pitch;
-        }
+        align_camera_to_scenario(preset, central_star_ent, &mut camera_query);
     }
 }
 

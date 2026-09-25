@@ -38,6 +38,16 @@ pub struct VolatileInventory {
     pub cometary_impact_count: u32,
 }
 
+/// Tracks a Late Heavy Bombardment impactor targeting a terrestrial body for volatile delivery.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LhbImpactor {
+    pub target_entity: Entity,
+    pub spawn_time_yr: f64,
+    pub expected_arrival_yr: f64,
+    pub target_r: f64,
+    pub target_q: f64,
+}
+
 fn default_elongation() -> f32 {
     1.0
 }

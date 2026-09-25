@@ -839,6 +839,7 @@ fn test_pop3_infalling_star_particle_accretion_safety() {
         lhb_resonance: false,
         disk_params: &disk_params,
         massive_bodies: &massive_bodies,
+        base_mass: data.base_mass,
     };
 
     // Must execute cleanly without panicking on min > max clamp

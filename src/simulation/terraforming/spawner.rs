@@ -90,8 +90,30 @@ pub fn launch_targeted_bombardment(
 
     // Flight time ~0.0035 years (~30 sim hours) for a satisfying, visible approach
     let dt_flight = 0.0035f64;
-    let inbound_velocity = -approach_dir * (standoff_dist / dt_flight);
-    let spawn_vel = target_vel + inbound_velocity;
+
+    // Estimate stellar gravitational acceleration on target:
+    // a_* = - (G * M_star / r^3) * r
+    let r_target_mag = target_pos.length();
+    let a_target = if r_target_mag > 1e-4 {
+        -(G_ASTRO * 1.0 / (r_target_mag * r_target_mag * r_target_mag)) * target_pos
+    } else {
+        DVec3::ZERO
+    };
+
+    // Target position at arrival time t + dt_flight accounting for Keplerian orbital curvature:
+    let predicted_target_pos =
+        target_pos + target_vel * dt_flight + 0.5 * a_target * dt_flight * dt_flight;
+
+    // Estimate stellar gravitational acceleration at spawn position
+    let r_spawn_mag = spawn_pos.length();
+    let a_spawn = if r_spawn_mag > 1e-4 {
+        -(G_ASTRO * 1.0 / (r_spawn_mag * r_spawn_mag * r_spawn_mag)) * spawn_pos
+    } else {
+        DVec3::ZERO
+    };
+
+    // Solved launch velocity compensating for differential gravitational curvature:
+    let spawn_vel = (predicted_target_pos - spawn_pos) / dt_flight - 0.5 * a_spawn * dt_flight;
 
     commands
         .spawn((

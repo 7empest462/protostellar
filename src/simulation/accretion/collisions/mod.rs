@@ -126,10 +126,9 @@ pub fn is_physically_interpenetrating(
 ) -> bool {
     let physical_contact = r1 + r2;
     dist < physical_contact * 0.90
-        || min_dist < physical_contact * 0.85
         || dist < r1.max(r2) * 1.05
         || dist < r_contact * 0.95
-        || min_dist < r_contact * 0.90
+        || (min_dist < physical_contact * 0.85 && dist < r_contact * 1.25)
 }
 
 fn compute_closest_approach(r_rel: DVec3, v_rel_vec: DVec3, dist: f64, dt: f64) -> (f64, DVec3) {
@@ -182,19 +181,62 @@ fn compute_effective_collision_radius(
     let both_major = b1.body_type.is_planet() && b2.body_type.is_planet();
 
     let r_phys = b1.radius + b2.radius;
-    let r_contact = if is_stellar || both_major {
-        r_phys
+    let r_contact = if is_stellar {
+        let (star_b, other_b) = if b1.is_central || b1.body_type.is_star_or_remnant() {
+            (b1, b2)
+        } else {
+            (b2, b1)
+        };
+        let r_orb = (other_b.pos.x * other_b.pos.x + other_b.pos.z * other_b.pos.z).sqrt() as f32;
+        let r_star_vis = f64::from(config.calc_visual_radius_with_orbit(
+            star_b.radius,
+            star_b.body_type,
+            0.0,
+            r_orb.max(0.001),
+        ));
+        let r_other_vis = f64::from(config.calc_visual_radius_with_orbit(
+            other_b.radius,
+            other_b.body_type,
+            r_orb,
+            r_orb.max(0.001),
+        ));
+        // Devourment occurs if body plunges into the star's visual photosphere
+        (r_star_vis + other_b.radius.max(r_other_vis * 0.40)).max(r_phys)
+    } else if both_major {
+        let r_orb1 = (b1.pos.x * b1.pos.x + b1.pos.z * b1.pos.z).sqrt() as f32;
+        let r_orb2 = (b2.pos.x * b2.pos.x + b2.pos.z * b2.pos.z).sqrt() as f32;
+        let min_r = r_orb1.min(r_orb2).max(0.001);
+        let r1_vis = f64::from(config.calc_visual_radius_with_orbit(
+            b1.radius,
+            b1.body_type,
+            r_orb1,
+            min_r,
+        ));
+        let r2_vis = f64::from(config.calc_visual_radius_with_orbit(
+            b2.radius,
+            b2.body_type,
+            r_orb2,
+            min_r,
+        ));
+        // Major planets collide if physically touching or passing halfway through each other visually
+        ((r1_vis + r2_vis) * 0.40).max(r_phys)
     } else {
         let r1_vis = f64::from(config.calc_visual_radius_for_type(b1.radius, b1.body_type));
         let r2_vis = f64::from(config.calc_visual_radius_for_type(b2.radius, b2.body_type));
-        (r1_vis + r2_vis).max(r_phys)
+        let r_orb = (b1.pos.length().min(b2.pos.length())).max(0.01);
+        let max_minor_r = r_orb * 0.15;
+        ((r1_vis + r2_vis) * 0.35).min(max_minor_r).max(r_phys)
     };
 
     let v_esc = (2.0 * G_ASTRO * (b1.mass + b2.mass) / r_contact.max(1e-6)).sqrt();
     let v_rel_vec = b1.vel - b2.vel;
     let v_rel = v_rel_vec.length();
 
-    let safronov_factor = 1.0 + (v_esc * v_esc) / (v_rel * v_rel + 1e-4);
+    let safronov_factor = if is_stellar || both_major {
+        1.0
+    } else {
+        1.0 + (v_esc * v_esc) / (v_rel * v_rel + 1e-4)
+    };
     let capture_r = if (b1.body_type.is_planet() && is_minor(b2.body_type))
         || (b2.body_type.is_planet() && is_minor(b1.body_type))
     {
@@ -243,13 +285,7 @@ fn is_theia_earth_snapshot(b1: &BodySnapshot, b2: &BodySnapshot) -> bool {
         (is_explicit || is_procedural) && !is_excluded
     };
     let is_theia = |b: &BodySnapshot| {
-        let n = b.name.as_str();
-        (n == "Theia" || n.starts_with("Theia"))
-            && !n.contains("Earth")
-            && !n.contains("Moon")
-            && !n.contains("Planet Nine")
-            && !n.contains("Planet 9")
-            && !n.contains("Venus")
+        crate::simulation::accretion::theia::is_explicit_theia(b.name.as_str())
     };
     (is_theia(b1) && is_earth(b2)) || (is_theia(b2) && is_earth(b1))
 }
@@ -295,7 +331,13 @@ fn process_body_pair(
     let (r_contact, v_esc, v_rel, effective_collision_radius) =
         compute_effective_collision_radius(config, ctx.star_mass, b1, b2);
 
-    let dt = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(0.05);
+    let max_linear_dt = if b1.body_type.is_planet() && b2.body_type.is_planet() {
+        let r_min = b1.pos.length().min(b2.pos.length());
+        (0.20 * r_min / v_rel.max(1e-2)).min(0.005)
+    } else {
+        0.05
+    };
+    let dt = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(max_linear_dt);
     let v_rel_vec = b1.vel - b2.vel;
     let (min_dist, r_closest) = compute_closest_approach(r_rel, v_rel_vec, dist, dt);
 
@@ -401,12 +443,7 @@ fn execute_collision_regimes(
         (is_explicit || is_procedural) && !is_excluded
     };
     let is_theia_cand = |n: &str| {
-        (n == "Theia" || n.starts_with("Theia"))
-            && !n.contains("Earth")
-            && !n.contains("Moon")
-            && !n.contains("Planet Nine")
-            && !n.contains("Planet 9")
-            && !n.contains("Venus")
+        crate::simulation::accretion::theia::is_explicit_theia(n)
     };
     let is_theia_earth = (is_theia_cand(&pair.p_name)
         && is_earth_cand(&pair.s_name, pair.s_pos, pair.s_type))

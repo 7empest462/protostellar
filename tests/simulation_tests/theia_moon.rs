@@ -428,6 +428,44 @@ fn test_theia_earth_collision_in_accretion_never_bounces() {
     );
 }
 
+fn spawn_test_moon(
+    world: &mut World,
+    parent: Entity,
+    name: &str,
+    mass: f64,
+    radius: f64,
+    pos: DVec3,
+    vel: DVec3,
+    semi_major_axis_au: f64,
+    orbital_period_years: f64,
+) -> Entity {
+    let comp = Composition::rocky();
+    let mut diff = InternalDifferentiation::default();
+    diff.recalculate(mass, radius, &comp);
+    world
+        .spawn((
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(mass),
+            Radius(radius),
+            Temperature(250.0),
+            comp,
+            diff,
+            CelestialBody {
+                name: name.to_string(),
+                body_type: BodyType::Moon,
+            },
+            SatelliteOf {
+                parent,
+                semi_major_axis_au,
+                orbital_period_years,
+                true_anomaly: 0.0,
+            },
+        ))
+        .id()
+}
+
 #[test]
 fn test_sibling_moons_orbiting_same_planet_collide_and_merge_when_crossing_paths() {
     let mut app = App::new();
@@ -471,7 +509,7 @@ fn test_sibling_moons_orbiting_same_planet_collide_and_merge_when_crossing_paths
             Mass(earth_mass),
             Radius(earth_rad),
             Temperature(288.0),
-            comp.clone(),
+            comp,
             diff,
             CelestialBody {
                 name: "Earth".to_string(),
@@ -486,63 +524,35 @@ fn test_sibling_moons_orbiting_same_planet_collide_and_merge_when_crossing_paths
     let moon1_mass = 0.0123 * EARTH_MASS_SOLAR;
     let moon1_rad = EARTH_RADIUS_AU * 0.272;
     let moon1_pos = earth_pos + DVec3::new(0.0075, 0.0, 0.0);
-    let mut moon1_diff = InternalDifferentiation::default();
-    moon1_diff.recalculate(moon1_mass, moon1_rad, &comp);
-
-    let moon1_ent = app
-        .world_mut()
-        .spawn((
-            SimPosition(moon1_pos),
-            SimVelocity(earth_vel + DVec3::new(0.0, 0.0, 0.2)),
-            SimAcceleration(DVec3::ZERO),
-            Mass(moon1_mass),
-            Radius(moon1_rad),
-            Temperature(250.0),
-            comp.clone(),
-            moon1_diff,
-            CelestialBody {
-                name: "The Moon".to_string(),
-                body_type: BodyType::Moon,
-            },
-            SatelliteOf {
-                parent: earth_ent,
-                semi_major_axis_au: 0.0075,
-                orbital_period_years: 0.074,
-                true_anomaly: 0.0,
-            },
-        ))
-        .id();
+    let moon1_vel = earth_vel + DVec3::new(0.0, 0.0, 0.2);
+    let moon1_ent = spawn_test_moon(
+        app.world_mut(),
+        earth_ent,
+        "The Moon",
+        moon1_mass,
+        moon1_rad,
+        moon1_pos,
+        moon1_vel,
+        0.0075,
+        0.074,
+    );
 
     // Moon 2: "Earth I (Moon)" at 0.0080 AU (distance 0.0005 AU, within visual contact radius ~0.0036 AU)
     let moon2_mass = 0.0050 * EARTH_MASS_SOLAR;
     let moon2_rad = EARTH_RADIUS_AU * 0.20;
     let moon2_pos = earth_pos + DVec3::new(0.0080, 0.0, 0.0);
-    let mut moon2_diff = InternalDifferentiation::default();
-    moon2_diff.recalculate(moon2_mass, moon2_rad, &comp);
-
-    let moon2_ent = app
-        .world_mut()
-        .spawn((
-            SimPosition(moon2_pos),
-            SimVelocity(earth_vel + DVec3::new(0.0, 0.0, 0.2)),
-            SimAcceleration(DVec3::ZERO),
-            Mass(moon2_mass),
-            Radius(moon2_rad),
-            Temperature(250.0),
-            comp,
-            moon2_diff,
-            CelestialBody {
-                name: "Earth I (Moon)".to_string(),
-                body_type: BodyType::Moon,
-            },
-            SatelliteOf {
-                parent: earth_ent,
-                semi_major_axis_au: 0.0080,
-                orbital_period_years: 0.078,
-                true_anomaly: 0.0,
-            },
-        ))
-        .id();
+    let moon2_vel = earth_vel + DVec3::new(0.0, 0.0, 0.2);
+    let moon2_ent = spawn_test_moon(
+        app.world_mut(),
+        earth_ent,
+        "Earth I (Moon)",
+        moon2_mass,
+        moon2_rad,
+        moon2_pos,
+        moon2_vel,
+        0.0080,
+        0.078,
+    );
 
     app.update();
 
@@ -777,3 +787,4 @@ fn test_the_moon_retains_spherical_planet_mesh_under_gas_and_pebble_accretion() 
         "Sibling moons must always select planet_mesh"
     );
 }
+

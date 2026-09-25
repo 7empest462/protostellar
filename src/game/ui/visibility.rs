@@ -2,12 +2,13 @@
 
 use bevy::prelude::*;
 
-use crate::simulation::components::CelestialBody;
+use crate::simulation::components::{BodyType, CelestialBody, CentralStar};
 use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
-    HudDynamicText, HudPanelElement, HudVisibilityState, PlanetBuilderPanel, PlanetBuilderState,
-    TelemetryGraphPanel, TelemetryPanelState,
+    HudDynamicText, HudPanelElement, HudVisibilityState, InspectorExoticHeader, InspectorSection,
+    PlanetBuilderPanel, PlanetBuilderState, TelemetryGraphPanel, TelemetryPanelState,
+    UiButtonAction,
 };
 
 /// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
@@ -165,3 +166,128 @@ fn flex_or_none(visible: bool) -> Display {
         Display::None
     }
 }
+
+/// Synchronizes visibility of scenario-contextual buttons and inspector action rows.
+#[allow(
+    clippy::type_complexity,
+    reason = "Queries for contextual buttons, inspector sections, and header text"
+)]
+pub fn update_scenario_contextual_ui(
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    player_state: Res<PlayerInteractionState>,
+    target_query: Query<(&CelestialBody, Option<&CentralStar>)>,
+    mut button_nodes: Query<(&UiButtonAction, &mut Node)>,
+    mut section_nodes: Query<(&InspectorSection, &mut Node), Without<UiButtonAction>>,
+    mut header_text: Query<&mut Text, With<InspectorExoticHeader>>,
+) {
+    let preset = scenario_state.as_ref().map_or(
+        crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
+        |s| s.current_preset,
+    );
+
+    let selected_info = player_state
+        .selected_entity
+        .and_then(|e| target_query.get(e).ok());
+    let is_star_like = selected_info.is_some_and(|(body, opt_star)| {
+        opt_star.is_some()
+            || matches!(
+                body.body_type,
+                BodyType::Protostar
+                    | BodyType::YellowDwarf
+                    | BodyType::RedDwarf
+                    | BodyType::BlueSupergiant
+                    | BodyType::BrownDwarf
+                    | BodyType::WhiteDwarf
+                    | BodyType::NeutronStar
+                    | BodyType::Pulsar
+                    | BodyType::BlackHole
+                    | BodyType::QuasiStar
+            )
+    });
+
+    let is_planetary_scenario = matches!(
+        preset,
+        crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+            | crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
+            | crate::simulation::scenarios::ScenarioPreset::Trappist1System
+            | crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary
+            | crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration
+            | crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby
+            | crate::simulation::scenarios::ScenarioPreset::KozaiLidovTriple
+    );
+
+    // 1. Synchronize inspector section containers
+    for (section, mut node) in section_nodes.iter_mut() {
+        node.display = match section {
+            InspectorSection::TerraformingBombardment => {
+                // Terraforming only appears in planetary scenarios and for solid/planetary bodies
+                flex_or_none(is_planetary_scenario && !is_star_like)
+            }
+            InspectorSection::ExoticExperiments => {
+                // Exotic experiments section is always visible, but dynamically updates its content
+                Display::Flex
+            }
+            InspectorSection::OrbitTracking
+            | InspectorSection::MassComposition
+            | InspectorSection::Astrophysics => Display::Flex,
+        };
+    }
+
+    // 2. Synchronize individual buttons according to their scenario correlation
+    for (action, mut node) in button_nodes.iter_mut() {
+        match action {
+            // Relativistic Binary Scenario actions
+            UiButtonAction::AccelerateInspiral => {
+                node.display = flex_or_none(
+                    preset == crate::simulation::scenarios::ScenarioPreset::RelativisticBinary,
+                );
+            }
+            // Solar Nebula MMSN Scenario actions
+            UiButtonAction::InjectEmbryo | UiButtonAction::TriggerLhb => {
+                node.display = flex_or_none(
+                    preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
+                );
+            }
+            // Little Red Dot Scenario actions
+            UiButtonAction::ToggleSuperEddington | UiButtonAction::TriggerBlowoutCocoon => {
+                node.display = flex_or_none(
+                    preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
+                );
+            }
+            // Pop-III Hypergiant is UNIVERSAL (available in all scenarios)
+            UiButtonAction::SpawnInfallPop3Star => {
+                node.display = Display::Flex;
+            }
+            // Coronal Mass Ejection: Magnetar Outburst scenario or active stars
+            UiButtonAction::TriggerCoronalMassEjection => {
+                node.display = flex_or_none(
+                    preset == crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst
+                        || is_star_like,
+                );
+            }
+            // Biosphere seeding: planetary scenarios on solid non-star worlds
+            UiButtonAction::SeedLife => {
+                node.display = flex_or_none(is_planetary_scenario && !is_star_like);
+            }
+            // Geological Epoch scrubber: scenarios with planetary era timelines
+            UiButtonAction::ToggleEpochScrubberPanel => {
+                node.display = flex_or_none(matches!(
+                    preset,
+                    crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+                        | crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // 3. Dynamic header text for exotic experiments
+    for mut text in header_text.iter_mut() {
+        if preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot {
+            text.0 = "EXOTIC / LITTLE RED DOT:".to_string();
+        } else {
+            text.0 = "EXOTIC PHENOMENA:".to_string();
+        }
+    }
+}
+

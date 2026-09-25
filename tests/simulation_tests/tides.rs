@@ -385,3 +385,106 @@ fn test_tidal_state_json_serialization() {
     assert!((loaded_tide.resonance_ratio - 1.5).abs() < 1e-6);
     assert!((loaded_tide.tidal_heating_power_watts - 4.2e13).abs() < 1.0);
 }
+
+#[test]
+fn test_planet_rotation_periods_not_wiped_by_tidal_step() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<SimulationConfig>()
+        .init_resource::<TidalConfig>();
+
+    app.add_systems(Update, update_tidal_evolution);
+
+    let mut disk_params = DiskParameters::default();
+    spawn_solar_nebula_mmsn(&mut app.world_mut().commands(), &mut disk_params);
+
+    // Initial check before simulation step
+    {
+        let mut query = app.world_mut().query::<(&CelestialBody, &SpinState)>();
+        for (body, spin) in query.iter(app.world()) {
+            if body.name.contains("Earth") {
+                assert!(
+                    (spin.rotation_period_hours - 24.0).abs() < 0.1,
+                    "Proto-Earth must start with ~24h rotation, got {:.2}h",
+                    spin.rotation_period_hours
+                );
+                assert!(
+                    (spin.axial_tilt_degrees - 23.44).abs() < 0.5,
+                    "Proto-Earth must start with ~23.4 deg tilt, got {:.2} deg",
+                    spin.axial_tilt_degrees
+                );
+            } else if body.name.contains("Jupiter") {
+                assert!(
+                    (spin.rotation_period_hours - 9.93).abs() < 0.1,
+                    "Proto-Jupiter must start with ~9.9h rotation, got {:.2}h",
+                    spin.rotation_period_hours
+                );
+            } else if body.name.contains("Saturn") {
+                assert!(
+                    (spin.rotation_period_hours - 10.7).abs() < 0.1,
+                    "Proto-Saturn must start with ~10.7h rotation, got {:.2}h",
+                    spin.rotation_period_hours
+                );
+                assert!(
+                    (spin.axial_tilt_degrees - 26.73).abs() < 0.5,
+                    "Proto-Saturn must start with ~26.7 deg tilt, got {:.2} deg",
+                    spin.axial_tilt_degrees
+                );
+            }
+        }
+    }
+
+    // Run 5 simulation frames of tidal evolution
+    for _ in 0..5 {
+        app.update();
+    }
+
+    // Post-step check: ensure rotation periods and tilts were NOT wiped to 8,766 hours
+    let mut query = app.world_mut().query::<(&CelestialBody, &SpinState)>();
+    let mut checked_earth = false;
+    let mut checked_jupiter = false;
+    let mut checked_saturn = false;
+
+    for (body, spin) in query.iter(app.world()) {
+        if body.name.contains("Earth") {
+            checked_earth = true;
+            assert!(
+                spin.rotation_period_hours < 25.0 && spin.rotation_period_hours > 23.0,
+                "Proto-Earth rotation period must stay near 24.0h, got {:.2}h (regression: wiped to 8,766h)",
+                spin.rotation_period_hours
+            );
+            assert!(
+                (spin.axial_tilt_degrees - 23.44).abs() < 1.0,
+                "Proto-Earth axial tilt must be preserved, got {:.2} deg",
+                spin.axial_tilt_degrees
+            );
+            assert!(
+                spin.spin_vector.x.abs() > 1e-12 || spin.spin_vector.z.abs() > 1e-12,
+                "Proto-Earth spin vector must retain non-zero horizontal tilt components"
+            );
+        } else if body.name.contains("Jupiter") {
+            checked_jupiter = true;
+            assert!(
+                spin.rotation_period_hours < 12.0 && spin.rotation_period_hours > 8.0,
+                "Proto-Jupiter rotation period must stay near 9.9h, got {:.2}h",
+                spin.rotation_period_hours
+            );
+        } else if body.name.contains("Saturn") {
+            checked_saturn = true;
+            assert!(
+                spin.rotation_period_hours < 13.0 && spin.rotation_period_hours > 9.0,
+                "Proto-Saturn rotation period must stay near 10.7h, got {:.2}h",
+                spin.rotation_period_hours
+            );
+            assert!(
+                (spin.axial_tilt_degrees - 26.73).abs() < 1.0,
+                "Proto-Saturn axial tilt must be preserved, got {:.2} deg",
+                spin.axial_tilt_degrees
+            );
+        }
+    }
+
+    assert!(checked_earth && checked_jupiter && checked_saturn);
+}

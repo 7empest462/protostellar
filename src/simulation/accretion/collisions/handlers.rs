@@ -399,14 +399,21 @@ pub fn handle_grazing_bounce(
         let impulse_mag = -(1.0 + e_restitution) * v_rel_normal / (1.0 / m1 + 1.0 / m2);
         let impulse = n_norm * impulse_mag;
 
+        let total_m = m1 + m2;
+        let kinetic_dissipation =
+            0.5 * ((m1 * m2) / total_m.max(1e-30)) * (v_rel_normal * v_rel_normal);
+        let delta_temp = (kinetic_dissipation * 3e5).clamp(150.0, 3000.0);
+
         if !is_central1 {
-            if let Ok((_, _, _, mut v1, _, _, _, _, _, _, _, _, _)) = ctx.bodies_query.get_mut(e1) {
+            if let Ok((_, _, _, mut v1, _, _, mut t1, ..)) = ctx.bodies_query.get_mut(e1) {
                 v1.0 += impulse / m1;
+                t1.0 = (t1.0 + delta_temp).min(4000.0);
             }
         }
         if !is_central2 {
-            if let Ok((_, _, _, mut v2, _, _, _, _, _, _, _, _, _)) = ctx.bodies_query.get_mut(e2) {
+            if let Ok((_, _, _, mut v2, _, _, mut t2, ..)) = ctx.bodies_query.get_mut(e2) {
                 v2.0 -= impulse / m2;
+                t2.0 = (t2.0 + delta_temp).min(4000.0);
             }
         }
 
@@ -439,12 +446,7 @@ pub fn handle_grazing_bounce(
     }
 }
 
-pub fn handle_inelastic_merger(
-    ctx: &mut CollisionContext,
-    pair: &SortedPair,
-    v_rel: f64,
-    b1: &mut BodySnapshot,
-) {
+fn should_skip_earth_moon_collision(pair: &SortedPair) -> bool {
     let is_earth_name = |n: &str, b_type: BodyType| {
         b_type.is_planet()
             && !n.contains("Moon")
@@ -459,11 +461,29 @@ pub fn handle_inelastic_merger(
             && !n.contains("Mercury")
             && !n.contains("Mars")
     };
-    if (is_earth_name(&pair.p_name, pair.p_type) && pair.s_name.contains("Moon"))
+    (is_earth_name(&pair.p_name, pair.p_type) && pair.s_name.contains("Moon"))
         || (is_earth_name(&pair.s_name, pair.s_type) && pair.p_name.contains("Moon"))
-    {
-        return;
-    }
+}
+
+struct InelasticMergerPhysics {
+    total_mass: f64,
+    merged_vel: DVec3,
+    merged_pos: DVec3,
+    merged_comp: Composition,
+    merged_spin: DVec3,
+    new_radius: f64,
+    new_temp: f64,
+    updated_type: BodyType,
+    new_acc: DVec3,
+    kinetic_loss: f64,
+}
+
+fn compute_inelastic_merger_physics(
+    pair: &SortedPair,
+    v_rel: f64,
+    b1_temp: f64,
+    star_mass: f64,
+) -> InelasticMergerPhysics {
     let total_mass = pair.p_m + pair.s_m;
     let merged_vel = if pair.p_is_central {
         DVec3::ZERO
@@ -491,9 +511,16 @@ pub fn handle_inelastic_merger(
         .cbrt()
         .max(EARTH_RADIUS_AU * 0.3);
 
-    let kinetic_loss = 0.5 * ((pair.p_m * pair.s_m) / total_mass) * v_rel * v_rel;
-    let delta_temp = (kinetic_loss * 5e5).clamp(0.0, 4000.0);
-    let new_temp = (b1.temp + delta_temp).min(10000.0);
+    let v_esc_sq = (2.0 * G_ASTRO * total_mass) / new_radius.max(1e-6);
+    let kinetic_loss =
+        0.5 * ((pair.p_m * pair.s_m) / total_mass.max(1e-30)) * (v_rel * v_rel + v_esc_sq * 0.25);
+    let gamma = (pair.s_m / pair.p_m.max(1e-30)).min(1.0);
+    let delta_temp = if gamma >= 0.05 {
+        (kinetic_loss * 5e5).clamp(250.0, 4000.0)
+    } else {
+        (gamma * 1500.0).clamp(0.5, 50.0)
+    };
+    let new_temp = (b1_temp + delta_temp).min(10000.0);
 
     let is_star_like = pair.p_type.is_star_or_remnant();
     let updated_type = if is_star_like {
@@ -512,8 +539,35 @@ pub fn handle_inelastic_merger(
     let new_acc = if pair.p_is_central {
         DVec3::ZERO
     } else {
-        -(G_ASTRO * ctx.star_mass / (r_len * r_len * r_len)) * merged_pos
+        -(G_ASTRO * star_mass / (r_len * r_len * r_len)) * merged_pos
     };
+
+    InelasticMergerPhysics {
+        total_mass,
+        merged_vel,
+        merged_pos,
+        merged_comp,
+        merged_spin,
+        new_radius,
+        new_temp,
+        updated_type,
+        new_acc,
+        kinetic_loss,
+    }
+}
+
+pub fn handle_inelastic_merger(
+    ctx: &mut CollisionContext,
+    pair: &SortedPair,
+    v_rel: f64,
+    b1: &mut BodySnapshot,
+) {
+    if should_skip_earth_moon_collision(pair) {
+        return;
+    }
+
+    let physics = compute_inelastic_merger_physics(pair, v_rel, b1.temp, ctx.star_mass);
+    let is_star_like = pair.p_type.is_star_or_remnant();
 
     if let Ok((
         _,
@@ -531,24 +585,24 @@ pub fn handle_inelastic_merger(
         _,
     )) = ctx.bodies_query.get_mut(pair.primary_entity)
     {
-        m.0 = total_mass;
-        pos.0 = merged_pos;
-        vel.0 = merged_vel;
-        acc.0 = new_acc;
+        m.0 = physics.total_mass;
+        pos.0 = physics.merged_pos;
+        vel.0 = physics.merged_vel;
+        acc.0 = physics.new_acc;
         if !is_star_like {
-            rad.0 = new_radius;
-            t.0 = new_temp;
+            rad.0 = physics.new_radius;
+            t.0 = physics.new_temp;
         }
-        *comp = merged_comp;
-        body.body_type = updated_type;
+        *comp = physics.merged_comp;
+        body.body_type = physics.updated_type;
 
-        update_merged_body_name(&mut body.name, updated_type);
+        update_merged_body_name(&mut body.name, physics.updated_type);
 
         if let Some(mut diff) = opt_diff {
-            diff.recalculate(total_mass, new_radius, &merged_comp);
+            diff.recalculate(physics.total_mass, physics.new_radius, &physics.merged_comp);
         }
         if let Some(mut spin) = opt_spin_mut {
-            spin.update_from_spin(merged_spin, total_mass, new_radius);
+            spin.update_from_spin(physics.merged_spin, physics.total_mass, physics.new_radius);
         }
     }
 
@@ -571,23 +625,23 @@ pub fn handle_inelastic_merger(
     ctx.merge_events.write(AccretionMergeEvent {
         primary_entity: pair.primary_entity,
         secondary_entity: pair.secondary_entity,
-        merged_mass: total_mass,
-        merged_position: merged_pos,
-        merged_velocity: merged_vel,
-        new_body_type: updated_type,
-        energy_released: kinetic_loss,
+        merged_mass: physics.total_mass,
+        merged_position: physics.merged_pos,
+        merged_velocity: physics.merged_vel,
+        new_body_type: physics.updated_type,
+        energy_released: physics.kinetic_loss,
     });
 
-    b1.mass = total_mass;
-    b1.pos = merged_pos;
-    b1.vel = merged_vel;
+    b1.mass = physics.total_mass;
+    b1.pos = physics.merged_pos;
+    b1.vel = physics.merged_vel;
     if !is_star_like {
-        b1.radius = new_radius;
-        b1.temp = new_temp;
+        b1.radius = physics.new_radius;
+        b1.temp = physics.new_temp;
     }
-    b1.comp = merged_comp;
-    b1.body_type = updated_type;
-    b1.spin = merged_spin;
+    b1.comp = physics.merged_comp;
+    b1.body_type = physics.updated_type;
+    b1.spin = physics.merged_spin;
 }
 
 fn is_canonical_solar_name(name: &str) -> bool {
