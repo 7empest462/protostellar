@@ -108,7 +108,7 @@ impl Default for GmcFluidUniforms {
             num_sinks: 0,
             ambient_temp: 15.0,
             g_astro: G_ASTRO as f32,
-            collapse_threshold: 4.8e-11, // M_sun / AU^3
+            collapse_threshold: 1.2e-10, // Higher threshold allows gas to visibly condense before spawning
             vacuum_rate: 1.0e-11,
             _pad0: 0.0,
             _pad1: 0.0,
@@ -275,7 +275,7 @@ pub fn receive_gmc_collapse_events(
 
     while let Ok(events) = receiver.rx.try_recv() {
         for ev in events {
-            if star_count >= 24 {
+            if star_count >= 1000 {
                 break;
             }
 
@@ -401,14 +401,14 @@ fn generate_initial_gmc_fields() -> (Vec<f32>, Vec<[f32; 4]>, Vec<f32>) {
                     + 0.10 * (wz * 0.028).sin() * (wy * 0.020).cos();
                 let rho = (rho_0 * profile * turb_rho.max(0.2)).max(1.0e-14);
 
-                // Supersonic turbulent velocity fluctuations (Mach ~ 3-4, sigma ~ 0.8-1.2 km/s ~ 0.17-0.25 AU/yr)
+                // Subsonic turbulent velocity fluctuations to allow local gravity to overcome kinetic energy
                 let phase_x = (wx * 0.025).sin() * (wz * 0.018).cos();
                 let phase_y = (wy * 0.022).cos() * (wx * 0.015).sin();
                 let phase_z = (wz * 0.028).sin() * (wy * 0.020).cos();
 
-                let vx = phase_x * 0.22;
-                let vy = phase_y * 0.18;
-                let vz = phase_z * 0.20;
+                let vx = phase_x * 0.044;
+                let vy = phase_y * 0.036;
+                let vz = phase_z * 0.040;
 
                 densities.push(rho);
                 velocities.push([vx, vy, vz, 0.0]);

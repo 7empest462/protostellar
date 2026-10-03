@@ -185,7 +185,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var a_grav = -world_pos * g_cloud;
 
     // Local clump self-gravity: accelerates gas toward local density peaks (driving Jeans runaway collapse)
-    let a_local_grav = (uniforms.g_astro * 2.5e6) * grad_rho;
+    let a_local_grav = (uniforms.g_astro * 3.5e6) * grad_rho;
     a_grav = a_grav + a_local_grav;
     var a_rad = vec3<f32>(0.0);
 
