@@ -145,11 +145,19 @@ fn handle_little_red_dot_action(
     camera_query: &mut Query<&mut PanOrbitCamera>,
 ) -> bool {
     match action {
-        UiButtonAction::ToggleSuperEddington => action_toggle_super_eddington(quasi_star_query, toast),
-        UiButtonAction::TriggerBlowoutCocoon => action_trigger_blowout_cocoon(quasi_star_query, toast),
-        UiButtonAction::SpawnInfallPop3Star => {
-            action_spawn_infall_pop3_star(quasi_star_query, toast, commands, player_state, camera_query)
+        UiButtonAction::ToggleSuperEddington => {
+            action_toggle_super_eddington(quasi_star_query, toast)
         }
+        UiButtonAction::TriggerBlowoutCocoon => {
+            action_trigger_blowout_cocoon(quasi_star_query, toast)
+        }
+        UiButtonAction::SpawnInfallPop3Star => action_spawn_infall_pop3_star(
+            quasi_star_query,
+            toast,
+            commands,
+            player_state,
+            camera_query,
+        ),
         UiButtonAction::TriggerGmcSupernovaShock => {
             action_trigger_gmc_supernova_shock(toast, commands, player_state, camera_query)
         }
@@ -157,7 +165,10 @@ fn handle_little_red_dot_action(
     }
 }
 
-fn action_toggle_super_eddington(quasi_star_query: &mut Query<&mut BlackHoleStarState>, toast: &mut NotificationToast) -> bool {
+fn action_toggle_super_eddington(
+    quasi_star_query: &mut Query<&mut BlackHoleStarState>,
+    toast: &mut NotificationToast,
+) -> bool {
     let mut toggled = false;
     for mut state in quasi_star_query.iter_mut() {
         state.toggle_super_eddington();
@@ -177,7 +188,10 @@ fn action_toggle_super_eddington(quasi_star_query: &mut Query<&mut BlackHoleStar
     true
 }
 
-fn action_trigger_blowout_cocoon(quasi_star_query: &mut Query<&mut BlackHoleStarState>, toast: &mut NotificationToast) -> bool {
+fn action_trigger_blowout_cocoon(
+    quasi_star_query: &mut Query<&mut BlackHoleStarState>,
+    toast: &mut NotificationToast,
+) -> bool {
     let mut triggered = false;
     for mut state in quasi_star_query.iter_mut() {
         state.trigger_blowout();

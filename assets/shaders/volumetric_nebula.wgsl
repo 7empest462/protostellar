@@ -136,22 +136,25 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
         // Ionization cavity carving and glowing H-alpha / [O III] emission fronts around protostars
         var cavity_glow = vec3<f32>(0.0);
+        var in_scatter = vec3<f32>(0.0);
 
         for (var i = 0u; i < neb.num_stars; i = i + 1u) {
             let star_data = neb.star_positions_and_cavities[i];
             let star_pos = star_data.xyz;
             let cav_radius = star_data.w;
+            let star_color = neb.star_colors_and_lum[i].rgb;
             let star_lum = neb.star_colors_and_lum[i].w;
 
-            if (cav_radius > 0.5) {
-                let dist_to_star = length(sample_pos - star_pos);
+            let light_vec = star_pos - sample_pos;
+            let light_dist = max(length(light_vec), 1.0);
 
+            if (cav_radius > 0.5) {
                 // Carve cavity: density cleared inside the bubble
-                let cavity_factor = smoothstep(cav_radius * 0.45, cav_radius, dist_to_star);
+                let cavity_factor = smoothstep(cav_radius * 0.45, cav_radius, light_dist);
                 density = density * cavity_factor;
 
                 // Ionization shock front glow: H-alpha (656 nm, crimson) and [O III] (501 nm, teal)
-                let edge_dist = abs(dist_to_star - cav_radius);
+                let edge_dist = abs(light_dist - cav_radius);
                 if (edge_dist < 25.0) {
                     let front_intensity = (1.0 - edge_dist / 25.0) * clamp(star_lum * 0.45, 0.4, 5.0);
                     let h_alpha = vec3<f32>(1.0, 0.15, 0.35); // Crimson / magenta ionization
@@ -159,29 +162,19 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
                     cavity_glow = cavity_glow + mix(h_alpha, o_iii, fbm3(sample_pos * 0.03)) * front_intensity;
                 }
             }
-        }
-
-        // Optical depth and Beer-Lambert extinction
-        let d_tau = neb.absorption_coefficient * density * ds;
-        let step_transmittance = exp(-d_tau);
-
-        // Protostellar starlight in-scattering
-        var in_scatter = vec3<f32>(0.0);
-        for (var i = 0u; i < neb.num_stars; i = i + 1u) {
-            let star_pos = neb.star_positions_and_cavities[i].xyz;
-            let star_color = neb.star_colors_and_lum[i].rgb;
-            let star_lum = neb.star_colors_and_lum[i].w;
-
-            let light_vec = star_pos - sample_pos;
-            let light_dist = max(length(light_vec), 1.0);
+            
+            // Protostellar starlight in-scattering
             let light_dir = light_vec / light_dist;
-
             let cos_theta = dot(ray_dir, light_dir);
             let phase = henyey_greenstein(cos_theta, neb.phase_g);
 
             let illuminance = (star_color * star_lum * 12.0) / (light_dist * light_dist + 100.0);
             in_scatter = in_scatter + illuminance * phase;
         }
+
+        // Optical depth and Beer-Lambert extinction
+        let d_tau = neb.absorption_coefficient * density * ds;
+        let step_transmittance = exp(-d_tau);
 
         // Ambient cold molecular gas emission (rich celestial hues across radii)
         let r_norm = clamp(r_core / 450.0, 0.0, 1.0);

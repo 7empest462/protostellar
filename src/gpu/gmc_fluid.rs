@@ -108,7 +108,7 @@ impl Default for GmcFluidUniforms {
             num_sinks: 0,
             ambient_temp: 15.0,
             g_astro: G_ASTRO as f32,
-            collapse_threshold: 1.2e-10, // Higher threshold allows gas to visibly condense before spawning
+            collapse_threshold: 6.5e-11, // Lower threshold allows gas to condense and ignite naturally
             vacuum_rate: 1.0e-11,
             _pad0: 0.0,
             _pad1: 0.0,
@@ -378,11 +378,9 @@ fn spawn_jeans_collapse_system(
         let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
         let angle = f64::from(i) * 2.4; // Phase offset
 
-        let p_pos =
-            ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
-        let p_vel = seed_vel
-            + local_x * (-v_circ_p * angle.sin())
-            + local_z * (v_circ_p * angle.cos());
+        let p_pos = ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
+        let p_vel =
+            seed_vel + local_x * (-v_circ_p * angle.sin()) + local_z * (v_circ_p * angle.cos());
 
         commands.spawn((
             CelestialBody {
@@ -402,9 +400,8 @@ fn spawn_jeans_collapse_system(
     }
 
     if let Some(ref mut t) = toast {
-        t.message = format!(
-            "✨ Jeans Instability Collapse: {protostar_name} formed ({seed_mass:.2} M☉)"
-        );
+        t.message =
+            format!("✨ Jeans Instability Collapse: {protostar_name} formed ({seed_mass:.2} M☉)");
         t.timer = 5.0;
     }
 

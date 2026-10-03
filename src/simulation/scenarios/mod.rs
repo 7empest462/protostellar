@@ -384,12 +384,13 @@ pub fn handle_load_scenario_events(
             | ScenarioPreset::MagnetarOutburst
             | ScenarioPreset::RelativisticBinary
             | ScenarioPreset::KozaiLidovTriple
-            | ScenarioPreset::SagittariusAStar
-            | ScenarioPreset::MolecularCloudCluster => {
+            | ScenarioPreset::SagittariusAStar => {
                 config.gas_density_scale = 0.0;
                 disk_params.gas_disk_lifetime_yr = 0.0;
             }
-            ScenarioPreset::SolarNebulaMmsn | ScenarioPreset::AccretionDiskGenesis => {
+            ScenarioPreset::SolarNebulaMmsn
+            | ScenarioPreset::AccretionDiskGenesis
+            | ScenarioPreset::MolecularCloudCluster => {
                 config.gas_density_scale = 1.0;
                 disk_params.gas_disk_lifetime_yr = 5.0e6;
             }
