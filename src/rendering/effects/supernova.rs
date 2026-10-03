@@ -2,6 +2,9 @@
 
 use bevy::prelude::*;
 
+use crate::rendering::bodies::VisualAssets;
+use crate::rendering::effects::remnants::{PersistentRemnantPool, PersistentSupernovaRemnant};
+use crate::rendering::materials::{SupernovaMaterial, SupernovaUniforms};
 use crate::rendering::particle_swarm::ParticleSwarmData;
 use crate::simulation::components::*;
 use crate::simulation::resources::SimTime;
@@ -225,6 +228,7 @@ pub fn update_supernova_explosions(
         Option<&mut AtmosphericEscapeTail>,
     )>,
     mut swarm: Option<ResMut<ParticleSwarmData>>,
+    mut remnant_pool: Option<ResMut<crate::rendering::effects::remnants::PersistentRemnantPool>>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
@@ -284,7 +288,19 @@ pub fn update_supernova_explosions(
             apply_swarm_blast(exp, swarm_data, dt);
         }
 
-        apply_celestial_blast(exp, &mut bodies_query, &mut commands);
+        apply_celestial_blast(exp, &mut bodies_query, &mut commands, dt);
+    }
+
+    // Hand off completed explosions to persistent interstellar remnants
+    if let Some(ref mut r_pool) = remnant_pool {
+        for exp in &pool.explosions {
+            if exp.timer >= exp.max_timer {
+                let has_pwn = matches!(exp.remnant_type, BodyType::Pulsar | BodyType::Magnetar);
+                crate::rendering::effects::remnants::spawn_remnant_from_explosion(
+                    r_pool, exp, has_pwn,
+                );
+            }
+        }
     }
 
     // Retain active explosions
@@ -378,9 +394,15 @@ fn apply_celestial_blast(
         Option<&mut AtmosphericEscapeTail>,
     )>,
     commands: &mut Commands,
+    dt: f32,
 ) {
     let center_dvec = exp.center.as_dvec3();
     let r_shock = f64::from(exp.current_radius_au);
+    let r_prev = if exp.timer <= dt * 2.0 + 0.1 {
+        0.0
+    } else {
+        f64::from((exp.current_radius_au - exp.blast_speed_au_s * dt.max(0.016)).max(0.0))
+    };
 
     for (b_ent, b_pos, mut b_vel, mut b_temp, b_body, mut opt_tail) in bodies_query.iter_mut() {
         if b_ent == exp.star_entity {
@@ -393,14 +415,16 @@ fn apply_celestial_blast(
             // Vaporize small asteroids within inner 2.0 AU of core collapse
             if dist < 2.0 && matches!(b_body.body_type, BodyType::Asteroid | BodyType::Comet) {
                 if let Ok(mut cmd) = commands.get_entity(b_ent) {
-                    cmd.despawn();
+                    cmd.try_despawn();
                 }
                 continue;
             }
 
-            // Blast outward momentum impulse
-            let impulse_mag = (0.05 / dist.max(0.5)).min(0.2);
-            b_vel.0 += rel_pos.normalize_or_zero() * impulse_mag;
+            // Blast outward momentum impulse: delivered once as the shock front sweeps past the body
+            if dist >= r_prev {
+                let impulse_mag = (0.05 / dist.max(0.5)).min(0.2);
+                b_vel.0 += rel_pos.normalize_or_zero() * impulse_mag;
+            }
 
             // Superheat planet surface
             let heating_boost = (5000.0 / (dist * dist).max(0.2)).clamp(100.0, 8000.0);
@@ -501,6 +525,199 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
                 alpha * 0.40,
             );
             gizmos.line(frag.pos, trail_end, trail_col);
+        }
+    }
+}
+
+/// Component marking an instantiated 3D volumetric supernova shock shell entity.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SupernovaVisualShell {
+    pub star_entity: Entity,
+}
+
+fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaUniforms, f32) {
+    let asphericity = match exp.explosion_type {
+        SupernovaType::Hypernova => 0.45,
+        SupernovaType::TypeII => 0.15,
+        SupernovaType::TypeIa => 0.05,
+        SupernovaType::PlanetaryNebula => 0.25,
+    };
+
+    let type_id = match exp.explosion_type {
+        SupernovaType::TypeII => 0.0,
+        SupernovaType::Hypernova => 1.0,
+        SupernovaType::TypeIa => 2.0,
+        SupernovaType::PlanetaryNebula => 3.0,
+    };
+
+    let uniforms = SupernovaUniforms {
+        params: Vec4::new(
+            exp.timer,
+            exp.max_timer,
+            exp.current_radius_au,
+            exp.blast_speed_au_s,
+        ),
+        core_params: Vec4::new(exp.flash_intensity, type_id, exp.ejecta_mass_solar, 1.0),
+        center_and_asphericity: Vec4::new(exp.center.x, exp.center.y, exp.center.z, asphericity),
+        core_color: Vec4::new(1.0, 0.75, 0.20, 1.0),
+        mantle_color: Vec4::new(0.15, 0.95, 0.85, 0.85),
+        envelope_color: Vec4::new(0.95, 0.25, 0.30, 0.80),
+        jet_color: Vec4::new(0.65, 0.35, 1.0, 0.95),
+    };
+
+    let scale_r = exp.current_radius_au.max(0.05);
+    (uniforms, scale_r)
+}
+
+fn persistent_remnant_uniforms(rem: &PersistentSupernovaRemnant) -> (SupernovaUniforms, f32) {
+    let asphericity = match rem.remnant_type {
+        SupernovaType::Hypernova => 0.45,
+        SupernovaType::TypeII => 0.15,
+        SupernovaType::TypeIa => 0.05,
+        SupernovaType::PlanetaryNebula => 0.25,
+    };
+
+    let type_id = match rem.remnant_type {
+        SupernovaType::TypeII => 0.0,
+        SupernovaType::Hypernova => 1.0,
+        SupernovaType::TypeIa => 2.0,
+        SupernovaType::PlanetaryNebula => 3.0,
+    };
+
+    let core_color = if rem.has_pwn {
+        Vec4::new(0.30, 0.85, 1.0, 1.0)
+    } else {
+        Vec4::new(1.0, 0.75, 0.20, 1.0)
+    };
+
+    let uniforms = SupernovaUniforms {
+        params: Vec4::new(
+            rem.age_years as f32,
+            rem.max_age_years as f32,
+            rem.current_radius_au,
+            rem.expansion_rate_au_yr,
+        ),
+        core_params: Vec4::new(0.0, type_id, 2.0, rem.opacity),
+        center_and_asphericity: Vec4::new(rem.center.x, rem.center.y, rem.center.z, asphericity),
+        core_color,
+        mantle_color: Vec4::new(0.15, 0.95, 0.85, 0.85),
+        envelope_color: Vec4::new(0.95, 0.25, 0.30, 0.80),
+        jet_color: Vec4::new(0.65, 0.35, 1.0, 0.95),
+    };
+
+    let scale_r = rem.current_radius_au.max(0.05);
+    (uniforms, scale_r)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Visual shell upsert requires ECS commands, asset pools, materials, and transform parameters"
+)]
+fn upsert_supernova_visual_shell(
+    commands: &mut Commands,
+    assets: &VisualAssets,
+    materials: &mut Assets<SupernovaMaterial>,
+    existing_shells: &mut hashbrown::HashMap<
+        Entity,
+        (Entity, Mut<'_, Transform>, Handle<SupernovaMaterial>),
+    >,
+    star_entity: Entity,
+    center: Vec3,
+    scale_r: f32,
+    uniforms: SupernovaUniforms,
+) {
+    if let Some((_, ref mut trans, ref mat_handle)) = existing_shells.get_mut(&star_entity) {
+        trans.translation = center;
+        trans.scale = Vec3::splat(scale_r);
+
+        if let Some(mut mat) = materials.get_mut(mat_handle) {
+            mat.uniforms = uniforms;
+        }
+    } else {
+        let mat_handle = materials.add(SupernovaMaterial { uniforms });
+
+        commands.spawn((
+            SupernovaVisualShell { star_entity },
+            Mesh3d(assets.star_mesh.clone()),
+            MeshMaterial3d(mat_handle),
+            Transform::from_translation(center).with_scale(Vec3::splat(scale_r)),
+            bevy::light::NotShadowCaster,
+            bevy::light::NotShadowReceiver,
+        ));
+    }
+}
+
+/// Synchronizes 3D volumetric supernova blast wave meshes and custom WGSL shader uniforms.
+#[allow(clippy::type_complexity, reason = "Supernova Visual Sync Query")]
+pub fn sync_supernova_visuals(
+    mut commands: Commands,
+    pool: Res<SupernovaDebrisPool>,
+    remnant_pool: Option<Res<PersistentRemnantPool>>,
+    visual_assets: Option<Res<VisualAssets>>,
+    sn_materials: Option<ResMut<Assets<SupernovaMaterial>>>,
+    mut shell_query: Query<(
+        Entity,
+        &SupernovaVisualShell,
+        &mut Transform,
+        &MeshMaterial3d<SupernovaMaterial>,
+    )>,
+) {
+    let (Some(assets), Some(mut materials)) = (visual_assets, sn_materials) else {
+        return;
+    };
+
+    let mut existing_shells: hashbrown::HashMap<
+        Entity,
+        (Entity, Mut<'_, Transform>, Handle<SupernovaMaterial>),
+    > = hashbrown::HashMap::new();
+
+    for (e, shell, trans, mat) in shell_query.iter_mut() {
+        existing_shells.insert(shell.star_entity, (e, trans, mat.0.clone()));
+    }
+
+    let mut active_stars: hashbrown::HashSet<Entity> = hashbrown::HashSet::new();
+
+    for exp in &pool.explosions {
+        active_stars.insert(exp.star_entity);
+        let (uniforms, scale_r) = supernova_explosion_uniforms(exp);
+        upsert_supernova_visual_shell(
+            &mut commands,
+            &assets,
+            &mut materials,
+            &mut existing_shells,
+            exp.star_entity,
+            exp.center,
+            scale_r,
+            uniforms,
+        );
+    }
+
+    if let Some(ref rem_pool) = remnant_pool {
+        for rem in &rem_pool.remnants {
+            if rem.opacity <= 0.005 {
+                continue;
+            }
+            active_stars.insert(rem.star_entity);
+            let (uniforms, scale_r) = persistent_remnant_uniforms(rem);
+            upsert_supernova_visual_shell(
+                &mut commands,
+                &assets,
+                &mut materials,
+                &mut existing_shells,
+                rem.star_entity,
+                rem.center,
+                scale_r,
+                uniforms,
+            );
+        }
+    }
+
+    // Despawn visual shells for explosions and remnants that completed
+    for (star_ent, (e, _, _)) in existing_shells {
+        if !active_stars.contains(&star_ent) {
+            if let Ok(mut cmd) = commands.get_entity(e) {
+                cmd.try_despawn();
+            }
         }
     }
 }

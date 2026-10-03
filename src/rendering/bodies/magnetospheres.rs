@@ -299,7 +299,7 @@ fn update_existing_magnetospheres(
                 }
             }
         } else if let Ok(mut cmd) = commands.get_entity(root_entity) {
-            cmd.despawn();
+            cmd.try_despawn();
         }
     }
     updated_entities
@@ -366,7 +366,7 @@ pub fn sync_magnetic_field_overlays(
     if !is_active_mode {
         for (root_ent, _, _, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(root_ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
         return;

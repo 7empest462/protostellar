@@ -226,8 +226,12 @@ fn update_planet_material(
     }
 }
 
-fn select_body_mesh(body: &CelestialBody, visual_assets: &VisualAssets) -> Handle<Mesh> {
-    super::meshes::select_body_mesh(body, visual_assets)
+fn select_body_mesh(
+    body: &CelestialBody,
+    radius_au: f64,
+    visual_assets: &VisualAssets,
+) -> Handle<Mesh> {
+    super::meshes::select_body_mesh(body, radius_au, visual_assets)
 }
 
 fn apply_impact_basins(mat: &mut PlanetMaterial, opt_basins: Option<&PlanetaryBasins>) {
@@ -490,6 +494,9 @@ fn update_body_material_properties(
     temp: &Temperature,
     comp: &Composition,
     elapsed_secs: f32,
+    elapsed_years: f64,
+    transform: &Transform,
+    scale: f32,
     star_dir: Vec3,
     opt_climate: Option<&PlanetaryClimate>,
     opt_bio: Option<&BiosphereState>,
@@ -508,9 +515,13 @@ fn update_body_material_properties(
     apply_impact_basins(mat, opt_basins);
 
     let color = compute_body_color(body, mass, temp, comp, opt_tidal);
-    let spin_rate = opt_spin.map_or(0.22, |s| {
-        (24.0 / s.rotation_period_hours.max(0.1)) as f32 * 0.22
-    });
+    let spin_angle = if let Some(spin) = opt_spin {
+        let rotations_per_year = 8766.0 / spin.rotation_period_hours.max(0.01);
+        ((elapsed_years * rotations_per_year * std::f64::consts::TAU) % std::f64::consts::TAU)
+            as f32
+    } else {
+        ((elapsed_years * 100.0 * std::f64::consts::TAU) % std::f64::consts::TAU) as f32
+    };
     let axial_tilt = opt_spin.map_or(0.08, |s| (s.axial_tilt_degrees as f32).to_radians());
 
     let params = compute_body_material_parameters(
@@ -531,10 +542,16 @@ fn update_body_material_properties(
     mat.extension.uniforms.color_seed = LinearRgba::from(color).to_vec4();
     mat.extension.uniforms.temperature = temp.0 as f32;
     mat.extension.uniforms.time = elapsed_secs;
-    mat.extension.uniforms.spin_rate = spin_rate;
+    mat.extension.uniforms.spin_angle = spin_angle;
     mat.extension.uniforms.climate_and_bio = params.climate_and_bio;
     mat.extension.uniforms.atmosphere_params = params.atmosphere_params;
     mat.extension.uniforms.dynamics_and_mag = params.dynamics_and_mag;
+    mat.extension.uniforms.planet_center_and_radius = Vec4::new(
+        transform.translation.x,
+        transform.translation.y,
+        transform.translation.z,
+        scale,
+    );
 
     let profile = super::atmospheres::compute_atmosphere_spectral_profile(
         body.body_type,
@@ -680,6 +697,7 @@ pub fn sync_celestial_transforms(
     let (star_pos, _star_entity, min_orbit_r) = find_star_position_and_min_orbit(&query);
     let all_moons = collect_system_moons(&query, &config, star_pos, min_orbit_r);
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+    let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
 
     for (
         entity,
@@ -725,7 +743,7 @@ pub fn sync_celestial_transforms(
             transform.rotation = Quat::from_rotation_arc(Vec3::Y, spin_dir);
         }
 
-        let target_mesh = select_body_mesh(body, &visual_assets);
+        let target_mesh = select_body_mesh(body, radius.0, &visual_assets);
         if mesh.0 != target_mesh {
             mesh.0 = target_mesh;
         }
@@ -738,6 +756,9 @@ pub fn sync_celestial_transforms(
                 temp,
                 comp,
                 visual_time,
+                elapsed_years,
+                &transform,
+                visual_radius,
                 star_dir,
                 opt_climate,
                 opt_bio,

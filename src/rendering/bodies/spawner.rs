@@ -58,7 +58,7 @@ fn spawn_star_visual(
                 planet_type: p_type,
                 temperature: temp.0 as f32,
                 time: 0.0,
-                spin_rate: 0.15,
+                spin_angle: 0.15,
                 composition: Vec4::new(star_subtype, 20.0, 0.5, 1.0),
                 color_seed: LinearRgba::from(base_color).to_vec4(),
                 climate_and_bio: Vec4::ZERO,
@@ -85,7 +85,7 @@ fn spawn_star_visual(
                     // refine this every frame, but we seed it at the HDR level so the
                     // first frame doesn't show a dark star surrounded by an unlit void.
                     intensity: if body.body_type == BodyType::BlackHole {
-                        2_000_000.0
+                        0.0
                     } else if body.body_type == BodyType::QuasiStar {
                         60_000_000.0
                     } else if matches!(
@@ -111,6 +111,7 @@ fn spawn_planet_visual(
     entity_cmd: &mut EntityCommands,
     body: &CelestialBody,
     mass: &Mass,
+    radius_au: f64,
     temp: &Temperature,
     comp: &Composition,
     base_color: Color,
@@ -161,7 +162,7 @@ fn spawn_planet_visual(
                 },
                 temperature: temp.0 as f32,
                 time: 0.0,
-                spin_rate: 0.15,
+                spin_angle: 0.15,
                 composition: Vec4::new(
                     norm_comp.silicate_frac as f32 + norm_comp.organics_frac as f32,
                     norm_comp.ice_frac as f32,
@@ -182,7 +183,7 @@ fn spawn_planet_visual(
         },
     });
 
-    let mesh_handle = super::meshes::select_body_mesh(body, visual_assets);
+    let mesh_handle = super::meshes::select_body_mesh(body, radius_au, visual_assets);
 
     entity_cmd.try_insert((
         VisualBody,
@@ -211,7 +212,10 @@ pub fn spawn_missing_visuals(
             &CelestialBody,
             Option<&CentralStar>,
         ),
-        Without<VisualBody>,
+        (
+            Without<VisualBody>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
     >,
 ) {
     for (entity, pos, mass, radius, temp, comp, body, is_star) in unspawned_query.iter() {
@@ -256,6 +260,7 @@ pub fn spawn_missing_visuals(
                 &mut entity_cmd,
                 body,
                 mass,
+                radius.0,
                 temp,
                 comp,
                 base_color,

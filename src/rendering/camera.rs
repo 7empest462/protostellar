@@ -83,26 +83,18 @@ pub fn setup_camera(mut commands: Commands) {
             far: 2_000_000.0,
             ..default()
         }),
-        Tonemapping::TonyMcMapface,
+        Tonemapping::AgX,
         DebandDither::Enabled,
         Bloom {
-            // Controls how much overall glow energy the star emits.
-            // 0.28 gives a radiant corona without washing out nearby planets.
-            intensity: 0.28,
-            // Low-frequency broad halo (mimics real optical lens glow &
-            // coronagraph diffraction rings around bright stars).
-            low_frequency_boost: 0.55,
+            intensity: 0.15,
+            low_frequency_boost: 0.10,
             low_frequency_boost_curvature: 0.88,
-            // High-frequency tight glints (specular ocean sunglint, lightning,
-            // lava fountains, aurora curtains).
             high_pass_frequency: 1.0,
             prefilter: BloomPrefilter {
-                // Only emit bloom above SDR white (> 1.8 nits) — stars and
-                // lava surpass this; dark rocky planets never trigger it.
                 threshold: 1.8,
                 threshold_softness: 0.40,
             },
-            composite_mode: BloomCompositeMode::Additive,
+            composite_mode: BloomCompositeMode::EnergyConserving,
             ..default()
         },
         Transform {
@@ -219,11 +211,39 @@ fn handle_camera_target_picking(
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
     ui_interaction_query: &Query<&Interaction>,
+    ui_nodes_query: &Query<(&ComputedNode, &GlobalTransform), With<Node>>,
     mouse_buttons: &ButtonInput<MouseButton>,
 ) {
-    let cursor_over_ui = ui_interaction_query
-        .iter()
-        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+    if player_state.just_selected_via_ui {
+        player_state.just_selected_via_ui = false;
+        return;
+    }
+
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    let cursor_over_ui = cursor_pos.y <= 95.0
+        || (cursor_pos.x <= 360.0 && cursor_pos.y <= 700.0)
+        || (cursor_pos.x >= (window.width() - 340.0) && cursor_pos.y <= 420.0)
+        || cursor_pos.y >= (window.height() - 75.0)
+        || ui_interaction_query
+            .iter()
+            .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered)
+        || ui_nodes_query.iter().any(|(cnode, gt)| {
+            let size = cnode.size();
+            if size.x <= 1.0 || size.y <= 1.0 {
+                return false;
+            }
+            let center = gt.translation().truncate();
+            let half = size * 0.5;
+            let min = center - half;
+            let max = center + half;
+            cursor_pos.x >= min.x
+                && cursor_pos.x <= max.x
+                && cursor_pos.y >= min.y
+                && cursor_pos.y <= max.y
+        });
 
     if cursor_over_ui
         || !mouse_buttons.just_pressed(MouseButton::Left)
@@ -232,9 +252,6 @@ fn handle_camera_target_picking(
         return;
     }
 
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
     let mut best_target: Option<Entity> = None;
     let mut best_score = f32::MAX;
 
@@ -260,7 +277,7 @@ fn handle_camera_target_picking(
     }
 
     if best_target.is_none() {
-        let mut min_screen_dist = 220.0f32;
+        let mut min_screen_dist = 40.0f32;
         for (entity, pos, _rad, _body, _mass, _opt_t) in targets_query.iter() {
             let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             if let Ok(screen_pos) = camera_comp.world_to_viewport(global_transform, center) {
@@ -281,7 +298,12 @@ fn handle_camera_target_picking(
                 || config.calc_visual_radius_for_type(radius.0, body.body_type),
                 |t| t.scale.x,
             );
-            camera.target_radius = config.calc_camera_framing_radius(visual_radius);
+            let frame_radius = if body.name.starts_with("🚀") || visual_radius < 0.001 {
+                0.015f32.max(config.calc_camera_framing_radius(visual_radius))
+            } else {
+                config.calc_camera_framing_radius(visual_radius)
+            };
+            camera.target_radius = frame_radius;
         }
     }
 }
@@ -312,7 +334,12 @@ fn handle_camera_keyboard_flight(
                     || config.calc_visual_radius_for_type(radius.0, body.body_type),
                     |t| t.scale.x,
                 );
-                camera.target_radius = config.calc_camera_framing_radius(visual_radius);
+                let frame_radius = if body.name.starts_with("🚀") || visual_radius < 0.001 {
+                    0.015f32.max(config.calc_camera_framing_radius(visual_radius))
+                } else {
+                    config.calc_camera_framing_radius(visual_radius)
+                };
+                camera.target_radius = frame_radius;
             }
         } else {
             camera.target_focus = Vec3::ZERO;
@@ -461,6 +488,7 @@ pub fn update_pan_orbit_camera(
         With<PanOrbitCamera>,
     >,
     ui_interaction_query: Query<&Interaction>,
+    ui_nodes_query: Query<(&ComputedNode, &GlobalTransform), With<Node>>,
 ) {
     let Ok((camera_comp, mut camera, mut transform, global_transform)) = camera_query.single_mut()
     else {
@@ -485,6 +513,7 @@ pub fn update_pan_orbit_camera(
         &mut camera,
         &config,
         &ui_interaction_query,
+        &ui_nodes_query,
         &mouse_buttons,
     );
 

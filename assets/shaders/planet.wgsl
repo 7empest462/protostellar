@@ -2,6 +2,8 @@
     mesh_view_bindings::view,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
+    mesh_functions::{get_world_from_local, mesh_position_local_to_clip, mesh_position_local_to_world, mesh_normal_local_to_world},
+    mesh_bindings::mesh,
 }
 
 #ifdef PREPASS_PIPELINE
@@ -20,7 +22,7 @@ struct PlanetExtension {
     planet_type: u32,
     temperature: f32,
     time: f32,
-    spin_rate: f32,
+    spin_angle: f32,
     composition: vec4<f32>, // x: rock, y: ice (volatiles/water), z: metal, w: gas (atmosphere)
     color_seed: vec4<f32>,
     climate_and_bio: vec4<f32>, // x: ocean_frac, y: ice_frac, z: biomass_frac, w: cloud_density
@@ -38,10 +40,141 @@ struct PlanetExtension {
     aurora_params: vec4<f32>, // x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
     storm_features: vec4<f32>, // x: hex_amplitude, y: hex_wavenumber (e.g. 6.0), z: great_spot_size, w: great_spot_lat_rad
     storm_dynamics: vec4<f32>, // x: great_spot_lon_rad, y: vortex_spin_rate, z: secondary_oval_count, w: zonal_shear_turbulence
+    planet_center_and_radius: vec4<f32>, // xyz = planet center in world coordinates, w = visual radius
+    civilization_params: vec4<f32>, // x: technosignature (0.0 to 2.0), yzw: unused
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(101)
 var<uniform> planet: PlanetExtension;
+
+struct Vertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+#ifdef VERTEX_TANGENTS
+    @location(3) tangent: vec4<f32>,
+#endif
+#ifdef VERTEX_COLORS
+    @location(4) color: vec4<f32>,
+#endif
+};
+
+
+fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
+    let p_type = planet.planet_type;
+    // Only terrestrial (3), ice worlds (4), and super-earths (6) get terrain displacement.
+    // Small bodies (8) and all others get a flat surface.
+    if (p_type != 3u && p_type != 4u && p_type != 6u) {
+        return 0.0;
+    }
+    var elev = 0.0;
+    let ocean_frac = planet.climate_and_bio.x;
+    if (p_type == 3u || p_type == 6u) {
+        let drift_phase = planet.spin_axis.w;
+        let plate_drift = vec3<f32>(
+            sin(drift_phase * 6.283 + p_surf.z * 2.6) * 0.28,
+            cos(drift_phase * 3.14159 + p_surf.x * 2.2) * 0.12,
+            sin(drift_phase * 4.712 + p_surf.y * 2.4) * 0.28
+        );
+        let p_tectonic = p_surf + plate_drift;
+        let continent_mask = fbm(p_tectonic * 1.85);
+        let regional_hills = fbm(p_tectonic * 5.5) * 0.32;
+        let mountain_ridges = ridge_noise(p_tectonic * 8.0) * 0.20;
+        let micro_detail = fbm(p_tectonic * 22.0) * 0.10;
+        let aggregation = planet.geological_params.y;
+        let super_axis = normalize(vec3<f32>(0.65, 0.25, 0.70));
+        let cluster_dipole = dot(p_surf, super_axis);
+        let cluster_bias = cluster_dipole * (aggregation - 0.20) * 0.14;
+        elev = continent_mask * 0.50 + regional_hills + mountain_ridges + micro_detail + cluster_bias;
+        if (p_type == 3u) {
+            let sea_level = clamp(0.38 + ocean_frac * 0.28, 0.22, 0.78);
+            if (elev < sea_level) { elev = sea_level; }
+        }
+    } else if (p_type == 4u) {
+        let regolith = fbm(p_surf * 14.0);
+        let micro_craters = fbm(p_surf * 22.0);
+        let boulder_noise = fbm(p_surf * 38.0);
+        let variegation = fbm(p_surf * 5.5);
+        elev = regolith * 0.3 + micro_craters * 0.15 + boulder_noise * 0.05 + variegation * 0.4;
+    }
+    // Evaluate Impact Basins
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let b_pos = planet.impact_basins_pos[i];
+        let b_data = planet.impact_basins_data[i];
+        if (b_data.w > 0.5) {
+            let center_n = b_pos.xyz;
+            let r_ang = b_pos.w;
+            let dot_p = dot(p_surf, center_n);
+            let dist_ang = acos(clamp(dot_p, -1.0, 1.0));
+            if (dist_ang < r_ang * 1.6) {
+                let norm_dist = dist_ang / r_ang;
+                let basin_depth = b_data.z;
+                if (norm_dist < 1.0) {
+                    let floor = -basin_depth * (1.0 - smoothstep(0.7, 1.0, norm_dist));
+                    let rim = basin_depth * 0.5 * smoothstep(0.8, 1.0, norm_dist);
+                    elev += floor + rim;
+                } else {
+                    let ejecta = basin_depth * 0.3 * (1.0 - smoothstep(1.0, 1.6, norm_dist));
+                    elev += ejecta;
+                }
+            }
+        }
+    }
+    return elev;
+}
+
+
+
+fn get_spun_p_surf(local_normal: vec3<f32>, instance_index: u32) -> vec3<f32> {
+    let base_world_normal = normalize(mesh_normal_local_to_world(local_normal, instance_index));
+    let surface_dir = base_world_normal;
+    
+    var s_axis = planet.spin_axis.xyz;
+    if (length(s_axis) < 0.1) { s_axis = vec3<f32>(0.0, 1.0, 0.0); } else { s_axis = normalize(s_axis); }
+    
+    let sin_lat = dot(surface_dir, s_axis);
+    let s_ref = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), abs(s_axis.z) > 0.95);
+    let s_tangent_x = normalize(cross(s_axis, s_ref));
+    let s_tangent_z = cross(s_tangent_x, s_axis);
+    let p_tilted = vec3<f32>(dot(surface_dir, s_tangent_x), sin_lat, dot(surface_dir, s_tangent_z));
+    
+    // Bevy's Quat::from_rotation_y and WGSL's rotate_y have opposite handedness.
+    // For planets (which don't physically rotate), this scrolls the texture.
+    // For minor bodies (which DO physically rotate), this perfectly cancels the physical rotation,
+    // locking the procedural displacement to the mesh!
+    return rotate_y(p_tilted, planet.spin_angle);
+}
+
+
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    
+    let p_surf = get_spun_p_surf(normalize(vertex.normal), vertex.instance_index);
+    let elev = get_vertex_displacement(p_surf);
+    
+    let displacement_factor = 0.02; // Reduced to 2% to fix jagged shadows and extreme spikes
+    var scale = displacement_factor;
+    if (planet.planet_type == 4u) { scale = 0.04; }
+    
+    let displaced_local_pos = vertex.position + vertex.normal * (elev * scale);
+    let local_pos = vec4<f32>(displaced_local_pos, 1.0);
+    
+    var world_from_local = get_world_from_local(vertex.instance_index);
+    out.world_position = mesh_position_local_to_world(world_from_local, local_pos);
+    out.world_normal = mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    out.position = mesh_position_local_to_clip(world_from_local, local_pos);
+    out.uv = vertex.uv;
+#ifdef VERTEX_COLORS
+    out.color = vertex.color;
+#endif
+    return out;
+}
+
+
+
+
 
 // 3D coordinate rotations
 fn rotate_y(p: vec3<f32>, angle: f32) -> vec3<f32> {
@@ -1091,11 +1224,10 @@ struct AnticyclonicVortexResult {
 fn evaluate_anticyclonic_vortices(
     p_gas: vec3<f32>,
     t: f32,
-    spin: f32,
     spot_size: f32,
     spot_lat: f32,
     spot_lon: f32,
-    spin_rate: f32,
+    vortex_spin_rate: f32,
     secondary_count: f32,
     mass_jup: f32,
 ) -> AnticyclonicVortexResult {
@@ -1137,7 +1269,7 @@ fn evaluate_anticyclonic_vortices(
 
     // Anticyclonic counter-clockwise spiral arms
     let vortex_angle = atan2(v, u);
-    let spiral = sin(vortex_angle * 3.0 - spin_rate * t * 0.4 - r_ell * 5.0) * 0.5 + 0.5;
+    let spiral = sin(vortex_angle * 3.0 - vortex_spin_rate * t * 0.4 - r_ell * 5.0) * 0.5 + 0.5;
 
     // Trailing Kelvin-Helmholtz turbulent wake downstream (eastward/westward shear flow)
     var wake = 0.0;
@@ -1220,6 +1352,7 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
     let norm = normalize(in.world_normal);
+    let surface_dir = normalize(in.world_position.xyz - planet.planet_center_and_radius.xyz);
     let to_star = normalize(-in.world_position.xyz);
     let stellar_insolation = max(dot(norm, to_star), 0.0);
 
@@ -1232,7 +1365,7 @@ fn fragment(
     }
 
     // Rotational latitude: dot product with physical 3D spin axis
-    let sin_lat = dot(norm, s_axis);
+    let sin_lat = dot(surface_dir, s_axis);
     let polar_angle = abs(sin_lat);
 
     // Orthonormal basis aligned with physical 3D spin axis (Y = s_axis)
@@ -1240,20 +1373,38 @@ fn fragment(
     let s_ref = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), abs(s_axis.z) > 0.95);
     let s_tangent_x = normalize(cross(s_axis, s_ref));
     let s_tangent_z = cross(s_tangent_x, s_axis);
-    let p_tilted = vec3<f32>(dot(norm, s_tangent_x), sin_lat, dot(norm, s_tangent_z));
+    let p_tilted = vec3<f32>(dot(surface_dir, s_tangent_x), sin_lat, dot(surface_dir, s_tangent_z));
     
-    let spin = planet.spin_rate;
     let t = planet.time;
     let temp = planet.temperature;
     
-    // 1. Solid surface coordinate (drifts with planetary rotation period)
-    let p_surf = rotate_y(p_tilted, t * spin);
+    // 1. Solid surface coordinate
+    // Bevy Quat and WGSL rotate_y are opposite handedness.
+    // For planets, this rotates the texture over the static mesh.
+    // For minor bodies (which physically rotate), this perfectly cancels the physical rotation!
+    let p_surf = rotate_y(p_tilted, planet.spin_angle);
+
+    // Evaluate high-frequency normal in fragment shader
+    let eps_frag = 0.002;
+    let h_base = get_vertex_displacement(p_surf);
+    let h_x = get_vertex_displacement(normalize(p_surf + vec3<f32>(eps_frag, 0.0, 0.0)));
+    let h_y = get_vertex_displacement(normalize(p_surf + vec3<f32>(0.0, eps_frag, 0.0)));
+    let h_z = get_vertex_displacement(normalize(p_surf + vec3<f32>(0.0, 0.0, eps_frag)));
+    
+    let grad_spun = vec3<f32>(h_x - h_base, h_y - h_base, h_z - h_base) / eps_frag;
+    let grad_tilted = rotate_y(grad_spun, -planet.spin_angle);
+    let grad_world = grad_tilted.x * s_tangent_x + grad_tilted.y * s_axis + grad_tilted.z * s_tangent_z;
+    
+    let bump_scale = select(0.02, 0.04, planet.planet_type == 4u);
+    let pixel_normal = normalize(surface_dir - grad_world * bump_scale);
+    pbr_input.N = pixel_normal;
+
     
     // 2. Cloud and atmospheric coordinate with zonal trade winds
     let lat = p_tilted.y;
     let zonal_drift = sin(lat * 3.14159 * 2.0) * 0.15;
-    let p_cloud = rotate_y(p_tilted, t * (spin * 1.25 + 0.04) + zonal_drift);
-    let p_cloud_sub = rotate_y(p_tilted, t * (spin * 0.85 - 0.03) - zonal_drift * 0.8);
+    let p_cloud = rotate_y(p_tilted, planet.spin_angle * 1.25 + t * 0.04 + zonal_drift);
+    let p_cloud_sub = rotate_y(p_tilted, planet.spin_angle * 0.85 - t * 0.03 - zonal_drift * 0.8);
     
     let rock = planet.composition.x;
     let ice = planet.composition.y;
@@ -1285,7 +1436,7 @@ fn fragment(
         
         // Differential counter-rotating latitudinal jet streams (faster on massive worlds)
         let jet_stream = sin(lat * (16.0 + min(mass_jup, 6.0) * 2.0)) * (t * 0.12);
-        var p_gas = rotate_y(p_tilted, t * (spin * 0.8) + jet_stream);
+        var p_gas = rotate_y(p_tilted, planet.spin_angle * 0.8 + jet_stream);
         
         // Atmospheric storm parameters from uniforms
         let hex_amp = planet.storm_features.x;
@@ -1332,7 +1483,7 @@ fn fragment(
         // Evaluate primary anticyclonic storm (Great Red Spot) and secondary ovals
         if (spot_size > 0.01) {
             let vortex_res = evaluate_anticyclonic_vortices(
-                p_gas, t, spin, spot_size, spot_lat, spot_lon, vortex_spin, sec_ovals, mass_jup
+                p_gas, t, spot_size, spot_lat, spot_lon, vortex_spin, sec_ovals, mass_jup
             );
             if (vortex_res.is_active) {
                 c3 = mix(c3, vortex_res.color, vortex_res.spot_mask * 0.95);
@@ -1382,7 +1533,7 @@ fn fragment(
     // =========================================================================
     else if (planet.planet_type == 2u) {
         let jet_stream = sin(lat * 10.0) * (t * 0.08);
-        let p_ice_gas = rotate_y(p_tilted, t * spin + jet_stream);
+        let p_ice_gas = rotate_y(p_tilted, planet.spin_angle + jet_stream);
         let swirl = fbm(p_ice_gas * 4.5 + vec3<f32>(t * 0.02, 0.0, t * 0.01));
         let band = sin(lat * 8.0 + swirl * 1.2) * 0.5 + 0.5;
         
@@ -1391,7 +1542,7 @@ fn fragment(
         let methane_veil = mix(deep_cyan, bright_azure, band);
         
         // High-altitude cirrus clouds with fast prograde drift
-        let cirrus_coord = rotate_y(p_tilted, t * (spin * 1.35) + jet_stream * 1.5);
+        let cirrus_coord = rotate_y(p_tilted, planet.spin_angle * 1.35 + jet_stream * 1.5);
         let cirrus = fbm(cirrus_coord * 14.0);
         let white_clouds = smoothstep(0.65, 0.85, cirrus);
         
@@ -1401,7 +1552,7 @@ fn fragment(
         let spot_size = planet.storm_features.z;
         if (spot_size > 0.01) {
             let dark_spot = evaluate_anticyclonic_vortices(
-                p_ice_gas, t, spin, spot_size, planet.storm_features.w,
+                p_ice_gas, t, spot_size, planet.storm_features.w,
                 planet.storm_dynamics.x, planet.storm_dynamics.y, planet.storm_dynamics.z, 0.8
             );
             if (dark_spot.is_active) {
@@ -1434,18 +1585,26 @@ fn fragment(
         
         let has_oceans = has_volatiles && ocean_frac > 0.02;
         let sea_level = clamp(0.20 + ocean_frac * 0.45, 0.25, 0.80);
-        let is_ice_cold = temp < 285.0; // Ice caps melt completely above 12 °C
-        let ice_cap_thresh = clamp(0.95 - (ice_frac * 0.40) - (273.0 / max(temp, 160.0)) * 0.04, 0.70, 0.99);
-        
+        let is_ice_cold = temp < 320.0 && ice_frac > 0.005;
+        let base_ice_thresh = clamp(1.0 - ice_frac * 1.05, 0.0, 0.98);
+
+        // Seasonal Milankovitch orbital insolation shift
+        let season_subsolar = dot(planet.star_dir_and_lum.xyz, s_axis);
+        let ice_thresh_north = clamp(base_ice_thresh + season_subsolar * 0.15, 0.0, 1.0);
+        let ice_thresh_south = clamp(base_ice_thresh - season_subsolar * 0.15, 0.0, 1.0);
+
+        let ice_edge_noise = fbm(p_surf * 10.0) * 0.06;
+        let in_north_cap = (p_tilted.y > 0.0) && (polar_angle + ice_edge_noise > ice_thresh_north);
+        let in_south_cap = (p_tilted.y < 0.0) && (polar_angle + ice_edge_noise > ice_thresh_south);
+
         // Polar Ice Shields & Glacial Calving Shelves:
-        // Form ONLY if planet has volatiles, is cold enough, at the true 3D spin poles,
-        // and not facing baking direct sunlight (insolation < 0.35)
-        if (has_volatiles && is_ice_cold && polar_angle > ice_cap_thresh && stellar_insolation < 0.35) {
+        if (has_volatiles && is_ice_cold && (in_north_cap || in_south_cap)) {
             let frost = fbm(p_surf * 14.0);
             let pack_ice = vec3<f32>(0.94, 0.97, 1.0);
-            let glacial_blue = vec3<f32>(0.65, 0.82, 0.98);
-            color = mix(pack_ice, glacial_blue, frost * 0.45);
+            let glacial_blue = vec3<f32>(0.68, 0.84, 0.98);
+            color = mix(pack_ice, glacial_blue, frost * 0.40);
             pbr_input.material.perceptual_roughness = 0.25;
+            pbr_input.material.metallic = 0.0;
         }
         // Vast Sapphire Oceans & Coastal Turquoise Continental Shelves (ONLY if world has oceans!)
         else if (has_oceans && combined_elev < sea_level) {
@@ -1532,14 +1691,14 @@ fn fragment(
         
         // Massive Multi-Scale Atmospheric Cloud Circulation & Storm Vortices (only if world has atmosphere/volatiles)
         if (has_volatiles || gas > 0.05) {
-            let p_cloud_rot = rotate_y(p_tilted, t * (spin * 1.12) + zonal_drift);
+            let p_cloud_rot = rotate_y(p_tilted, planet.spin_angle * 1.12 + zonal_drift);
             let cloud_main = fbm(p_cloud_rot * 4.6);
             let cloud_spirals = fbm(p_cloud_rot * 9.5 + vec3<f32>(0.0, t * 0.02, 0.0));
             let storm_bands = sin(lat * 10.0 + cloud_main * 2.2) * 0.5 + 0.5;
             let super_clouds = cloud_main * 0.60 + cloud_spirals * 0.25 + storm_bands * 0.15;
             
             // Soft cloud drop shadows on land and ocean surfaces
-            let shadow_rot = rotate_y(p_tilted, t * (spin * 1.12) + zonal_drift) + vec3<f32>(0.025, 0.015, 0.025);
+            let shadow_rot = rotate_y(p_tilted, planet.spin_angle * 1.12 + zonal_drift) + vec3<f32>(0.025, 0.015, 0.025);
             let shadow_val = fbm(shadow_rot * 4.6);
             if (shadow_val > 0.50) {
                 color = color * (1.0 - (shadow_val - 0.50) * 0.45);
@@ -1679,7 +1838,7 @@ fn fragment(
         }
         // B. Venusian runaway greenhouse deck
         else if (temp >= 380.0 && (gas > 0.05 || cloud_density > 0.5 || pressure_bar > 5.0)) {
-            let super_rot = rotate_y(p_tilted, t * (spin * 3.5));
+            let super_rot = rotate_y(p_tilted, planet.spin_angle * 3.5);
             let clouds = fbm(super_rot * 4.5 + vec3<f32>(t * 0.05, 0.0, t * 0.05));
             let band = sin(lat * 8.0 + clouds * 1.8) * 0.5 + 0.5;
             let sulfur_deck = mix(vec3<f32>(0.78, 0.70, 0.42), vec3<f32>(0.90, 0.84, 0.62), band);
@@ -1698,17 +1857,24 @@ fn fragment(
         // D. Temperate water-bearing / biosphere
         else if (has_volatiles && ocean_frac >= 0.04 && temp >= 240.0 && temp <= 380.0) {
             let sea_level = clamp(0.38 + ocean_frac * 0.28, 0.22, 0.78);
-            let is_ice_cold = temp < 288.0;
-            let ice_cap_thresh = clamp(
-                0.95 - (ice_frac * 0.50) - (273.0 / max(temp, 150.0)) * 0.05,
-                0.68,
-                0.99
-            );
+            let is_ice_cold = temp < 320.0 && ice_frac > 0.005;
+            let base_ice_thresh = clamp(1.0 - ice_frac * 1.05, 0.0, 0.98);
 
-            // Polar caps (ice only — no neon bands)
-            if (is_ice_cold && polar_angle > ice_cap_thresh && stellar_insolation < 0.35) {
+            // Seasonal Milankovitch orbital insolation shift
+            let season_subsolar = dot(planet.star_dir_and_lum.xyz, s_axis);
+            let ice_thresh_north = clamp(base_ice_thresh + season_subsolar * 0.15, 0.0, 1.0);
+            let ice_thresh_south = clamp(base_ice_thresh - season_subsolar * 0.15, 0.0, 1.0);
+
+            let ice_edge_noise = fbm(p_surf * 10.0) * 0.06;
+            let in_north_cap = (p_tilted.y > 0.0) && (polar_angle + ice_edge_noise > ice_thresh_north);
+            let in_south_cap = (p_tilted.y < 0.0) && (polar_angle + ice_edge_noise > ice_thresh_south);
+
+            // Polar caps & dynamic continental glaciers:
+            if (is_ice_cold && (in_north_cap || in_south_cap)) {
                 let frost_var = fbm(p_surf * 12.0);
-                color = mix(vec3<f32>(0.86, 0.90, 0.95), vec3<f32>(0.94, 0.96, 0.99), frost_var);
+                let pack_ice = vec3<f32>(0.92, 0.95, 0.98);
+                let glacial_blue = vec3<f32>(0.72, 0.85, 0.96);
+                color = mix(pack_ice, glacial_blue, frost_var * 0.35);
                 pbr_input.material.perceptual_roughness = 0.22;
                 pbr_input.material.metallic = 0.0;
             }
@@ -1813,13 +1979,54 @@ fn fragment(
                 }
             }
 
+
+            // Dynamic civilization city lights on the night side
+            let tech_level = planet.civilization_params.x;
+            if (tech_level > 0.0) {
+                // Hard ocean mask: no lights underwater, regardless of ice cap state
+                let is_ocean = elev < sea_level;
+                
+                // Polar exclusion: cities don't exist on polar ice caps
+                // sin_lat goes 0 at equator to 1.0 at pole; ice caps typically > 65° lat
+                let polar_fade = 1.0 - smoothstep(0.55, 0.80, abs(sin_lat));
+                
+                // Ice cap exclusion: fade cities where ice covers the surface
+                let ice_cap_mask = mix(1.0, polar_fade, clamp(ice_frac * 4.0, 0.0, 1.0));
+
+                // Noise to cluster cities along coasts and plains (avoid mountain peaks)
+                let rel_elev = max(0.0, elev - sea_level);
+                let valley_mask = 1.0 - smoothstep(0.0, 0.15, rel_elev);
+                
+                // High frequency noise for city light clusters
+                let pop_noise = fbm(p_surf * 45.0 + vec3<f32>(1.2, 5.5, -2.1));
+                let cluster_noise = fbm(p_surf * 8.0);
+                
+                let base_density = smoothstep(0.65 - tech_level * 0.2, 1.0, pop_noise * cluster_noise);
+                let population_density = base_density * valley_mask * ice_cap_mask
+                    * select(1.0, 0.0, is_ocean); // zero on ocean
+                
+                // Only visible on the night side (fades in just past terminator)
+                let night_factor = 1.0 - smoothstep(-0.1, 0.05, dot(norm, to_star));
+                
+                if (population_density > 0.0) {
+                    // Warm amber (low tech) → blue-white LED (high tech)
+                    let warm_city = vec3<f32>(1.0, 0.75, 0.40);
+                    let advanced_city = vec3<f32>(0.85, 0.95, 1.0);
+                    let city_color = mix(warm_city, advanced_city, clamp(tech_level - 1.0, 0.0, 1.0));
+                    
+                    let light_intensity = population_density * night_factor * clamp(tech_level * 3.0, 0.0, 8.0);
+                    pbr_input.material.emissive += vec4<f32>(city_color * light_intensity * 2.5, 0.0);
+                }
+            }
+
             // Dual-layer clouds + soft ground shadow
             if (cloud_density > 0.02) {
+
                 let c_main = fbm(p_cloud * 5.2);
                 let c_sub = fbm(p_cloud_sub * 9.5);
                 let total_clouds = c_main * 0.65 + c_sub * 0.35;
 
-                let shadow_coord = rotate_y(p_tilted, t * (spin * 1.25 + 0.04) + zonal_drift)
+                let shadow_coord = rotate_y(p_tilted, planet.spin_angle * 1.25 + t * 0.04 + zonal_drift)
                     + vec3<f32>(0.03, 0.02, 0.03);
                 let shadow_val = fbm(shadow_coord * 5.2);
                 if (shadow_val > 0.55 && elev >= sea_level) {
@@ -1937,11 +2144,8 @@ fn fragment(
         let quasi_photosphere = render_quasistar_photosphere(p_surf, norm, pbr_input.V, t);
         out.color = vec4<f32>(quasi_photosphere, 1.0);
     } else if (planet.planet_type == 5u) {
-        // Gravitational singularity event horizon + photon ring
-        let NdotV = max(dot(pbr_input.N, pbr_input.V), 0.0);
-        let photon_ring = pow(1.0 - NdotV, 6.0);
-        let ring_color = vec3<f32>(1.0, 0.65, 0.25) * photon_ring * 8.0;
-        out.color = vec4<f32>(ring_color, 1.0);
+        // Gravitational singularity event horizon: absolute light-trapping black void
+        out.color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     } else {
         let lit = apply_pbr_lighting(pbr_input);
         
@@ -2055,21 +2259,88 @@ fn fragment(
         let ambient_boost = base_col * 0.08;
         let NdotL = dot(pbr_input.N, star_dir); // Physical solar zenith angle
         
-        // Rayleigh & Mie atmospheric scattering with golden/crimson sunset terminators (planets only)
+        // Phase 2: High-Fidelity Volumetric Raymarched Atmospheric Scattering (Optical Depth)
         var atmospheric_haze = vec3<f32>(0.0);
+        var surface_attenuation = vec3<f32>(1.0);
+        
         if (planet.planet_type != 4u && (pressure_bar > 0.005 || cloud_density > 0.05 || planet.planet_type == 1u || planet.planet_type == 2u || planet.planet_type == 6u)) {
-            let twilight = exp(-NdotL * NdotL * 16.0); // Concentrated along day-night terminator line
+            let center = planet.planet_center_and_radius.xyz;
+            let r_planet = max(planet.planet_center_and_radius.w, 0.001);
             
-            // Forward Mie aerosol scattering when looking towards the star
-            let forward_mie = pow(max(dot(-pbr_input.V, star_dir), 0.0), 8.0) * 0.45;
+            let h_r = max(planet.atmosphere_params.y * r_planet, 0.002);
+            let h_m = h_r * 0.4;
+            let r_atmo = r_planet + h_r * 4.5;
             
-            let day_rayleigh = planet.scattering_params.rgb;
-            let sunset_hue = vec3<f32>(1.0, 0.38, 0.08) * (1.0 + forward_mie);
-            let ground_scatter = mix(day_rayleigh, sunset_hue, twilight);
-            let haze_scale = clamp(pressure_bar * 0.4 + 0.30, 0.15, 1.4);
+            let ray_origin = view.world_position.xyz;
+            let ray_dir = -pbr_input.V;
             
-            let day_factor = clamp(NdotL * 3.0 + 0.2, 0.0, 1.0) * mix(0.20, 1.0, total_shadow);
-            atmospheric_haze = ground_scatter * (fresnel * haze_scale + forward_mie * 0.5) * day_factor;
+            // Ray intersects atmosphere shell
+            let oc = ray_origin - center;
+            let b = dot(oc, ray_dir);
+            let c_atmo = dot(oc, oc) - r_atmo * r_atmo;
+            let disc_atmo = b * b - c_atmo;
+            
+            if (disc_atmo > 0.0) {
+                let t_enter_atmo = max(-b - sqrt(disc_atmo), 0.0);
+                let t_surface = length(in.world_position.xyz - ray_origin);
+                
+                let t_start = t_enter_atmo;
+                let t_end = t_surface;
+                
+                if (t_end > t_start) {
+                    let step_count = 5;
+                    let step_size = (t_end - t_start) / f32(step_count);
+                    
+                    let beta_r = planet.scattering_params.rgb;
+                    let beta_m = beta_r * clamp(cloud_density * 2.0 + pressure_bar * 0.15, 0.1, 1.5);
+                    let g = clamp(planet.scattering_params.w, 0.50, 0.95);
+                    
+                    let cos_theta = dot(ray_dir, star_dir);
+                    let cos2_theta = cos_theta * cos_theta;
+                    let p_rayleigh = (3.0 / (16.0 * 3.1415926)) * (1.0 + cos2_theta);
+                    
+                    let g2 = g * g;
+                    let denom = 1.0 + g2 - 2.0 * g * cos_theta;
+                    let p_mie = (3.0 * (1.0 - g2) / (8.0 * 3.1415926 * (2.0 + g2))) * (1.0 + cos2_theta) / (denom * sqrt(max(denom, 1e-4)));
+                    
+                    var opt_depth_r = 0.0;
+                    var opt_depth_m = 0.0;
+                    var in_scatter = vec3<f32>(0.0);
+                    
+                    for (var i = 0; i < step_count; i = i + 1) {
+                        let t_sample = t_start + (f32(i) + 0.5) * step_size;
+                        let sample_pos = ray_origin + ray_dir * t_sample;
+                        let alt = max(length(sample_pos - center) - r_planet, 0.0);
+                        
+                        let d_r = exp(-alt / h_r) * step_size;
+                        let d_m = exp(-alt / h_m) * step_size;
+                        opt_depth_r += d_r;
+                        opt_depth_m += d_m;
+                        
+                        // Sunlight optical depth from sample to outer atmosphere
+                        let soc = sample_pos - center;
+                        let sb = dot(soc, star_dir);
+                        let sc = dot(soc, soc) - r_atmo * r_atmo;
+                        let sdisc = sb * sb - sc;
+                        var sun_path = 0.0;
+                        if (sdisc > 0.0) { 
+                            sun_path = max(-sb + sqrt(sdisc), 0.0); 
+                        }
+                        
+                        let s_depth_r = exp(-alt / h_r) * sun_path;
+                        let s_depth_m = exp(-alt / h_m) * sun_path;
+                        
+                        let tau = beta_r * (opt_depth_r + s_depth_r) + beta_m * (opt_depth_m + s_depth_m);
+                        let attenuation = exp(-tau);
+                        
+                        in_scatter += (beta_r * d_r * p_rayleigh + beta_m * d_m * p_mie) * attenuation;
+                    }
+                    
+                    let sun_visible = mix(0.15, 1.0, total_shadow);
+                    atmospheric_haze = in_scatter * sun_visible * 6.0;
+                    surface_attenuation = exp(-(beta_r * opt_depth_r + beta_m * opt_depth_m));
+                }
+            }
         }
         
         // Dynamic Polar Auroral Ovals & Coronal Excitation
@@ -2134,7 +2405,7 @@ fn fragment(
 
         // HDR scene-linear radiance accumulation. All emissive sources (lava pools, comet
         // gas vents, biomass phosphorescence) are pre-scaled at their HDR intensities above.
-        out.color = vec4<f32>(balanced_lit + ambient_boost + atmospheric_haze + aurora_glow + pbr_input.material.emissive.rgb, 1.0);
+        out.color = vec4<f32>((balanced_lit + ambient_boost + pbr_input.material.emissive.rgb) * surface_attenuation + atmospheric_haze + aurora_glow, 1.0);
     }
     
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);

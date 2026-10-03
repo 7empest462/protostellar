@@ -356,7 +356,7 @@ pub fn sync_relativistic_jets(
         if let Some((pos, _body, jet_state, opt_spin)) = active_map.get(&root.target) {
             if jet_state.jet_length_au <= 0.01 {
                 if let Ok(mut cmd) = commands.get_entity(root_entity) {
-                    cmd.despawn();
+                    cmd.try_despawn();
                 }
                 continue;
             }
@@ -385,7 +385,7 @@ pub fn sync_relativistic_jets(
                 );
             }
         } else if let Ok(mut cmd) = commands.get_entity(root_entity) {
-            cmd.despawn();
+            cmd.try_despawn();
         }
     }
 

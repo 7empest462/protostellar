@@ -1,6 +1,11 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use protostellar::rendering::bodies::VisualAssets;
+use protostellar::rendering::effects::remnants::{
+    update_persistent_remnants, PersistentRemnantPool, PersistentSupernovaRemnant,
+};
 use protostellar::rendering::effects::supernova::*;
+use protostellar::rendering::materials::{SupernovaMaterial, SupernovaUniforms};
 use protostellar::rendering::particle_swarm::ParticleSwarmData;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::SimTime;
@@ -320,4 +325,267 @@ fn test_supernova_event_ingestion_in_bevy_schedule() {
         "SupernovaEvent must trigger a SupernovaExplosionInstance in the debris pool"
     );
     assert_eq!(pool.explosions[0].explosion_type, SupernovaType::Hypernova);
+}
+
+#[test]
+fn test_supernova_uniforms_alignment_and_defaults() {
+    let uniforms = SupernovaUniforms::default();
+    assert_eq!(uniforms.params, Vec4::new(0.0, 7.5, 1.0, 45.0));
+    assert_eq!(uniforms.core_params, Vec4::new(1.0, 0.0, 5.0, 0.0));
+    assert_eq!(
+        uniforms.center_and_asphericity,
+        Vec4::new(0.0, 0.0, 0.0, 0.15)
+    );
+
+    // Verify 16-byte WGSL uniform alignment
+    assert_eq!(std::mem::size_of::<SupernovaUniforms>() % 16, 0);
+}
+
+#[test]
+fn test_supernova_wgsl_shader_naga_validation() {
+    crate::shader_guardrails::validate_wgsl_shader_with_naga(
+        "assets/shaders/supernova.wgsl",
+        "struct SupernovaUniforms",
+    );
+}
+
+#[test]
+fn test_supernova_visual_shell_ecs_sync() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(AssetPlugin::default());
+    app.init_asset::<Mesh>();
+    app.init_asset::<SupernovaMaterial>();
+    app.init_resource::<SupernovaDebrisPool>();
+
+    let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+    let fallback_mesh = meshes.add(Sphere::new(1.0).mesh());
+    app.insert_resource(VisualAssets::dummy(fallback_mesh));
+
+    app.add_systems(Update, sync_supernova_visuals);
+
+    let star_entity = Entity::from_bits(999);
+    {
+        let mut pool = app.world_mut().resource_mut::<SupernovaDebrisPool>();
+        trigger_supernova_explosion(
+            &mut pool,
+            star_entity,
+            Vec3::new(10.0, 5.0, 0.0),
+            28.0,
+            3.0,
+            BodyType::BlackHole,
+        );
+    }
+
+    // Run 1: Should spawn SupernovaVisualShell entity
+    app.update();
+
+    let mut shell_query = app.world_mut().query::<(
+        Entity,
+        &SupernovaVisualShell,
+        &Transform,
+        &MeshMaterial3d<SupernovaMaterial>,
+    )>();
+    let matching_shells: Vec<_> = shell_query.iter(app.world()).collect();
+    assert_eq!(
+        matching_shells.len(),
+        1,
+        "Exactly one visual shell should be spawned"
+    );
+    let (shell_ent, shell, transform, mat_handle) = matching_shells[0];
+    assert_eq!(shell.star_entity, star_entity);
+    assert_eq!(transform.translation, Vec3::new(10.0, 5.0, 0.0));
+    assert!(transform.scale.x > 0.0);
+
+    // Verify material uniforms were set
+    let materials = app.world().resource::<Assets<SupernovaMaterial>>();
+    let mat = materials
+        .get(&mat_handle.0)
+        .expect("Material should exist in Assets");
+    assert_eq!(mat.uniforms.center_and_asphericity.x, 10.0);
+    assert_eq!(mat.uniforms.center_and_asphericity.y, 5.0);
+    assert_eq!(mat.uniforms.core_params.y, 1.0); // Hypernova type_id = 1.0
+
+    // Run 2: Clear explosions from pool, update should despawn the shell
+    {
+        let mut pool = app.world_mut().resource_mut::<SupernovaDebrisPool>();
+        pool.clear();
+    }
+    app.update();
+
+    assert!(
+        app.world().get_entity(shell_ent).is_err(),
+        "Visual shell should be despawned when explosion ends"
+    );
+}
+
+#[test]
+fn test_persistent_supernova_remnant_handoff_and_sedov_expansion() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SupernovaEvent>();
+    app.init_resource::<SupernovaDebrisPool>();
+    app.init_resource::<PersistentRemnantPool>();
+    app.init_resource::<SimTime>();
+
+    let pulsar_star = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Crab Progenitor".to_string(),
+                body_type: BodyType::Pulsar,
+            },
+            SimPosition(DVec3::ZERO),
+            Mass(1.4),
+            CentralStar,
+        ))
+        .id();
+
+    // Spawn an explosion that is nearly expired (timer = max_timer)
+    {
+        let mut pool = app.world_mut().resource_mut::<SupernovaDebrisPool>();
+        trigger_supernova_explosion(
+            &mut pool,
+            pulsar_star,
+            Vec3::ZERO,
+            12.0,
+            1.4,
+            BodyType::Pulsar,
+        );
+        pool.explosions[0].timer = pool.explosions[0].max_timer; // Ready to hand off!
+    }
+
+    app.add_systems(Update, update_supernova_explosions);
+    app.add_systems(
+        Update,
+        update_persistent_remnants.after(update_supernova_explosions),
+    );
+
+    // Update 1: Supernova explosion finishes and hands off to PersistentRemnantPool
+    app.update();
+
+    let remnant_pool = app.world().resource::<PersistentRemnantPool>();
+    assert_eq!(
+        remnant_pool.remnants.len(),
+        1,
+        "Finished supernova explosion must hand off to PersistentRemnantPool"
+    );
+    let rem = &remnant_pool.remnants[0];
+    assert_eq!(rem.remnant_type, SupernovaType::TypeII);
+    assert!(
+        rem.has_pwn,
+        "Pulsar remnant must activate Pulsar Wind Nebula"
+    );
+    assert!(
+        rem.filaments.len() >= 24,
+        "Remnant must contain multi-layer chemical filaments"
+    );
+    let initial_r = rem.current_radius_au;
+
+    // Advance simulated time by 2,000 years to verify Sedov-Taylor expansion
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.current_dt_yr = 2000.0;
+        sim_time.elapsed_years = 2000.0;
+    }
+    app.update();
+
+    let remnant_pool = app.world().resource::<PersistentRemnantPool>();
+    let rem_expanded = &remnant_pool.remnants[0];
+    assert!(
+        rem_expanded.current_radius_au > initial_r,
+        "Remnant must expand over deep time (was {:.1} AU, now {:.1} AU)",
+        initial_r,
+        rem_expanded.current_radius_au
+    );
+    assert_eq!(rem_expanded.age_years, 2000.0);
+    assert!(rem_expanded.opacity > 0.0 && rem_expanded.opacity <= 1.0);
+}
+
+#[test]
+fn test_supernova_visual_shell_persists_into_remnant() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(AssetPlugin::default());
+    app.init_asset::<Mesh>();
+    app.init_asset::<SupernovaMaterial>();
+    app.init_resource::<SupernovaDebrisPool>();
+    app.init_resource::<PersistentRemnantPool>();
+
+    let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+    let fallback_mesh = meshes.add(Sphere::new(1.0).mesh());
+    app.insert_resource(VisualAssets::dummy(fallback_mesh));
+
+    app.add_systems(Update, sync_supernova_visuals);
+
+    let star_entity = Entity::from_bits(888);
+    {
+        let mut pool = app.world_mut().resource_mut::<SupernovaDebrisPool>();
+        trigger_supernova_explosion(
+            &mut pool,
+            star_entity,
+            Vec3::new(5.0, 0.0, 0.0),
+            20.0,
+            1.4,
+            BodyType::Pulsar,
+        );
+    }
+
+    // Step 1: Prompt explosion creates SupernovaVisualShell
+    app.update();
+
+    let (shell_ent, mat_handle_id) = {
+        let mut shell_query = app.world_mut().query::<(
+            Entity,
+            &SupernovaVisualShell,
+            &Transform,
+            &MeshMaterial3d<SupernovaMaterial>,
+        )>();
+        let matching_shells: Vec<_> = shell_query.iter(app.world()).collect();
+        assert_eq!(matching_shells.len(), 1);
+        let (shell_ent, shell, transform, mat_handle) = matching_shells[0];
+        assert_eq!(shell.star_entity, star_entity);
+        assert_eq!(transform.translation, Vec3::new(5.0, 0.0, 0.0));
+        (shell_ent, mat_handle.0.clone())
+    };
+
+    // Step 2: Prompt explosion ends, but PersistentRemnantPool holds the remnant
+    {
+        let mut pool = app.world_mut().resource_mut::<SupernovaDebrisPool>();
+        pool.clear();
+        let mut rem_pool = app.world_mut().resource_mut::<PersistentRemnantPool>();
+        rem_pool.remnants.push(PersistentSupernovaRemnant {
+            star_entity,
+            center: Vec3::new(5.0, 0.0, 0.0),
+            remnant_type: SupernovaType::TypeII,
+            initial_radius_au: 20.0,
+            current_radius_au: 80.0,
+            expansion_rate_au_yr: 0.02,
+            age_years: 500.0,
+            max_age_years: 50_000.0,
+            opacity: 0.85,
+            has_pwn: true,
+            filaments: Vec::new(),
+        });
+    }
+
+    app.update();
+
+    // Verify visual shell persists and was updated to remnant scale & opacity
+    assert!(app.world().get_entity(shell_ent).is_ok());
+    let updated_trans = app.world().get::<Transform>(shell_ent).unwrap();
+    assert_eq!(updated_trans.scale.x, 80.0);
+
+    let materials = app.world().resource::<Assets<SupernovaMaterial>>();
+    let mat = materials.get(&mat_handle_id).unwrap();
+    assert_eq!(mat.uniforms.core_params.w, 0.85);
+
+    // Step 3: When remnant is cleared, the visual shell is despawned
+    {
+        let mut rem_pool = app.world_mut().resource_mut::<PersistentRemnantPool>();
+        rem_pool.clear();
+    }
+    app.update();
+
+    assert!(app.world().get_entity(shell_ent).is_err());
 }

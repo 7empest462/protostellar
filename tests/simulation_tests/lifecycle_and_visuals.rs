@@ -537,7 +537,7 @@ fn test_minor_bodies_mesh_variety_and_spectral_classification() {
             name,
             body_type: BodyType::Asteroid,
         };
-        let handle = select_body_mesh(&body, assets);
+        let handle = select_body_mesh(&body, 0.0000001, assets);
         if !asteroid_handles.contains(&handle) {
             asteroid_handles.push(handle);
         }
@@ -556,7 +556,7 @@ fn test_minor_bodies_mesh_variety_and_spectral_classification() {
             name,
             body_type: BodyType::Comet,
         };
-        let handle = select_body_mesh(&body, assets);
+        let handle = select_body_mesh(&body, 0.0000001, assets);
         if !comet_handles.contains(&handle) {
             comet_handles.push(handle);
         }
@@ -599,7 +599,7 @@ fn test_planetesimal_and_comet_mesh_fallback_never_smooth_sphere() {
             name: name.to_string(),
             body_type,
         };
-        let handle = select_body_mesh(&body, assets);
+        let handle = select_body_mesh(&body, 0.0000001, assets);
         assert_ne!(
             handle, assets.planet_mesh,
             "Minor body '{name}' of type {body_type:?} must never use smooth hydrostatic planet_mesh!"

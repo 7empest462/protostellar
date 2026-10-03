@@ -588,8 +588,8 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let planet_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(6)
-            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 36)),
+            .ico(7)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(128, 96)),
     );
     let particle_mesh = meshes.add(
         Sphere::new(1.0)
@@ -757,36 +757,72 @@ pub fn select_comet_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<Mes
     }
 }
 
-/// Selects visual mesh for any celestial body type.
-pub fn select_body_mesh(body: &CelestialBody, visual_assets: &VisualAssets) -> Handle<Mesh> {
+/// Selects visual mesh for any celestial body type, enforcing spherical geometry above hydrostatic equilibrium (> 450 km).
+pub fn select_body_mesh(
+    body: &CelestialBody,
+    radius_au: f64,
+    visual_assets: &VisualAssets,
+) -> Handle<Mesh> {
     if body.body_type.is_star_or_remnant() {
         visual_assets.star_mesh.clone()
     } else if body.body_type == BodyType::Moon || body.name.to_lowercase().contains("moon") {
         visual_assets.planet_mesh.clone()
     } else {
         let lower = body.name.to_lowercase();
-        let is_comet_name = lower.contains("comet")
-            || lower.contains("halley")
-            || lower.contains("encke")
-            || lower.contains("67p")
-            || lower.contains("churyumov")
-            || lower.contains("bopp")
-            || lower.contains("borisov")
-            || lower.contains("oumuamua")
-            || lower.contains("wild");
+        let is_explicit_minor = matches!(
+            body.body_type,
+            BodyType::Asteroid
+                | BodyType::Comet
+                | BodyType::Planetesimal
+                | BodyType::DustGrain
+                | BodyType::DebrisRing
+        );
 
-        if body.body_type == BodyType::Comet || is_comet_name {
-            select_comet_mesh(&body.name, visual_assets)
-        } else if body.body_type == BodyType::Asteroid || body.body_type == BodyType::Planetesimal {
-            if lower.contains("icy") || lower.contains("ice") {
-                select_comet_mesh(&body.name, visual_assets)
-            } else {
-                select_asteroid_mesh(&body.name, visual_assets)
-            }
-        } else if body.body_type == BodyType::DustGrain {
-            visual_assets.particle_mesh.clone()
-        } else {
+        // Any planet, embryo, or massive body exceeding hydrostatic equilibrium (> 450 km) is spherical.
+        // Minor bodies below hydrostatic equilibrium always retain irregular meshes.
+        let is_spherical_planet = !is_explicit_minor
+            && (radius_au >= 0.000_003
+                || body.body_type.is_planet()
+                || lower.starts_with("planet ")
+                || lower.starts_with("planet-")
+                || lower.starts_with("planet_")
+                || lower == "planet"
+                || lower.starts_with("embryo")
+                || lower.starts_with("protoplanet")
+                || lower.starts_with("proto-")
+                || lower.contains("earth")
+                || lower.contains("ceres"));
+
+        let is_hydrostatic_minor = is_explicit_minor && radius_au >= 0.000_003;
+
+        if is_spherical_planet || is_hydrostatic_minor {
             visual_assets.planet_mesh.clone()
+        } else {
+            let is_comet_name = lower.contains("comet")
+                || lower.contains("halley")
+                || lower.contains("encke")
+                || lower.contains("67p")
+                || lower.contains("churyumov")
+                || lower.contains("bopp")
+                || lower.contains("borisov")
+                || lower.contains("oumuamua")
+                || lower.contains("wild");
+
+            if body.body_type == BodyType::Comet || is_comet_name {
+                select_comet_mesh(&body.name, visual_assets)
+            } else if body.body_type == BodyType::Asteroid
+                || body.body_type == BodyType::Planetesimal
+            {
+                if lower.contains("icy") || lower.contains("ice") {
+                    select_comet_mesh(&body.name, visual_assets)
+                } else {
+                    select_asteroid_mesh(&body.name, visual_assets)
+                }
+            } else if body.body_type == BodyType::DustGrain {
+                visual_assets.particle_mesh.clone()
+            } else {
+                visual_assets.planet_mesh.clone()
+            }
         }
     }
 }

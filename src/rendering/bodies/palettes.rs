@@ -169,20 +169,20 @@ pub fn compute_asteroid_spectral_palette(name: &str, comp: &Composition) -> Colo
 pub fn compute_comet_spectral_palette(name: &str, _comp: &Composition) -> Color {
     let lower = name.to_lowercase();
     if lower.contains("67p") || lower.contains("arrokoth") {
-        Color::srgb(0.062, 0.045, 0.038)
+        Color::srgb(0.162, 0.145, 0.138)
     } else if lower.contains("hale-bopp") || lower.contains("swift") {
-        Color::srgb(0.045, 0.055, 0.070)
+        Color::srgb(0.145, 0.155, 0.170)
     } else if lower.contains("halley") || lower.contains("tempel") {
-        Color::srgb(0.048, 0.042, 0.038)
+        Color::srgb(0.148, 0.142, 0.138)
     } else {
         let hash = name.bytes().fold(0usize, |acc, b| {
             acc.wrapping_mul(31).wrapping_add(b as usize)
         });
         match hash % 4 {
-            0 => Color::srgb(0.040, 0.040, 0.042),
-            1 => Color::srgb(0.058, 0.044, 0.036),
-            2 => Color::srgb(0.042, 0.052, 0.065),
-            _ => Color::srgb(0.052, 0.046, 0.038),
+            0 => Color::srgb(0.140, 0.140, 0.142),
+            1 => Color::srgb(0.158, 0.144, 0.136),
+            2 => Color::srgb(0.142, 0.152, 0.165),
+            _ => Color::srgb(0.152, 0.146, 0.138),
         }
     }
 }

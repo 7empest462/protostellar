@@ -43,34 +43,54 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
     // MODE 1.0: DIFFUSE COMA ENVELOPE (Spherical Sublimation Halo around Nucleus)
     if (mode > 0.5) {
-        let rho_coma = dist_nuc / max(coma_r, 0.0001);
+        let cam_pos = view.world_position;
+        let view_dir = normalize(in.world_position.xyz - cam_pos);
+        let v_to_nuc = nuc_pos - cam_pos;
+        let dist_along_ray = dot(v_to_nuc, view_dir);
+        let closest_point = cam_pos + view_dir * dist_along_ray;
+        let r_perp = length(closest_point - nuc_pos);
+        
+        let rho_coma = r_perp / max(coma_r, 0.0001);
         if (rho_coma > 1.0) {
             discard;
         }
 
+        // Volumetric path-length cross section through the sphere
+        let volume_thickness = sqrt(max(0.0, 1.0 - rho_coma * rho_coma));
+
         // Concentric sublimation core glow vs outer gaseous halo
-        let core_mask = exp(-rho_coma * rho_coma * 6.5);
-        let halo_mask = pow(max(0.0, 1.0 - rho_coma), 2.2);
+        let core_mask = exp(-rho_coma * rho_coma * 6.5) * volume_thickness;
+        let halo_mask = pow(max(0.0, 1.0 - rho_coma), 2.2) * volume_thickness;
 
-        // Sunward Whipple-Eddington fountain compression
-        let dir_norm = normalize(d_pos);
+        // Sunward Whipple-Eddington fountain compression (fix positional offset)
+        var dir_norm = vec3<f32>(0.0);
+        if (r_perp > 0.0001) {
+            dir_norm = normalize(closest_point - nuc_pos);
+        } else {
+            dir_norm = -anti_solar;
+        }
         let sunward_dot = dot(dir_norm, -anti_solar);
-        let bow_compression = 1.0 + 0.35 * max(0.0, sunward_dot);
+        let bow_compression = 1.0 + 0.45 * max(0.0, sunward_dot);
 
-        // C2 Swan band emerald fluorescence mixed with dust-scattered sunlight
+// C2 Swan band emerald fluorescence mixed with dust-scattered sunlight
         let swan_emerald = vec3<f32>(0.20, 0.98, 0.72);
         let dust_coma = comet.dust_color.rgb * 1.1;
-        let outer_coma_rgb = mix(swan_emerald, dust_coma, dust_ratio);
-        let coma_rgb = mix(outer_coma_rgb, vec3<f32>(0.96, 1.0, 0.98), core_mask);
+        
+        let base_density = (core_mask + halo_mask * 0.35) * bow_compression * activity;
+        // Reduce the massive multipliers so it's a soft glow, not a blown-out solid white sphere.
+        let gas_rgb = mix(swan_emerald, vec3<f32>(0.96, 1.0, 0.98), clamp(core_mask * 1.5, 0.0, 1.0)) * (base_density * 0.8 * (1.0 - dust_ratio));
+        let dust_rgb = dust_coma * (base_density * 0.6 * dust_ratio);
 
-        let intensity = (core_mask * 2.5 + halo_mask * 0.85) * bow_compression * activity;
-        let alpha = clamp((core_mask * 0.92 + halo_mask * 0.40) * bow_compression, 0.0, 0.95);
+        // Vastly reduce occlusion alpha. A comet coma is optically thin gas and sparse dust.
+        let occlusion_alpha = clamp(base_density * 0.04 * dust_ratio, 0.0, 0.60);
+        let premultiplied_dust = dust_rgb * occlusion_alpha;
+        let final_rgb = gas_rgb + premultiplied_dust;
 
-        if (alpha < 0.005) {
+        if (occlusion_alpha < 0.005 && base_density < 0.005) {
             discard;
         }
 
-        out.color = vec4<f32>(coma_rgb * intensity, alpha);
+        out.color = vec4<f32>(final_rgb, occlusion_alpha);
         return out;
     }
 
@@ -138,13 +158,19 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // C. COMBINED LUMINANCE & ALPHA
     let ion_rgb = comet.ion_color.rgb * (ion_intensity * 2.8 * activity);
     let dust_rgb = comet.dust_color.rgb * (dust_intensity * 1.8 * activity);
-    let final_rgb = ion_rgb + dust_rgb;
+    
+    // Calculate final alpha for background occlusion (dust occludes, ion is mostly transparent emission)
+    let final_alpha = clamp((dust_intensity * 0.85) * edge_fade * base_fade * tip_fade * activity, 0.0, 0.95);
 
-    let final_alpha = clamp((ion_intensity * 0.85 + dust_intensity * 0.55) * edge_fade * base_fade * tip_fade * activity, 0.0, 0.95);
-
-    if (final_alpha < 0.005) {
+    if (final_alpha < 0.005 && ion_intensity < 0.005) {
         discard;
     }
+
+    // Now uses AlphaMode::Premultiplied in Bevy.
+    // Dust scatters and occludes (so we multiply by alpha).
+    // Ion plasma is purely emissive additive light (so we DO NOT multiply by alpha, letting it add to the background).
+    let premultiplied_dust = dust_rgb * final_alpha;
+    let final_rgb = ion_rgb + premultiplied_dust;
 
     out.color = vec4<f32>(final_rgb, final_alpha);
     return out;

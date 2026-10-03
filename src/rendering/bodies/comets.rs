@@ -82,16 +82,18 @@ fn compute_tail_parameters(
     .clamp(nuc_visual_r * 1.2, 0.35);
 
     // Tail length driven by sublimation activity and physical escape tail if present
-    let mut tail_len = (0.35 + 2.4 * activity).clamp(0.15, 6.5);
+    // Increased multipliers and max clamps to allow for much longer, sweeping tails.
+    let mut tail_len = (0.35 + 5.5 * activity).clamp(0.15, 25.0);
     if let Some(esc_len) = opt_escape_len {
         if esc_len > 0.05 {
-            tail_len = tail_len.max(esc_len * 0.85).clamp(0.15, 7.5);
+            tail_len = tail_len.max(esc_len * 0.85).clamp(0.15, 30.0);
         }
     }
 
     // Flaring width at tail tip (dust tails flare wider than collimated ion ribbons)
-    let flare_rate = 0.08 + 0.16 * dust_ratio;
-    let tail_width = (coma_r * 1.2 + tail_len * flare_rate).clamp(coma_r * 1.1, 1.8);
+    let flare_rate = 0.15 + 0.55 * dust_ratio;
+    // Removed 4.0 max clamp to ensure the bounding mesh fully engulfs curved dust tails at massive lengths
+    let tail_width = (coma_r * 1.5 + tail_len * flare_rate).max(coma_r * 1.2);
 
     // Composition-dependent emission & scatter colors
     let ion_color = Vec4::new(0.18, 0.88, 1.0, 0.95);
@@ -241,19 +243,6 @@ fn collect_active_comets(
     let mut map = HashMap::new();
 
     for (entity, pos, vel, comp, body, radius, opt_tail) in comet_query.iter() {
-        if matches!(
-            body.body_type,
-            BodyType::Protoplanet
-                | BodyType::TerrestrialPlanet
-                | BodyType::SuperEarth
-                | BodyType::GasGiant
-                | BodyType::IceGiant
-                | BodyType::Moon
-        ) || body.body_type.is_star_or_remnant()
-        {
-            continue;
-        }
-
         let is_comet_type = body.body_type == BodyType::Comet;
         let is_named_comet = body.name.to_lowercase().contains("comet");
         let is_minor_body = matches!(
@@ -384,7 +373,14 @@ fn update_existing_comet_tails(
                 }
             }
         } else if let Ok(mut cmd) = commands.get_entity(root_entity) {
-            cmd.despawn();
+            cmd.try_despawn();
+            if let Some(children) = opt_children {
+                for child in children {
+                    if let Ok(mut child_cmd) = commands.get_entity(*child) {
+                        child_cmd.try_despawn();
+                    }
+                }
+            }
         }
     }
     updated_entities

@@ -110,6 +110,16 @@ pub fn update_skybox_uniforms(
         0.0_f32
     };
 
+    let target_gc_blend = if let Some(ref state) = scenario_state {
+        if state.current_preset == ScenarioPreset::SagittariusAStar {
+            1.0_f32
+        } else {
+            0.0_f32
+        }
+    } else {
+        0.0_f32
+    };
+
     // 2. Gravitational Lensing Parameters Calculation
     let camera_pos = camera_query
         .single()
@@ -117,25 +127,25 @@ pub fn update_skybox_uniforms(
     let mut lens_pos_and_mass = Vec4::ZERO;
     let mut lens_params = Vec4::ZERO;
 
-    if let Ok((star_pos, star_mass, star_radius, star_body, opt_bhs)) = star_query.single() {
+    if let Ok((star_pos, _star_mass, star_radius, star_body, opt_bhs)) = star_query.single() {
         let is_quasi = star_body.body_type == BodyType::QuasiStar;
-        let is_massive_bh = star_body.body_type == BodyType::BlackHole && star_mass.0 > 100.0;
+        let is_bh = star_body.body_type == BodyType::BlackHole;
 
-        if is_quasi || is_massive_bh {
+        if is_quasi || is_bh {
             let bh_pos = Vec3::new(star_pos.x as f32, star_pos.y as f32, star_pos.z as f32);
             let bh_rel = bh_pos - camera_pos;
             let dist_to_bh = bh_rel.length().max(0.01);
 
             let visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
-            let is_blown_out = opt_bhs.map_or(is_massive_bh, |s| s.is_blown_out);
+            let is_blown_out = opt_bhs.map_or(is_bh, |s| s.is_blown_out);
             let blowout_p =
                 opt_bhs.map_or(if is_blown_out { 1.0 } else { 0.0 }, |s| s.blowout_progress);
 
             // Effective gravitational Einstein radius (physical + visual aesthetic scaling)
             // Pre-blowout: subtle relativistic shimmer around the 60 AU envelope (R ~ 12 AU).
-            // Post-blowout: focuses onto the 2.5 AU event horizon with a 1.85x photon sphere (R ~ 4.6 AU).
+            // Post-blowout / Stellar-Mass BH: focuses onto the event horizon with a 2.1x photon sphere.
             let effective_lens_r = if is_blown_out {
-                (visual_r * 1.85).clamp(2.0, 6.0)
+                (visual_r * 2.10).max(0.005)
             } else {
                 let r_cocoon_lens = (visual_r * 0.20).clamp(2.0, 12.0);
                 let r_bh_lens = (visual_r * 1.85).clamp(2.0, 6.0);
@@ -143,13 +153,13 @@ pub fn update_skybox_uniforms(
             };
 
             let shadow_r = if is_blown_out {
-                (visual_r * 0.98).max(0.01)
+                (visual_r * 0.98).max(0.003)
             } else {
                 (visual_r * 0.05).clamp(0.5, 3.0)
             };
             let theta_e = (effective_lens_r / dist_to_bh).atan();
             let theta_shadow = (shadow_r / dist_to_bh).atan();
-            let photon_ring_width = (theta_shadow * 0.045).clamp(0.002, 0.06);
+            let photon_ring_width = (theta_shadow * 0.045).clamp(0.0005, 0.06);
 
             lens_pos_and_mass = Vec4::new(bh_rel.x, bh_rel.y, bh_rel.z, theta_e);
             lens_params = Vec4::new(theta_shadow, photon_ring_width, 1.0, 1.0);
@@ -160,13 +170,17 @@ pub fn update_skybox_uniforms(
         if let Some(mut mat) = materials.get_mut(handle) {
             // Smooth exponential lerp toward target mode (transition speed ~ 2.2 / sec)
             let current_blend = mat.uniforms.params.y;
+            let current_gc_blend = mat.uniforms.scenario_params.x;
             let blend_speed = 2.2;
             let new_blend =
                 current_blend + (target_blend - current_blend) * (dt * blend_speed).min(1.0);
+            let new_gc_blend = current_gc_blend
+                + (target_gc_blend - current_gc_blend) * (dt * blend_speed).min(1.0);
 
             // Update parameters
             mat.uniforms.params.x += dt; // Animation time
             mat.uniforms.params.y = new_blend; // Mode blend: 0.0 = Milky Way, 1.0 = Early Universe
+            mat.uniforms.scenario_params.x = new_gc_blend; // 1.0 = Galactic Center
             mat.uniforms.params.z = 1.30; // Exposure
             mat.uniforms.params.w = 1.0; // Star twinkle intensity
 

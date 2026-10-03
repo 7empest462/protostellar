@@ -316,7 +316,7 @@ pub fn sync_quasar_beams(
     let Some((pos, body, _mass, radius, opt_qs)) = target else {
         for (ent, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
         return;
@@ -329,7 +329,7 @@ pub fn sync_quasar_beams(
     if !is_blown_out || light_dist <= 0.1 {
         for (ent, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
         return;
@@ -410,7 +410,7 @@ pub fn sync_pulsar_beams(
     let Some((pos, body, radius)) = target else {
         for (ent, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
         return;
@@ -528,7 +528,7 @@ pub fn sync_magnetar_structures(
     let Some((pos, _body, _)) = target else {
         for (ent, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
         return;
@@ -583,5 +583,142 @@ pub fn sync_magnetar_structures(
                     NotShadowCaster,
                 ));
             });
+    }
+}
+
+/// Marker component for an instantiated visual accretion disk entity attached to a black hole.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct VisualBlackHoleDiskChild;
+
+/// Synchronizes relativistic accretion disks, Keplerian Doppler beaming, and gravitational lensing on black holes.
+#[allow(clippy::type_complexity, reason = "Black hole accretion disk query")]
+pub fn sync_black_hole_accretion_disks(
+    mut commands: Commands,
+    sim_time: Option<Res<SimTime>>,
+    visual_assets: Res<VisualAssets>,
+    mut disk_materials: ResMut<Assets<BlackHoleDiskMaterial>>,
+    camera_query: Query<
+        &Transform,
+        (
+            With<crate::rendering::camera::PanOrbitCamera>,
+            Without<VisualBlackHoleDiskChild>,
+        ),
+    >,
+    black_holes_query: Query<
+        (
+            Entity,
+            &Mass,
+            &Radius,
+            &CelestialBody,
+            &Transform,
+            Option<&SpinState>,
+            Option<&Children>,
+        ),
+        (With<VisualBody>, Without<VisualBlackHoleDiskChild>),
+    >,
+    mut disk_children_query: Query<
+        (&mut Transform, &MeshMaterial3d<BlackHoleDiskMaterial>),
+        (
+            With<VisualBlackHoleDiskChild>,
+            Without<CelestialBody>,
+            Without<crate::rendering::camera::PanOrbitCamera>,
+        ),
+    >,
+) {
+    let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+    let cam_pos = camera_query
+        .iter()
+        .next()
+        .map_or(Vec3::new(0.0, 5.0, 10.0), |t| t.translation);
+
+    for (bh_entity, mass, _radius, body, bh_trans, _opt_spin, opt_children) in
+        black_holes_query.iter()
+    {
+        if body.body_type != BodyType::BlackHole {
+            continue;
+        }
+
+        // Accretion disk scale relative to black hole event horizon
+        // The parent mesh is scaled by bh_visual_radius.
+        // A Plane3d mesh (size 1.0) scaled by 12.0 spans 6.0x the event horizon radius,
+        // matching the physical extent of the ISCO through outer Shakura-Sunyaev disk (~18-24 r_s).
+        let disk_scale = 12.0f32;
+
+        let cam_dir_world = (cam_pos - bh_trans.translation).normalize_or_zero();
+        let cam_dir_local = bh_trans.rotation.inverse() * cam_dir_world;
+
+        // Camera-oriented billboard frame for General Relativistic gravitational lensing
+        let spin_axis = Vec3::Y;
+        let mut u_right = spin_axis.cross(cam_dir_local);
+        if u_right.length_squared() < 1e-6 {
+            u_right = Vec3::X;
+        } else {
+            u_right = u_right.normalize();
+        }
+        // col0: screen right (u_right)
+        // col1: mesh normal facing camera (cam_dir_local)
+        // col2: col0 x col1 = u_right x cam_dir_local (points screen down, so -Z is screen up)
+        let z_screen_col = u_right.cross(cam_dir_local).normalize();
+        let disk_rotation = Quat::from_mat3(&Mat3::from_cols(u_right, cam_dir_local, z_screen_col));
+        let cos_theta = cam_dir_local.dot(spin_axis).clamp(-1.0, 1.0);
+
+        let mut found_child = false;
+        if let Some(children) = opt_children {
+            for child in children.iter() {
+                if let Ok((mut transform, mat_handle)) = disk_children_query.get_mut(child) {
+                    found_child = true;
+                    transform.translation = cam_dir_local * 1.05;
+                    transform.scale = Vec3::new(disk_scale, 1.0, disk_scale);
+                    transform.rotation = disk_rotation;
+
+                    if let Some(mut mat) = disk_materials.get_mut(&mat_handle.0) {
+                        mat.uniforms.time = visual_time;
+                        mat.uniforms.inner_radius = 0.16; // ISCO (3.0 r_s normalized)
+                        mat.uniforms.outer_radius = 1.0;
+                        mat.uniforms.schwa_radius = 0.055;
+                        mat.uniforms.disk_color = Vec4::new(1.0, 0.90, 0.70, 1.0);
+                        mat.uniforms.spin_axis = Vec4::new(0.0, 1.0, 0.0, mass.0 as f32);
+                        mat.uniforms.cam_dir_local =
+                            Vec4::new(cam_dir_local.x, cam_dir_local.y, cam_dir_local.z, cos_theta);
+                        mat.uniforms.cam_up_local =
+                            Vec4::new(z_screen_col.x, z_screen_col.y, z_screen_col.z, 0.0);
+                    }
+                }
+            }
+        }
+
+        if !found_child {
+            let material = disk_materials.add(BlackHoleDiskMaterial {
+                uniforms: BlackHoleDiskUniforms {
+                    inner_radius: 0.16,
+                    outer_radius: 1.0,
+                    schwa_radius: 0.055,
+                    time: visual_time,
+                    disk_color: Vec4::new(1.0, 0.90, 0.70, 1.0),
+                    spin_axis: Vec4::new(0.0, 1.0, 0.0, mass.0 as f32),
+                    cam_dir_local: Vec4::new(
+                        cam_dir_local.x,
+                        cam_dir_local.y,
+                        cam_dir_local.z,
+                        cos_theta,
+                    ),
+                    cam_up_local: Vec4::new(z_screen_col.x, z_screen_col.y, z_screen_col.z, 0.0),
+                },
+            });
+
+            if let Ok(mut bh_cmd) = commands.get_entity(bh_entity) {
+                bh_cmd.with_children(|parent| {
+                    parent.spawn((
+                        VisualBlackHoleDiskChild,
+                        Mesh3d(visual_assets.accretion_disk_mesh.clone()),
+                        MeshMaterial3d(material),
+                        Transform::from_translation(cam_dir_local * 1.05)
+                            .with_scale(Vec3::new(disk_scale, 1.0, disk_scale))
+                            .with_rotation(disk_rotation),
+                        NotShadowCaster,
+                    ));
+                });
+            }
+        }
     }
 }

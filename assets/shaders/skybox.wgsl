@@ -10,6 +10,7 @@ struct SkyboxUniforms {
     tuning: vec4<f32>, // x: star_density, y: nebula_intensity, z: cosmic_web_scale, w: filament_brightness
     lens_pos_and_mass: vec4<f32>, // x, y, z: black hole position relative to camera in AU, w: theta_E in radians
     lens_params: vec4<f32>, // x: shadow radius (radians), y: photon ring width (radians), z: is_active (1.0 or 0.0), w: boost
+    scenario_params: vec4<f32>, // x: galactic_center_blend (0.0 to 1.0)
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0)
@@ -592,35 +593,106 @@ fn compute_gravitational_lensing(view_dir: vec3<f32>) -> vec3<f32> {
 // MAIN FRAGMENT SHADER
 // ============================================================================
 
+// ============================================================================
+// PART 4: GALACTIC CENTER (SAGITTARIUS A*)
+// ============================================================================
+
+fn render_galactic_center(dir: vec3<f32>, time: f32) -> vec3<f32> {
+    // In the galactic center, we are INSIDE the nuclear star cluster.
+    // The "sky" is the inner parsecs of the galaxy. Immense density of old stars,
+    // heavy dust lanes (the Circumnuclear Disk), and hot ionized gas.
+    let g = to_galactic(dir);
+    let b = g.y; // galactic latitude
+    let abs_b = abs(b);
+
+    // 1. Nuclear Star Cluster Glow (Highly concentrated, spherical-oblate)
+    // Reduce the base glow so it doesn't blow out the entire skybox
+    let nsc_glow = exp(-abs_b / 0.45) * 0.45 + exp(-abs_b / 1.2) * 0.15;
+    
+    // Warm golden-amber starlight tone for old stars dominating the central bulge
+    let nsc_color = vec3<f32>(1.0, 0.75, 0.45) * nsc_glow;
+
+    // 2. The Circumnuclear Disk (Immense dense dust lanes orbiting the center)
+    let dust_coord = g * 6.0 + vec3<f32>(0.2, 0.4, 1.7);
+    let dust_noise = fbm3(dust_coord, 5);
+    let dust_fine = fbm3(dust_coord * 4.0, 3);
+    // Sharper dust with higher contrast
+    let dust_density = clamp(dust_noise * 2.2 + dust_fine * 0.8 - 0.7, 0.0, 4.0);
+    // Dust is heavily concentrated near the equatorial plane of the galaxy
+    let dust_optical_depth = dust_density * exp(-abs_b / 0.25) * 6.5;
+    let dust_transmission = exp(-dust_optical_depth);
+
+    // 3. Hot Ionized Gas (Sgr A West / Minispiral)
+    let neb_coord = g * 8.5 + vec3<f32>(2.4, -1.1, 0.8);
+    let h_alpha_mask = smoothstep(0.5, 0.85, fbm3(neb_coord, 4)) * exp(-abs_b / 0.35);
+    let h_alpha_color = vec3<f32>(0.8, 0.15, 0.3) * h_alpha_mask * 1.5 * dust_transmission;
+
+    // 4. Insanely Dense Starfield
+    var star_light = vec3<f32>(0.0);
+    // Layer 1: Bright giants (e.g. IRS 16 cluster Wolf-Rayet and O-stars)
+    let l1 = render_star_layer(
+        dir,
+        45.0,
+        vec3<f32>(10.0, 20.0, 30.0),
+        0.88, // Only top 12% are bright giants
+        0.001,
+        0.0025,
+        0.08,
+        time,
+        skybox.params.w,
+    );
+    // Layer 2: Extreme background faint stars (millions in the FOV)
+    let l2 = render_star_layer(
+        dir,
+        120.0,
+        vec3<f32>(100.0, 200.0, 300.0),
+        0.75, // Top 25% of grid are faint stars
+        0.0006,
+        0.0,
+        0.0,
+        time,
+        skybox.params.w,
+    );
+    star_light = (l1 + l2 * 0.4) * dust_transmission;
+
+    return nsc_color * dust_transmission + h_alpha_color + star_light;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal on celestial sphere is the exact unit viewing direction
     let raw_dir = normalize(in.world_normal);
     let time = skybox.params.x;
     let blend = clamp(skybox.params.y, 0.0, 1.0);
+    let gc_blend = clamp(skybox.scenario_params.x, 0.0, 1.0);
 
     // Apply General Relativistic Gravitational Lensing & Warping
     let dir = compute_gravitational_lensing(raw_dir);
 
-    var color = vec3<f32>(0.0);
+    var base_color = vec3<f32>(0.0);
 
     if (blend <= 0.001) {
         // Pure Modern Milky Way
-        color = render_milky_way(dir, time);
+        base_color = render_milky_way(dir, time);
     } else if (blend >= 0.999) {
         // Pure Early Universe High-Redshift Cosmic Web
-        color = render_early_universe(dir, time);
+        base_color = render_early_universe(dir, time);
     } else {
         // Smooth scenario interpolation between eras
         let modern = render_milky_way(dir, time);
         let early = render_early_universe(dir, time);
-        color = mix(modern, early, blend);
+        base_color = mix(modern, early, blend);
+    }
+
+    // Blend into Galactic Center scenario if active
+    if (gc_blend > 0.001) {
+        let gc_color = render_galactic_center(dir, time);
+        base_color = mix(base_color, gc_color, gc_blend);
     }
 
     // Exposure tone multiplier
-    let final_color = color * skybox.params.z;
+    let final_color = base_color * skybox.params.z;
 
     return vec4<f32>(final_color, 1.0);
 }
-
 

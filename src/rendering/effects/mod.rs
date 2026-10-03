@@ -1,11 +1,20 @@
 //! Visual effects, orbit path gizmos, impact shockwaves, and diagnostic overlays.
 
+pub mod impact_debris;
+pub mod kilonova;
+pub mod megastructures;
 pub mod orbits;
 pub mod planetary;
 pub mod relativistic;
+pub mod remnants;
+pub mod roche_stream;
 pub mod shockwaves;
 pub mod supernova;
+pub mod tde;
 pub mod tools;
+
+pub use impact_debris::*;
+pub use roche_stream::*;
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -15,6 +24,10 @@ use crate::simulation::resources::*;
 use crate::utils::constants::EARTH_MASS_SOLAR;
 use crate::utils::math::*;
 
+pub use kilonova::{
+    draw_kilonova_effects, update_kilonova_effects, KilonovaInstance, KilonovaPool,
+};
+pub use megastructures::{draw_dyson_swarms, update_megastructure_construction, DysonSwarm};
 pub use orbits::{
     draw_ambient_and_trailing_orbit_ribbon, draw_conic_apsides_and_nodes,
     draw_hyperbolic_trajectory,
@@ -29,14 +42,20 @@ pub use relativistic::{
     draw_quasar_relativistic_jets, draw_quasi_star_photosphere_and_magnetosphere,
     draw_standard_black_hole_jets, draw_stellar_evolution_nebula, draw_white_dwarf_gizmos,
 };
+pub use remnants::{
+    draw_persistent_supernova_remnants, spawn_remnant_from_explosion, update_persistent_remnants,
+    PersistentRemnantPool, PersistentSupernovaRemnant, RemnantFilament,
+};
 pub use shockwaves::{
     draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
     update_impact_shockwaves, update_roche_debris_streams,
 };
 pub use supernova::{
-    draw_supernova_explosions, update_supernova_explosions, EjectaLayer, SupernovaDebrisPool,
-    SupernovaEjectaFragment, SupernovaExplosionInstance, SupernovaType,
+    draw_supernova_explosions, sync_supernova_visuals, update_supernova_explosions, EjectaLayer,
+    SupernovaDebrisPool, SupernovaEjectaFragment, SupernovaExplosionInstance, SupernovaType,
+    SupernovaVisualShell,
 };
+pub use tde::{draw_tidal_disruption_streams, update_tidal_disruption_streams};
 pub use tools::{
     draw_bombardment_projectiles_gizmo, draw_planet_builder_preview, draw_slingshot_preview,
     draw_tractor_beam_gizmo, draw_trajectory_prediction_gizmos,
@@ -340,19 +359,22 @@ pub fn draw_orbital_effects_and_gizmos(
         ),
         With<CentralStar>,
     >,
-    bodies_query: Query<(
-        Entity,
-        &SimPosition,
-        &SimVelocity,
-        &Mass,
-        &Composition,
-        &CelestialBody,
-        Option<&InternalDifferentiation>,
-        Option<&SpinState>,
-        Option<&Radius>,
-        Option<&AtmosphericEscapeTail>,
-        Option<&SatelliteOf>,
-    )>,
+    bodies_query: Query<
+        (
+            Entity,
+            &SimPosition,
+            &SimVelocity,
+            &Mass,
+            &Composition,
+            &CelestialBody,
+            Option<&InternalDifferentiation>,
+            Option<&SpinState>,
+            Option<&Radius>,
+            Option<&AtmosphericEscapeTail>,
+            Option<&SatelliteOf>,
+        ),
+        Without<crate::simulation::probes::SpaceProbe>,
+    >,
     parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
     opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
     opt_slingshot: Option<Res<crate::simulation::resources::SlingshotState>>,
@@ -532,4 +554,35 @@ pub fn draw_bombardment_gizmos(
     }
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     draw_bombardment_projectiles_gizmo(&mut gizmos, &projectiles_query, &targets_query, elapsed);
+}
+
+pub fn draw_persistent_remnants_gizmos(
+    mut gizmos: Gizmos,
+    remnant_pool: Option<Res<PersistentRemnantPool>>,
+    sim_time: Option<Res<SimTime>>,
+) {
+    let Some(pool) = remnant_pool else {
+        return;
+    };
+    if pool.remnants.is_empty() {
+        return;
+    }
+    let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+    draw_persistent_supernova_remnants(&mut gizmos, &pool, visual_time);
+}
+
+pub fn draw_kilonova_gizmos(mut gizmos: Gizmos, kilonova_pool: Option<Res<KilonovaPool>>) {
+    if let Some(pool) = kilonova_pool.filter(|p| !p.instances.is_empty()) {
+        draw_kilonova_effects(&mut gizmos, &pool);
+    }
+}
+
+pub fn draw_tde_gizmos(mut gizmos: Gizmos, tde_pool: Option<Res<TidalDisruptionPool>>) {
+    let Some(pool) = tde_pool else {
+        return;
+    };
+    if pool.streams.is_empty() {
+        return;
+    }
+    draw_tidal_disruption_streams(&mut gizmos, &pool);
 }

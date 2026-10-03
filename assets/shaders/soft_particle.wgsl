@@ -7,7 +7,7 @@ struct SoftParticleUniforms {
     params: vec4<f32>,
 };
 
-@group(2) @binding(0) var<uniform> material: SoftParticleUniforms;
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> material: SoftParticleUniforms;
 
 @fragment
 fn fragment(

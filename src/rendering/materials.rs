@@ -8,7 +8,7 @@ pub struct PlanetUniforms {
     pub planet_type: u32,
     pub temperature: f32,
     pub time: f32,
-    pub spin_rate: f32,
+    pub spin_angle: f32,
     /// x: rock (silicate + organics), y: ice (volatiles/water), z: metal, w: gas (atmosphere)
     pub composition: Vec4,
     pub color_seed: Vec4,
@@ -42,6 +42,10 @@ pub struct PlanetUniforms {
     pub storm_features: Vec4,
     /// x: great_spot_lon_rad, y: vortex_spin_rate, z: secondary_oval_count, w: zonal_shear_turbulence
     pub storm_dynamics: Vec4,
+    /// xyz: planet center in world coordinates, w: visual radius
+    pub planet_center_and_radius: Vec4,
+    /// x: technosignature (0.0 to 2.0), yzw: unused
+    pub civilization_params: Vec4,
 }
 
 impl Default for PlanetUniforms {
@@ -50,7 +54,7 @@ impl Default for PlanetUniforms {
             planet_type: 0,
             temperature: 300.0,
             time: 0.0,
-            spin_rate: 0.15,
+            spin_angle: 0.15,
             composition: Vec4::ZERO,
             color_seed: Vec4::ONE,
             climate_and_bio: Vec4::ZERO,
@@ -68,6 +72,8 @@ impl Default for PlanetUniforms {
             aurora_params: Vec4::ZERO,
             storm_features: Vec4::ZERO,
             storm_dynamics: Vec4::new(0.0, 1.0, 0.0, 0.5),
+            planet_center_and_radius: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            civilization_params: Vec4::ZERO,
         }
     }
 }
@@ -79,6 +85,9 @@ pub struct PlanetMaterialExtension {
 }
 
 impl MaterialExtension for PlanetMaterialExtension {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/planet.wgsl".into()
+    }
     fn fragment_shader() -> ShaderRef {
         "shaders/planet.wgsl".into()
     }
@@ -197,6 +206,47 @@ impl Material for RingMaterial {
     }
 }
 
+/// GPU uniforms for the relativistic black hole accretion disk and gravitational lensing arc shader.
+#[derive(Clone, Default, ShaderType, Debug)]
+pub struct BlackHoleDiskUniforms {
+    pub inner_radius: f32,
+    pub outer_radius: f32,
+    pub schwa_radius: f32,
+    pub time: f32,
+    pub disk_color: Vec4,
+    pub spin_axis: Vec4,
+    /// xyz: unit camera direction in local BH space, w: cos(inclination)
+    pub cam_dir_local: Vec4,
+    /// xyz: screen-up direction (z_screen_col) in local BH space, w: unused
+    pub cam_up_local: Vec4,
+}
+
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct BlackHoleDiskMaterial {
+    #[uniform(0)]
+    pub uniforms: BlackHoleDiskUniforms,
+}
+
+impl Material for BlackHoleDiskMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/black_hole_disk.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None; // Double-sided rendering so accretion disk is visible from any inclination
+        Ok(())
+    }
+}
+
 #[derive(Clone, Default, ShaderType, Debug)]
 pub struct SkyboxUniforms {
     /// x: time (seconds), y: scenario_blend (0.0 = Milky Way, 1.0 = Early Universe), z: exposure, w: star_twinkle
@@ -207,6 +257,8 @@ pub struct SkyboxUniforms {
     pub lens_pos_and_mass: Vec4,
     /// x: angular shadow radius theta_s (radians), y: photon ring width (radians), z: is_active (1.0 or 0.0), w: relativistic boost factor
     pub lens_params: Vec4,
+    /// x: galactic center blend (0.0 = solar neighborhood, 1.0 = galactic center), y, z, w: unused
+    pub scenario_params: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
@@ -223,6 +275,7 @@ impl Default for SkyboxMaterial {
                 tuning: Vec4::new(1.0, 1.0, 1.0, 1.0),
                 lens_pos_and_mass: Vec4::ZERO,
                 lens_params: Vec4::ZERO,
+                scenario_params: Vec4::ZERO,
             },
         }
     }
@@ -346,6 +399,125 @@ pub struct CometTailMaterial {
 impl Material for CometTailMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/comet_tail.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Premultiplied
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+/// GPU uniform parameters for volumetric supernova blast waves, expanding Rayleigh-Taylor shock shells, and prompt core flashes.
+#[derive(Clone, ShaderType, Debug)]
+pub struct SupernovaUniforms {
+    /// x: elapsed time (s), y: max lifespan (s), z: current radius (AU), w: blast speed (AU/s)
+    pub params: Vec4,
+    /// x: prompt flash intensity (1.0 -> 0.0), y: explosion type (0=Type II, 1=Hypernova, 2=Type Ia, 3=PlanetaryNebula), z: ejecta mass (solar), w: reserved
+    pub core_params: Vec4,
+    /// xyz: explosion center in world space (AU), w: asphericity / prolate elongation (e.g. 0.35 for Hypernova)
+    pub center_and_asphericity: Vec4,
+    /// Radioactive core color RGBA (Nickel-56 / Cobalt-56 incandescent glow)
+    pub core_color: Vec4,
+    /// Intermediate mantle color RGBA (Oxygen/Silicon/Sulfur forbidden line ionization)
+    pub mantle_color: Vec4,
+    /// Outer forward shock shell color RGBA (Hydrogen-alpha / shock boundary)
+    pub envelope_color: Vec4,
+    /// Relativistic polar jet color RGBA (for Hypernovas / Collapsars)
+    pub jet_color: Vec4,
+}
+
+impl Default for SupernovaUniforms {
+    fn default() -> Self {
+        Self {
+            params: Vec4::new(0.0, 7.5, 1.0, 45.0),
+            core_params: Vec4::new(1.0, 0.0, 5.0, 0.0),
+            center_and_asphericity: Vec4::new(0.0, 0.0, 0.0, 0.15),
+            core_color: Vec4::new(1.0, 0.75, 0.20, 1.0),
+            mantle_color: Vec4::new(0.15, 0.95, 0.85, 0.85),
+            envelope_color: Vec4::new(0.95, 0.25, 0.30, 0.80),
+            jet_color: Vec4::new(0.65, 0.35, 1.0, 0.95),
+        }
+    }
+}
+
+/// Custom Bevy material for volumetric expanding supernova shockwaves, ejecta filaments, and core breakout.
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct SupernovaMaterial {
+    #[uniform(0)]
+    pub uniforms: SupernovaUniforms,
+}
+
+impl Material for SupernovaMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/supernova.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+#[derive(Clone, ShaderType, Debug)]
+pub struct VolumetricNebulaUniforms {
+    pub box_min: Vec3,
+    pub step_count: u32,
+    pub box_max: Vec3,
+    pub absorption_coefficient: f32,
+    pub scattering_albedo: f32,
+    pub phase_g: f32,
+    pub num_stars: u32,
+    #[allow(clippy::pub_underscore_fields, reason = "WGSL memory layout alignment")]
+    pub _pad: u32,
+    pub star_positions_and_cavities: [Vec4; 16],
+    pub star_colors_and_lum: [Vec4; 16],
+}
+
+impl Default for VolumetricNebulaUniforms {
+    fn default() -> Self {
+        Self {
+            box_min: Vec3::splat(-550.0),
+            step_count: 96,
+            box_max: Vec3::splat(550.0),
+            absorption_coefficient: 0.025,
+            scattering_albedo: 0.85,
+            phase_g: 0.65,
+            num_stars: 0,
+            _pad: 0,
+            star_positions_and_cavities: [Vec4::ZERO; 16],
+            star_colors_and_lum: [Vec4::ZERO; 16],
+        }
+    }
+}
+
+/// Custom Bevy material for 3D raymarched Giant Molecular Clouds with dynamic ionization cavities.
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct VolumetricNebulaMaterial {
+    #[uniform(0)]
+    pub uniforms: VolumetricNebulaUniforms,
+}
+
+impl Material for VolumetricNebulaMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/volumetric_nebula.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {

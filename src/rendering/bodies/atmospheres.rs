@@ -240,6 +240,115 @@ fn update_atmosphere_child_mesh(
     found_child
 }
 
+fn compute_spin_axis(opt_spin: Option<&SpinState>) -> Vec4 {
+    opt_spin.map_or(Vec4::new(0.0, 1.0, 0.0, 0.0), |s| {
+        if s.spin_vector.length_squared() > 1e-12
+            && (s.spin_vector.x.abs() > 1e-6 || s.spin_vector.z.abs() > 1e-6)
+        {
+            let n = s.spin_vector.normalize();
+            Vec4::new(n.x as f32, n.y as f32, n.z as f32, 0.0)
+        } else {
+            let tilt = (s.axial_tilt_degrees as f32).to_radians();
+            Vec4::new(tilt.sin(), tilt.cos(), 0.0, 0.0)
+        }
+    })
+}
+
+fn despawn_atmosphere_children(
+    commands: &mut Commands,
+    children: &Children,
+    atmo_children_query: &Query<
+        (&mut Transform, &MeshMaterial3d<AtmosphereMaterial>),
+        With<VisualAtmosphereChild>,
+    >,
+) {
+    for child in children.iter() {
+        if atmo_children_query.get(child).is_ok() {
+            if let Ok(mut c_cmd) = commands.get_entity(child) {
+                c_cmd.try_despawn();
+            }
+        }
+    }
+}
+
+fn extract_primary_star_lighting(
+    primary_star_query: &Query<
+        (&SimPosition, &Temperature, &Mass),
+        (With<CentralStar>, With<CelestialBody>),
+    >,
+) -> (Vec3, f32) {
+    let star_data = primary_star_query.iter().next();
+    let star_pos = star_data.map_or(Vec3::ZERO, |(p, _, _)| {
+        Vec3::new(p.x as f32, p.y as f32, p.z as f32)
+    });
+    let star_lum = star_data.map_or(1.0, |(_, t, m)| {
+        let t_ratio = (t.0 / 5778.0) as f32;
+        let m_ratio = m.0 as f32;
+        (t_ratio * t_ratio * t_ratio * t_ratio * m_ratio).clamp(0.2, 50.0)
+    });
+    (star_pos, star_lum)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Atmosphere uniform calculation requires planetary state components and starlight parameters"
+)]
+fn build_planet_atmosphere_uniforms(
+    p_pos: &SimPosition,
+    p_rad: &Radius,
+    body: &CelestialBody,
+    comp: &Composition,
+    temp: &Temperature,
+    opt_climate: Option<&PlanetaryClimate>,
+    opt_vol: Option<&VolatileInventory>,
+    opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
+    opt_diff: Option<&InternalDifferentiation>,
+    opt_spin: Option<&SpinState>,
+    star_pos: Vec3,
+    star_lum: f32,
+) -> (AtmosphereUniforms, bool, f32) {
+    let norm = comp.normalized();
+    let pressure_bar = opt_vol.map_or((norm.gas_frac as f32 * 2.0).max(0.0), |v| {
+        v.atmospheric_pressure_bar
+    });
+    let cloud_coverage = opt_climate.map_or(norm.gas_frac as f32, |c| c.cloud_coverage_frac);
+
+    let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.30;
+    let is_ice_giant = body.body_type == BodyType::IceGiant;
+    let has_atmosphere =
+        is_gas_giant || is_ice_giant || pressure_bar >= 0.005 || norm.gas_frac > 0.02;
+
+    let planet_world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let star_vector = (star_pos - planet_world_pos).normalize_or_zero();
+
+    let profile = compute_atmosphere_spectral_profile(
+        body.body_type,
+        comp,
+        temp.0,
+        pressure_bar,
+        cloud_coverage,
+    );
+
+    let visual_r = p_rad.0 as f32;
+    let atmo_r = visual_r * profile.shell_outer_scale;
+    let aurora_params = derive_auroral_params(opt_aurora, opt_diff);
+    let spin_axis = compute_spin_axis(opt_spin);
+
+    let uniforms = create_atmosphere_uniforms(
+        &profile,
+        pressure_bar,
+        visual_r,
+        atmo_r,
+        star_vector,
+        star_lum,
+        planet_world_pos,
+        aurora_params,
+        spin_axis,
+    );
+
+    (uniforms, has_atmosphere, profile.shell_outer_scale)
+}
+
 /// Synchronizes 3D planetary atmospheric limb glow shells, materials, and starlight vectors.
 #[allow(clippy::type_complexity, reason = "Atmosphere Mesh Query Complexity")]
 pub fn sync_planetary_atmospheres(
@@ -276,15 +385,7 @@ pub fn sync_planetary_atmospheres(
         return;
     };
 
-    let star_data = primary_star_query.iter().next();
-    let star_pos = star_data.map_or(Vec3::ZERO, |(p, _, _)| {
-        Vec3::new(p.x as f32, p.y as f32, p.z as f32)
-    });
-    let star_lum = star_data.map_or(1.0, |(_, t, m)| {
-        let t_ratio = (t.0 / 5778.0) as f32;
-        let m_ratio = m.0 as f32;
-        (t_ratio * t_ratio * t_ratio * t_ratio * m_ratio).clamp(0.2, 50.0)
-    });
+    let (star_pos, star_lum) = extract_primary_star_lighting(&primary_star_query);
 
     for (
         planet_ent,
@@ -307,57 +408,25 @@ pub fn sync_planetary_atmospheres(
                 BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain | BodyType::Planetesimal
             )
         {
+            if let Some(children) = opt_children {
+                despawn_atmosphere_children(&mut commands, children, &atmo_children_query);
+            }
             continue;
         }
 
-        let norm = comp.normalized();
-        let pressure_bar = opt_vol.map_or((norm.gas_frac as f32 * 2.0).max(0.0), |v| {
-            v.atmospheric_pressure_bar
-        });
-        let cloud_coverage = opt_climate.map_or(norm.gas_frac as f32, |c| c.cloud_coverage_frac);
-
-        let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.30;
-        let is_ice_giant = body.body_type == BodyType::IceGiant;
-        let has_atmosphere =
-            is_gas_giant || is_ice_giant || pressure_bar >= 0.005 || norm.gas_frac > 0.02;
-
-        let planet_world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
-        let star_vector = (star_pos - planet_world_pos).normalize_or_zero();
-
-        let profile = compute_atmosphere_spectral_profile(
-            body.body_type,
+        let (uniforms, has_atmosphere, shell_outer_scale) = build_planet_atmosphere_uniforms(
+            p_pos,
+            p_rad,
+            body,
             comp,
-            temp.0,
-            pressure_bar,
-            cloud_coverage,
-        );
-
-        let visual_r = p_rad.0 as f32;
-        let atmo_r = visual_r * profile.shell_outer_scale;
-        let aurora_params = derive_auroral_params(opt_aurora, opt_diff);
-
-        let spin_axis = opt_spin.map_or(Vec4::new(0.0, 1.0, 0.0, 0.0), |s| {
-            if s.spin_vector.length_squared() > 1e-12
-                && (s.spin_vector.x.abs() > 1e-6 || s.spin_vector.z.abs() > 1e-6)
-            {
-                let n = s.spin_vector.normalize();
-                Vec4::new(n.x as f32, n.y as f32, n.z as f32, 0.0)
-            } else {
-                let tilt = (s.axial_tilt_degrees as f32).to_radians();
-                Vec4::new(tilt.sin(), tilt.cos(), 0.0, 0.0)
-            }
-        });
-
-        let uniforms = create_atmosphere_uniforms(
-            &profile,
-            pressure_bar,
-            visual_r,
-            atmo_r,
-            star_vector,
+            temp,
+            opt_climate,
+            opt_vol,
+            opt_aurora,
+            opt_diff,
+            opt_spin,
+            star_pos,
             star_lum,
-            planet_world_pos,
-            aurora_params,
-            spin_axis,
         );
 
         let mut found_child = false;
@@ -365,7 +434,7 @@ pub fn sync_planetary_atmospheres(
             found_child = update_atmosphere_child_mesh(
                 children,
                 has_atmosphere,
-                profile.shell_outer_scale,
+                shell_outer_scale,
                 &uniforms,
                 &mut atmo_children_query,
                 &mut atmo_materials,
@@ -379,7 +448,7 @@ pub fn sync_planetary_atmospheres(
                 planet_ent,
                 visual_assets.atmosphere_mesh.clone(),
                 material,
-                profile.shell_outer_scale,
+                shell_outer_scale,
             );
         }
     }

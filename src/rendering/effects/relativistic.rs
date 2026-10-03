@@ -626,18 +626,6 @@ pub fn draw_black_hole_spacetime_curvature(
                 alpha_mul * 0.35,
             ),
         );
-        if ring_scale < 1.3 {
-            gizmos.sphere(
-                Isometry3d::from_translation(star_vec),
-                r_ring,
-                Color::srgba(
-                    col.to_srgba().red,
-                    col.to_srgba().green,
-                    col.to_srgba().blue,
-                    alpha_mul * 0.04,
-                ),
-            );
-        }
     }
 
     let n_geodesics = 12u32;

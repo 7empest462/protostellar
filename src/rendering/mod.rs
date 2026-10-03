@@ -7,6 +7,7 @@ pub mod gas_clouds;
 pub mod materials;
 pub mod particle_swarm;
 pub mod skybox;
+pub mod volumetric_nebula;
 
 use bevy::prelude::*;
 
@@ -17,15 +18,19 @@ use crate::rendering::gas_clouds::*;
 use crate::rendering::materials::*;
 use crate::rendering::particle_swarm::*;
 use crate::rendering::skybox::*;
-use crate::simulation::resources::{ImpactShockwavePool, RocheDebrisPool};
+use crate::simulation::resources::{ImpactShockwavePool, RocheDebrisPool, TidalDisruptionPool};
 
 pub struct RenderingPlugin;
 
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ImpactShockwavePool>()
+            .init_resource::<crate::simulation::resources::ImpactEjectaPool>()
             .init_resource::<RocheDebrisPool>()
             .init_resource::<SupernovaDebrisPool>()
+            .init_resource::<PersistentRemnantPool>()
+            .init_resource::<KilonovaPool>()
+            .init_resource::<TidalDisruptionPool>()
             .add_plugins((
                 GasCloudPlugin,
                 ParticleSwarmPlugin,
@@ -35,6 +40,10 @@ impl Plugin for RenderingPlugin {
                 MaterialPlugin::<SkyboxMaterial>::default(),
                 MaterialPlugin::<RelativisticJetMaterial>::default(),
                 MaterialPlugin::<CometTailMaterial>::default(),
+                MaterialPlugin::<SupernovaMaterial>::default(),
+                MaterialPlugin::<BlackHoleDiskMaterial>::default(),
+                MaterialPlugin::<RocheStreamMaterial>::default(),
+                MaterialPlugin::<VolumetricNebulaMaterial>::default(),
             ))
             .add_systems(
                 Startup,
@@ -55,13 +64,14 @@ impl Plugin for RenderingPlugin {
                         .after(crate::simulation::geology::sync_geological_evolution_system),
                     update_pan_orbit_camera.after(sync_celestial_transforms),
                     (sync_skybox_to_camera, update_skybox_uniforms).after(update_pan_orbit_camera),
-                    draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
-                    draw_bombardment_gizmos.after(update_pan_orbit_camera),
                     spawn_missing_visuals,
                     sync_planetary_atmospheres
                         .after(sync_celestial_transforms)
                         .after(spawn_missing_visuals),
                     sync_planetary_rings
+                        .after(sync_celestial_transforms)
+                        .after(spawn_missing_visuals),
+                    sync_black_hole_accretion_disks
                         .after(sync_celestial_transforms)
                         .after(spawn_missing_visuals),
                     sync_cometary_tails.after(sync_celestial_transforms),
@@ -70,12 +80,41 @@ impl Plugin for RenderingPlugin {
                     sync_magnetar_structures.after(sync_celestial_transforms),
                     sync_magnetic_field_overlays.after(sync_celestial_transforms),
                     sync_relativistic_jets.after(sync_celestial_transforms),
+                    sync_supernova_visuals
+                        .after(update_supernova_explosions)
+                        .after(update_persistent_remnants),
+                    volumetric_nebula::sync_volumetric_nebula.after(sync_celestial_transforms),
+                ),
+            )
+            .add_systems(
+                Update,
+                (
+                    draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
+                    draw_bombardment_gizmos.after(update_pan_orbit_camera),
+                    draw_persistent_remnants_gizmos.after(update_pan_orbit_camera),
+                    draw_kilonova_gizmos.after(update_pan_orbit_camera),
+                    draw_tde_gizmos.after(update_pan_orbit_camera),
+                    crate::rendering::effects::draw_impact_ejecta_system
+                        .after(update_pan_orbit_camera),
                     update_impact_shockwaves
+                        .after(crate::simulation::physics::step_physics_simulation),
+                    crate::rendering::effects::update_impact_ejecta
                         .after(crate::simulation::physics::step_physics_simulation),
                     update_roche_debris_streams
                         .after(crate::simulation::physics::step_physics_simulation),
+                    update_roche_streams.after(crate::simulation::physics::step_physics_simulation),
+                    update_tidal_disruption_streams
+                        .after(crate::simulation::physics::step_physics_simulation),
                     update_supernova_explosions
                         .after(crate::simulation::thermodynamics::update_thermodynamics),
+                    update_persistent_remnants.after(update_supernova_explosions),
+                    update_kilonova_effects
+                        .after(crate::simulation::physics::step_physics_simulation),
+                    update_megastructure_construction
+                        .after(crate::simulation::physics::step_physics_simulation),
+                    draw_dyson_swarms.after(update_pan_orbit_camera),
+                    crate::simulation::probes::draw_probe_navigation_gizmos
+                        .after(update_pan_orbit_camera),
                 ),
             );
     }

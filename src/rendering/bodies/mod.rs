@@ -33,9 +33,10 @@ pub use shadows::{
 };
 pub use spawner::spawn_missing_visuals;
 pub use structures::{
-    sync_magnetar_structures, sync_planetary_rings, sync_pulsar_beams, sync_quasar_beams,
-    MagnetarStructurePart, MagnetarStructureRoot, PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart,
-    QuasarBeamRoot, VisualRingChild,
+    sync_black_hole_accretion_disks, sync_magnetar_structures, sync_planetary_rings,
+    sync_pulsar_beams, sync_quasar_beams, MagnetarStructurePart, MagnetarStructureRoot,
+    PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart, QuasarBeamRoot, VisualBlackHoleDiskChild,
+    VisualRingChild,
 };
 pub use transforms::{
     compute_magma_incandescence, compute_magma_ocean_crust_fraction, sync_celestial_transforms,
