@@ -27,6 +27,7 @@ pub fn update_thermodynamics(
     time_warp: Res<TimeWarp>,
     sim_time: Res<SimTime>,
     mut config: ResMut<SimulationConfig>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     mut ignition_events: MessageWriter<StarIgnitionEvent>,
     mut engulfment_events: MessageWriter<PlanetaryEngulfmentEvent>,
     mut supernova_events: MessageWriter<SupernovaEvent>,
@@ -69,6 +70,7 @@ pub fn update_thermodynamics(
     }
 
     let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
+    let is_gmc = scenario_state.is_some_and(|s| s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster);
 
     // 1. Process Protostellar Core Heating, Ignition, and Multi-Branch Stellar Evolution
     for (
@@ -108,6 +110,7 @@ pub fn update_thermodynamics(
             &mut commands,
             &mut ignition_events,
             &mut supernova_events,
+            is_gmc,
         );
 
         if let Some(ref mut evo) = opt_evo {
@@ -241,12 +244,13 @@ fn step_protostar_ignition_and_limits(
     commands: &mut Commands,
     ignition_events: &mut MessageWriter<StarIgnitionEvent>,
     supernova_events: &mut MessageWriter<SupernovaEvent>,
+    is_gmc: bool,
 ) {
     let is_genesis = body.name.contains("Genesis") || body.name.contains("T-Tauri");
     if ignition.is_ignited {
         let blast_speed = 0.65;
         ignition.shockwave_radius = (ignition.shockwave_radius + blast_speed * dt_yr).min(30.0);
-        if !is_genesis {
+        if !is_genesis && !is_gmc {
             let time_decay = (1.0 - (elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
             config.gas_density_scale = config.gas_density_scale.min(time_decay);
         }

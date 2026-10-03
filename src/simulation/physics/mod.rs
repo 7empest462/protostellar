@@ -326,7 +326,7 @@ fn analyze_physics_system(
     } else if is_little_red_dot || is_compact_system {
         dt.min(0.00004)
     } else if is_gmc_cluster {
-        dt.min(0.0005)
+        dt.min(0.005) // Relaxed from 0.0005 to allow much faster time-warp without crashing
     } else {
         dt
     };
