@@ -317,7 +317,8 @@ pub fn dissipate_gas_disk(
 
     let t = sim_time.elapsed_years;
     let lifetime = disk_params.gas_disk_lifetime_yr;
-    let is_gmc = scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
+    let is_gmc =
+        scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
 
     if lifetime <= 0.0 || t >= lifetime || (disk_params.disk_mass <= 0.0 && !is_gmc) {
         config.gas_density_scale = 0.0;
