@@ -329,6 +329,12 @@ pub fn dissipate_gas_disk(
     let decay_constant = -4.605 / lifetime;
     config.gas_density_scale = (decay_constant * t).exp() as f32;
 
+    if is_gmc {
+        // Hide the 2D Keplerian particle swarm disk in the 3D Molecular Cloud scenario
+        config.active_particles = 0;
+        return;
+    }
+
     let particle_start_decay = lifetime * 0.5;
     if t > particle_start_decay {
         let decay_progress = (t - particle_start_decay) / (lifetime - particle_start_decay);

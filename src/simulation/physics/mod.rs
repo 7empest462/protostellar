@@ -330,8 +330,11 @@ fn analyze_physics_system(
     } else {
         dt
     };
-    let n_substeps = ((target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
-    let sub_dt = target_dt / (n_substeps as f64);
+
+    // CRITICAL: Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding!
+    let safe_target_dt = target_dt.min(max_substeps as f64 * eff_dt);
+    let n_substeps = ((safe_target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
+    let sub_dt = safe_target_dt / (n_substeps as f64);
 
     let massive_indices: Vec<usize> = body_data
         .iter()
@@ -525,7 +528,8 @@ pub fn step_physics_simulation(
         eff_softening_au,
     );
 
-    sim_time.elapsed_years += target_dt;
-    sim_time.current_dt_yr = target_dt;
+    let actual_integrated_time = ctx.sub_dt * ctx.n_substeps as f64;
+    sim_time.elapsed_years += actual_integrated_time;
+    sim_time.current_dt_yr = actual_integrated_time;
     sim_time.step_count += ctx.n_substeps as u64;
 }
