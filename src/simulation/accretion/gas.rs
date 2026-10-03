@@ -96,13 +96,14 @@ fn calculate_gas_growth_step(
     body_type: BodyType,
     comp_gas_frac: f64,
 ) -> f64 {
-    let r_hill = r_au * (m / (3.0 * env.star_mass)).cbrt();
+    let host_mass = if env.star_mass <= 0.001 { 24.0 } else { env.star_mass };
+    let r_hill = r_au * (m / (3.0 * host_mass)).cbrt();
     let r_capture = if env.is_massive_disk {
         r_hill.clamp(0.002, 3.5)
     } else {
         r_hill
     };
-    let omega_k = (G_ASTRO * env.star_mass / (r_au * r_au * r_au)).sqrt();
+    let omega_k = (G_ASTRO * host_mass / (r_au * r_au * r_au)).sqrt();
 
     let m_earth = m / EARTH_MASS_SOLAR;
     let is_runaway = m_earth >= env.runaway_threshold_m_earth;
@@ -304,6 +305,7 @@ fn update_gas_accretion_body_name(
     reason = "Nebular gas accretion involves many simulation components and per-body state"
 )]
 pub fn direct_nebular_gas_accretion(
+    mut commands: Commands,
     config: Res<SimulationConfig>,
     time_warp: Res<TimeWarp>,
     sim_time: Res<SimTime>,
@@ -321,6 +323,7 @@ pub fn direct_nebular_gas_accretion(
             Option<&mut SpinState>,
             Option<&mut VolatileInventory>,
             Option<&mut Temperature>,
+            Option<&IgnitionState>,
         ),
         (
             Without<CentralStar>,
@@ -343,7 +346,7 @@ pub fn direct_nebular_gas_accretion(
     let is_massive_disk = star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 
     for (
-        _entity,
+        entity,
         mut mass,
         pos,
         mut rad,
@@ -353,6 +356,7 @@ pub fn direct_nebular_gas_accretion(
         mut opt_spin,
         mut opt_vol,
         mut opt_temp,
+        opt_ign,
     ) in bodies_query.iter_mut()
     {
         let actual_r = pos.0.length();
@@ -403,6 +407,21 @@ pub fn direct_nebular_gas_accretion(
                 opt_vol.as_deref_mut(),
                 opt_temp.as_deref_mut(),
             );
+            
+            // If body accreted enough gas to become a star, ignite it!
+            if body.body_type.is_star_or_remnant() && opt_ign.is_none() {
+                commands.entity(entity).insert((
+                    IgnitionState {
+                        core_temperature: 1.2e7,
+                        fusion_fraction: 1.0,
+                        is_ignited: true,
+                        shockwave_radius: 0.0,
+                    },
+                    StellarEvolutionState::default(),
+                    Luminosity((mass.0 * 2.5).max(0.5)),
+                ));
+                bevy::log::info!("🔥 {} has accreted enough gas to ignite into a star!", body.name);
+            }
         }
     }
 }
