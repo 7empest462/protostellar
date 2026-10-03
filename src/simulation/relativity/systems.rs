@@ -58,7 +58,8 @@ pub fn resolve_relativistic_host_context(
     let rel_pos = body_pos - star_pos;
     let rel_vel = body_vel - star_vel;
     let r = rel_pos.length();
-    if r < 1e-6 || r > 50.0 {
+    let max_r = if star_mass > 100.0 { 15_000.0 } else { 1_000.0 };
+    if r < 1e-6 || r > max_r {
         return None;
     }
 
@@ -169,7 +170,7 @@ fn evaluate_compact_coalescence(
     let (_, peak_f_hz) = calculate_gw_frequency(m_total, threshold);
 
     if let Ok(mut entity_cmd) = commands.get_entity(companion_entity) {
-        entity_cmd.despawn();
+        entity_cmd.try_despawn();
     }
 
     merger_events.write(GravitationalWaveMergerEvent {
@@ -220,6 +221,9 @@ fn apply_relativistic_kinematics_and_telemetry(
     let chirp_mass = mu.powf(0.6) * (m_host + m_body).powf(0.4);
     let strain = calculate_gw_strain(chirp_mass, f_gw_hz, 10.0);
 
+    let (z_tot, _z_grav, beta) =
+        calculate_relativistic_redshift(m_host, ctx.rel_pos.length(), ctx.rel_vel.length());
+
     // Update Cached State
     rel_state.precession_rate_arcsec_century = rate_arcsec_cy;
     rel_state.precession_advance_per_orbit_rad = advance_rad;
@@ -231,12 +235,26 @@ fn apply_relativistic_kinematics_and_telemetry(
     rel_state.orbital_decay_rate_au_per_myr = da_dt * 1e6;
     rel_state.semi_major_axis_au = a;
     rel_state.eccentricity = e;
+    rel_state.total_redshift_z = z_tot;
+    rel_state.beta_v_over_c = beta;
 
-    // 3. Apply 1PN Relativistic Acceleration to Velocity
-    if rel_config.enable_1pn_precession {
-        let a_1pn = calculate_1pn_acceleration(ctx.rel_pos, ctx.rel_vel, m_host);
-        if a_1pn.is_finite() {
-            vel.0 += a_1pn * dt_yr;
+    // 3. Apply 1PN Relativistic Precession to Velocity
+    if rel_config.enable_1pn_precession && accumulated_delta.abs() > 1e-12 {
+        let h_vec = ctx.rel_pos.cross(ctx.rel_vel);
+        let h_len = h_vec.length();
+        if h_len > 1e-8 {
+            let h_hat = h_vec / h_len;
+            // Precess velocity around orbital normal by accumulated 1PN angle.
+            // Strict Rodriguez rotation preserves kinetic energy (|v_rot| == |v|) identically,
+            // preventing artificial kinetic energy pumping and orbital escape.
+            let max_angle = 0.05f64;
+            let d_theta = accumulated_delta.clamp(-max_angle, max_angle);
+            let (sin_t, cos_t) = d_theta.sin_cos();
+            let v_perp = h_hat.cross(ctx.rel_vel);
+            let v_rot = ctx.rel_vel * cos_t + v_perp * sin_t;
+            if v_rot.is_finite() {
+                vel.0 = v_rot;
+            }
         }
     }
 
@@ -261,7 +279,7 @@ fn apply_relativistic_kinematics_and_telemetry(
 pub fn update_relativity_evolution(
     rel_config: Res<RelativityConfig>,
     sim_time: Res<SimTime>,
-    config: Res<SimulationConfig>,
+    _config: Res<SimulationConfig>,
     mut merger_events: MessageWriter<GravitationalWaveMergerEvent>,
     mut commands: Commands,
     mut star_query: Query<
@@ -293,7 +311,7 @@ pub fn update_relativity_evolution(
         return;
     }
 
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
+    let dt_yr = sim_time.current_dt_yr;
     let effective_dt_yr = dt_yr * rel_config.time_scale.max(1.0);
     let star_opt = star_query
         .iter()

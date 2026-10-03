@@ -117,7 +117,11 @@ impl SimulationConfig {
         } else if body_type == crate::simulation::components::BodyType::Moon {
             (base_rad * 0.55).max(0.0004)
         } else if body_type == crate::simulation::components::BodyType::BlackHole {
-            (base_rad * 2.8).clamp(0.35, 3.50)
+            // Event horizon shadow: scales monotonically with mass from stellar-mass to supermassive.
+            // A 5-10 M_sun BH is compact (~0.0022-0.0028 AU), distinctly smaller than a 0.025 AU main-sequence star.
+            // At 1,600 M_sun, it dynamically scales up to ~0.020 AU.
+            let mass_factor = (physical_radius_au / 1.974e-8).max(1.0);
+            (0.0012 * (mass_factor.powf(0.38) as f32) * self.size_exaggeration).clamp(0.0012, 10.0)
         } else {
             base_rad
         }
@@ -133,10 +137,15 @@ impl SimulationConfig {
         min_planetary_orbit_au: f32,
     ) -> f32 {
         let base_rad = self.calc_visual_radius_for_type(physical_radius_au, body_type);
+        // Only compact multi-planet systems around ultra-cool stars (where inner planets orbit < 0.15 AU)
+        // require scaling. Planets and moons with orbital radius >= 0.15 AU have ample orbital separation
+        // and retain their full, natural visual radius.
         if min_planetary_orbit_au < 0.15 && min_planetary_orbit_au > 0.0 {
-            if body_type.is_star_or_remnant() {
-                // For compact systems (where inner planet orbits within 0.15 AU, e.g. TRAPPIST-1),
-                // scale the star so it does not engulf the inner planetary orbits.
+            if body_type == crate::simulation::components::BodyType::BlackHole {
+                base_rad
+            } else if body_type.is_star_or_remnant() {
+                // For compact systems (e.g. TRAPPIST-1), scale the star so it does not engulf
+                // the inner planetary orbits. Only applies to low-mass physical stars (R < 0.002 AU).
                 if physical_radius_au < 0.002 {
                     let max_star_r =
                         (min_planetary_orbit_au * 0.28).max(0.001) * self.size_exaggeration;
@@ -144,12 +153,12 @@ impl SimulationConfig {
                 } else {
                     base_rad
                 }
-            } else if body_type.is_planet()
-                || body_type == crate::simulation::components::BodyType::Moon
+            } else if (body_type.is_planet()
+                || body_type == crate::simulation::components::BodyType::Moon)
+                && r_orb < 0.15
             {
                 // In compact systems, scale planets down proportionally with the compact star
-                // so the star is always visibly dominant (~4.5-5.5x wider in diameter) and planets
-                // have spacious dark voids between their orbits.
+                // so the star is visibly dominant (~4.5-5.5x wider) and dark voids remain between orbits.
                 let compact_star_r = (min_planetary_orbit_au * 0.28).max(0.001);
                 // Standard red dwarf base visual radius ~0.00965 AU:
                 let ref_star_vis_r = self.calc_visual_radius(0.00056);
@@ -158,7 +167,16 @@ impl SimulationConfig {
                 let compact_planet_r = base_rad * star_scale_ratio * 0.70;
                 // Also guarantee planet visual radius does not exceed 7% of its orbital distance
                 let max_orbit_r = (r_orb * 0.07).max(0.00025);
-                compact_planet_r.min(max_orbit_r).max(0.00025)
+                let scaled_r = compact_planet_r.min(max_orbit_r).max(0.00025);
+
+                // Smoothly blend to base_rad between 0.06 AU and 0.15 AU to prevent visual popping or pulsing
+                if r_orb > 0.06 {
+                    let t = ((r_orb - 0.06) / (0.15 - 0.06)).clamp(0.0, 1.0);
+                    let smooth_t = t * t * (3.0 - 2.0 * t);
+                    scaled_r * (1.0 - smooth_t) + base_rad * smooth_t
+                } else {
+                    scaled_r
+                }
             } else {
                 base_rad
             }
@@ -271,6 +289,10 @@ impl TimeWarp {
     /// Multiplier corresponding to authentic Real-Time progression (1 wall-clock second = 1 simulation second).
     /// 1 / (0.03 * 31,557,600) = 1 / 946,728 ≈ 1.05626958e-6.
     pub const SPEED_REAL_TIME: f64 = 1.0 / (Self::BASE_YEARS_PER_SEC * Self::SECONDS_PER_YEAR);
+    /// Multiplier corresponding to 1 wall-clock second = 1 simulation minute (60x real-time).
+    pub const SPEED_1_MINUTE: f64 = 60.0 * Self::SPEED_REAL_TIME;
+    /// Multiplier corresponding to 1 wall-clock second = 5 simulation minutes (300x real-time).
+    pub const SPEED_5_MINUTES: f64 = 300.0 * Self::SPEED_REAL_TIME;
 
     /// Minimum allowable time multiplier (allows real-time and sub-second slow motion).
     pub const MIN_SPEED: f64 = 1.0e-7;
@@ -305,7 +327,12 @@ impl TimeWarp {
         } else if sec_per_sec < 60.0 {
             format!("1s = {sec_per_sec:.1}s")
         } else if sec_per_sec < 3600.0 {
-            format!("1s = {:.1} min", sec_per_sec / 60.0)
+            let minutes = sec_per_sec / 60.0;
+            if (minutes - minutes.round()).abs() < 0.05 {
+                format!("1s = {:.0} min", minutes.round())
+            } else {
+                format!("1s = {minutes:.1} min")
+            }
         } else if sec_per_sec < 86400.0 {
             format!("1s = {:.1} hr", sec_per_sec / 3600.0)
         } else if years_per_sec < 0.0833 {
@@ -474,6 +501,28 @@ pub struct RocheDebrisPool {
     pub streams: Vec<RocheDebrisStream>,
 }
 
+/// Active visual relativistic tidal disruption event (TDE) plasma stream funneled into a black hole.
+#[derive(Debug, Clone)]
+pub struct TidalDisruptionStream {
+    pub bh_entity: Entity,
+    pub bh_pos: Vec3,
+    pub disruption_pos: Vec3,
+    pub r_tidal: f32,
+    pub r_isco: f32,
+    pub timer: f32,
+    pub max_timer: f32,
+    pub initial_mass_solar: f64,
+    pub initial_velocity: Vec3,
+    /// Plasma stream ribbons: (progress [0..1], radius, azimuthal_angle, vertical_thickness, intensity)
+    pub stream_nodes: Vec<(f32, f32, f32, f32, f32)>,
+}
+
+/// Pool of active relativistic tidal disruption event (TDE) streams.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct TidalDisruptionPool {
+    pub streams: Vec<TidalDisruptionStream>,
+}
+
 /// Available player tools for interacting with and shaping the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PlayerTool {
@@ -609,4 +658,24 @@ pub struct PlayerInteractionState {
     pub tractor_mass: f64,
     pub impulse_delta_v: Option<DVec3>,
     pub impulse_target_entity: Option<Entity>,
+    /// Set true when celestial body selection was initiated by a UI interaction (e.g. Quick Bar),
+    /// preventing 3D mouse picking from accidentally overriding the target in the same frame.
+    pub just_selected_via_ui: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImpactEjectaRing {
+    pub primary_entity: Entity,
+    pub primary_pos: Vec3,
+    pub impact_pos: Vec3,
+    pub timer: f32,
+    pub max_timer: f32,
+    pub ring_mass: f64,
+    pub color: Color,
+    pub fragments: Vec<(f32, f32, f32, f32)>, // r, phi, omega, z
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct ImpactEjectaPool {
+    pub rings: Vec<ImpactEjectaRing>,
 }

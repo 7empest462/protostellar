@@ -449,7 +449,7 @@ pub fn handle_load_system_events(
         // 1. Despawn existing celestial bodies
         for ent in bodies_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
 

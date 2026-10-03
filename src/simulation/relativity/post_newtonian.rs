@@ -62,25 +62,27 @@ pub fn calculate_1pn_precession_rate(
 
 /// Computes the Post-Newtonian (1PN) acceleration correction vector $\vec{a}_{1\text{PN}}$ in $\text{AU/yr}^2$.
 ///
-/// Standard Einstein-Infeld-Hoffmann / Post-Newtonian relative coordinate acceleration:
-/// $$\vec{a}_{1\text{PN}} = \frac{G M}{c^2 r^3} \left[ \left( \frac{4 G M}{r} - v^2 \right) \vec{r} + 4 (\vec{r} \cdot \vec{v}) \vec{v} \right]$$
-pub fn calculate_1pn_acceleration(rel_pos: DVec3, rel_vel: DVec3, m_central_solar: f64) -> DVec3 {
+/// Implements the Nobili & Roxburgh (1986) / Anderson relativistic precession formulation:
+/// $$\vec{a}_{1\text{PN}} = -\frac{6 (G M)^2}{c^2 r^4} \vec{r}$$
+///
+/// This reproduces Einstein's periastron precession ($\delta \varpi = \frac{6 \pi GM}{c^2 a (1-e^2)}$)
+/// exactly, while remaining strictly conservative and attractive (directed inward toward the central mass),
+/// avoiding unphysical coordinate repulsion in strong gravitational fields.
+pub fn calculate_1pn_acceleration(rel_pos: DVec3, _rel_vel: DVec3, m_central_solar: f64) -> DVec3 {
     let r_sq = rel_pos.length_squared();
     if r_sq < 1e-12 || m_central_solar <= 1e-9 {
         return DVec3::ZERO;
     }
-    let r = r_sq.sqrt();
     let c = SPEED_OF_LIGHT_AU_YR;
     let c_sq = c * c;
     let gm = G_ASTRO * m_central_solar;
-    let v_sq = rel_vel.length_squared();
-    let r_dot_v = rel_pos.dot(rel_vel);
 
-    let factor = gm / (c_sq * r_sq * r);
-    let r_term = (4.0 * gm / r) - v_sq;
-    let v_term = 4.0 * r_dot_v;
+    // a_1PN = -6 (GM)^2 / (c^2 r^4) * r_vec
+    let r4 = (r_sq * r_sq).max(1e-12);
+    let mag = (6.0 * gm * gm) / (c_sq * r4);
+    let clamped_mag = mag.min(1e12);
 
-    factor * (r_term * rel_pos + v_term * rel_vel)
+    -(clamped_mag * rel_pos)
 }
 
 /// Computes the Peters (1964) gravitational wave quadrupole radiation power in Watts.
@@ -227,4 +229,27 @@ pub fn calculate_gw_strain(chirp_mass_solar: f64, f_gw_hz: f64, distance_kpc: f6
     let omega_factor = (PI * f_gw_yr).powf(2.0 / 3.0);
     let h = (4.0 / d_au) * g_m_over_c2.powf(5.0 / 3.0) * omega_factor;
     h.clamp(0.0, 1.0)
+}
+
+/// Computes relativistic redshift and velocity fraction:
+/// - `z_total`: Combined gravitational and transverse Doppler redshift $z = \Delta \lambda / \lambda_0$
+/// - `z_grav`: Gravitational redshift component $z_{\text{grav}} = (1 - r_s/r)^{-1/2} - 1$
+/// - `beta`: Velocity fraction $\beta = v / c$
+pub fn calculate_relativistic_redshift(
+    m_central_solar: f64,
+    r_au: f64,
+    v_au_yr: f64,
+) -> (f64, f64, f64) {
+    if m_central_solar <= 1e-9 || r_au <= 1e-9 {
+        return (0.0, 0.0, 0.0);
+    }
+    let c = SPEED_OF_LIGHT_AU_YR;
+    let beta = (v_au_yr / c).clamp(0.0, 0.999);
+    let r_s = calculate_schwarzschild_radius(m_central_solar);
+    let grav_factor = (1.0 - r_s / r_au).max(1e-4);
+    let z_grav = 1.0 / grav_factor.sqrt() - 1.0;
+    let lorentz_gamma = 1.0 / (1.0 - beta * beta).sqrt();
+    let z_total = (lorentz_gamma / grav_factor.sqrt() - 1.0).max(0.0);
+
+    (z_total, z_grav, beta)
 }

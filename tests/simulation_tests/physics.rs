@@ -841,3 +841,110 @@ fn test_time_warp_keyboard_presets_1_through_8() {
         );
     }
 }
+
+#[test]
+fn test_time_warp_one_minute_and_five_minutes_presets() {
+    use protostellar::game::time_control::handle_time_control_input;
+    use protostellar::game::ui::interactions::time_and_panels::handle_time_action;
+    use protostellar::game::ui::types::{NotificationToast, UiButtonAction};
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_systems(Update, handle_time_control_input);
+    app.add_systems(
+        Update,
+        protostellar::simulation::physics::step_physics_simulation,
+    );
+
+    // Spawn central body so physics simulation ticks
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(protostellar::utils::constants::SOLAR_RADIUS_AU),
+        SimPosition(bevy::math::DVec3::ZERO),
+        SimVelocity(bevy::math::DVec3::ZERO),
+        SimAcceleration(bevy::math::DVec3::ZERO),
+    ));
+
+    // 1. Verify Keyboard Digit9 sets 1s = 1 min
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Digit9);
+    app.update();
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .release(KeyCode::Digit9);
+
+    let tw = app.world().resource::<TimeWarp>();
+    assert!(
+        (tw.multiplier - TimeWarp::SPEED_1_MINUTE).abs() < 1e-9,
+        "Digit9 must activate SPEED_1_MINUTE"
+    );
+    assert_eq!(tw.human_readable_speed(), "1s = 1 min");
+
+    // Run 60 frames (1 second wall time at 60 fps)
+    let t0 = app.world().resource::<SimTime>().elapsed_years;
+    for _ in 0..60 {
+        app.update();
+    }
+    let t1 = app.world().resource::<SimTime>().elapsed_years;
+    let elapsed_sec = (t1 - t0) * TimeWarp::SECONDS_PER_YEAR;
+    assert!(
+        (elapsed_sec - 60.0).abs() < 0.05,
+        "60 frames at 1 min/s should advance exactly 60.0s (got {elapsed_sec:.2}s)"
+    );
+
+    // 2. Verify Keyboard Digit0 sets 1s = 5 min
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Digit0);
+    app.update();
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .release(KeyCode::Digit0);
+
+    let tw = app.world().resource::<TimeWarp>();
+    assert!(
+        (tw.multiplier - TimeWarp::SPEED_5_MINUTES).abs() < 1e-9,
+        "Digit0 must activate SPEED_5_MINUTES"
+    );
+    assert_eq!(tw.human_readable_speed(), "1s = 5 min");
+
+    // Run 60 frames (1 second wall time at 60 fps)
+    let t2 = app.world().resource::<SimTime>().elapsed_years;
+    for _ in 0..60 {
+        app.update();
+    }
+    let t3 = app.world().resource::<SimTime>().elapsed_years;
+    let elapsed_sec_5m = (t3 - t2) * TimeWarp::SECONDS_PER_YEAR;
+    assert!(
+        (elapsed_sec_5m - 300.0).abs() < 0.1,
+        "60 frames at 5 min/s should advance exactly 300.0s (got {elapsed_sec_5m:.2}s)"
+    );
+
+    // 3. Verify UI button action handlers for TimeSpeed1Min and TimeSpeed5Min
+    let mut tw_test = TimeWarp::default();
+    let mut toast = NotificationToast::default();
+
+    let handled_1m = handle_time_action(&UiButtonAction::TimeSpeed1Min, &mut tw_test, &mut toast);
+    assert!(handled_1m);
+    assert_eq!(tw_test.multiplier, TimeWarp::SPEED_1_MINUTE);
+    assert!(toast.message.contains("1 min"));
+
+    let handled_5m = handle_time_action(&UiButtonAction::TimeSpeed5Min, &mut tw_test, &mut toast);
+    assert!(handled_5m);
+    assert_eq!(tw_test.multiplier, TimeWarp::SPEED_5_MINUTES);
+    assert!(toast.message.contains("5 min"));
+}

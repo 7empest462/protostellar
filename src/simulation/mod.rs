@@ -2,14 +2,17 @@
 
 pub mod accretion;
 pub mod atmosphere_escape;
+pub mod biology;
 pub mod components;
 pub mod disk;
 pub mod disk_migration;
 pub mod geology;
 pub mod kozai_lidov;
+pub mod naming;
 pub mod pebble_accretion;
 pub mod physics;
 pub mod predictor;
+pub mod probes;
 pub mod relativity;
 pub mod resources;
 pub mod scenarios;
@@ -64,6 +67,7 @@ pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(crate::simulation::probes::ProbesPlugin);
         app.init_resource::<SimulationConfig>()
             .init_resource::<TimeWarp>()
             .init_resource::<SimTime>()
@@ -80,10 +84,12 @@ impl Plugin for SimulationPlugin {
             .init_resource::<RelativityConfig>()
             .init_resource::<AtmosphericEscapeConfig>()
             .init_resource::<KozaiLidovConfig>()
+            .init_resource::<TidalDisruptionPool>()
             .add_message::<AccretionMergeEvent>()
             .add_message::<MoonFormationEvent>()
             .add_message::<CollisionBounceEvent>()
             .add_message::<RocheDisruptionEvent>()
+            .add_message::<TidalDisruptionEvent>()
             .add_message::<StarIgnitionEvent>()
             .add_message::<PlanetaryEngulfmentEvent>()
             .add_message::<SupernovaEvent>()
@@ -134,6 +140,14 @@ impl Plugin for SimulationPlugin {
                     sync_geological_evolution_system.after(update_thermodynamics),
                     update_stellar_flares_system.after(step_physics_simulation),
                     update_planetary_auroral_ovals_system.after(update_stellar_flares_system),
+                    crate::simulation::naming::update_auto_generated_names
+                        .after(step_physics_simulation),
+                    crate::simulation::biology::civilization::habitability_tracking_system
+                        .after(step_physics_simulation),
+                    process_roche_lobe_overflow.after(step_physics_simulation),
+                    crate::simulation::accretion::roche::cleanup_roche_lobe_overflow
+                        .after(process_roche_lobe_overflow),
+                    process_classical_novae.after(process_roche_lobe_overflow),
                 ),
             )
             .init_resource::<TimelineScrubber>();

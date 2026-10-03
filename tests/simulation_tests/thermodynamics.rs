@@ -1,5 +1,6 @@
 //! Test module generated from simulation_tests.
 
+use bevy::prelude::*;
 use protostellar::simulation::components::*;
 use protostellar::utils::constants::*;
 
@@ -364,5 +365,194 @@ fn test_thermodynamics_zero_distance_and_negative_luminosity_resilience() {
         temp.0 >= 30.0,
         "Surface temperature should be at least deep space floor 30 K, got {}",
         temp.0
+    );
+}
+
+fn setup_milankovitch_test_app() -> (App, Entity) {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_message::<SupernovaEvent>();
+
+    // Central Sun-like star (1.0 M_sun, 1.0 L_sun, 5778 K)
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::MainSequenceStar,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        Temperature(5778.0),
+        Luminosity(1.0),
+        IgnitionState {
+            core_temperature: 1.5e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 50.0,
+        },
+    ));
+
+    // Earth-like planet at 1.0 AU with water volatiles
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Proto-Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 29.78)),
+            Temperature(288.0),
+            Composition {
+                metal_frac: 0.32,
+                silicate_frac: 0.66,
+                ice_frac: 0.02,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            VolatileInventory {
+                delivered_water_m_earth: 0.0006,
+                ocean_coverage_frac: 0.71,
+                atmospheric_pressure_bar: 1.0,
+                cometary_impact_count: 5,
+            },
+        ))
+        .id();
+
+    app.add_systems(Update, update_thermodynamics);
+    (app, earth_ent)
+}
+
+#[test]
+fn test_milankovitch_ice_albedo_feedback_and_polar_ice_advance() {
+    use bevy::math::DVec3;
+
+    let (mut app, earth_ent) = setup_milankovitch_test_app();
+
+    // 1. Initial temperate equilibrium at 1.0 AU
+    app.update();
+
+    let climate = *app
+        .world()
+        .get::<PlanetaryClimate>(earth_ent)
+        .expect("PlanetaryClimate must be inserted");
+    assert_eq!(climate.climate_regime, ClimateRegime::TemperateHabitable);
+    assert!(
+        (climate.surface_temperature_k - 288.0).abs() < 5.0,
+        "Surface temp should be ~288 K (got {:.1} K)",
+        climate.surface_temperature_k
+    );
+    assert!(
+        climate.ice_coverage_frac > 0.05 && climate.ice_coverage_frac < 0.20,
+        "Earth ice coverage should be ~10% (got {:.1}%)",
+        climate.ice_coverage_frac * 100.0
+    );
+    assert!(
+        climate.polar_ice_cap_latitude_deg > 70.0 && climate.polar_ice_cap_latitude_deg < 88.0,
+        "Earth polar ice caps should sit above 70° latitude (got {:.1}°)",
+        climate.polar_ice_cap_latitude_deg
+    );
+    assert!(
+        (climate.albedo - 0.29).abs() < 0.05,
+        "Earth albedo should be ~0.29 (got {:.2})",
+        climate.albedo
+    );
+
+    // 2. Move planet out to 1.25 AU (glacial advance / Milankovitch winter)
+    {
+        let mut pos = app.world_mut().get_mut::<SimPosition>(earth_ent).unwrap();
+        pos.0 = DVec3::new(1.25, 0.0, 0.0);
+    }
+    app.update();
+
+    let cold_climate = app.world().get::<PlanetaryClimate>(earth_ent).unwrap();
+    assert!(
+        cold_climate.surface_temperature_k < climate.surface_temperature_k,
+        "Planet at 1.25 AU must cool down"
+    );
+    assert!(
+        cold_climate.ice_coverage_frac > climate.ice_coverage_frac,
+        "Ice caps must advance equatorward as planet cools"
+    );
+    assert!(
+        cold_climate.polar_ice_cap_latitude_deg < climate.polar_ice_cap_latitude_deg,
+        "Ice cap edge must move to lower latitudes (got {:.1}°)",
+        cold_climate.polar_ice_cap_latitude_deg
+    );
+    assert!(
+        cold_climate.albedo > climate.albedo,
+        "Ice-albedo positive feedback must increase planetary albedo"
+    );
+}
+
+#[test]
+fn test_climate_snowball_and_hothouse_regimes() {
+    use bevy::math::DVec3;
+
+    let (mut app, earth_ent) = setup_milankovitch_test_app();
+
+    // 3. Move planet out to 1.65 AU (runaway Snowball Earth)
+    {
+        let mut pos = app.world_mut().get_mut::<SimPosition>(earth_ent).unwrap();
+        pos.0 = DVec3::new(1.65, 0.0, 0.0);
+        let mut temp = app.world_mut().get_mut::<Temperature>(earth_ent).unwrap();
+        temp.0 = 230.0;
+    }
+    app.update();
+
+    let snowball = app.world().get::<PlanetaryClimate>(earth_ent).unwrap();
+    assert_eq!(
+        snowball.climate_regime,
+        ClimateRegime::SnowballIceAge,
+        "Planet at 1.65 AU must enter Snowball Ice Age"
+    );
+    assert_eq!(
+        snowball.ice_coverage_frac, 1.0,
+        "Snowball Earth must have 100% ice coverage"
+    );
+    assert_eq!(
+        snowball.polar_ice_cap_latitude_deg, 0.0,
+        "Snowball Earth ice caps must reach the equator (0°)"
+    );
+    assert!(
+        snowball.albedo > 0.65,
+        "Snowball Earth albedo must exceed 0.65 (got {:.2})",
+        snowball.albedo
+    );
+
+    // 4. Move planet into 0.78 AU (warm greenhouse / ice-free poles)
+    {
+        let mut pos = app.world_mut().get_mut::<SimPosition>(earth_ent).unwrap();
+        pos.0 = DVec3::new(0.78, 0.0, 0.0);
+        let mut temp = app.world_mut().get_mut::<Temperature>(earth_ent).unwrap();
+        temp.0 = 315.0;
+    }
+    app.update();
+
+    let hothouse = app.world().get::<PlanetaryClimate>(earth_ent).unwrap();
+    assert_eq!(
+        hothouse.ice_coverage_frac, 0.0,
+        "Warm planet must have completely melted ice caps"
+    );
+    assert_eq!(
+        hothouse.polar_ice_cap_latitude_deg, 90.0,
+        "Ice-free planet ice cap latitude must be 90° (at the pole)"
+    );
+    assert!(
+        hothouse.albedo < 0.28,
+        "Ice-free water world must have low bare albedo (got {:.2})",
+        hothouse.albedo
     );
 }

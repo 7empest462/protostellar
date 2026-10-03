@@ -32,6 +32,10 @@ pub struct RelativisticState {
     pub semi_major_axis_au: f64,
     /// Cached instantaneous orbital eccentricity.
     pub eccentricity: f64,
+    /// Total relativistic redshift (gravitational redshift + transverse Doppler) $z = \Delta \lambda / \lambda_0$.
+    pub total_redshift_z: f64,
+    /// Relativistic velocity fraction $\beta = v / c$.
+    pub beta_v_over_c: f64,
 }
 
 impl Default for RelativisticState {
@@ -48,6 +52,8 @@ impl Default for RelativisticState {
             is_coalescing: false,
             semi_major_axis_au: 1.0,
             eccentricity: 0.0,
+            total_redshift_z: 0.0,
+            beta_v_over_c: 0.0,
         }
     }
 }
@@ -67,6 +73,8 @@ impl RelativisticState {
             is_coalescing: false,
             semi_major_axis_au: 0.3871,
             eccentricity: 0.2056,
+            total_redshift_z: 1.48e-8,
+            beta_v_over_c: 0.00016,
         }
     }
 
@@ -98,6 +106,8 @@ impl RelativisticState {
             is_coalescing: false,
             semi_major_axis_au: a_au,
             eccentricity,
+            total_redshift_z: 0.0,
+            beta_v_over_c: 0.0,
         }
     }
 }

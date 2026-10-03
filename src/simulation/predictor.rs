@@ -408,7 +408,10 @@ pub fn update_trajectory_predictor(
             &Mass,
             &Radius,
         ),
-        Without<CentralStar>,
+        (
+            Without<CentralStar>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
     >,
 ) {
     if !predictor_state.is_enabled {
