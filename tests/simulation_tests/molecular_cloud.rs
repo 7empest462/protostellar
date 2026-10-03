@@ -94,10 +94,16 @@ fn test_molecular_cloud_cluster_scenario_spawning_and_hierarchy() {
     fixture_app.update();
 
     // Primary Central Protostar checks
-    let primary_body = fixture_app.world().get::<CelestialBody>(primary_ent).unwrap();
+    let primary_body = fixture_app
+        .world()
+        .get::<CelestialBody>(primary_ent)
+        .unwrap();
     let primary_mass = fixture_app.world().get::<Mass>(primary_ent).unwrap();
     let primary_rad = fixture_app.world().get::<Radius>(primary_ent).unwrap();
-    let primary_ign = fixture_app.world().get::<IgnitionState>(primary_ent).unwrap();
+    let primary_ign = fixture_app
+        .world()
+        .get::<IgnitionState>(primary_ent)
+        .unwrap();
 
     assert_eq!(primary_body.body_type, BodyType::Protostar);
     assert!(primary_body.name.contains("Protostar Alpha"));
@@ -118,9 +124,10 @@ fn test_molecular_cloud_cluster_scenario_spawning_and_hierarchy() {
     let mut total_mass = 0.0;
     let mut has_binary_companion = false;
 
-    let mut query = fixture_app
-        .world_mut()
-        .query::<(Entity, &CelestialBody, &Mass, &SimPosition, &SimVelocity)>();
+    let mut query =
+        fixture_app
+            .world_mut()
+            .query::<(Entity, &CelestialBody, &Mass, &SimPosition, &SimVelocity)>();
 
     for (ent, body, mass, pos, vel) in query.iter(fixture_app.world()) {
         total_mass += mass.0;

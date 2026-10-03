@@ -371,4 +371,3 @@ pub fn spawn_preseeded_cluster_fixture(
 
     primary_protostar
 }
-

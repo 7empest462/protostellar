@@ -308,8 +308,8 @@ fn analyze_physics_system(
 
     let is_compact_system = (star_mass < 0.25 && disk_params.outer_radius_au < 1.0)
         || scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System);
-    let is_gmc_cluster = scenario_state
-        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
+    let is_gmc_cluster =
+        scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
     let is_smbh = star_mass > 100_000.0;
     let max_substeps = if is_smbh {
         config.max_substeps_per_frame.max(256)

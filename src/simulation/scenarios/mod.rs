@@ -155,9 +155,7 @@ fn spawn_scenario_preset(
             Some(spawn_accretion_disk_genesis(commands, disk_params))
         }
         ScenarioPreset::Trappist1System => Some(spawn_trappist_1_system(commands, disk_params)),
-        ScenarioPreset::Kepler16Circumbinary => {
-            Some(spawn_kepler_16_system(commands, disk_params))
-        }
+        ScenarioPreset::Kepler16Circumbinary => Some(spawn_kepler_16_system(commands, disk_params)),
         ScenarioPreset::HotJupiterMigration => {
             scenario_state.migration_active = true;
             scenario_state.migration_target_au = 0.045;

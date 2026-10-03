@@ -96,7 +96,11 @@ fn calculate_gas_growth_step(
     body_type: BodyType,
     comp_gas_frac: f64,
 ) -> f64 {
-    let host_mass = if env.star_mass <= 0.001 { 24.0 } else { env.star_mass };
+    let host_mass = if env.star_mass <= 0.001 {
+        24.0
+    } else {
+        env.star_mass
+    };
     let r_hill = r_au * (m / (3.0 * host_mass)).cbrt();
     let r_capture = if env.is_massive_disk {
         r_hill.clamp(0.002, 3.5)
@@ -407,7 +411,7 @@ pub fn direct_nebular_gas_accretion(
                 opt_vol.as_deref_mut(),
                 opt_temp.as_deref_mut(),
             );
-            
+
             // If body accreted enough gas to become a star, ignite it!
             if body.body_type.is_star_or_remnant() && opt_ign.is_none() {
                 commands.entity(entity).insert((
@@ -420,7 +424,10 @@ pub fn direct_nebular_gas_accretion(
                     StellarEvolutionState::default(),
                     Luminosity((mass.0 * 2.5).max(0.5)),
                 ));
-                bevy::log::info!("🔥 {} has accreted enough gas to ignite into a star!", body.name);
+                bevy::log::info!(
+                    "🔥 {} has accreted enough gas to ignite into a star!",
+                    body.name
+                );
             }
         }
     }

@@ -180,8 +180,9 @@ fn handle_little_red_dot_action(
         }
         UiButtonAction::SpawnInfallPop3Star => {
             let is_quasi_scenario = !quasi_star_query.is_empty();
-            let (r_au, total_m, star_mass, star_name, star_type, star_temp, toast_text) = if is_quasi_scenario {
-                (
+            let (r_au, total_m, star_mass, star_name, star_type, star_temp, toast_text) =
+                if is_quasi_scenario {
+                    (
                     120.0,
                     150_000.0,
                     120.0,
@@ -190,20 +191,25 @@ fn handle_little_red_dot_action(
                     45_000.0,
                     "🌟 Spawned 120 M☉ Pop-III Hypergiant plunging toward the 100,000 M☉ Black Hole Seed!".to_string(),
                 )
-            } else {
-                (
-                    140.0,
-                    24.0,
-                    8.0,
-                    "Infalling Massive O-Star (Cloud Infall)".to_string(),
-                    BodyType::BlueSupergiant,
-                    36_000.0,
-                    "🌟 Spawned 8.0 M☉ Massive Protostar entering the Molecular Cloud!".to_string(),
-                )
-            };
+                } else {
+                    (
+                        140.0,
+                        24.0,
+                        8.0,
+                        "Infalling Massive O-Star (Cloud Infall)".to_string(),
+                        BodyType::BlueSupergiant,
+                        36_000.0,
+                        "🌟 Spawned 8.0 M☉ Massive Protostar entering the Molecular Cloud!"
+                            .to_string(),
+                    )
+                };
 
             let v_circ = (crate::utils::constants::G_ASTRO * total_m / r_au).sqrt();
-            let v_mag = if is_quasi_scenario { v_circ * 0.38 } else { v_circ * 0.70 };
+            let v_mag = if is_quasi_scenario {
+                v_circ * 0.38
+            } else {
+                v_circ * 0.70
+            };
             let pos = DVec3::new(r_au, 0.0, 15.0);
             let vel = DVec3::new(-v_mag * 0.75, 0.0, -v_mag * 0.65);
 
