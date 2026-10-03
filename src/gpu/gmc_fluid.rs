@@ -301,108 +301,119 @@ pub fn receive_gmc_collapse_events(
             }
 
             star_count += 1;
-            let raw_vel = bevy::math::DVec3::new(
-                f64::from(ev.com_velocity[0]),
-                f64::from(ev.com_velocity[1]),
-                f64::from(ev.com_velocity[2]),
-            );
-            let safe_r = r_len.max(10.0);
-            let v_circ = (crate::utils::constants::G_ASTRO * 24.0 * safe_r
-                / (safe_r * safe_r + 160.0 * 160.0).powf(1.5))
-            .sqrt();
-            let tangent = if ev_pos.cross(bevy::math::DVec3::Y).length_squared() > 1e-4 {
-                ev_pos.cross(bevy::math::DVec3::Y).normalize()
-            } else {
-                bevy::math::DVec3::new(0.0, 0.0, 1.0)
-            };
-            let seed_vel = (tangent * v_circ * 0.85 + raw_vel.clamp_length_max(v_circ * 0.35))
-                .clamp_length_max(v_circ * 1.15);
-            let local_speed =
-                (seed_vel.length() * crate::utils::constants::AU_PER_YR_TO_KM_PER_S).max(0.25);
-            let jeans_mass =
-                crate::simulation::scenarios::molecular_cloud::calculate_turbulent_jeans_mass_solar(
-                    f64::from(ev.local_mass_solar / GMC_CELL_VOLUME_AU3).max(4.8e-11),
-                    f64::from(ev.temperature_k),
-                    local_speed,
-                );
-            let seed_mass = jeans_mass.clamp(0.35, 4.5);
-
-            let protostar_name = format!("Protostar Jeans-{star_count}");
-            commands.spawn((
-                CelestialBody {
-                    body_type: BodyType::Protostar,
-                    name: protostar_name.clone(),
-                },
-                Mass(seed_mass),
-                SimPosition(ev_pos),
-                SimVelocity(seed_vel),
-                SimAcceleration::default(),
-                Radius(3.5 * crate::utils::constants::SOLAR_RADIUS_AU),
-                Temperature(f64::from(ev.temperature_k).max(3800.0)),
-                Luminosity((seed_mass * 2.5).max(0.5)),
-                AngularMomentum::default(),
-                Composition::solar_gas(),
-                IgnitionState {
-                    core_temperature: 1.2e7,
-                    fusion_fraction: 1.0,
-                    is_ignited: true,
-                    shockwave_radius: 0.5,
-                },
-                StellarEvolutionState::default(),
-                SpinState {
-                    rotation_period_hours: 48.0,
-                    axial_tilt_degrees: 15.0,
-                    spin_vector: bevy::math::DVec3::new(0.0, 1.0, 0.0),
-                },
-            ));
-
-            // Stage B: Promote to planetary system by seeding orbiting Protoplanets
-            let local_x = tangent;
-            let local_z = tangent.cross(bevy::math::DVec3::Y).normalize();
-            for i in 1..=3 {
-                let a_au = f64::from(i) * 8.5 + 4.0; // orbits at 12.5, 21.0, 29.5 AU
-                let m_p = 0.003; // ~3 Jupiter masses
-                let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
-                let angle = f64::from(i) * 2.4; // Phase offset
-
-                let p_pos =
-                    ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
-                let p_vel = seed_vel
-                    + local_x * (-v_circ_p * angle.sin())
-                    + local_z * (v_circ_p * angle.cos());
-
-                commands.spawn((
-                    CelestialBody {
-                        body_type: BodyType::Protoplanet,
-                        name: format!("{protostar_name} b{i}"),
-                    },
-                    Mass(m_p),
-                    SimPosition(p_pos),
-                    SimVelocity(p_vel),
-                    SimAcceleration::default(),
-                    Radius(1.5 * 0.000_477), // 1.5x Jupiter Radius in AU
-                    Temperature(1200.0 / (a_au).sqrt()),
-                    Luminosity(0.0),
-                    AngularMomentum::default(),
-                    Composition::solar_gas(),
-                ));
-            }
-
-            if let Some(ref mut t) = toast {
-                t.message = format!(
-                    "✨ Jeans Instability Collapse: {protostar_name} formed ({seed_mass:.2} M☉)"
-                );
-                t.timer = 5.0;
-            }
-
-            bevy::log::info!(
-                "✨ Spawned new Protostar from GPU Jeans Collapse: {} at {:?}, mass {:.2} M☉",
-                protostar_name,
-                ev_pos,
-                seed_mass
-            );
+            spawn_jeans_collapse_system(&mut commands, &ev, ev_pos, r_len, star_count, &mut toast);
         }
     }
+}
+
+fn spawn_jeans_collapse_system(
+    commands: &mut Commands,
+    ev: &GpuJeansCollapseEvent,
+    ev_pos: bevy::math::DVec3,
+    r_len: f64,
+    star_count: usize,
+    toast: &mut Option<ResMut<crate::game::ui::NotificationToast>>,
+) {
+    let raw_vel = bevy::math::DVec3::new(
+        f64::from(ev.com_velocity[0]),
+        f64::from(ev.com_velocity[1]),
+        f64::from(ev.com_velocity[2]),
+    );
+    let safe_r = r_len.max(10.0);
+    let v_circ = (crate::utils::constants::G_ASTRO * 24.0 * safe_r
+        / (safe_r * safe_r + 160.0 * 160.0).powf(1.5))
+    .sqrt();
+    let tangent = if ev_pos.cross(bevy::math::DVec3::Y).length_squared() > 1e-4 {
+        ev_pos.cross(bevy::math::DVec3::Y).normalize()
+    } else {
+        bevy::math::DVec3::new(0.0, 0.0, 1.0)
+    };
+    let seed_vel = (tangent * v_circ * 0.85 + raw_vel.clamp_length_max(v_circ * 0.35))
+        .clamp_length_max(v_circ * 1.15);
+    let local_speed =
+        (seed_vel.length() * crate::utils::constants::AU_PER_YR_TO_KM_PER_S).max(0.25);
+    let jeans_mass =
+        crate::simulation::scenarios::molecular_cloud::calculate_turbulent_jeans_mass_solar(
+            f64::from(ev.local_mass_solar / GMC_CELL_VOLUME_AU3).max(4.8e-11),
+            f64::from(ev.temperature_k),
+            local_speed,
+        );
+    let seed_mass = jeans_mass.clamp(0.35, 4.5);
+
+    let protostar_name = format!("Protostar Jeans-{star_count}");
+    commands.spawn((
+        CelestialBody {
+            body_type: BodyType::Protostar,
+            name: protostar_name.clone(),
+        },
+        Mass(seed_mass),
+        SimPosition(ev_pos),
+        SimVelocity(seed_vel),
+        SimAcceleration::default(),
+        Radius(3.5 * crate::utils::constants::SOLAR_RADIUS_AU),
+        Temperature(f64::from(ev.temperature_k).max(3800.0)),
+        Luminosity((seed_mass * 2.5).max(0.5)),
+        AngularMomentum::default(),
+        Composition::solar_gas(),
+        IgnitionState {
+            core_temperature: 1.2e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 0.5,
+        },
+        StellarEvolutionState::default(),
+        SpinState {
+            rotation_period_hours: 48.0,
+            axial_tilt_degrees: 15.0,
+            spin_vector: bevy::math::DVec3::new(0.0, 1.0, 0.0),
+        },
+    ));
+
+    // Stage B: Promote to planetary system by seeding orbiting Protoplanets
+    let local_x = tangent;
+    let local_z = tangent.cross(bevy::math::DVec3::Y).normalize();
+    for i in 1..=3 {
+        let a_au = f64::from(i) * 8.5 + 4.0; // orbits at 12.5, 21.0, 29.5 AU
+        let m_p = 0.003; // ~3 Jupiter masses
+        let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
+        let angle = f64::from(i) * 2.4; // Phase offset
+
+        let p_pos =
+            ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
+        let p_vel = seed_vel
+            + local_x * (-v_circ_p * angle.sin())
+            + local_z * (v_circ_p * angle.cos());
+
+        commands.spawn((
+            CelestialBody {
+                body_type: BodyType::Protoplanet,
+                name: format!("{protostar_name} b{i}"),
+            },
+            Mass(m_p),
+            SimPosition(p_pos),
+            SimVelocity(p_vel),
+            SimAcceleration::default(),
+            Radius(1.5 * 0.000_477), // 1.5x Jupiter Radius in AU
+            Temperature(1200.0 / (a_au).sqrt()),
+            Luminosity(0.0),
+            AngularMomentum::default(),
+            Composition::solar_gas(),
+        ));
+    }
+
+    if let Some(ref mut t) = toast {
+        t.message = format!(
+            "✨ Jeans Instability Collapse: {protostar_name} formed ({seed_mass:.2} M☉)"
+        );
+        t.timer = 5.0;
+    }
+
+    bevy::log::info!(
+        "✨ Spawned new Protostar from GPU Jeans Collapse: {} at {:?}, mass {:.2} M☉",
+        protostar_name,
+        ev_pos,
+        seed_mass
+    );
 }
 
 /// Builds initial density, velocity, and temperature fields for the GMC core.

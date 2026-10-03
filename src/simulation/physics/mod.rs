@@ -157,7 +157,10 @@ fn identify_giant_planets(
     (jupiter_entity, saturn_entity, ice_giant_entities)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Physics kernel requires all integration state explicitly for performance"
+)]
 fn run_physics_substeps(
     body_data: &mut [PhysicsBodyEntry],
     n_substeps: usize,

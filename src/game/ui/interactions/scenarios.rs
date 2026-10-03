@@ -145,160 +145,182 @@ fn handle_little_red_dot_action(
     camera_query: &mut Query<&mut PanOrbitCamera>,
 ) -> bool {
     match action {
-        UiButtonAction::ToggleSuperEddington => {
-            let mut toggled = false;
-            for mut state in quasi_star_query.iter_mut() {
-                state.toggle_super_eddington();
-                let mode = if state.super_eddington_active {
-                    "4.5x Eddington (Hyper-Accretion Active)"
-                } else {
-                    "0.9x Eddington (Sub-Eddington Normal)"
-                };
-                toast.message = format!("⚡ Inflow Rate: {mode} on JWST Little Red Dot");
-                toast.timer = 4.5;
-                toggled = true;
-            }
-            if !toggled {
-                toast.message = "ℹ️ No Quasi-Star present in active simulation.".to_string();
-                toast.timer = 3.0;
-            }
-            true
-        }
-        UiButtonAction::TriggerBlowoutCocoon => {
-            let mut triggered = false;
-            for mut state in quasi_star_query.iter_mut() {
-                state.trigger_blowout();
-                toast.message = "💥 COCOON BLOWOUT: Radiation pressure stripping hydrogen envelope to unveil Supermassive Quasar!".to_string();
-                toast.timer = 6.0;
-                triggered = true;
-            }
-            if !triggered {
-                toast.message = "ℹ️ No Quasi-Star present in active simulation.".to_string();
-                toast.timer = 3.0;
-            }
-            true
-        }
+        UiButtonAction::ToggleSuperEddington => action_toggle_super_eddington(quasi_star_query, toast),
+        UiButtonAction::TriggerBlowoutCocoon => action_trigger_blowout_cocoon(quasi_star_query, toast),
         UiButtonAction::SpawnInfallPop3Star => {
-            let is_quasi_scenario = !quasi_star_query.is_empty();
-            let (r_au, total_m, star_mass, star_name, star_type, star_temp, toast_text) =
-                if is_quasi_scenario {
-                    (
-                    120.0,
-                    150_000.0,
-                    120.0,
-                    "Infalling Pop-III Hypergiant (TDE Target)".to_string(),
-                    BodyType::BlueSupergiant,
-                    45_000.0,
-                    "🌟 Spawned 120 M☉ Pop-III Hypergiant plunging toward the 100,000 M☉ Black Hole Seed!".to_string(),
-                )
-                } else {
-                    (
-                        140.0,
-                        24.0,
-                        8.0,
-                        "Infalling Massive O-Star (Cloud Infall)".to_string(),
-                        BodyType::BlueSupergiant,
-                        36_000.0,
-                        "🌟 Spawned 8.0 M☉ Massive Protostar entering the Molecular Cloud!"
-                            .to_string(),
-                    )
-                };
-
-            let v_circ = (crate::utils::constants::G_ASTRO * total_m / r_au).sqrt();
-            let v_mag = if is_quasi_scenario {
-                v_circ * 0.38
-            } else {
-                v_circ * 0.70
-            };
-            let pos = DVec3::new(r_au, 0.0, 15.0);
-            let vel = DVec3::new(-v_mag * 0.75, 0.0, -v_mag * 0.65);
-
-            let new_star = commands
-                .spawn((
-                    CelestialBody {
-                        name: star_name,
-                        body_type: star_type,
-                    },
-                    Mass(star_mass),
-                    SimPosition(pos),
-                    SimVelocity(vel),
-                    SimAcceleration(DVec3::ZERO),
-                    Radius(if is_quasi_scenario { 0.012 } else { 0.025 }),
-                    Temperature(star_temp),
-                    Luminosity(if is_quasi_scenario { 250.0 } else { 45.0 }),
-                    Composition::solar_gas(),
-                    VolatileInventory::default(),
-                    IgnitionState {
-                        core_temperature: 15.0e6,
-                        fusion_fraction: 1.0,
-                        is_ignited: true,
-                        shockwave_radius: 0.0,
-                    },
-                    SpinState {
-                        spin_vector: DVec3::new(0.0, 1e-10, 0.0),
-                        rotation_period_hours: 24.0,
-                        axial_tilt_degrees: 15.0,
-                    },
-                ))
-                .id();
-
-            player_state.selected_entity = Some(new_star);
-            if let Ok(mut cam) = camera_query.single_mut() {
-                cam.target_entity = Some(new_star);
-            }
-            toast.message = toast_text;
-            toast.timer = 5.5;
-            true
+            action_spawn_infall_pop3_star(quasi_star_query, toast, commands, player_state, camera_query)
         }
         UiButtonAction::TriggerGmcSupernovaShock => {
-            let pos = DVec3::new(175.0, 20.0, -45.0);
-            let vel = DVec3::new(-2.2, -0.3, 1.2);
-            let remnant_name = "Supernova Remnant SN 2026-GMC (Pulsar Core)".to_string();
-
-            let sn_star = commands
-                .spawn((
-                    CelestialBody {
-                        name: remnant_name,
-                        body_type: BodyType::Pulsar,
-                    },
-                    Mass(1.4),
-                    SimPosition(pos),
-                    SimVelocity(vel),
-                    SimAcceleration::default(),
-                    Radius(0.005),
-                    Temperature(5.0e6),
-                    Luminosity(8500.0),
-                    Composition::metal_rich(),
-                    VolatileInventory::default(),
-                    IgnitionState {
-                        core_temperature: 1.0e9,
-                        fusion_fraction: 1.0,
-                        is_ignited: true,
-                        shockwave_radius: 12.0,
-                    },
-                    SpinState {
-                        spin_vector: DVec3::new(0.0, 1.0, 0.0),
-                        rotation_period_hours: 0.001,
-                        axial_tilt_degrees: 15.0,
-                    },
-                    ElectromagneticFieldState {
-                        magnetic_field_gauss: 1.0e12,
-                        rotation_period_sec: 0.033,
-                        magnetic_inclination_rad: 0.35,
-                        jet_length_au: 25.0,
-                        synchrotron_intensity: 150.0,
-                    },
-                ))
-                .id();
-
-            player_state.selected_entity = Some(sn_star);
-            if let Ok(mut cam) = camera_query.single_mut() {
-                cam.target_entity = Some(sn_star);
-            }
-            toast.message = "💥 Supernova shockwave triggered at 180 AU! Expanding blast wave driving compressive shock into cloud core!".to_string();
-            toast.timer = 6.0;
-            true
+            action_trigger_gmc_supernova_shock(toast, commands, player_state, camera_query)
         }
         _ => false,
     }
+}
+
+fn action_toggle_super_eddington(quasi_star_query: &mut Query<&mut BlackHoleStarState>, toast: &mut NotificationToast) -> bool {
+    let mut toggled = false;
+    for mut state in quasi_star_query.iter_mut() {
+        state.toggle_super_eddington();
+        let mode = if state.super_eddington_active {
+            "4.5x Eddington (Hyper-Accretion Active)"
+        } else {
+            "0.9x Eddington (Sub-Eddington Normal)"
+        };
+        toast.message = format!("⚡ Inflow Rate: {mode} on JWST Little Red Dot");
+        toast.timer = 4.5;
+        toggled = true;
+    }
+    if !toggled {
+        toast.message = "ℹ️ No Quasi-Star present in active simulation.".to_string();
+        toast.timer = 3.0;
+    }
+    true
+}
+
+fn action_trigger_blowout_cocoon(quasi_star_query: &mut Query<&mut BlackHoleStarState>, toast: &mut NotificationToast) -> bool {
+    let mut triggered = false;
+    for mut state in quasi_star_query.iter_mut() {
+        state.trigger_blowout();
+        toast.message = "💥 COCOON BLOWOUT: Radiation pressure stripping hydrogen envelope to unveil Supermassive Quasar!".to_string();
+        toast.timer = 6.0;
+        triggered = true;
+    }
+    if !triggered {
+        toast.message = "ℹ️ No Quasi-Star present in active simulation.".to_string();
+        toast.timer = 3.0;
+    }
+    true
+}
+
+fn action_spawn_infall_pop3_star(
+    quasi_star_query: &mut Query<&mut BlackHoleStarState>,
+    toast: &mut NotificationToast,
+    commands: &mut Commands,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+) -> bool {
+    let is_quasi_scenario = !quasi_star_query.is_empty();
+    let (r_au, total_m, star_mass, star_name, star_type, star_temp, toast_text) =
+        if is_quasi_scenario {
+            (
+                120.0,
+                150_000.0,
+                120.0,
+                "Infalling Pop-III Hypergiant (TDE Target)".to_string(),
+                BodyType::BlueSupergiant,
+                45_000.0,
+                "🌟 Spawned 120 M☉ Pop-III Hypergiant plunging toward the 100,000 M☉ Black Hole Seed!".to_string(),
+            )
+        } else {
+            (
+                140.0,
+                24.0,
+                8.0,
+                "Infalling Massive O-Star (Cloud Infall)".to_string(),
+                BodyType::BlueSupergiant,
+                36_000.0,
+                "🌟 Spawned 8.0 M☉ Massive Protostar entering the Molecular Cloud!".to_string(),
+            )
+        };
+
+    let v_circ = (crate::utils::constants::G_ASTRO * total_m / r_au).sqrt();
+    let v_mag = if is_quasi_scenario {
+        v_circ * 0.38
+    } else {
+        v_circ * 0.70
+    };
+    let pos = DVec3::new(r_au, 0.0, 15.0);
+    let vel = DVec3::new(-v_mag * 0.75, 0.0, -v_mag * 0.65);
+
+    let new_star = commands
+        .spawn((
+            CelestialBody {
+                name: star_name,
+                body_type: star_type,
+            },
+            Mass(star_mass),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration(DVec3::ZERO),
+            Radius(if is_quasi_scenario { 0.012 } else { 0.025 }),
+            Temperature(star_temp),
+            Luminosity(if is_quasi_scenario { 250.0 } else { 45.0 }),
+            Composition::solar_gas(),
+            VolatileInventory::default(),
+            IgnitionState {
+                core_temperature: 15.0e6,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1e-10, 0.0),
+                rotation_period_hours: 24.0,
+                axial_tilt_degrees: 15.0,
+            },
+        ))
+        .id();
+
+    player_state.selected_entity = Some(new_star);
+    if let Ok(mut cam) = camera_query.single_mut() {
+        cam.target_entity = Some(new_star);
+    }
+    toast.message = toast_text;
+    toast.timer = 5.5;
+    true
+}
+
+fn action_trigger_gmc_supernova_shock(
+    toast: &mut NotificationToast,
+    commands: &mut Commands,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+) -> bool {
+    let pos = DVec3::new(175.0, 20.0, -45.0);
+    let vel = DVec3::new(-2.2, -0.3, 1.2);
+    let remnant_name = "Supernova Remnant SN 2026-GMC (Pulsar Core)".to_string();
+
+    let sn_star = commands
+        .spawn((
+            CelestialBody {
+                name: remnant_name,
+                body_type: BodyType::Pulsar,
+            },
+            Mass(1.4),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration::default(),
+            Radius(0.005),
+            Temperature(5.0e6),
+            Luminosity(8500.0),
+            Composition::metal_rich(),
+            VolatileInventory::default(),
+            IgnitionState {
+                core_temperature: 1.0e9,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 12.0,
+            },
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+                rotation_period_hours: 0.001,
+                axial_tilt_degrees: 15.0,
+            },
+            ElectromagneticFieldState {
+                magnetic_field_gauss: 1.0e12,
+                rotation_period_sec: 0.033,
+                magnetic_inclination_rad: 0.35,
+                jet_length_au: 25.0,
+                synchrotron_intensity: 150.0,
+            },
+        ))
+        .id();
+
+    player_state.selected_entity = Some(sn_star);
+    if let Ok(mut cam) = camera_query.single_mut() {
+        cam.target_entity = Some(sn_star);
+    }
+    toast.message = "💥 Supernova shockwave triggered at 180 AU! Expanding blast wave driving compressive shock into cloud core!".to_string();
+    toast.timer = 6.0;
+    true
 }

@@ -9,7 +9,10 @@ use crate::utils::constants::*;
 
 use super::integrator::*;
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Physics kernel requires all integration state explicitly for performance"
+)]
 pub fn compute_single_body_acc(
     i: usize,
     body: &PhysicsBodyEntry,
