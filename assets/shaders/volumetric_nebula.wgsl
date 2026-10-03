@@ -131,8 +131,15 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
         // Ambient dense cold molecular cloud core profile (dense Plummer sphere + turbulent FBM filaments)
         let core_profile = 1.0 / pow(1.0 + (r_core / 240.0) * (r_core / 240.0), 1.25);
-        let fbm_turb = fbm3(sample_pos * 0.008);
-        var density = core_profile * (0.40 + 0.85 * fbm_turb);
+        
+        var density = 0.0;
+        var fbm_turb = 0.5;
+
+        // Early exit optimization for empty space (massively improves FPS when zoomed out or in empty regions)
+        if (core_profile > 0.02) {
+            fbm_turb = fbm3(sample_pos * 0.008);
+            density = core_profile * (0.40 + 0.85 * fbm_turb);
+        }
 
         // Ionization cavity carving and glowing H-alpha / [O III] emission fronts around protostars
         var cavity_glow = vec3<f32>(0.0);
@@ -159,7 +166,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
                     let front_intensity = (1.0 - edge_dist / 25.0) * clamp(star_lum * 0.45, 0.4, 5.0);
                     let h_alpha = vec3<f32>(1.0, 0.15, 0.35); // Crimson / magenta ionization
                     let o_iii = vec3<f32>(0.1, 0.85, 0.9);    // Forbidden teal [O III] line
-                    cavity_glow = cavity_glow + mix(h_alpha, o_iii, fbm3(sample_pos * 0.03)) * front_intensity;
+                    // Reuse the previously calculated fbm_turb instead of computing an entirely new fbm3 inside an O(N) loop
+                    cavity_glow = cavity_glow + mix(h_alpha, o_iii, fract(fbm_turb * 3.7)) * front_intensity;
                 }
             }
             
