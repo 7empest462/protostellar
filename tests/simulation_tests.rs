@@ -32,8 +32,14 @@ mod magma_and_crust;
 mod magnetospheres;
 #[path = "simulation_tests/mechanics.rs"]
 mod mechanics;
+#[path = "simulation_tests/molecular_cloud.rs"]
+mod molecular_cloud;
+#[path = "simulation_tests/molecular_cloud_adversarial.rs"]
+mod molecular_cloud_adversarial;
 #[path = "simulation_tests/orbits_and_effects.rs"]
 mod orbits_and_effects;
+#[path = "simulation_tests/pebble_accretion.rs"]
+mod pebble_accretion;
 #[path = "simulation_tests/physics.rs"]
 mod physics;
 #[path = "simulation_tests/precision_events.rs"]
@@ -50,6 +56,8 @@ mod relativity;
 mod save_load;
 #[path = "simulation_tests/scenarios.rs"]
 mod scenarios;
+#[path = "simulation_tests/shader_guardrails.rs"]
+mod shader_guardrails;
 #[path = "simulation_tests/shadows_and_eclipses.rs"]
 mod shadows_and_eclipses;
 #[path = "simulation_tests/slingshot.rs"]
@@ -72,3 +80,5 @@ mod thermodynamics;
 mod tides;
 #[path = "simulation_tests/ui.rs"]
 mod ui;
+#[path = "simulation_tests/ui_contextual.rs"]
+mod ui_contextual;

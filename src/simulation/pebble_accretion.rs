@@ -13,6 +13,7 @@ use std::f64::consts::PI;
 use crate::simulation::components::*;
 use crate::simulation::disk::planetesimals::PlanetesimalSpawner;
 use crate::simulation::resources::*;
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
 
 /// Metallicity-like solid-to-gas ratio for the ambient pebble reservoir.
@@ -205,6 +206,7 @@ pub fn apply_pebble_accretion(
     time_warp: Res<TimeWarp>,
     sim_time: Res<SimTime>,
     disk_params: Res<DiskParameters>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
     mut bodies_query: Query<
         (
             &mut Mass,
@@ -217,10 +219,18 @@ pub fn apply_pebble_accretion(
         (
             Without<CentralStar>,
             Without<crate::simulation::terraforming::BombardmentProjectile>,
+            Without<crate::simulation::probes::SpaceProbe>,
         ),
     >,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
+        return;
+    }
+
+    if scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster)
+    {
         return;
     }
 
@@ -424,9 +434,17 @@ pub fn spawn_streaming_instability_minor_bodies(
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
     mut spawner: ResMut<PlanetesimalSpawner>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
     body_count: Query<Entity, With<CelestialBody>>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+
+    if scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster)
+    {
         return;
     }
 

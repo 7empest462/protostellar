@@ -770,7 +770,7 @@ fn test_the_moon_retains_spherical_planet_mesh_under_gas_and_pebble_accretion() 
 
     // Mesh selection check: must choose the spherical planet mesh, NOT an irregular asteroid or contact-binary comet mesh
     let vis = app.world().resource::<VisualAssets>();
-    let selected_mesh = select_body_mesh(moon_body, vis);
+    let selected_mesh = select_body_mesh(moon_body, 0.00001, vis);
     assert_eq!(
         selected_mesh, planet_mesh,
         "The Moon must be assigned the spherical planet_mesh, not a comet or asteroid mesh"
@@ -782,7 +782,7 @@ fn test_the_moon_retains_spherical_planet_mesh_under_gas_and_pebble_accretion() 
         body_type: BodyType::Moon,
     };
     assert_eq!(
-        select_body_mesh(&sibling_moon, vis),
+        select_body_mesh(&sibling_moon, 0.00001, vis),
         planet_mesh,
         "Sibling moons must always select planet_mesh"
     );

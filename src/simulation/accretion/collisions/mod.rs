@@ -31,6 +31,7 @@ pub fn process_accretion_and_collisions(
     mut moon_events: MessageWriter<MoonFormationEvent>,
     mut bounce_events: MessageWriter<CollisionBounceEvent>,
     mut roche_events: MessageWriter<RocheDisruptionEvent>,
+    mut tde_events: Option<MessageWriter<TidalDisruptionEvent>>,
     mut bodies_query: AccretionQuery,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
@@ -99,6 +100,7 @@ pub fn process_accretion_and_collisions(
                 moon_events: &mut moon_events,
                 bounce_events: &mut bounce_events,
                 roche_events: &mut roche_events,
+                tde_events: tde_events.as_mut(),
                 merged_away: &mut merged_away,
                 newly_formed_moons: &mut newly_formed_moons,
                 pending_despawns: &mut pending_despawns,
@@ -112,7 +114,7 @@ pub fn process_accretion_and_collisions(
 
     for entity in pending_despawns {
         if let Ok(mut entity_cmd) = commands.get_entity(entity) {
-            entity_cmd.despawn();
+            entity_cmd.try_despawn();
         }
     }
 }
@@ -187,21 +189,29 @@ fn compute_effective_collision_radius(
         } else {
             (b2, b1)
         };
-        let r_orb = (other_b.pos.x * other_b.pos.x + other_b.pos.z * other_b.pos.z).sqrt() as f32;
-        let r_star_vis = f64::from(config.calc_visual_radius_with_orbit(
-            star_b.radius,
-            star_b.body_type,
-            0.0,
-            r_orb.max(0.001),
-        ));
-        let r_other_vis = f64::from(config.calc_visual_radius_with_orbit(
-            other_b.radius,
-            other_b.body_type,
-            r_orb,
-            r_orb.max(0.001),
-        ));
-        // Devourment occurs if body plunges into the star's visual photosphere
-        (r_star_vis + other_b.radius.max(r_other_vis * 0.40)).max(r_phys)
+        let is_bh =
+            star_b.body_type == BodyType::BlackHole || other_b.body_type == BodyType::BlackHole;
+        let r_star_vis =
+            f64::from(config.calc_visual_radius_for_type(star_b.radius, star_b.body_type));
+        let r_other_vis =
+            f64::from(config.calc_visual_radius_for_type(other_b.radius, other_b.body_type));
+        if is_bh {
+            let (bh_b, target_b) = if star_b.body_type == BodyType::BlackHole {
+                (star_b, other_b)
+            } else {
+                (other_b, star_b)
+            };
+            let bh_vis =
+                f64::from(config.calc_visual_radius_for_type(bh_b.radius, BodyType::BlackHole));
+            let r_tidal = target_b.radius * (bh_b.mass / target_b.mass.max(1e-12)).cbrt();
+            // Any body entering the black hole's visual shadow or tidal disruption boundary is devoured
+            (bh_vis + other_b.radius.max(r_other_vis * 0.40))
+                .max(r_phys)
+                .max(r_tidal.min(bh_vis * 2.0))
+        } else {
+            // Devourment occurs if body plunges into the star's visual photosphere
+            (r_star_vis + other_b.radius.max(r_other_vis * 0.40)).max(r_phys)
+        }
     } else if both_major {
         let r_orb1 = (b1.pos.x * b1.pos.x + b1.pos.z * b1.pos.z).sqrt() as f32;
         let r_orb2 = (b2.pos.x * b2.pos.x + b2.pos.z * b2.pos.z).sqrt() as f32;
@@ -350,6 +360,10 @@ fn process_body_pair(
 
     if !can_candidate_moon && !is_theia_earth && interpenetrating {
         let pair = sort_collision_pair(b1, b2);
+        if pair.p_type == BodyType::BlackHole && pair.s_type != BodyType::BlackHole {
+            handle_tidal_disruption_event(ctx, &pair, min_dist, b1);
+            return;
+        }
         handle_inelastic_merger(ctx, &pair, v_rel, b1);
         return;
     }
@@ -443,6 +457,11 @@ fn execute_collision_regimes(
     } else {
         classify_impact(params, d_roche)
     };
+
+    if pair.p_type == BodyType::BlackHole && pair.s_type != BodyType::BlackHole {
+        handle_tidal_disruption_event(ctx, &pair, min_dist, b1);
+        return;
+    }
 
     match regime {
         ImpactRegime::EmbeddedMerge | ImpactRegime::Merger => {

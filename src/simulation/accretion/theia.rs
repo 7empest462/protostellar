@@ -210,7 +210,7 @@ fn locate_or_spawn_theia(
         for (other_e, _, _, _, _, other_b, ..) in bodies_query.iter() {
             if other_e != t && is_explicit_theia(other_b.name.as_str()) {
                 if let Ok(mut cmd) = commands.get_entity(other_e) {
-                    cmd.despawn();
+                    cmd.try_despawn();
                 }
             }
         }
@@ -327,12 +327,14 @@ fn resolve_giant_impact_moon(
         diff.recalculate(moon_mass, theia.4 .0, &Composition::rocky());
     }
 
-    commands.entity(theia_ent).try_insert(SatelliteOf {
-        parent: earth_ent,
-        semi_major_axis_au: orbit_dist_au,
-        orbital_period_years: p_moon_yr,
-        true_anomaly: 0.0,
-    });
+    if let Ok(mut cmd) = commands.get_entity(theia_ent) {
+        cmd.try_insert(SatelliteOf {
+            parent: earth_ent,
+            semi_major_axis_au: orbit_dist_au,
+            orbital_period_years: p_moon_yr,
+            true_anomaly: 0.0,
+        });
+    }
 
     if let Some(ref mut t) = toast {
         t.message = "🌕 GIANT IMPACT MOON FORMATION // Theia collided with Earth! Silicate debris accreted into The Moon.".to_string();
@@ -441,7 +443,7 @@ pub fn update_theia_rendezvous(
         for (extra_e, _, _, _, _, extra_b, ..) in bodies_query.iter() {
             if is_explicit_theia(extra_b.name.as_str()) {
                 if let Ok(mut cmd) = commands.get_entity(extra_e) {
-                    cmd.despawn();
+                    cmd.try_despawn();
                 }
             }
         }

@@ -511,7 +511,7 @@ pub fn update_black_hole_star_dynamics(
                 );
 
                 if let Ok(mut e_cmd) = commands.get_entity(sat_ent) {
-                    e_cmd.despawn();
+                    e_cmd.try_despawn();
                 }
             }
         }

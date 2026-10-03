@@ -138,6 +138,13 @@ pub struct PlanetaryClimate {
     pub cloud_coverage_frac: f32,
     /// Dominant climate regime classification
     pub climate_regime: ClimateRegime,
+    /// Dynamic polar ice cap equatorward latitude boundary in degrees (90° = ice-free pole, 0° = Snowball Earth equator).
+    #[serde(default = "default_polar_ice_lat")]
+    pub polar_ice_cap_latitude_deg: f32,
+}
+
+fn default_polar_ice_lat() -> f32 {
+    75.0
 }
 
 impl Default for PlanetaryClimate {
@@ -150,6 +157,7 @@ impl Default for PlanetaryClimate {
             ice_coverage_frac: 0.10,
             cloud_coverage_frac: 0.50,
             climate_regime: ClimateRegime::TemperateHabitable,
+            polar_ice_cap_latitude_deg: 75.0,
         }
     }
 }
@@ -165,6 +173,8 @@ pub struct BiosphereState {
     pub oxygen_fraction: f32,
     /// Timestamp when primordial life emerged (sim_yr)
     pub emergence_year: Option<f64>,
+    #[serde(default)]
+    pub technosignature: f32,
 }
 
 impl Default for BiosphereState {
@@ -174,6 +184,7 @@ impl Default for BiosphereState {
             biomass_coverage_frac: 0.0,
             oxygen_fraction: 0.0,
             emergence_year: None,
+            technosignature: 0.0,
         }
     }
 }

@@ -219,7 +219,7 @@ pub fn update_late_heavy_bombardment_cascade(
                 let v_radial = (i_pos.0 - star_pos.0).dot(i_vel.0);
                 if r_sun > 2.2 && v_radial > 0.0 {
                     if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
-                        entity_cmd.despawn();
+                        entity_cmd.try_despawn();
                     }
                 }
             }
@@ -228,7 +228,7 @@ pub fn update_late_heavy_bombardment_cascade(
             let r_sun = (i_pos.0 - star_pos.0).length();
             if r_sun > 4.5 {
                 if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
-                    entity_cmd.despawn();
+                    entity_cmd.try_despawn();
                 }
             }
         }

@@ -240,6 +240,7 @@ struct VertexOutput {
     world_position: vec4<f32>,
     world_normal: vec3<f32>,
     uv: vec2<f32>,
+    color: vec4<f32>,
 };
 
 struct FragmentOutput {
@@ -262,6 +263,27 @@ fn main_pass_post_lighting_processing(pbr: PbrInput, color: vec4<f32>) -> vec4<f
 fn apply_pbr_lighting(pbr: PbrInput) -> vec4<f32> {
     return vec4<f32>(1.0, 1.0, 1.0, 1.0);
 }
+
+fn mesh_normal_local_to_world(normal: vec3<f32>, instance_index: u32) -> vec3<f32> {
+    return normal;
+}
+
+fn get_world_from_local(instance_index: u32) -> mat4x4<f32> {
+    return mat4x4<f32>(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    );
+}
+
+fn mesh_position_local_to_world(world_from_local: mat4x4<f32>, local_position: vec4<f32>) -> vec4<f32> {
+    return local_position;
+}
+
+fn mesh_position_local_to_clip(world_from_local: mat4x4<f32>, local_position: vec4<f32>) -> vec4<f32> {
+    return local_position;
+}
 "#;
 
     // Filter out preprocessor lines and prepass branch for forward pass validation
@@ -269,18 +291,24 @@ fn apply_pbr_lighting(pbr: PbrInput) -> vec4<f32> {
     let mut skip_prepass = false;
     for line in shader_source.lines().skip(18) {
         let trimmed = line.trim();
-        if trimmed == "#ifdef PREPASS_PIPELINE" {
+        if trimmed.starts_with("#ifdef PREPASS_PIPELINE") {
             skip_prepass = true;
             continue;
         }
-        if trimmed == "#else" {
-            skip_prepass = false;
-            continue;
+        if trimmed.starts_with("#else") {
+            if skip_prepass {
+                skip_prepass = false;
+                continue;
+            }
         }
-        if trimmed == "#endif" {
+        if trimmed.starts_with("#endif") {
             continue;
         }
         if skip_prepass {
+            continue;
+        }
+        if trimmed.starts_with("#") {
+            // Strip remaining #ifdefs like VERTEX_TANGENTS
             continue;
         }
         cleaned_lines.push(line);

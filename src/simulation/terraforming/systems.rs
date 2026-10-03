@@ -213,7 +213,7 @@ pub fn update_guided_bombardment_projectiles(
         else {
             // Target was consumed, shattered, or despawned
             if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
-                entity_cmd.despawn();
+                entity_cmd.try_despawn();
             }
             continue;
         };
@@ -272,7 +272,7 @@ pub fn update_guided_bombardment_projectiles(
         );
 
         if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
-            entity_cmd.despawn();
+            entity_cmd.try_despawn();
         }
     }
 }

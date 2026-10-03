@@ -219,9 +219,17 @@ pub fn auto_spawn_planetesimals(
     _config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
     mut spawner: ResMut<PlanetesimalSpawner>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
     body_count: Query<Entity, With<CelestialBody>>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+
+    if scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster)
+    {
         return;
     }
 

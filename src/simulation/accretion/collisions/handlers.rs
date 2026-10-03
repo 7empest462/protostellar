@@ -12,6 +12,7 @@ use crate::utils::constants::*;
 
 use super::super::basins::*;
 use super::super::events::*;
+use super::super::impact_regimes::radius_from_mass_density;
 use super::types::*;
 use crate::simulation::components::classify_body_by_mass_and_comp;
 
@@ -589,7 +590,9 @@ pub fn handle_inelastic_merger(
         pos.0 = physics.merged_pos;
         vel.0 = physics.merged_vel;
         acc.0 = physics.new_acc;
-        if !is_star_like {
+        if body.body_type == BodyType::BlackHole {
+            rad.0 = (1.974e-8 * physics.total_mass).max(1e-7);
+        } else if !is_star_like {
             rad.0 = physics.new_radius;
             t.0 = physics.new_temp;
         }
@@ -635,7 +638,9 @@ pub fn handle_inelastic_merger(
     b1.mass = physics.total_mass;
     b1.pos = physics.merged_pos;
     b1.vel = physics.merged_vel;
-    if !is_star_like {
+    if b1.body_type == BodyType::BlackHole {
+        b1.radius = (1.974e-8 * physics.total_mass).max(1e-7);
+    } else if !is_star_like {
         b1.radius = physics.new_radius;
         b1.temp = physics.new_temp;
     }
@@ -759,4 +764,80 @@ pub fn handle_aerocapture(
             }
         }
     }
+}
+
+/// Handles relativistic tidal disruption of stars, planets, and minor bodies around a Black Hole.
+pub fn handle_tidal_disruption_event(
+    ctx: &mut CollisionContext,
+    pair: &SortedPair,
+    _min_dist: f64,
+    b1: &mut BodySnapshot,
+) {
+    let s_density = pair.s_comp.average_density();
+    let s_rad_au = radius_from_mass_density(pair.s_m, s_density);
+    let r_tidal = s_rad_au * (pair.p_m / pair.s_m.max(1e-12)).cbrt();
+    let r_isco = (1.974e-8 * pair.p_m * 3.0).max(1e-6);
+
+    let total_mass = pair.p_m + pair.s_m;
+    let merged_vel = if pair.p_is_central {
+        DVec3::ZERO
+    } else {
+        (pair.p_vel * pair.p_m + pair.s_vel * pair.s_m) / total_mass
+    };
+    let merged_pos = if pair.p_is_central {
+        DVec3::ZERO
+    } else {
+        (pair.p_pos * pair.p_m + pair.s_pos * pair.s_m) / total_mass
+    };
+
+    if let Ok((_, mut m, mut pos, mut vel, _, mut rad, ..)) =
+        ctx.bodies_query.get_mut(pair.primary_entity)
+    {
+        m.0 = total_mass;
+        pos.0 = merged_pos;
+        vel.0 = merged_vel;
+        rad.0 = (1.974e-8 * total_mass).max(1e-7);
+    }
+
+    if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {
+        cmd.remove::<SatelliteOf>();
+    }
+    if ctx.player_state.selected_entity == Some(pair.secondary_entity) {
+        ctx.player_state.selected_entity = Some(pair.primary_entity);
+    }
+    ctx.merged_away.insert(pair.secondary_entity);
+    if !ctx.pending_despawns.contains(&pair.secondary_entity) {
+        ctx.pending_despawns.push(pair.secondary_entity);
+    }
+
+    if let Some(ref mut tde_writer) = ctx.tde_events {
+        tde_writer.write(TidalDisruptionEvent {
+            bh_entity: pair.primary_entity,
+            disrupted_entity: pair.secondary_entity,
+            bh_mass_solar: pair.p_m,
+            body_mass_solar: pair.s_m,
+            tidal_radius_au: r_tidal,
+            isco_radius_au: r_isco,
+            bh_pos: pair.p_pos.as_vec3(),
+            disruption_pos: pair.s_pos.as_vec3(),
+            initial_velocity: (pair.s_vel - pair.p_vel).as_vec3(),
+            bh_name: pair.p_name.clone(),
+            disrupted_name: pair.s_name.clone(),
+        });
+    }
+
+    ctx.merge_events.write(AccretionMergeEvent {
+        primary_entity: pair.primary_entity,
+        secondary_entity: pair.secondary_entity,
+        merged_mass: total_mass,
+        merged_position: merged_pos,
+        merged_velocity: merged_vel,
+        new_body_type: BodyType::BlackHole,
+        energy_released: 0.1 * pair.s_m * SPEED_OF_LIGHT_AU_YR * SPEED_OF_LIGHT_AU_YR * 0.01,
+    });
+
+    b1.mass = total_mass;
+    b1.pos = merged_pos;
+    b1.vel = merged_vel;
+    b1.radius = (1.974e-8 * total_mass).max(1e-7);
 }

@@ -28,6 +28,7 @@ pub type AccretionQuery<'w, 's> = Query<
         Option<&'static mut SatelliteOf>,
         Option<&'static CentralStar>,
     ),
+    Without<crate::simulation::probes::SpaceProbe>,
 >;
 
 #[derive(Clone)]
@@ -67,7 +68,7 @@ pub struct SortedPair {
     pub s_name: String,
 }
 
-pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4> {
+pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4, 'm5> {
     pub commands: &'a mut Commands<'c1, 'c2>,
     pub bodies_query: &'a mut AccretionQuery<'q1, 'q2>,
     pub player_state: &'a mut PlayerInteractionState,
@@ -75,6 +76,7 @@ pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4> {
     pub moon_events: &'a mut MessageWriter<'m2, MoonFormationEvent>,
     pub bounce_events: &'a mut MessageWriter<'m3, CollisionBounceEvent>,
     pub roche_events: &'a mut MessageWriter<'m4, RocheDisruptionEvent>,
+    pub tde_events: Option<&'a mut MessageWriter<'m5, TidalDisruptionEvent>>,
     pub merged_away: &'a mut HashSet<Entity>,
     pub newly_formed_moons: &'a mut HashSet<Entity>,
     pub pending_despawns: &'a mut SmallVec<[Entity; 32]>,

@@ -71,7 +71,7 @@ fn ensure_space_weather_components_attached(
     for star_ent in unattached_stars.iter() {
         commands
             .entity(star_ent)
-            .insert(StellarFlareState::default());
+            .try_insert(StellarFlareState::default());
     }
 
     for (p_ent, body, opt_diff, opt_em, opt_vol) in unattached_planets.iter() {

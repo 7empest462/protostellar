@@ -50,3 +50,19 @@ pub struct RocheDisruptionEvent {
     pub primary_name: String,
     pub disrupted_name: String,
 }
+
+/// Event fired when a celestial body crosses the tidal disruption radius of a black hole and is spaghettified.
+#[derive(Message, Debug, Clone)]
+pub struct TidalDisruptionEvent {
+    pub bh_entity: Entity,
+    pub disrupted_entity: Entity,
+    pub bh_mass_solar: f64,
+    pub body_mass_solar: f64,
+    pub tidal_radius_au: f64,
+    pub isco_radius_au: f64,
+    pub bh_pos: Vec3,
+    pub disruption_pos: Vec3,
+    pub initial_velocity: Vec3,
+    pub bh_name: String,
+    pub disrupted_name: String,
+}

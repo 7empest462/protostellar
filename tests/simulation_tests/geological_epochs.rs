@@ -255,15 +255,7 @@ fn test_epoch_scrubbing_and_climate_synchronization() {
                 atmospheric_pressure_bar: 1.0,
                 cometary_impact_count: 0,
             },
-            PlanetaryClimate {
-                surface_temperature_k: 288.0,
-                equilibrium_temperature_k: 255.0,
-                greenhouse_delta_k: 33.0,
-                albedo: 0.30,
-                ice_coverage_frac: 0.10,
-                cloud_coverage_frac: 0.50,
-                climate_regime: ClimateRegime::TemperateHabitable,
-            },
+            PlanetaryClimate::default(),
         ))
         .id();
 
@@ -369,15 +361,7 @@ fn test_hadean_to_any_epoch_transition_unfreezes_planet() {
                 atmospheric_pressure_bar: 1.0,
                 cometary_impact_count: 0,
             },
-            PlanetaryClimate {
-                surface_temperature_k: 288.0,
-                equilibrium_temperature_k: 255.0,
-                greenhouse_delta_k: 33.0,
-                albedo: 0.30,
-                ice_coverage_frac: 0.10,
-                cloud_coverage_frac: 0.50,
-                climate_regime: ClimateRegime::TemperateHabitable,
-            },
+            PlanetaryClimate::default(),
         ))
         .id();
 
@@ -512,15 +496,7 @@ fn test_future_epoch_ocean_stability_no_oscillations() {
                 atmospheric_pressure_bar: 1.0,
                 cometary_impact_count: 0,
             },
-            PlanetaryClimate {
-                surface_temperature_k: 288.0,
-                equilibrium_temperature_k: 255.0,
-                greenhouse_delta_k: 33.0,
-                albedo: 0.30,
-                ice_coverage_frac: 0.10,
-                cloud_coverage_frac: 0.50,
-                climate_regime: ClimateRegime::TemperateHabitable,
-            },
+            PlanetaryClimate::default(),
         ))
         .id();
 
@@ -631,6 +607,7 @@ fn test_venus_temperate_ocean_stability_no_oscillations() {
                 ice_coverage_frac: 0.0,
                 cloud_coverage_frac: 1.0,
                 climate_regime: ClimateRegime::RunawayVenusian,
+                polar_ice_cap_latitude_deg: 90.0,
             },
         ))
         .id();
@@ -830,15 +807,7 @@ fn test_multi_planet_epoch_isolation() {
                 atmospheric_pressure_bar: 1.0,
                 cometary_impact_count: 0,
             },
-            PlanetaryClimate {
-                surface_temperature_k: 288.0,
-                equilibrium_temperature_k: 255.0,
-                greenhouse_delta_k: 33.0,
-                albedo: 0.30,
-                ice_coverage_frac: 0.10,
-                cloud_coverage_frac: 0.50,
-                climate_regime: ClimateRegime::TemperateHabitable,
-            },
+            PlanetaryClimate::default(),
             Temperature(288.0),
         ))
         .id();
@@ -866,6 +835,7 @@ fn test_multi_planet_epoch_isolation() {
                 ice_coverage_frac: 0.15,
                 cloud_coverage_frac: 0.08,
                 climate_regime: ClimateRegime::SnowballIceAge,
+                polar_ice_cap_latitude_deg: 35.0,
             },
             Temperature(215.0),
         ))
@@ -946,6 +916,7 @@ fn test_non_solar_planet_isolation_from_epoch_scrubbing() {
                 ice_coverage_frac: 0.0,
                 cloud_coverage_frac: 0.0,
                 climate_regime: ClimateRegime::AirlessVacuum,
+                polar_ice_cap_latitude_deg: 90.0,
             },
             Temperature(1800.0),
         ))

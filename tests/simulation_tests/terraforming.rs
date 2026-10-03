@@ -21,6 +21,7 @@ fn test_icy_comet_delivery_and_ocean_condensation() {
         ice_coverage_frac: 0.05,
         cloud_coverage_frac: 0.50,
         climate_regime: ClimateRegime::TemperateHabitable,
+        polar_ice_cap_latitude_deg: 75.0,
     };
 
     // Calculate delivery for an icy comet impact
@@ -90,6 +91,7 @@ fn test_chondrite_atmospheric_pressure_and_greenhouse() {
         ice_coverage_frac: 0.0,
         cloud_coverage_frac: 0.0,
         climate_regime: ClimateRegime::AirlessVacuum,
+        polar_ice_cap_latitude_deg: 90.0,
     };
 
     let chondrite_mass_solar = 0.0005 * EARTH_MASS_SOLAR;
@@ -169,6 +171,7 @@ fn test_runaway_greenhouse_ocean_evaporation() {
             ice_coverage_frac: 0.0,
             cloud_coverage_frac: 0.8,
             climate_regime: ClimateRegime::TemperateHabitable,
+            polar_ice_cap_latitude_deg: 90.0,
         },
         2.0,
         ClimateRegime::RunawayVenusian,
@@ -206,6 +209,7 @@ fn test_glaciation_breakout_via_co2_bombardment() {
         ice_coverage_frac: 1.0,
         cloud_coverage_frac: 0.3,
         climate_regime: ClimateRegime::SnowballIceAge,
+        polar_ice_cap_latitude_deg: 0.0,
     };
 
     // Heavy targeted CO2 bombardment (injecting 1.8 bars of CO2)
