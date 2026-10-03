@@ -10,6 +10,7 @@
    - [Camera & Viewport Controls](#camera--viewport-controls)
    - [Time Flow Engine](#time-flow-engine)
    - [Supernova Core-Collapse, Matter Ejection & Remnant Formation](#supernova-core-collapse-matter-ejection--remnant-formation)
+   - [Persistent Supernova Remnant (SNR) Nebulae & Shaders](#persistent-supernova-remnant-snr-nebulae--shaders)
    - [Pristine Disk Genesis & Protostellar Thermonuclear Ignition](#pristine-disk-genesis--protostellar-thermonuclear-ignition)
    - [Secular Kozai-Lidov Resonance & Hierarchical Triples](#secular-kozai-lidov-resonance--hierarchical-triples)
    - [Contextual Scenario-Specific HUD Adaptation](#contextual-scenario-specific-hud-adaptation)
@@ -21,6 +22,8 @@
    - [Multi-Moon Solar Eclipses & Planetary Ring Shadows](#multi-moon-solar-eclipses--planetary-ring-shadows)
    - [Viscoelastic Tidal Heating & Spin-Orbit Locking](#viscoelastic-tidal-heating--spin-orbit-locking)
    - [General Relativistic Dynamics & Gravitational Wave Coalescence](#general-relativistic-dynamics--gravitational-wave-coalescence)
+   - [Kilonova Fireballs, Binary Mergers & GW Ringdown](#kilonova-fireballs-binary-mergers--gw-ringdown)
+   - [Realistic Black Hole Event Horizons & Optical Physics](#realistic-black-hole-event-horizons--optical-physics)
    - [Atmospheric Photoevaporation & Solar Wind Stripping](#atmospheric-photoevaporation--solar-wind-stripping)
    - [Dynamic Roche Disruption & Ring Spawner](#dynamic-roche-disruption--ring-spawner)
    - [Theia-Earth Giant Impact & Lunar Coalescence](#theia-earth-giant-impact--lunar-coalescence)
@@ -33,7 +36,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (312 Tests)](#-automated-test-suite-312-tests)
+6. [🧪 Automated Test Suite (318 Tests)](#-automated-test-suite-318-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -58,6 +61,9 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 | **Multi-Moon Solar Eclipses & Ring Shadows** | Dynamic ray-marched umbra/penumbra solar eclipse shadow discs on planet surfaces and Cassini-divided ring shadows across day/night sides. | Automatic in all systems with moons or rings (e.g. Saturn, Earth-Moon) |
 | **Atmospheric Photoevaporation & EUV Winds** | Energy-limited photoevaporative hydrodynamic escape stripping close-in envelopes down to bare chthonian cores with anti-stellar cometary ion tails. | Open Inspector (**`[I]`**) $\to$ click **`[💨 Strip Atm]`** |
 | **General Relativistic 1PN & GW Inspiral** | First Post-Newtonian (1PN) perihelion precession (Mercury) and Peters gravitational-wave orbital decay leading to ISCO coalescence and chirp mergers. | Open Inspector (**`[I]`**) $\to$ click **`[🌀 Inspiral]`** |
+| **Persistent Supernova Remnant (SNR) Nebulae & Shaders** | Custom volumetric WGSL shader (`supernova.wgsl`) transitioning prompt explosions into persistent filamentary nebulae expanding via Sedov-Taylor self-similar blast physics ($R(t) \propto t^{0.38}$), multi-element cooling wisps ($H\alpha$ ruby & $[\text{O III}]$ emerald), and central Pulsar Wind Nebula (PWN) synchrotron emission cores. | Automatic transition following any stellar core collapse or supernova detonation |
+| **Kilonova Fireballs & Binary Coalescence** | Compact binary mergers (BNS / NS-BH / BBH) driven by Peters GW orbital decay. Spawns relativistic polar short-GRB jets ($\Gamma \ge 25$), $r$-process radioactive lanthanide fireballs ($5,000\text{ K} \to 2,000\text{ K}$), expanding blast rings, BBH spacetime chirp ripples, and Quasi-Normal Mode (QNM) ringdown shimmer. | Load **`[HUD]`** PSR B1913+16 or trigger **`[🌀 Inspiral]`** on compact binaries |
+| **Realistic Black Hole Event Horizons** | Pure pitch-black unlit event horizons ($0\text{ lumen}$ emission), razor-sharp photon ring ($pow(1-N\cdot V, 36.0)$), physical Schwarzschild radius scaling ($r_{\text{vis}} \propto 2GM/c^2$, shrinking to ~0.005 AU for stellar-mass remnants), and active background star gravitational lensing. | Formed via Hypernova / Collapsar ($\ge 25\ M_\odot$), JWST Little Red Dot (**`[F6]`**), or over-accreting a Neutron Star |
 | **System Save / Load & Scenario Serializer** | Full JSON serialization preserving masses, compositions, climates, spins, rings, basins, tides, and orbital vectors. | Press **`[F12]`** (Save) / **`[Shift+F12]`** (Load) |
 | **Scrollable Target Inspector & Universal HUD Pills** | Clean, organized inspection panel with vertical scroll, categorized sections, and universal `🗕` minimization with glowing restore pills. | Press **`[I]`** or click any corner `🗕` button |
 
@@ -105,7 +111,24 @@ Witness the violent death of massive stars and the birth of exotic compact remna
 - **In-Game Triggers**:
   - In the Target Inspector (**`[I]`**), advance a massive star's evolutionary state until it detonates.
   - Focus the central star and press **`[N]`** to trigger instant core collapse.
-  - Over-accrete a White Dwarf past the Chandrasekhar limit ($1.44\ M_\odot$) or a Neutron Star past the TOV limit ($2.17\ M_\odot$).
+
+---
+
+### Persistent Supernova Remnant (SNR) Nebulae & Shaders
+Following prompt stellar core collapse, explosions smoothly transition into persistent, long-lived diffuse nebulae modeling centuries of interstellar blast dynamics:
+- **Sedov-Taylor Blast Expansion**:
+  - Remnants decouple from the prompt ballistic phase and transition into the self-similar adiabatic Sedov-Taylor blast regime:
+    $$R(t) = R_0 \cdot \left(1 + \frac{t}{\tau_{\text{sedov}}}\right)^{0.38}$$
+  - The forward shock decelerates under interstellar medium (ISM) resistance while continuing to sweep outward across the planetary system out to $250+\text{ AU}$.
+- **Multi-Element Filamentary Wisps**:
+  - As the ejecta decelerates, radiative cooling fragments the shell into structured, turbulent filamentary wisps.
+  - Spectrally differentiated emission: ruby $H\alpha$ ($656\text{ nm}$) hydrogen filaments, emerald $[\text{O III}]$ ($500.7\text{ nm}$) doubly-ionized oxygen sheets, and amber $[\text{S II}]$ shock boundaries.
+  - Remnants slowly fade over tens of thousands of simulated years ($e^{-t / \tau_{\text{cool}}}$) into deep-space interstellar medium enrichments.
+- **Pulsar Wind Nebula (PWN) Synchrotron Core**:
+  - When a Type II core collapse leaves behind a newborn Pulsar or Magnetar, relativistic electron-positron winds continuously inject energy into the inner cavity.
+  - Generates a vibrant, persistent Crab-like synchrotron core emitting non-thermal sapphire glow energized by the central engine's spin-down luminosity.
+- **Volumetric WGSL Supernova Shader (`supernova.wgsl`)**:
+  - Custom ray-marched shader pass calculating real-time optical depth, inner photosphere absorption, forward blast ionization rims, and high-energy limb brightening.
 
 ---
 
@@ -243,6 +266,32 @@ Real-time shadow projections rendered on planetary day/night hemispheres:
    - Peters gravitational wave power ($P_{\text{GW}}$ in Watts).
    - GW inspiral coalescence timescale ($\tau_{\text{inspiral}}$ in Myr).
 3. Click **`[🌀 Inspiral]`** on compact binary systems to accelerate gravitational radiation decay, pulling the components into the Innermost Stable Circular Orbit (ISCO) until they coalesce in a brilliant gravitational wave burst!
+
+---
+
+### Kilonova Fireballs, Binary Mergers & GW Ringdown
+When compact relativistic binaries (binary neutron stars, neutron star-black hole pairs, or binary black holes) merge via Peters gravitational-wave orbital decay:
+- **Binary Neutron Star (BNS) & NS-BH Coalescence**:
+  - **Relativistic Polar Short-GRB Jets**: Merging neutron stars launch ultra-relativistic collimated gamma-ray burst jets ($\Gamma \ge 25$) piercing outward along the orbital angular momentum axis.
+  - **r-Process Lanthanide Fireball**: Tidal dynamic ejecta and accretion disk wind outpourings synthesize rapid neutron-capture ($r$-process) heavy elements (gold, platinum, neodymium). The resulting radioactive fireball expands rapidly ($v \approx 0.1\text{--}0.3c$), cooling from an incandescent $5,000\text{ K}$ down to a deep infrared $2,000\text{ K}$ over tens of simulated days.
+  - **Expanding Shock Blast Waves**: Supersonic multi-stage blast rings propagate through circumstellar gas, dispersing newly synthesized heavy metals into the surrounding planetary system.
+- **Binary Black Hole (BBH) Coalescence & Ringdown**:
+  - During the final inspiral plunge, extreme spacetime curvature ripples outward in concentric gravitational wave metric chirp ripples ($h_+ / h_\times$).
+  - Post-merger, the single deformed Kerr black hole settles via **Quasi-Normal Mode (QNM) Ringdown**, releasing pure gravitational energy and producing optical spacetime shimmer before calming into a quiescent Kerr event horizon.
+
+---
+
+### Realistic Black Hole Event Horizons & Optical Physics
+Black holes in Protostellar obey relativistic optical physics and Schwarzschild geometry:
+- **Physical Schwarzschild Radius Scaling**:
+  - Rather than artificially oversized spheres, black hole visual radiuses strictly scale with Schwarzschild radius:
+    $$r_{\text{Schwarzschild}} = \frac{2 G M}{c^2}$$
+  - A stellar-mass black hole ($3\text{--}10\ M_\odot$) collapses down to a compact core ($\sim 0.005\text{--}0.015\text{ AU}$), realistically tiny compared to its multi-AU progenitor supergiant star.
+- **Pitch-Black Photon Absorption**:
+  - The interior of the event horizon emits **zero lumens** ($I = 0.0$), acting as a pure, light-devouring void with unlit PBR properties.
+- **Razor-Sharp Photon Ring & Gravitational Lensing**:
+  - Relativistic ray lensing creates a razor-sharp photon ring ($1.5 R_s$) rendered via high-order grazing limb equations ($\propto (1 - \hat{N}\cdot\hat{V})^{36}$), contrasting against the pitch-black horizon.
+  - All black holes—regardless of mass—actively warp and lens background star fields, Einstein rings, and surrounding nebula textures in real time.
 
 ---
 
@@ -423,6 +472,7 @@ Protostellar is designed around Bevy's data-driven **Entity Component System (EC
 protostellar/
 ├── assets/
 │   └── shaders/
+│       ├── supernova.wgsl        # Ray-marched volumetric supernova fireball, shock fronts & ionization shells
 │       ├── skybox.wgsl           # Milky Way & Cosmic Web procedural skybox with gravitational lensing
 │       ├── planet.wgsl           # PBR crusts, magma oceans, Ray-marched ring shadows & eclipses
 │       ├── atmosphere.wgsl       # Multi-layer Rayleigh/Mie atmospheric scattering & twilight ring
@@ -447,12 +497,12 @@ protostellar/
 │   │   ├── space_weather/        # CMEs, stellar flares, magnetospheric stand-off & auroral ovals
 │   │   ├── telemetry.rs          # Symplectic energy auditing, metrics history & CSV export
 │   │   ├── terraforming/         # Targeted bombardment spawner & dynamic climate modification
-│   │   ├── thermodynamics.rs     # Stellar evolution, habitability indexing & climate regimes
+│   │   ├── thermodynamics/       # Stellar evolution, habitability indexing & multi-zone climate regimes
 │   │   ├── tides/                # Viscoelastic tidal heating, volcanism & spin-orbit locking
 │   │   └── physics.rs            # Symplectic leapfrog N-body integrator
 │   ├── rendering/
 │   │   ├── bodies/               # Meshes, atmospheres, relativistic jets, ring systems
-│   │   ├── effects/              # Supernova core-collapse explosions, conics, orbit ribbons, cometary tails
+│   │   ├── effects/              # Supernova & Kilonova explosions, persistent SNR nebulae, GW ripples, conics, ribbons
 │   │   ├── materials.rs          # Custom Bevy PBR & volumetric shader materials
 │   │   └── camera.rs             # Pan-orbit camera, zoom, target tracking
 │   ├── game/
@@ -463,16 +513,17 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 37 specialized test suites covering 312 automated tests
+    └── simulation_tests/         # 37 specialized test suites covering 318 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (312 Tests)
+## 🧪 Automated Test Suite (318 Tests)
 
-Protostellar enforces rigorous physical validity through **312 comprehensive integration tests** across 37 specialized test suites:
+Protostellar enforces rigorous physical validity through **318 comprehensive integration tests** across 37 specialized test suites:
 
-- **Supernova Core-Collapse & Ejecta**: Mass-differentiated explosion regimes (Hypernova, Type II, Type Ia, Planetary Nebula), prompt breakout fireball decay, high-velocity ejecta kinematics, SPH disk blast clearing, and planet atmospheric escape tails.
+- **Supernova Core-Collapse & Persistent Remnant Nebulae**: Mass-differentiated explosion regimes (Hypernova, Type II, Type Ia, Planetary Nebula), prompt breakout fireball decay, high-velocity ejecta kinematics, SPH disk blast clearing, handoff to persistent Sedov-Taylor nebulae ($R(t) \propto t^{0.38}$), multi-element filamentary cooling, and Pulsar Wind Nebula (PWN) synchrotron cores.
+- **Kilonova Fireballs & Relativistic Remnants**: Peters GW orbital inspiral coalescence, relativistic short-GRB polar jets, $r$-process lanthanide fireball radioactive cooling, BBH spacetime metric chirp ripples, Kerr QNM ringdown shimmer, and Schwarzschild black hole event horizon scaling ($r_{\text{vis}} \propto 2GM/c^2$) with grazing photon ring lensing.
 - **Pristine Disk Genesis & Star Ignition**: Organic coagulation from 100,000 SPH particles, water-ice snow line trapping, protostellar core contraction, and automatic 10.0 MK fusion ignition.
 - **Hierarchical Kozai-Lidov Triples**: Secular quadrupole angular momentum conservation ($L_z = \sqrt{1 - e^2} \cos i = \text{const}$), cyclic eccentricity-inclination coupling, and grazing tidal captures.
 - **Orbital Mechanics & Conservation**: Symplectic leapfrog energy conservation, Keplerian solver accuracy, high-warp orbital stability.

@@ -20,7 +20,12 @@ fn focus_camera_on_target(
 ) {
     cam.target_entity = Some(entity);
     let visual_r = config.calc_visual_radius_for_type(radius, body_type);
-    cam.target_radius = config.calc_camera_framing_radius(visual_r);
+    let frame_r = if radius <= 1e-6 || visual_r < 0.001 {
+        0.015f32.max(config.calc_camera_framing_radius(visual_r))
+    } else {
+        config.calc_camera_framing_radius(visual_r)
+    };
+    cam.target_radius = frame_r;
     let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
     cam.target_focus = target_vec;
     cam.focus = target_vec;
@@ -41,6 +46,7 @@ fn select_and_toast_body(
     toast: &mut NotificationToast,
 ) {
     player_state.selected_entity = Some(entity);
+    player_state.just_selected_via_ui = true;
     if let Ok(mut cam) = camera_query.single_mut() {
         focus_camera_on_target(&mut cam, pos, radius, body_type, config, entity);
     }
@@ -190,6 +196,7 @@ pub fn handle_selection_action(
             );
             if let Some(target) = worlds.first() {
                 player_state.selected_entity = Some(target.entity);
+                player_state.just_selected_via_ui = true;
                 if let Ok(item) = selected_query.get(target.entity) {
                     let pos = item.3 .0;
                     if let Ok(mut cam) = camera_query.single_mut() {
@@ -382,6 +389,7 @@ fn select_planetary_target(
         let body_name = item.6.name.clone();
         let pos = item.3 .0;
         player_state.selected_entity = Some(ent);
+        player_state.just_selected_via_ui = true;
         if let Ok(mut cam) = camera_query.single_mut() {
             focus_camera_on_target(&mut cam, pos, item.2 .0, item.6.body_type, config, ent);
         }
@@ -421,6 +429,7 @@ fn select_kuiper_target(
         let body_name = item.6.name.clone();
         let pos = item.3 .0;
         player_state.selected_entity = Some(ent);
+        player_state.just_selected_via_ui = true;
         if let Ok(mut cam) = camera_query.single_mut() {
             focus_camera_on_target(&mut cam, pos, item.2 .0, item.6.body_type, config, ent);
         }

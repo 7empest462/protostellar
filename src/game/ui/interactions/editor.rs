@@ -37,7 +37,9 @@ fn handle_mass_change(
     };
 
     mass.0 *= multiplier;
-    if is_star.is_none() && !body.body_type.is_star_or_remnant() {
+    if body.body_type == BodyType::BlackHole {
+        radius.0 = (1.974e-8 * mass.0).max(1e-7);
+    } else if is_star.is_none() && !body.body_type.is_star_or_remnant() {
         let avg_density = comp.average_density();
         radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
             .cbrt()
@@ -257,7 +259,7 @@ fn handle_view_and_target(
                     toast.timer = 4.0;
                 }
                 if let Ok(mut cmd) = commands.get_entity(ent) {
-                    cmd.despawn();
+                    cmd.try_despawn();
                 }
                 player_state.selected_entity = None;
                 if let Ok(mut cam) = camera_query.single_mut() {
@@ -304,7 +306,7 @@ fn handle_star_aging_transition(
                 body.body_type = BodyType::BlackHole;
                 body.name = "The Star (Stellar-Mass Black Hole)".to_string();
                 mass.0 = (m * 0.25).clamp(3.0, 15.0);
-                radius.0 = 2.95e-5 * mass.0;
+                radius.0 = (1.974e-8 * mass.0).max(1e-7);
                 temp.0 = 10.0;
                 lum.0 = 5000.0;
                 toast.message =
@@ -546,6 +548,40 @@ fn handle_shatter_and_life(
             }
             true
         }
+
+        UiButtonAction::AdvanceCivilization => {
+            if let Some(ent) = player_state.selected_entity {
+                if let Ok((.., _comp, _body, is_star, _, _, _, _)) = selected_query.get_mut(ent) {
+                    if is_star.is_some() {
+                        toast.message = "⚠️ Civilization cannot survive on a star.".to_string();
+                        toast.timer = 3.5;
+                    } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                        p_cmd.insert(BiosphereState {
+                            habitability_score: 0.95,
+                            biomass_coverage_frac: 0.85,
+                            oxygen_fraction: 0.21,
+                            emergence_year: Some(0.0),
+                            technosignature: 1.0,
+                        });
+                        toast.message =
+                            "🏙️ Civilization Emerged! Observe the night side.".to_string();
+                        toast.timer = 5.0;
+                    }
+                }
+            }
+            true
+        }
+        UiButtonAction::LaunchProbe => {
+            if let Some(target) = player_state.selected_entity {
+                commands.spawn(crate::simulation::probes::LaunchProbeRequest { target });
+                toast.message = "🚀 Probe launched towards target!".to_string();
+                toast.timer = 4.0;
+            } else {
+                toast.message = "⚠️ Please select a target planet first!".to_string();
+                toast.timer = 3.0;
+            }
+            true
+        }
         UiButtonAction::SeedLife => {
             if let Some(ent) = player_state.selected_entity {
                 if let Ok((.., mut comp, body, is_star, _, _, _, _)) = selected_query.get_mut(ent) {
@@ -566,6 +602,7 @@ fn handle_shatter_and_life(
                                 biomass_coverage_frac: 0.65,
                                 oxygen_fraction: 0.21,
                                 emergence_year: Some(sim_time_years),
+                                technosignature: 0.0,
                             },
                             PlanetaryClimate {
                                 surface_temperature_k: 288.0,
@@ -575,6 +612,7 @@ fn handle_shatter_and_life(
                                 ice_coverage_frac: 0.10,
                                 cloud_coverage_frac: 0.55,
                                 climate_regime: ClimateRegime::TemperateHabitable,
+                                polar_ice_cap_latitude_deg: 75.0,
                             },
                         ));
                         comp.ice_frac = 0.08;
@@ -712,14 +750,16 @@ fn handle_tidal_lock(
                 let r_au = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.01);
                 let p_yr = (r_au.powi(3) / star_mass.max(0.01)).sqrt();
                 let p_hours = (p_yr * YEAR_SECONDS / 3600.0).clamp(1.0, 50000.0);
-                commands.entity(ent).try_insert((
-                    SpinState {
-                        spin_vector: DVec3::new(0.0, 1.0, 0.0),
-                        rotation_period_hours: p_hours,
-                        axial_tilt_degrees: 0.0,
-                    },
-                    crate::simulation::tides::TidalState::new_locked(1.0),
-                ));
+                if let Ok(mut cmd) = commands.get_entity(ent) {
+                    cmd.try_insert((
+                        SpinState {
+                            spin_vector: DVec3::new(0.0, 1.0, 0.0),
+                            rotation_period_hours: p_hours,
+                            axial_tilt_degrees: 0.0,
+                        },
+                        crate::simulation::tides::TidalState::new_locked(1.0),
+                    ));
+                }
                 toast.message = format!(
                     "⚡ {} Synchronously Tidally Locked (Period: {:.1}h, Tilt: 0.0°)",
                     body.name, p_hours
@@ -797,12 +837,14 @@ fn handle_strip_atmosphere(
 
         body.body_type = classify_body_by_mass_and_comp(mass.0, &comp, false);
 
-        commands.entity(ent).try_insert(AtmosphericEscapeTail {
-            loss_rate_m_earth_per_myr: 50.0,
-            tail_length_au: 4.5,
-            ion_color: Color::srgba(0.25, 0.85, 1.0, 0.85),
-            is_active: true,
-        });
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            cmd.try_insert(AtmosphericEscapeTail {
+                loss_rate_m_earth_per_myr: 50.0,
+                tail_length_au: 4.5,
+                ion_color: Color::srgba(0.25, 0.85, 1.0, 0.85),
+                is_active: true,
+            });
+        }
 
         toast.message = format!(
             "💨 PHOTOEVAPORATION BURST! Stripped gaseous envelope from \"{}\", revealing bare rocky core!",

@@ -7,36 +7,31 @@ use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::ScrollableInspector;
 
-/// Handles mouse wheel scrolling for the bottom-left Target Inspector panel.
+/// Handles mouse wheel scrolling for any scrollable UI panel (Inspector, Quick Selector, etc).
 pub fn handle_inspector_scroll(
     mut mouse_wheel: MessageReader<MouseWheel>,
-    mut scroll_query: Query<
-        (Entity, &mut ScrollPosition, &Node, &ComputedNode),
-        With<ScrollableInspector>,
-    >,
+    mut scroll_query: Query<(Entity, &mut ScrollPosition, &ComputedNode)>,
     interaction_query: Query<(Entity, &Interaction)>,
     parent_query: Query<&ChildOf>,
 ) {
-    let Ok((scroll_entity, mut scroll_position, _node, computed)) = scroll_query.single_mut()
-    else {
-        return;
-    };
-
-    let is_hovered = is_inspector_hovered(scroll_entity, &interaction_query, &parent_query);
-    if !is_hovered {
-        return;
-    }
-
-    let max_offset_y =
-        ((computed.content_size().y - computed.size().y) * computed.inverse_scale_factor).max(0.0);
-
+    let mut total_delta_y = 0.0;
     for ev in mouse_wheel.read() {
-        let delta_y = match ev.unit {
+        total_delta_y += match ev.unit {
             MouseScrollUnit::Line => -ev.y * 28.0,
             MouseScrollUnit::Pixel => -ev.y,
         };
+    }
 
-        scroll_position.y = (scroll_position.y + delta_y).clamp(0.0, max_offset_y);
+    if total_delta_y == 0.0 {
+        return;
+    }
+
+    for (scroll_entity, mut scroll_position, computed) in scroll_query.iter_mut() {
+        if is_inspector_hovered(scroll_entity, &interaction_query, &parent_query) {
+            // ComputedNode sizes are in the same logical pixel space. No scale factor needed.
+            let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0);
+            scroll_position.y = (scroll_position.y + total_delta_y).clamp(0.0, max_offset_y);
+        }
     }
 }
 

@@ -37,8 +37,13 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(AssetPlugin { ..default() }),
+                .set(AssetPlugin { ..default() })
+                .set(bevy::log::LogPlugin {
+                    filter: "wgpu=error,naga=warn,bevy_render=info,bevy_ecs::error::handler=error,protostellar=info".into(),
+                    ..default()
+                }),
         )
+        .insert_resource(FallbackErrorHandler(protostellar_error_handler))
         .add_plugins((SimulationPlugin, RenderingPlugin, GamePlugin, GpuSimPlugin))
         .run();
 }

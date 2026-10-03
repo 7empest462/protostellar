@@ -40,6 +40,8 @@ pub fn handle_time_control_input(
 
     // Speed warp presets:
     // [1]: Real-time 1:1 (1s = 1s)
+    // [9] or [Shift+1]: 1s = 1 min (60x Real-time)
+    // [0] or [Shift+2]: 1s = 5 min (300x Real-time)
     // [2]: 1.0x (1s = 11.0 days)
     // [3]: 10.0x (1s = ~3.6 months)
     // [4]: 100.0x (1s = ~3.0 yr)
@@ -47,11 +49,31 @@ pub fn handle_time_control_input(
     // [6]: 10,000.0x (1s = ~300.0 yr)
     // [7]: 100,000.0x (1s = ~3.0k yr)
     // [8]: 1,000,000.0x (1s = ~30.0k yr)
-    if keyboard.just_pressed(KeyCode::Digit1) || keyboard.just_pressed(KeyCode::Numpad1) {
+    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+
+    if (keyboard.just_pressed(KeyCode::Digit1) || keyboard.just_pressed(KeyCode::Numpad1)) && !shift
+    {
         time_warp.set_preset(TimeWarp::SPEED_REAL_TIME);
         toast_msg = Some("▶ Speed: Real-time (1s = 1.0s)".to_string());
     }
-    if keyboard.just_pressed(KeyCode::Digit2) || keyboard.just_pressed(KeyCode::Numpad2) {
+    if keyboard.just_pressed(KeyCode::Digit9)
+        || keyboard.just_pressed(KeyCode::Numpad9)
+        || (shift
+            && (keyboard.just_pressed(KeyCode::Digit1) || keyboard.just_pressed(KeyCode::Numpad1)))
+    {
+        time_warp.set_preset(TimeWarp::SPEED_1_MINUTE);
+        toast_msg = Some("▶ Speed: 1s = 1 min (60x Real-time)".to_string());
+    }
+    if keyboard.just_pressed(KeyCode::Digit0)
+        || keyboard.just_pressed(KeyCode::Numpad0)
+        || (shift
+            && (keyboard.just_pressed(KeyCode::Digit2) || keyboard.just_pressed(KeyCode::Numpad2)))
+    {
+        time_warp.set_preset(TimeWarp::SPEED_5_MINUTES);
+        toast_msg = Some("▶ Speed: 1s = 5 min (300x Real-time)".to_string());
+    }
+    if (keyboard.just_pressed(KeyCode::Digit2) || keyboard.just_pressed(KeyCode::Numpad2)) && !shift
+    {
         time_warp.set_preset(1.0);
         toast_msg = Some("▶ Speed: 1.0x (1s = 11.0 days)".to_string());
     }

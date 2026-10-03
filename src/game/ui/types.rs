@@ -557,6 +557,8 @@ pub enum UiButtonAction {
     // Time Controls
     TimePause,
     TimeSpeedRealtime,
+    TimeSpeed1Min,
+    TimeSpeed5Min,
     TimeSpeed1,
     TimeSpeed100,
     TimeSpeed10k,
@@ -625,6 +627,8 @@ pub enum UiButtonAction {
     BombardChondrite,
     BombardSalvo,
     BombardCore,
+    AdvanceCivilization,
+    LaunchProbe,
     // Gravitational Tidal Actions
     TidalLock,
     // Relativistic Gravitational Waves & Inspiral
@@ -643,10 +647,13 @@ pub enum UiButtonAction {
     LoadScenarioMagnetar,
     LoadScenarioRelativisticBinary,
     LoadScenarioKozaiTriple,
+    LoadScenarioSagittariusAStar,
+    LoadScenarioMolecularCloud,
     // JWST Little Red Dot / Quasi-Star Experiments
     ToggleSuperEddington,
     TriggerBlowoutCocoon,
     SpawnInfallPop3Star,
+    TriggerGmcSupernovaShock,
     // Fullscreen and Panel Collapsibility
     ToggleFullScreenHud,
     ToggleTopLeftPanel,
@@ -671,6 +678,8 @@ impl UiButtonAction {
         match self {
             UiButtonAction::TimePause => "[Space]: Pause or resume continuous orbital physics flow.",
             UiButtonAction::TimeSpeedRealtime => "[1]: 1:1 Real-time progression (1s = 1s).",
+            UiButtonAction::TimeSpeed1Min => "[9] or [S-1]: 1 second = 1 minute simulation time (60x real-time).",
+            UiButtonAction::TimeSpeed5Min => "[0] or [S-2]: 1 second = 5 minutes simulation time (300x real-time).",
             UiButtonAction::TimeSpeed1 => "[2]: 1.0x Orbital flow speed (1s = 11.0 days).",
             UiButtonAction::TimeSpeed100 => "[4]: 100x Accelerated time progression (~3.0 yr/sec).",
             UiButtonAction::TimeSpeed10k => "[6]: 10,000x High-speed planetary accretion flow (~300 yr/sec).",
@@ -754,9 +763,12 @@ impl UiButtonAction {
             UiButtonAction::LoadScenarioMagnetar => "[F9]: Load SGR 1806-20 (Ultra-magnetized 10¹⁵ G magnetar with starquake flares & companion).",
             UiButtonAction::LoadScenarioRelativisticBinary => "[F10]: Load PSR B1913+16 Hulse-Taylor relativistic binary pulsar and gravitational waves.",
             UiButtonAction::LoadScenarioKozaiTriple => "[F11]: Load HD 80606 Kozai-Lidov hierarchical triple secular resonance and tidal migration.",
+            UiButtonAction::LoadScenarioSagittariusAStar => "[F10]: Load Sagittarius A* supermassive black hole (4.3×10⁶ M☉) with relativistic S-star cluster.",
+            UiButtonAction::LoadScenarioMolecularCloud => "Load Giant Molecular Cloud (24 M☉) Jeans instability cluster collapse with 10 protostellar seeds.",
             UiButtonAction::ToggleSuperEddington => "[X]: Toggle Super-Eddington hyper-accretion onto the central black hole seed.",
             UiButtonAction::TriggerBlowoutCocoon => "[B]: Trigger radiation envelope blowout to unveil the naked Supermassive Quasar.",
             UiButtonAction::SpawnInfallPop3Star => "[T]: Spawn an infalling Population III hypergiant star to observe a Tidal Disruption Event (TDE).",
+            UiButtonAction::TriggerGmcSupernovaShock => "💥 Detonate an external massive star into a Supernova outside the cloud, driving a compressive shockwave.",
             UiButtonAction::ToggleFullScreenHud => "[F11]: Toggle clean full-screen view (hide/show all HUD overlays).",
             UiButtonAction::ToggleTopLeftPanel => "Minimize or expand top-left system statistics panel.",
             UiButtonAction::ToggleTopRightPanel => "Minimize or expand top-right diagnostics and time controls.",
@@ -771,6 +783,8 @@ impl UiButtonAction {
             UiButtonAction::CycleSlingshotArchetype => "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue).",
             UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",
             UiButtonAction::QuickLoad => "[Shift+F12]: Quick Load saved solar system state from disk.",
+            UiButtonAction::AdvanceCivilization => "Advance civilization: spawns a high-tech biosphere and activates city lights on the night side.",
+            UiButtonAction::LaunchProbe => "Launch a Space Probe: sends an Orbiter or Rover from a technologically advanced world (or star) to explore the selected target.",
         }
     }
 }
@@ -803,6 +817,55 @@ pub fn create_button(
                 Text::new(label),
                 TextFont {
                     font_size: FontSize::Px(12.5),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.92, 0.96, 1.0)),
+                Pickable::IGNORE,
+            ));
+        });
+}
+
+/// Stores the resting colors of a Quick Bar button so it can be dynamically highlighted without recreating the UI.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct QuickBarButtonBaseColor {
+    pub bg: Color,
+    pub border: Color,
+}
+
+/// Helper function to create compact glassmorphic button style with base color memory for dense toolbars
+pub fn create_compact_selectable_button(
+    parent: &mut ChildSpawnerCommands,
+    action: UiButtonAction,
+    label: &str,
+    bg_color: Color,
+    border_color: Color,
+    base_bg: Color,
+    base_border: Color,
+) {
+    parent
+        .spawn((
+            Button,
+            action,
+            QuickBarButtonBaseColor {
+                bg: base_bg,
+                border: base_border,
+            },
+            Node {
+                padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+                margin: UiRect::all(Val::Px(1.5)),
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BorderColor::all(border_color),
+            BackgroundColor(bg_color),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(10.5),
                     ..default()
                 },
                 TextColor(Color::srgb(0.92, 0.96, 1.0)),

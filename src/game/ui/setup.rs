@@ -93,6 +93,143 @@ fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
         });
 }
 
+fn spawn_scenario_presets_panel(center_col: &mut ChildSpawnerCommands) {
+    center_col
+        .spawn((
+            HudPanelElement::ScenarioPresets,
+            Interaction::default(),
+            Node {
+                flex_direction: FlexDirection::Row,
+                padding: UiRect::axes(Val::Px(3.0), Val::Px(2.0)),
+                align_items: AlignItems::Center,
+                margin: UiRect::bottom(Val::Px(3.0)),
+                flex_wrap: FlexWrap::Wrap,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.90)),
+            BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
+        ))
+        .with_children(|scenario_row| {
+            const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 12] = [
+                (
+                    UiButtonAction::LoadScenarioSolar,
+                    "Solar [F1]",
+                    Color::srgba(0.18, 0.14, 0.04, 0.9),
+                    Color::srgb(0.9, 0.75, 0.3),
+                ),
+                (
+                    UiButtonAction::LoadScenarioGenesis,
+                    "Genesis [Disk]",
+                    Color::srgba(0.04, 0.18, 0.16, 0.9),
+                    Color::srgb(0.25, 0.95, 0.8),
+                ),
+                (
+                    UiButtonAction::LoadScenarioTrappist,
+                    "TRAPPIST-1 [F2]",
+                    Color::srgba(0.22, 0.06, 0.08, 0.9),
+                    Color::srgb(1.0, 0.45, 0.45),
+                ),
+                (
+                    UiButtonAction::LoadScenarioKepler16,
+                    "Kepler-16 [F3]",
+                    Color::srgba(0.20, 0.12, 0.04, 0.9),
+                    Color::srgb(1.0, 0.7, 0.3),
+                ),
+                (
+                    UiButtonAction::LoadScenarioHotJupiter,
+                    "Hot Jup [F4]",
+                    Color::srgba(0.18, 0.08, 0.22, 0.9),
+                    Color::srgb(0.85, 0.45, 1.0),
+                ),
+                (
+                    UiButtonAction::LoadScenarioRoguePlanet,
+                    "Rogue [F5]",
+                    Color::srgba(0.06, 0.16, 0.22, 0.9),
+                    Color::srgb(0.4, 0.85, 1.0),
+                ),
+                (
+                    UiButtonAction::LoadScenarioLittleRedDot,
+                    "LRD [F6]",
+                    Color::srgba(0.24, 0.04, 0.06, 0.9),
+                    Color::srgb(1.0, 0.35, 0.4),
+                ),
+                (
+                    UiButtonAction::LoadScenarioPulsar,
+                    "Pulsar [F7]",
+                    Color::srgba(0.04, 0.12, 0.26, 0.9),
+                    Color::srgb(0.45, 0.85, 1.0),
+                ),
+                (
+                    UiButtonAction::LoadScenarioMagnetar,
+                    "Magnetar [F9]",
+                    Color::srgba(0.20, 0.05, 0.28, 0.9),
+                    Color::srgb(0.90, 0.45, 1.0),
+                ),
+                (
+                    UiButtonAction::LoadScenarioKozaiTriple,
+                    "Kozai [F11]",
+                    Color::srgba(0.08, 0.18, 0.14, 0.9),
+                    Color::srgb(0.4, 0.95, 0.65),
+                ),
+                (
+                    UiButtonAction::LoadScenarioSagittariusAStar,
+                    "Sgr A* [F10]",
+                    Color::srgba(0.25, 0.05, 0.20, 0.9),
+                    Color::srgb(1.0, 0.5, 0.8),
+                ),
+                (
+                    UiButtonAction::LoadScenarioMolecularCloud,
+                    "GMC Cluster",
+                    Color::srgba(0.06, 0.16, 0.22, 0.9),
+                    Color::srgb(0.45, 0.85, 1.0),
+                ),
+            ];
+            for (action, label, bg, border) in SCENARIO_BUTTONS {
+                create_compact_button(scenario_row, action, label, bg, border);
+            }
+            create_compact_button(
+                scenario_row,
+                UiButtonAction::ToggleScenariosPanel,
+                "🗕",
+                Color::srgba(0.16, 0.08, 0.12, 0.85),
+                Color::srgb(0.9, 0.4, 0.6),
+            );
+        });
+}
+
+fn spawn_scenario_presets_pill(center_col: &mut ChildSpawnerCommands) {
+    center_col
+        .spawn((
+            Button,
+            UiButtonAction::ToggleScenariosPanel,
+            HudPanelElement::ScenarioPresetsPill,
+            Node {
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                display: Display::None,
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                margin: UiRect::bottom(Val::Px(3.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.88)),
+            BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
+        ))
+        .with_children(|pill| {
+            pill.spawn((
+                Text::new("🎬 Scenarios [F1-F9] ▼"),
+                TextFont {
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.85, 0.65, 1.0)),
+                Pickable::IGNORE,
+            ));
+        });
+}
+
 fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
     top_row
         .spawn(Node {
@@ -102,159 +239,43 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|center_col| {
-            center_col.spawn((
-                QuickBodySelectorBar,
-                Interaction::default(),
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    padding: UiRect::axes(Val::Px(4.0), Val::Px(2.5)),
-                    align_items: AlignItems::Center,
-                    margin: UiRect::bottom(Val::Px(3.0)),
-                    flex_wrap: FlexWrap::Wrap,
-                    justify_content: JustifyContent::Center,
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
-                BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
-            ));
-
             center_col
                 .spawn((
-                    HudPanelElement::ScenarioPresets,
+                    ScrollPosition::default(),
                     Interaction::default(),
                     Node {
-                        flex_direction: FlexDirection::Row,
-                        padding: UiRect::axes(Val::Px(3.0), Val::Px(2.0)),
-                        align_items: AlignItems::Center,
+                        flex_direction: FlexDirection::Column,
+                        width: Val::Px(640.0), // Force width so children can wrap correctly during measurement
+                        max_height: Val::Vh(35.0),
+                        overflow: Overflow::scroll_y(),
                         margin: UiRect::bottom(Val::Px(3.0)),
-                        flex_wrap: FlexWrap::Wrap,
-                        justify_content: JustifyContent::Center,
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.90)),
-                    BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
+                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                    BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
                 ))
-                .with_children(|scenario_row| {
-                    const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 10] = [
-                        (
-                            UiButtonAction::LoadScenarioSolar,
-                            "Solar [F1]",
-                            Color::srgba(0.18, 0.14, 0.04, 0.9),
-                            Color::srgb(0.9, 0.75, 0.3),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioGenesis,
-                            "Genesis [Disk]",
-                            Color::srgba(0.04, 0.18, 0.16, 0.9),
-                            Color::srgb(0.25, 0.95, 0.8),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioTrappist,
-                            "TRAPPIST-1 [F2]",
-                            Color::srgba(0.22, 0.06, 0.08, 0.9),
-                            Color::srgb(1.0, 0.45, 0.45),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioKepler16,
-                            "Kepler-16 [F3]",
-                            Color::srgba(0.20, 0.12, 0.04, 0.9),
-                            Color::srgb(1.0, 0.7, 0.3),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioHotJupiter,
-                            "Hot Jup [F4]",
-                            Color::srgba(0.18, 0.08, 0.22, 0.9),
-                            Color::srgb(0.85, 0.45, 1.0),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioRoguePlanet,
-                            "Rogue [F5]",
-                            Color::srgba(0.06, 0.16, 0.22, 0.9),
-                            Color::srgb(0.4, 0.85, 1.0),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioLittleRedDot,
-                            "LRD [F6]",
-                            Color::srgba(0.24, 0.04, 0.06, 0.9),
-                            Color::srgb(1.0, 0.35, 0.4),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioPulsar,
-                            "Pulsar [F7]",
-                            Color::srgba(0.04, 0.12, 0.26, 0.9),
-                            Color::srgb(0.45, 0.85, 1.0),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioMagnetar,
-                            "Magnetar [F9]",
-                            Color::srgba(0.20, 0.05, 0.28, 0.9),
-                            Color::srgb(0.90, 0.45, 1.0),
-                        ),
-                        (
-                            UiButtonAction::LoadScenarioKozaiTriple,
-                            "Kozai [F11]",
-                            Color::srgba(0.08, 0.18, 0.14, 0.9),
-                            Color::srgb(0.4, 0.95, 0.65),
-                        ),
-                    ];
-                    for (action, label, bg, border) in SCENARIO_BUTTONS {
-                        create_compact_button(scenario_row, action, label, bg, border);
-                    }
-                    create_compact_button(
-                        scenario_row,
-                        UiButtonAction::ToggleScenariosPanel,
-                        "🗕",
-                        Color::srgba(0.16, 0.08, 0.12, 0.85),
-                        Color::srgb(0.9, 0.4, 0.6),
-                    );
-                });
-
-            center_col
-                .spawn((
-                    Button,
-                    UiButtonAction::ToggleScenariosPanel,
-                    HudPanelElement::ScenarioPresetsPill,
-                    Node {
-                        padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
-                        display: Display::None,
-                        border: UiRect::all(Val::Px(1.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        margin: UiRect::bottom(Val::Px(3.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.01, 0.03, 0.07, 0.88)),
-                    BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
-                ))
-                .with_children(|pill| {
-                    pill.spawn((
-                        Text::new("🎬 Scenarios [F1-F9] ▼"),
-                        TextFont {
-                            font_size: FontSize::Px(10.0),
+                .with_children(|scroll_container| {
+                    scroll_container.spawn((
+                        QuickBodySelectorBar,
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            width: Val::Percent(100.0),
+                            padding: UiRect::axes(Val::Px(4.0), Val::Px(2.5)),
+                            align_items: AlignItems::Center,
+                            flex_wrap: FlexWrap::Wrap,
+                            justify_content: JustifyContent::Center,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.85, 0.65, 1.0)),
-                        Pickable::IGNORE,
                     ));
                 });
+
+            spawn_scenario_presets_panel(center_col);
+            spawn_scenario_presets_pill(center_col);
         });
 }
 
-fn spawn_top_right_controls_panel(top_row: &mut ChildSpawnerCommands) {
-    top_row
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::FlexStart,
-            column_gap: Val::Px(6.0),
-            ..default()
-        })
-        .with_children(|right_row| {
-            spawn_top_controls_card(right_row);
-            spawn_simulation_metrics_column(right_row);
-        });
-}
+// Removed spawn_top_right_controls_panel
 
 fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
     right_row
@@ -332,28 +353,17 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
 
                 card.spawn(Node {
                     flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(3.0),
-                    align_items: AlignItems::FlexStart,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(4.0),
+                    row_gap: Val::Px(2.0),
+                    max_width: Val::Px(280.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
                     ..default()
                 })
                 .with_children(|grid| {
-                    grid.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0),
-                        ..default()
-                    })
-                    .with_children(|col1| {
-                        spawn_main_tool_shortcuts(col1);
-                    });
-
-                    grid.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0),
-                        ..default()
-                    })
-                    .with_children(|col2| {
-                        spawn_view_mode_badges(col2);
-                    });
+                    spawn_main_tool_shortcuts(grid);
+                    spawn_view_mode_badges(grid);
                 });
             });
         });
@@ -429,6 +439,13 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
         "🌟 Pop-III [T]",
         Color::srgba(0.08, 0.16, 0.28, 0.90),
         Color::srgb(0.40, 0.85, 1.0),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::TriggerGmcSupernovaShock,
+        "💥 Supernova",
+        Color::srgba(0.28, 0.08, 0.08, 0.90),
+        Color::srgb(1.0, 0.45, 0.30),
     );
     create_compact_button(
         col,
@@ -812,6 +829,20 @@ fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
                     );
                     create_compact_button(
                         speed_row,
+                        UiButtonAction::TimeSpeed1Min,
+                        "1m [9]",
+                        Color::srgba(0.08, 0.20, 0.22, 0.9),
+                        Color::srgb(0.35, 0.95, 0.85),
+                    );
+                    create_compact_button(
+                        speed_row,
+                        UiButtonAction::TimeSpeed5Min,
+                        "5m [0]",
+                        Color::srgba(0.08, 0.18, 0.24, 0.9),
+                        Color::srgb(0.4, 0.9, 0.95),
+                    );
+                    create_compact_button(
+                        speed_row,
                         UiButtonAction::TimeSpeed1,
                         "11d [2]",
                         Color::srgba(0.08, 0.16, 0.24, 0.9),
@@ -842,94 +873,6 @@ fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
         });
 }
 
-fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) {
-    bottom_row
-        .spawn(Node {
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexEnd,
-            ..default()
-        })
-        .with_children(|right_col| {
-            right_col
-                .spawn((
-                    Button,
-                    UiButtonAction::ToggleBottomRightPanel,
-                    HudPanelElement::BottomRightPill,
-                    Node {
-                        padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
-                        display: Display::None,
-                        border: UiRect::all(Val::Px(1.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
-                    BorderColor::all(Color::srgba(0.25, 0.5, 0.8, 0.6)),
-                ))
-                .with_children(|pill| {
-                    pill.spawn((
-                        Text::new("⌨ Shortcuts [?] ▲"),
-                        TextFont {
-                            font_size: FontSize::Px(9.5),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.5, 0.85, 1.0)),
-                        Pickable::IGNORE,
-                    ));
-                });
-
-            right_col
-                .spawn((
-                    HudPanelElement::BottomRightPanel,
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(6.0)),
-                        max_width: Val::Px(240.0),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.88)),
-                    BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.5)),
-                ))
-                .with_children(|panel| {
-                    panel
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            margin: UiRect::bottom(Val::Px(3.0)),
-                            ..default()
-                        })
-                        .with_children(|hdr| {
-                            hdr.spawn((
-                                Text::new("⌨ SHORTCUTS & HELP"),
-                                TextFont {
-                                    font_size: FontSize::Px(9.5),
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.4, 0.75, 1.0)),
-                            ));
-                            create_compact_button(
-                                hdr,
-                                UiButtonAction::ToggleBottomRightPanel,
-                                "🗕",
-                                Color::srgba(0.14, 0.08, 0.16, 0.85),
-                                Color::srgb(0.9, 0.4, 0.6),
-                            );
-                        });
-
-                    panel.spawn((
-                        Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Space] Pause | [1..4] Speed | [F10] Telemetry | [F11] Epochs"),
-                        TextFont {
-                            font_size: FontSize::Px(9.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.75, 0.82, 0.95)),
-                    ));
-                });
-        });
-}
-
 /// Sets up the complete HUD overlay interface with interactive on-screen toolbars.
 pub fn setup_hud(mut commands: Commands) {
     commands.init_resource::<NotificationToast>();
@@ -951,41 +894,88 @@ pub fn setup_hud(mut commands: Commands) {
             },
         ))
         .with_children(|root| {
-            // TOP ROW: Clean header containing Telemetry (left), Quick Selector & Scenarios (center), Badges & Metrics (right)
+            // TOP LEFT: Telemetry & Stats
             root.spawn(Node {
-                width: Val::Percent(100.0),
-                justify_content: JustifyContent::SpaceBetween,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::FlexStart,
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                left: Val::Px(10.0),
                 ..default()
             })
-            .with_children(|top_row| {
-                spawn_top_left_stats_panel(top_row);
-                spawn_top_center_quick_bar(top_row);
-                spawn_top_right_controls_panel(top_row);
+            .with_children(|wrapper| {
+                spawn_top_left_stats_panel(wrapper);
             });
 
-            // BOTTOM ROW: Target Inspector (left), Toast & Playbar (center), Navigation Help (right)
+            // TOP CENTER: Quick Selector Bar & Scenarios
             root.spawn(Node {
-                width: Val::Percent(100.0),
-                justify_content: JustifyContent::SpaceBetween,
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::FlexEnd,
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-320.0)), // Center offset for 640px width
                 ..default()
             })
-            .with_children(|bottom_row| {
-                super::inspector_panel::spawn_bottom_left_inspector_panel(bottom_row);
-                spawn_bottom_center_toast_panel(bottom_row);
-                spawn_bottom_right_controls_panel(bottom_row);
+            .with_children(|wrapper| {
+                spawn_top_center_quick_bar(wrapper);
             });
 
-            // PLANET BUILDER MODAL DRAWER
+            // TOP RIGHT: Simulation Metrics
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(10.0),
+                ..default()
+            })
+            .with_children(|wrapper| {
+                spawn_simulation_metrics_column(wrapper);
+            });
+
+            // MIDDLE RIGHT: Controls & Badges
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                top: Val::Vh(40.0), // Safely below top right
+                right: Val::Px(10.0),
+                ..default()
+            })
+            .with_children(|wrapper| {
+                spawn_top_controls_card(wrapper);
+            });
+
+            // BOTTOM LEFT: Target Inspector
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(10.0),
+                left: Val::Px(10.0),
+                ..default()
+            })
+            .with_children(|wrapper| {
+                super::inspector_panel::spawn_bottom_left_inspector_panel(wrapper);
+            });
+
+            // BOTTOM CENTER: Toast & Playbar
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(10.0),
+                left: Val::Percent(45.0), // Shifted left per user request
+                margin: UiRect::left(Val::Px(-260.0)), // Center offset for 520px width
+                ..default()
+            })
+            .with_children(|wrapper| {
+                spawn_bottom_center_toast_panel(wrapper);
+            });
+
+            // BOTTOM RIGHT: Navigation Help
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(10.0),
+                right: Val::Px(10.0),
+                ..default()
+            })
+            .with_children(|wrapper| {
+                super::navigation_panel::spawn_bottom_right_controls_panel(wrapper);
+            });
+
+            // MODAL DRAWERS (Absolute by default inside their spawn functions)
             super::builder_panel::spawn_planet_builder_panel(root);
-
-            // TELEMETRY & CLIMATE GRAPHING DRAWER
             super::telemetry_panel::spawn_telemetry_panel(root);
-
-            // DEEP-TIME GEOLOGICAL EPOCH SCRUBBER DRAWER
             super::epoch_scrubber::spawn_epoch_scrubber_panel(root);
         });
 }

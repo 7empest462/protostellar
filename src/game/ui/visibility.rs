@@ -175,7 +175,11 @@ fn flex_or_none(visible: bool) -> Display {
 pub fn update_scenario_contextual_ui(
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     player_state: Res<PlayerInteractionState>,
-    target_query: Query<(&CelestialBody, Option<&CentralStar>)>,
+    target_query: Query<(
+        &CelestialBody,
+        Option<&CentralStar>,
+        Option<&crate::simulation::probes::SpaceProbe>,
+    )>,
     mut button_nodes: Query<(&UiButtonAction, &mut Node)>,
     mut section_nodes: Query<(&InspectorSection, &mut Node), Without<UiButtonAction>>,
     mut header_text: Query<&mut Text, With<InspectorExoticHeader>>,
@@ -188,7 +192,8 @@ pub fn update_scenario_contextual_ui(
     let selected_info = player_state
         .selected_entity
         .and_then(|e| target_query.get(e).ok());
-    let is_star_like = selected_info.is_some_and(|(body, opt_star)| {
+    let is_probe = selected_info.is_some_and(|(_, _, opt_probe)| opt_probe.is_some());
+    let is_star_like = selected_info.is_some_and(|(body, opt_star, _)| {
         opt_star.is_some()
             || matches!(
                 body.body_type,
@@ -220,16 +225,13 @@ pub fn update_scenario_contextual_ui(
     for (section, mut node) in section_nodes.iter_mut() {
         node.display = match section {
             InspectorSection::TerraformingBombardment => {
-                // Terraforming only appears in planetary scenarios and for solid/planetary bodies
-                flex_or_none(is_planetary_scenario && !is_star_like)
+                // Terraforming only appears in planetary scenarios and for solid/planetary bodies (never probes)
+                flex_or_none(is_planetary_scenario && !is_star_like && !is_probe)
             }
-            InspectorSection::ExoticExperiments => {
-                // Exotic experiments section is always visible, but dynamically updates its content
-                Display::Flex
-            }
-            InspectorSection::OrbitTracking
+            InspectorSection::ExoticExperiments
+            | InspectorSection::OrbitTracking
             | InspectorSection::MassComposition
-            | InspectorSection::Astrophysics => Display::Flex,
+            | InspectorSection::Astrophysics => flex_or_none(!is_probe),
         };
     }
 
@@ -257,6 +259,12 @@ pub fn update_scenario_contextual_ui(
             // Pop-III Hypergiant is UNIVERSAL (available in all scenarios)
             UiButtonAction::SpawnInfallPop3Star => {
                 node.display = Display::Flex;
+            }
+            // Molecular Cloud Supernova shockwave trigger
+            UiButtonAction::TriggerGmcSupernovaShock => {
+                node.display = flex_or_none(
+                    preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster,
+                );
             }
             // Coronal Mass Ejection: Magnetar Outburst scenario or active stars
             UiButtonAction::TriggerCoronalMassEjection => {

@@ -13,6 +13,8 @@ pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) 
         .spawn(Node {
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::FlexStart,
+            flex_shrink: 1.0,
+            min_height: Val::Px(0.0),
             ..default()
         })
         .with_children(|col| {
@@ -23,6 +25,8 @@ pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) 
                     padding: UiRect::all(Val::Px(8.0)),
                     width: Val::Px(380.0),
                     max_height: Val::Vh(60.0),
+                    flex_shrink: 1.0,
+                    min_height: Val::Px(0.0),
                     border: UiRect::all(Val::Px(1.5)),
                     overflow: Overflow::clip_y(),
                     ..default()
@@ -94,6 +98,7 @@ fn spawn_inspector_scrollable_body(panel: &mut ChildSpawnerCommands) {
                 overflow: Overflow::scroll_y(),
                 flex_grow: 1.0,
                 flex_shrink: 1.0,
+                min_height: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 padding: UiRect::right(Val::Px(3.0)),
                 ..default()
@@ -422,7 +427,7 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 9] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 11] = [
                 (
                     UiButtonAction::IgniteStar,
                     "Ignite [I]",
@@ -452,6 +457,18 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
                     "Life [E]",
                     Color::srgba(0.04, 0.20, 0.08, 0.9),
                     Color::srgb(0.35, 1.0, 0.45),
+                ),
+                (
+                    UiButtonAction::AdvanceCivilization,
+                    "Adv. Civ",
+                    Color::srgba(0.04, 0.15, 0.25, 0.9),
+                    Color::srgb(0.4, 0.9, 1.0),
+                ),
+                (
+                    UiButtonAction::LaunchProbe,
+                    "Launch Probe",
+                    Color::srgba(0.1, 0.2, 0.4, 0.9),
+                    Color::srgb(0.5, 0.7, 1.0),
                 ),
                 (
                     UiButtonAction::AgeStar,

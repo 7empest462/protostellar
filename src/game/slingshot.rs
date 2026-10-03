@@ -499,6 +499,7 @@ pub fn spawn_slingshot_world(
             } else {
                 ClimateRegime::TemperateHabitable
             },
+            polar_ice_cap_latitude_deg: if cfg.temp_k < 260.0 { 35.0 } else { 75.0 },
         },
         BiosphereState::default(),
         ElectromagneticFieldState {

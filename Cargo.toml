@@ -92,7 +92,7 @@ glam = { version = "0.33", features = ["fast-math"] }
 bytemuck = { version = "1.21", features = ["derive"] }
 
 # High-Performance Data Structures (aligned with Bevy where possible)
-hashbrown = "0.16"
+hashbrown = "0.17"
 flume = "0.12"
 smallvec = "1.16"
 

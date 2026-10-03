@@ -29,6 +29,20 @@ pub fn handle_time_action(
             toast.timer = 3.5;
             true
         }
+        UiButtonAction::TimeSpeed1Min => {
+            time_warp.multiplier = TimeWarp::SPEED_1_MINUTE;
+            time_warp.is_paused = false;
+            toast.message = "▶ Speed: 1s = 1 min (60x Real-time)".to_string();
+            toast.timer = 3.5;
+            true
+        }
+        UiButtonAction::TimeSpeed5Min => {
+            time_warp.multiplier = TimeWarp::SPEED_5_MINUTES;
+            time_warp.is_paused = false;
+            toast.message = "▶ Speed: 1s = 5 min (300x Real-time)".to_string();
+            toast.timer = 3.5;
+            true
+        }
         UiButtonAction::TimeSpeed1 => {
             time_warp.multiplier = 1.0;
             time_warp.is_paused = false;

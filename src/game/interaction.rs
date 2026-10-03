@@ -71,7 +71,12 @@ fn handle_tab_selection(
     if let Ok((_, mut cam)) = camera_query.single_mut() {
         cam.target_entity = Some(target.entity);
         let visual_r = config.calc_visual_radius_for_type(target.radius_au, target.body_type);
-        cam.target_radius = config.calc_camera_framing_radius(visual_r);
+        let frame_r = if target.name.starts_with("🚀") || visual_r < 0.001 {
+            0.015f32.max(config.calc_camera_framing_radius(visual_r))
+        } else {
+            config.calc_camera_framing_radius(visual_r)
+        };
+        cam.target_radius = frame_r;
     }
 
     let m_str = if target.mass_solar >= 0.01 {
@@ -229,7 +234,9 @@ fn apply_body_mass_and_orbit_edits(
         || keyboard.just_pressed(KeyCode::NumpadAdd)
     {
         mass.0 *= 1.25;
-        if !body.body_type.is_star_or_remnant() {
+        if body.body_type == BodyType::BlackHole {
+            radius.0 = (1.974e-8 * mass.0).max(1e-7);
+        } else if !body.body_type.is_star_or_remnant() {
             let avg_density = comp.average_density();
             radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
                 .cbrt()
@@ -248,7 +255,9 @@ fn apply_body_mass_and_orbit_edits(
         || keyboard.just_pressed(KeyCode::NumpadSubtract)
     {
         mass.0 = (mass.0 * 0.8).max(1e-7 * EARTH_MASS_SOLAR);
-        if !body.body_type.is_star_or_remnant() {
+        if body.body_type == BodyType::BlackHole {
+            radius.0 = (1.974e-8 * mass.0).max(1e-7);
+        } else if !body.body_type.is_star_or_remnant() {
             let avg_density = comp.average_density();
             radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
                 .cbrt()
@@ -400,7 +409,7 @@ fn handle_planet_interaction_actions(
     }
     if keyboard.just_pressed(KeyCode::Delete) || keyboard.just_pressed(KeyCode::Backspace) {
         if let Ok(mut cmd) = commands.get_entity(entity) {
-            cmd.despawn();
+            cmd.try_despawn();
         }
         player_state.selected_entity = None;
     }
@@ -430,6 +439,7 @@ fn handle_planet_interaction_actions(
                     biomass_coverage_frac: 0.65,
                     oxygen_fraction: 0.21,
                     emergence_year: Some(0.0),
+                    technosignature: 0.0,
                 },
                 PlanetaryClimate {
                     surface_temperature_k: 288.0,
@@ -439,6 +449,7 @@ fn handle_planet_interaction_actions(
                     ice_coverage_frac: 0.10,
                     cloud_coverage_frac: 0.55,
                     climate_regime: ClimateRegime::TemperateHabitable,
+                    polar_ice_cap_latitude_deg: 75.0,
                 },
             ));
             comp.ice_frac = 0.08;
@@ -563,6 +574,10 @@ fn handle_scenario_and_system_hotkeys(
             KeyCode::F9,
             crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst,
         ),
+        (
+            KeyCode::F10,
+            crate::simulation::scenarios::ScenarioPreset::SagittariusAStar,
+        ),
     ];
     for (key, preset) in preset_map {
         if keyboard.just_pressed(key) {
@@ -605,6 +620,128 @@ fn handle_scenario_and_system_hotkeys(
     }
 }
 
+type SelectedBodyQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut Mass,
+        &'static mut Radius,
+        &'static mut Temperature,
+        &'static mut SimPosition,
+        &'static mut SimVelocity,
+        &'static mut Composition,
+        &'static mut CelestialBody,
+        Option<&'static mut InternalDifferentiation>,
+        Option<&'static mut Transform>,
+        Option<&'static mut IgnitionState>,
+        Option<&'static mut BlackHoleStarState>,
+        Option<&'static CentralStar>,
+    ),
+    Without<PanOrbitCamera>,
+>;
+
+fn handle_unselected_star_ignition_hotkey(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    selected_query: &mut SelectedBodyQuery,
+    is_star_selected: bool,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyI) && !is_star_selected {
+        let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+        if let Some((star_ent, _, _, _, _, _, _, mut body, _, _, Some(mut ignition), _, _)) =
+            selected_query
+                .iter_mut()
+                .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star)| {
+                    opt_star.is_some() || body.body_type.is_star_or_remnant()
+                })
+        {
+            trigger_star_ignition_or_flare(
+                commands,
+                star_ent,
+                &mut body,
+                &mut ignition,
+                shift,
+                toast,
+            );
+        }
+    }
+}
+
+fn handle_selected_body_tools(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    star_mass: f64,
+    player_state: &mut PlayerInteractionState,
+    selected_query: &mut SelectedBodyQuery,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if let Some(selected_ent) = player_state.selected_entity {
+        if let Ok((
+            entity,
+            mut mass,
+            mut radius,
+            mut _temp,
+            mut pos,
+            mut vel,
+            mut comp,
+            mut body,
+            mut diff_opt,
+            mut trans_opt,
+            mut ignition_opt,
+            mut opt_quasi,
+            _opt_star,
+        )) = selected_query.get_mut(selected_ent)
+        {
+            apply_body_mass_and_orbit_edits(
+                keyboard,
+                star_mass,
+                &mut mass,
+                &mut radius,
+                &mut pos,
+                &mut vel,
+                &comp,
+                &body,
+                diff_opt.as_deref_mut(),
+                trans_opt.as_deref_mut(),
+            );
+            apply_body_interaction_actions(
+                commands,
+                keyboard,
+                star_mass,
+                entity,
+                &mass,
+                &mut radius,
+                &mut pos,
+                &mut vel,
+                &mut comp,
+                &mut body,
+                ignition_opt.as_deref_mut(),
+                opt_quasi.as_deref_mut(),
+                player_state,
+                toast,
+            );
+        }
+    }
+}
+
+fn handle_theia_hotkey(
+    keyboard: &ButtonInput<KeyCode>,
+    mut theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyM) {
+        if let Some(ref mut state) = theia_state {
+            state.manual_trigger_requested = true;
+        }
+        toast.message =
+            "🌑 THEIA MOON COLLISION TRIGGERED // Intercept trajectory locked for Moon formation!"
+                .to_string();
+        toast.timer = 8.0;
+    }
+}
+
 /// Handles player tool activation and direct live editing of celestial bodies.
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn handle_player_tools(
@@ -627,24 +764,7 @@ pub fn handle_player_tools(
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
     mut opt_predictor: Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
-    mut selected_query: Query<
-        (
-            Entity,
-            &mut Mass,
-            &mut Radius,
-            &mut Temperature,
-            &mut SimPosition,
-            &mut SimVelocity,
-            &mut Composition,
-            &mut CelestialBody,
-            Option<&mut InternalDifferentiation>,
-            Option<&mut Transform>,
-            Option<&mut IgnitionState>,
-            Option<&mut BlackHoleStarState>,
-            Option<&CentralStar>,
-        ),
-        Without<PanOrbitCamera>,
-    >,
+    mut selected_query: SelectedBodyQuery,
 ) {
     let star_mass = disk_params.central_star_mass;
     let is_star_selected = player_state.selected_entity.is_some_and(|e| {
@@ -677,83 +797,24 @@ pub fn handle_player_tools(
         &selected_query,
     );
 
-    if keyboard.just_pressed(KeyCode::KeyI) && !is_star_selected {
-        let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-        if let Some((star_ent, _, _, _, _, _, _, mut body, _, _, Some(mut ignition), _, _)) =
-            selected_query
-                .iter_mut()
-                .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star)| {
-                    opt_star.is_some() || body.body_type.is_star_or_remnant()
-                })
-        {
-            trigger_star_ignition_or_flare(
-                &mut commands,
-                star_ent,
-                &mut body,
-                &mut ignition,
-                shift,
-                &mut toast,
-            );
-        }
-    }
+    handle_unselected_star_ignition_hotkey(
+        &mut commands,
+        &keyboard,
+        &mut selected_query,
+        is_star_selected,
+        &mut toast,
+    );
 
-    if let Some(selected_ent) = player_state.selected_entity {
-        if let Ok((
-            entity,
-            mut mass,
-            mut radius,
-            mut _temp,
-            mut pos,
-            mut vel,
-            mut comp,
-            mut body,
-            mut diff_opt,
-            mut trans_opt,
-            mut ignition_opt,
-            mut opt_quasi,
-            _opt_star,
-        )) = selected_query.get_mut(selected_ent)
-        {
-            apply_body_mass_and_orbit_edits(
-                &keyboard,
-                star_mass,
-                &mut mass,
-                &mut radius,
-                &mut pos,
-                &mut vel,
-                &comp,
-                &body,
-                diff_opt.as_deref_mut(),
-                trans_opt.as_deref_mut(),
-            );
-            apply_body_interaction_actions(
-                &mut commands,
-                &keyboard,
-                star_mass,
-                entity,
-                &mass,
-                &mut radius,
-                &mut pos,
-                &mut vel,
-                &mut comp,
-                &mut body,
-                ignition_opt.as_deref_mut(),
-                opt_quasi.as_deref_mut(),
-                &mut player_state,
-                &mut toast,
-            );
-        }
-    }
+    handle_selected_body_tools(
+        &mut commands,
+        &keyboard,
+        star_mass,
+        &mut player_state,
+        &mut selected_query,
+        &mut toast,
+    );
 
-    if keyboard.just_pressed(KeyCode::KeyM) {
-        if let Some(ref mut state) = theia_state {
-            state.manual_trigger_requested = true;
-        }
-        toast.message =
-            "🌑 THEIA MOON COLLISION TRIGGERED // Intercept trajectory locked for Moon formation!"
-                .to_string();
-        toast.timer = 8.0;
-    }
+    handle_theia_hotkey(&keyboard, theia_state.as_deref_mut(), &mut toast);
 
     handle_scenario_and_system_hotkeys(
         &keyboard,

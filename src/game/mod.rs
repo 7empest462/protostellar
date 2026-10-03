@@ -35,8 +35,10 @@ impl Plugin for GamePlugin {
                     handle_player_tools,
                     handle_planet_builder_click_spawn,
                     handle_slingshot_input,
-                    handle_ui_button_interactions,
+                    handle_ui_button_interactions
+                        .before(crate::rendering::camera::update_pan_orbit_camera),
                     update_quick_body_selector_bar.after(handle_ui_button_interactions),
+                    update_quick_bar_highlights.after(update_quick_body_selector_bar),
                     update_planet_builder_ui,
                     update_telemetry_graph_ui,
                     update_epoch_scrubber_ui,

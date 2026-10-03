@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
+use crate::simulation::probes::{ProbeType, SpaceProbe};
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
@@ -92,10 +93,17 @@ pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> S
         "Kuiper".to_string()
     } else if lower.contains("ceres") {
         "Ceres".to_string()
+    } else if let Some(suffix) = name.strip_prefix("Protostar Jeans-") {
+        format!("✨ Jeans-{suffix}")
+    } else if let Some(suffix) = name.strip_prefix("Protostar ") {
+        let clean = suffix.split('(').next().unwrap_or(suffix).trim();
+        format!("✨ {clean}")
     } else if lower.contains("genesis") {
         "Genesis Protostar".to_string()
-    } else if lower.contains("protostar") || (is_star && lower.contains("sun")) {
+    } else if is_star && lower.contains("sun") {
         "Sun".to_string()
+    } else if lower.contains("protostar") {
+        "✨ Protostar".to_string()
     } else if lower.contains("host star") {
         "Host Star".to_string()
     } else if lower.starts_with("asteroid-") {
@@ -289,6 +297,7 @@ fn populate_expanded_quick_bar(
     major_worlds: &[SystemWorld],
     embryo_bodies: &[(Entity, String, BodyType, bool, f64)],
     minor_bodies: &[(Entity, String, BodyType, bool, f64)],
+    probes: &[(Entity, ProbeType, String)],
     selected_entity: Option<Entity>,
     quick_bar_state: &QuickBarState,
 ) {
@@ -322,12 +331,47 @@ fn populate_expanded_quick_bar(
             base_border
         };
 
-        create_compact_button(
+        create_compact_selectable_button(
             btn_row,
             UiButtonAction::SelectEntity(world.entity),
             &button_label,
             bg_color,
             border_color,
+            base_bg,
+            base_border,
+        );
+    }
+
+    for (probe_ent, probe_type, probe_name) in probes {
+        let (base_bg, base_border) = match probe_type {
+            ProbeType::Orbiter => (
+                Color::srgba(0.06, 0.22, 0.38, 0.92),
+                Color::srgb(0.3, 0.85, 1.0),
+            ),
+            ProbeType::Rover => (
+                Color::srgba(0.35, 0.20, 0.05, 0.92),
+                Color::srgb(1.0, 0.75, 0.25),
+            ),
+        };
+        let is_selected = selected_entity == Some(*probe_ent);
+        let bg_color = if is_selected {
+            Color::srgba(0.20, 0.45, 0.85, 0.95)
+        } else {
+            base_bg
+        };
+        let border_color = if is_selected {
+            Color::srgb(1.0, 1.0, 1.0)
+        } else {
+            base_border
+        };
+        create_compact_selectable_button(
+            btn_row,
+            UiButtonAction::SelectEntity(*probe_ent),
+            probe_name,
+            bg_color,
+            border_color,
+            base_bg,
+            base_border,
         );
     }
 
@@ -347,12 +391,14 @@ fn populate_expanded_quick_bar(
                 } else {
                     base_border
                 };
-                create_compact_button(
+                create_compact_selectable_button(
                     btn_row,
                     UiButtonAction::SelectEntity(*ent),
                     &raw_label,
                     bg_color,
                     border_color,
+                    base_bg,
+                    base_border,
                 );
             }
             create_compact_button(
@@ -477,12 +523,14 @@ fn populate_minor_body_belts(
                 } else {
                     b_border
                 };
-                create_compact_button(
+                create_compact_selectable_button(
                     btn_row,
                     UiButtonAction::SelectEntity(*ent),
                     &raw_label,
                     bg,
                     border,
+                    b_bg,
+                    b_border,
                 );
             }
         } else {
@@ -507,12 +555,43 @@ type QuickBarCacheState = (
     Vec<Entity>,
     usize,
     usize,
-    Option<Entity>,
+    usize,
     bool,
     bool,
     bool,
     Vec<BeltZone>,
 );
+
+/// Dynamically updates background and border highlighting on Quick Bar buttons when selection changes
+/// without needing to despawn and reconstruct the UI tree.
+pub fn update_quick_bar_highlights(
+    player_state: Res<PlayerInteractionState>,
+    mut btn_query: Query<
+        (
+            &UiButtonAction,
+            &QuickBarButtonBaseColor,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<Button>,
+    >,
+) {
+    if !player_state.is_changed() {
+        return;
+    }
+    let sel = player_state.selected_entity;
+    for (action, base, mut bg, mut border) in btn_query.iter_mut() {
+        if let UiButtonAction::SelectEntity(ent) = action {
+            if Some(*ent) == sel {
+                *bg = BackgroundColor(Color::srgba(0.20, 0.45, 0.85, 0.95));
+                *border = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
+            } else {
+                *bg = BackgroundColor(base.bg);
+                *border = BorderColor::all(base.border);
+            }
+        }
+    }
+}
 
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn update_quick_body_selector_bar(
@@ -529,6 +608,7 @@ pub fn update_quick_body_selector_bar(
         ),
         With<CelestialBody>,
     >,
+    probes_query: Query<(Entity, &SpaceProbe, &CelestialBody)>,
     mut quick_bar_state: ResMut<QuickBarState>,
     player_state: Res<PlayerInteractionState>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -555,12 +635,17 @@ pub fn update_quick_body_selector_bar(
         }));
 
     let major_worlds = collect_sorted_system_worlds(bodies_query.iter());
+    let probes: Vec<(Entity, ProbeType, String)> = probes_query
+        .iter()
+        .map(|(e, p, b)| (e, p.probe_type, b.name.clone()))
+        .collect();
+
     let current_entities: Vec<Entity> = major_worlds.iter().map(|b| b.entity).collect();
     let current_state = (
         current_entities,
         embryo_bodies.len(),
         minor_bodies.len(),
-        player_state.selected_entity,
+        probes.len(),
         quick_bar_state.is_minimized,
         quick_bar_state.show_embryos,
         quick_bar_state.show_minor_bodies,
@@ -577,26 +662,29 @@ pub fn update_quick_body_selector_bar(
 
     *last_state = current_state;
 
-    commands.entity(bar_ent).despawn_children();
-    commands.entity(bar_ent).with_children(|btn_row| {
-        if quick_bar_state.is_minimized {
-            populate_minimized_quick_bar(
-                btn_row,
-                major_worlds.len(),
-                embryo_bodies.len(),
-                minor_bodies.len(),
-            );
-        } else {
-            populate_expanded_quick_bar(
-                btn_row,
-                &major_worlds,
-                &embryo_bodies,
-                &minor_bodies,
-                player_state.selected_entity,
-                &quick_bar_state,
-            );
-        }
-    });
+    if let Ok(mut bar_cmd) = commands.get_entity(bar_ent) {
+        bar_cmd.despawn_children();
+        bar_cmd.with_children(|btn_row| {
+            if quick_bar_state.is_minimized {
+                populate_minimized_quick_bar(
+                    btn_row,
+                    major_worlds.len(),
+                    embryo_bodies.len(),
+                    minor_bodies.len(),
+                );
+            } else {
+                populate_expanded_quick_bar(
+                    btn_row,
+                    &major_worlds,
+                    &embryo_bodies,
+                    &minor_bodies,
+                    &probes,
+                    player_state.selected_entity,
+                    &quick_bar_state,
+                );
+            }
+        });
+    }
 }
 
 fn compute_builder_spawn_coords(
@@ -728,6 +816,7 @@ pub fn spawn_custom_builder_world(
                 } else {
                     ClimateRegime::TemperateHabitable
                 },
+                polar_ice_cap_latitude_deg: if temp_k < 260.0 { 35.0 } else { 75.0 },
             },
             BiosphereState::default(),
             ElectromagneticFieldState {
