@@ -154,12 +154,14 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
             ice_coverage_frac: 0.15,
             cloud_coverage_frac: 0.50,
             climate_regime: ClimateRegime::TemperateHabitable,
+            polar_ice_cap_latitude_deg: 70.0,
         },
         BiosphereState {
             habitability_score: 0.88,
             biomass_coverage_frac: 0.55,
             oxygen_fraction: 0.20,
             emergence_year: Some(10.0),
+            technosignature: 0.0,
         },
     ));
 
@@ -196,12 +198,14 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
             ice_coverage_frac: 0.08,
             cloud_coverage_frac: 0.55,
             climate_regime: ClimateRegime::TemperateHabitable,
+            polar_ice_cap_latitude_deg: 75.0,
         },
         BiosphereState {
             habitability_score: 0.94,
             biomass_coverage_frac: 0.72,
             oxygen_fraction: 0.21,
             emergence_year: Some(50.0),
+            technosignature: 0.0,
         },
     ));
 }

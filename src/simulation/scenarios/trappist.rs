@@ -166,6 +166,7 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
             ice_coverage_frac: if t_surf < 240.0 { 0.85 } else { 0.10 },
             cloud_coverage_frac: 0.50,
             climate_regime: regime,
+            polar_ice_cap_latitude_deg: if t_surf < 240.0 { 20.0 } else { 75.0 },
         },
     ));
     cmd.insert((
@@ -174,6 +175,7 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
             biomass_coverage_frac: if is_hab { 0.65 } else { 0.0 },
             oxygen_fraction: if is_hab { 0.18 } else { 0.001 },
             emergence_year: if is_hab { Some(100.0) } else { None },
+            technosignature: 0.0,
         },
         TidalState {
             host_entity: None,

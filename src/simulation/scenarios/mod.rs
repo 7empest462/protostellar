@@ -10,12 +10,16 @@
 pub mod exotic;
 pub mod genesis;
 pub mod kepler;
+pub mod molecular_cloud;
+pub mod sagittarius;
 pub mod solar;
 pub mod trappist;
 
 pub use exotic::*;
 pub use genesis::*;
 pub use kepler::*;
+pub use molecular_cloud::*;
+pub use sagittarius::*;
 pub use solar::*;
 pub use trappist::*;
 
@@ -39,6 +43,8 @@ pub enum ScenarioPreset {
     MagnetarOutburst,
     RelativisticBinary,
     KozaiLidovTriple,
+    SagittariusAStar,
+    MolecularCloudCluster,
 }
 
 impl ScenarioPreset {
@@ -55,6 +61,8 @@ impl ScenarioPreset {
             ScenarioPreset::MagnetarOutburst => "SGR 1806-20 (Magnetar Giant Flare)",
             ScenarioPreset::RelativisticBinary => "PSR B1913+16 (Relativistic Binary)",
             ScenarioPreset::KozaiLidovTriple => "HD 80606 (Kozai-Lidov Triple)",
+            ScenarioPreset::SagittariusAStar => "Sagittarius A* & S-Stars (Galactic Center)",
+            ScenarioPreset::MolecularCloudCluster => "GMC Cluster (Jeans Instability)",
         }
     }
 
@@ -93,6 +101,12 @@ impl ScenarioPreset {
             ScenarioPreset::KozaiLidovTriple => {
                 "Hierarchical triple system: G-dwarf primary, inner giant inclined at 68°, and distant M-dwarf companion driving secular eccentricity pumping (e -> 0.88) and tidal migration."
             }
+            ScenarioPreset::SagittariusAStar => {
+                "Supermassive black hole Sgr A* (4.3×10⁶ M☉) with the relativistic S-star cluster (S2, S4714 at 8% c, S62, S29, S38) and the tidally sheared G2 cloud."
+            }
+            ScenarioPreset::MolecularCloudCluster => {
+                "Cold pre-stellar molecular cloud core (24 M☉, 550 AU) undergoing turbulent Jeans instability collapse, birthing an open cluster of protostellar seeds and infalling binaries."
+            }
         }
     }
 }
@@ -124,6 +138,8 @@ fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
         ScenarioPreset::MagnetarOutburst => (6.5, 0.785, 0.62),
         ScenarioPreset::RelativisticBinary => (0.04, 0.785, 0.70),
         ScenarioPreset::KozaiLidovTriple => (15.0, 0.785, 0.65),
+        ScenarioPreset::SagittariusAStar => (1200.0, 0.785, 0.65),
+        ScenarioPreset::MolecularCloudCluster => (850.0, 0.785, 0.65),
     }
 }
 
@@ -132,32 +148,44 @@ fn spawn_scenario_preset(
     commands: &mut Commands,
     disk_params: &mut DiskParameters,
     scenario_state: &mut ActiveScenarioState,
-) -> Entity {
+) -> Option<Entity> {
     match preset {
-        ScenarioPreset::SolarNebulaMmsn => spawn_solar_nebula_mmsn(commands, disk_params),
-        ScenarioPreset::AccretionDiskGenesis => spawn_accretion_disk_genesis(commands, disk_params),
-        ScenarioPreset::Trappist1System => spawn_trappist_1_system(commands, disk_params),
-        ScenarioPreset::Kepler16Circumbinary => spawn_kepler_16_system(commands, disk_params),
+        ScenarioPreset::SolarNebulaMmsn => Some(spawn_solar_nebula_mmsn(commands, disk_params)),
+        ScenarioPreset::AccretionDiskGenesis => {
+            Some(spawn_accretion_disk_genesis(commands, disk_params))
+        }
+        ScenarioPreset::Trappist1System => Some(spawn_trappist_1_system(commands, disk_params)),
+        ScenarioPreset::Kepler16Circumbinary => {
+            Some(spawn_kepler_16_system(commands, disk_params))
+        }
         ScenarioPreset::HotJupiterMigration => {
             scenario_state.migration_active = true;
             scenario_state.migration_target_au = 0.045;
-            spawn_hot_jupiter_scenario(commands, disk_params)
+            Some(spawn_hot_jupiter_scenario(commands, disk_params))
         }
         ScenarioPreset::RoguePlanetFlyby => {
             let (star, rogue) = spawn_rogue_planet_scenario(commands, disk_params);
             scenario_state.rogue_planet_entity = Some(rogue);
-            star
+            Some(star)
         }
-        ScenarioPreset::LittleRedDot => spawn_little_red_dot_scenario(commands, disk_params),
-        ScenarioPreset::PulsarSystem => spawn_pulsar_system_scenario(commands, disk_params),
-        ScenarioPreset::MagnetarOutburst => spawn_magnetar_outburst_scenario(commands, disk_params),
+        ScenarioPreset::LittleRedDot => Some(spawn_little_red_dot_scenario(commands, disk_params)),
+        ScenarioPreset::PulsarSystem => Some(spawn_pulsar_system_scenario(commands, disk_params)),
+        ScenarioPreset::MagnetarOutburst => {
+            Some(spawn_magnetar_outburst_scenario(commands, disk_params))
+        }
         ScenarioPreset::RelativisticBinary => {
             let (pulsar, _) = spawn_relativistic_binary_scenario(commands, disk_params);
-            pulsar
+            Some(pulsar)
         }
         ScenarioPreset::KozaiLidovTriple => {
             let (star, _, _) = spawn_kozai_triple_scenario(commands, disk_params);
-            star
+            Some(star)
+        }
+        ScenarioPreset::SagittariusAStar => {
+            Some(spawn_sagittarius_a_star_scenario(commands, disk_params))
+        }
+        ScenarioPreset::MolecularCloudCluster => {
+            spawn_molecular_cloud_cluster_scenario(commands, disk_params)
         }
     }
 }
@@ -202,38 +230,46 @@ fn update_scenario_system_phase(
     phase_mgr: &mut Option<ResMut<crate::game::phases::PhaseManager>>,
     next_phase: &mut Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
 ) {
+    let (target_phase, desc) = match preset {
+        ScenarioPreset::SolarNebulaMmsn => (
+            crate::game::phases::SystemPhase::ProtoplanetaryDisk,
+            "Dense protoplanetary disk orbiting young protostar. Dust and pebbles are accreting.",
+        ),
+        ScenarioPreset::AccretionDiskGenesis => (
+            crate::game::phases::SystemPhase::ProtoplanetaryDisk,
+            "🌌 Protoplanetary Disk Genesis: SPH viscous gas fluid, aerodynamic drag, snow line trap & electrostatic coagulation.",
+        ),
+        ScenarioPreset::MolecularCloudCluster => (
+            crate::game::phases::SystemPhase::MolecularCloudCollapse,
+            "🌌 Cold Molecular Cloud core undergoing gravitational Jeans collapse and fragmentation.",
+        ),
+        ScenarioPreset::Trappist1System => (
+            crate::game::phases::SystemPhase::MatureSolarSystem,
+            "🌟 TRAPPIST-1: Resonant 7-planet architecture orbiting ultracool red dwarf.",
+        ),
+        ScenarioPreset::Kepler16Circumbinary => (
+            crate::game::phases::SystemPhase::MatureSolarSystem,
+            "🌟 Kepler-16: Circumbinary gas giant orbiting close stellar pair.",
+        ),
+        ScenarioPreset::PulsarSystem => (
+            crate::game::phases::SystemPhase::MatureSolarSystem,
+            "🌟 Pulsar System: Diamond and rocky worlds surviving extreme pulsar wind.",
+        ),
+        ScenarioPreset::SagittariusAStar => (
+            crate::game::phases::SystemPhase::MatureSolarSystem,
+            "🌌 Galactic Center: Relativistic S-star orbits around supermassive black hole Sgr A*.",
+        ),
+        _ => (
+            crate::game::phases::SystemPhase::MatureSolarSystem,
+            "🌟 Mature stellar and planetary system.",
+        ),
+    };
     if let Some(ref mut pm) = phase_mgr {
-        let (target_phase, desc) = match preset {
-            ScenarioPreset::SolarNebulaMmsn => (
-                crate::game::phases::SystemPhase::ProtoplanetaryDisk,
-                "Dense protoplanetary disk orbiting young protostar. Dust and pebbles are accreting.",
-            ),
-            ScenarioPreset::AccretionDiskGenesis => (
-                crate::game::phases::SystemPhase::ProtoplanetaryDisk,
-                "🌌 Protoplanetary Disk Genesis: SPH viscous gas fluid, aerodynamic drag, snow line trap & electrostatic coagulation.",
-            ),
-            ScenarioPreset::Trappist1System => (
-                crate::game::phases::SystemPhase::MatureSolarSystem,
-                "🌟 TRAPPIST-1: Resonant 7-planet architecture orbiting ultracool red dwarf.",
-            ),
-            ScenarioPreset::Kepler16Circumbinary => (
-                crate::game::phases::SystemPhase::MatureSolarSystem,
-                "🌟 Kepler-16: Circumbinary gas giant orbiting close stellar pair.",
-            ),
-            ScenarioPreset::PulsarSystem => (
-                crate::game::phases::SystemPhase::MatureSolarSystem,
-                "🌟 Pulsar System: Diamond and rocky worlds surviving extreme pulsar wind.",
-            ),
-            _ => (
-                crate::game::phases::SystemPhase::MatureSolarSystem,
-                "🌟 Mature stellar and planetary system.",
-            ),
-        };
         pm.current_phase = target_phase;
         pm.phase_description = desc;
-        if let Some(ref mut np) = next_phase {
-            np.set(target_phase);
-        }
+    }
+    if let Some(ref mut np) = next_phase {
+        np.set(target_phase);
     }
 }
 
@@ -253,6 +289,8 @@ fn configure_scenario_particles_and_swarm(
             | ScenarioPreset::MagnetarOutburst
             | ScenarioPreset::RelativisticBinary
             | ScenarioPreset::KozaiLidovTriple
+            | ScenarioPreset::SagittariusAStar
+            | ScenarioPreset::MolecularCloudCluster
     ) || disk_params.disk_mass <= 0.0;
 
     config.active_particles = if is_empty_swarm {
@@ -276,13 +314,13 @@ fn configure_scenario_particles_and_swarm(
 
 fn align_camera_to_scenario(
     preset: ScenarioPreset,
-    central_star_ent: Entity,
+    central_star_ent: Option<Entity>,
     camera_query: &mut Query<&mut crate::rendering::camera::PanOrbitCamera>,
 ) {
     if let Some(mut cam) = camera_query.iter_mut().next() {
         cam.focus = Vec3::ZERO;
         cam.target_focus = Vec3::ZERO;
-        cam.target_entity = Some(central_star_ent);
+        cam.target_entity = central_star_ent;
         let (target_r, target_yaw, target_pitch) = scenario_preset_camera_pose(preset);
         cam.radius = target_r;
         cam.target_radius = target_r;
@@ -324,7 +362,7 @@ pub fn handle_load_scenario_events(
 
         for ent in bodies_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.despawn();
+                cmd.try_despawn();
             }
         }
 
@@ -347,7 +385,9 @@ pub fn handle_load_scenario_events(
             | ScenarioPreset::PulsarSystem
             | ScenarioPreset::MagnetarOutburst
             | ScenarioPreset::RelativisticBinary
-            | ScenarioPreset::KozaiLidovTriple => {
+            | ScenarioPreset::KozaiLidovTriple
+            | ScenarioPreset::SagittariusAStar
+            | ScenarioPreset::MolecularCloudCluster => {
                 config.gas_density_scale = 0.0;
                 disk_params.gas_disk_lifetime_yr = 0.0;
             }
@@ -361,7 +401,7 @@ pub fn handle_load_scenario_events(
         let central_star_ent =
             spawn_scenario_preset(preset, &mut commands, &mut disk_params, &mut scenario_state);
 
-        player_state.selected_entity = Some(central_star_ent);
+        player_state.selected_entity = central_star_ent;
 
         configure_scenario_particles_and_swarm(
             preset,
@@ -382,7 +422,7 @@ pub fn update_active_scenarios(
     mut scenario_state: ResMut<ActiveScenarioState>,
     mut bodies_query: Query<(&mut SimVelocity, &SimPosition, &mut CelestialBody, &Mass)>,
 ) {
-    if time_warp.is_paused {
+    if time_warp.is_paused && !time_warp.step_once {
         return;
     }
 

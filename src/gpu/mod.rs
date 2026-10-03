@@ -2,6 +2,7 @@
 
 pub mod buffers;
 pub mod compute_node;
+pub mod gmc_fluid;
 pub mod particle_pipeline;
 
 use bevy::prelude::*;
@@ -22,7 +23,7 @@ pub struct GpuSimPlugin;
 
 impl Plugin for GpuSimPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ParticleRenderPlugin);
+        app.add_plugins((ParticleRenderPlugin, gmc_fluid::GmcFluidPlugin));
 
         // Create cross-world readback channel and recycling channel
         let (tx, rx) = flume::bounded::<Vec<u8>>(2);
