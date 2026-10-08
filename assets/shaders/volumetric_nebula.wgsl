@@ -15,7 +15,7 @@ struct VolumetricNebulaUniforms {
     scattering_albedo: f32,
     phase_g: f32,
     num_stars: u32,
-    _pad: u32,
+    elapsed_years: f32,
     star_positions_and_cavities: array<vec4<f32>, 16>, // xyz: world_pos, w: cavity_radius_au
     star_colors_and_lum: array<vec4<f32>, 16>,        // rgb: emission color, w: luminosity_solar
 };
@@ -75,7 +75,8 @@ fn fbm3(p: vec3<f32>) -> f32 {
 
 // Ray-box slab intersection test against [box_min, box_max]
 fn intersect_box(ray_orig: vec3<f32>, ray_dir: vec3<f32>, b_min: vec3<f32>, b_max: vec3<f32>) -> vec2<f32> {
-    let safe_d = select(ray_dir, vec3<f32>(1e-6) * sign(ray_dir + vec3<f32>(1e-9)), abs(ray_dir) < vec3<f32>(1e-6));
+    let dir_sign = select(vec3<f32>(-1.0), vec3<f32>(1.0), ray_dir >= vec3<f32>(0.0));
+    let safe_d = select(ray_dir, dir_sign * 1e-6, abs(ray_dir) < vec3<f32>(1e-6));
     let inv_d = 1.0 / safe_d;
     let t0 = (b_min - ray_orig) * inv_d;
     let t1 = (b_max - ray_orig) * inv_d;
@@ -113,13 +114,17 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     }
 
     let march_dist = min(t_far - t_near, 1100.0);
-    let steps = clamp(neb.step_count, 16u, 96u);
+    // Dynamic step count: fewer steps for long marches inside the volume
+    let max_steps = select(64u, 40u, t_near <= 0.0);
+    let steps = clamp(neb.step_count, 16u, max_steps);
     let ds = march_dist / f32(steps);
+
+    // Dithering based on pixel coordinates to reduce banding
+    let dither = fract(sin(dot(in.position.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    var current_t = t_near + ds * dither;
 
     var transmittance = 1.0;
     var accumulated_color = vec3<f32>(0.0);
-
-    var current_t = t_near + ds * 0.5;
 
     for (var s = 0u; s < steps; s = s + 1u) {
         if (transmittance < 0.01) {
@@ -129,21 +134,41 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let sample_pos = ray_origin + ray_dir * current_t;
         let r_core = length(sample_pos);
 
-        // Ambient dense cold molecular cloud core profile (dense Plummer sphere + turbulent FBM filaments)
+        // Ambient dense cold molecular cloud core profile (dense Plummer sphere)
         let core_profile = 1.0 / pow(1.0 + (r_core / 240.0) * (r_core / 240.0), 1.25);
+
+        // Lin-Shu logarithmic spiral galaxy density wave profile
+        let r_cyl = max(length(sample_pos.xz), 0.1);
+        let phi = atan2(sample_pos.z + 1e-5, sample_pos.x + 1e-5);
+        let pattern_angle = 0.00045 * neb.elapsed_years;
+        let r_norm_spiral = max(r_cyl / 60.0, 0.20);
+        let xi = 2.0 * (phi - pattern_angle) - 3.08 * log(r_norm_spiral);
+        let spiral_modulation = 0.5 + 0.5 * cos(xi);
+        let z_disk = exp(-abs(sample_pos.y) / 36.0);
+
+        // Galactic nucleus bulge smoothly transitions into sweeping spiral arms
+        let bulge_profile = exp(-r_core / 45.0) * 1.6;
+        let arm_weight = smoothstep(20.0, 60.0, r_cyl);
+        let arm_profile = exp(-r_cyl / 250.0) * z_disk * (0.08 + 2.50 * pow(spiral_modulation, 2.2));
+        let spiral_composite = mix(bulge_profile, arm_profile, arm_weight);
+
+        // Smooth evolution over cosmic time from turbulent collapse into rotating spiral galaxy
+        let t_spiral = clamp((neb.elapsed_years - 600.0) / 1400.0, 0.0, 1.0);
+        let eff_profile = mix(core_profile, spiral_composite, t_spiral);
         
         var density = 0.0;
         var fbm_turb = 0.5;
 
-        // Early exit optimization for empty space (massively improves FPS when zoomed out or in empty regions)
-        if (core_profile > 0.02) {
+        // Early exit optimization for empty space
+        if (eff_profile > 0.015) {
             fbm_turb = fbm3(sample_pos * 0.008);
-            density = core_profile * (0.40 + 0.85 * fbm_turb);
+            density = eff_profile * (0.35 + 0.90 * fbm_turb);
         }
 
         // Ionization cavity carving and glowing H-alpha / [O III] emission fronts around protostars
         var cavity_glow = vec3<f32>(0.0);
         var in_scatter = vec3<f32>(0.0);
+        var min_cavity_factor = 1.0;
 
         for (var i = 0u; i < neb.num_stars; i = i + 1u) {
             let star_data = neb.star_positions_and_cavities[i];
@@ -156,9 +181,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             let light_dist = max(length(light_vec), 1.0);
 
             if (cav_radius > 0.5) {
-                // Carve cavity: density cleared inside the bubble
+                // Carve cavity: track strongest clearing across all stellar bubbles
                 let cavity_factor = smoothstep(cav_radius * 0.45, cav_radius, light_dist);
-                density = density * cavity_factor;
+                min_cavity_factor = min(min_cavity_factor, cavity_factor);
 
                 // Ionization shock front glow: H-alpha (656 nm, crimson) and [O III] (501 nm, teal)
                 let edge_dist = abs(light_dist - cav_radius);
@@ -180,6 +205,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             in_scatter = in_scatter + illuminance * phase;
         }
 
+        // Keep a residual ionized-gas floor so overlapping HII bubbles don't erase the cloud
+        density = density * mix(0.15, 1.0, min_cavity_factor);
+
         // Optical depth and Beer-Lambert extinction
         let d_tau = neb.absorption_coefficient * density * ds;
         let step_transmittance = exp(-d_tau);
@@ -191,7 +219,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let outer_color = vec3<f32>(0.55, 0.25, 0.85); // Cosmic violet outer veil
 
         let gas_color = mix(core_color, mix(mid_color, outer_color, smoothstep(0.35, 0.85, r_norm)), smoothstep(0.10, 0.45, r_norm));
-        let ambient_gas = gas_color * density * 2.2;
+        // Spiral arm contrast: luminous cyan/blue arm ridges and deep amber/smoky dust lanes
+        let arm_tint = mix(vec3<f32>(0.22, 0.12, 0.08), vec3<f32>(0.35, 0.95, 1.45), pow(spiral_modulation, 1.8));
+        let final_gas_color = mix(gas_color, arm_tint, t_spiral * 0.85);
+        let ambient_gas = final_gas_color * density * 2.2;
         let ambient_scatter = vec3<f32>(0.25, 0.45, 0.85) * density * neb.scattering_albedo;
 
         let total_emission = ambient_gas + ambient_scatter + in_scatter * neb.scattering_albedo + cavity_glow;

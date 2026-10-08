@@ -2,6 +2,7 @@
 
 pub mod buffers;
 pub mod compute_node;
+pub mod gmc_collapse;
 pub mod gmc_fluid;
 pub mod particle_pipeline;
 

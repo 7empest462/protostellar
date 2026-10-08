@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+use crate::rendering::effects::remnants::PersistentRemnantPool;
+use crate::rendering::effects::supernova::SupernovaDebrisPool;
 use crate::simulation::components::*;
 use crate::simulation::resources::{SimTime, TimeWarp};
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
@@ -34,8 +36,9 @@ pub struct GpuSinkParticle {
     pub sink_radius_au: f32,
     pub radiation_pressure_factor: f32,
     pub is_ignited: u32,
+    pub mass_solar: f32,
     #[allow(clippy::pub_underscore_fields, reason = "WGSL memory layout alignment")]
-    pub _pad: [u32; 2],
+    pub _pad: u32,
 }
 
 impl Default for GpuSinkParticle {
@@ -45,7 +48,33 @@ impl Default for GpuSinkParticle {
             sink_radius_au: 15.0,
             radiation_pressure_factor: 1.0,
             is_ignited: 0,
-            _pad: [0, 0],
+            mass_solar: 1.0,
+            _pad: 0,
+        }
+    }
+}
+
+/// Active expanding supernova blast wave for fluid shock compression and nucleosynthetic enrichment.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct GpuSupernovaBlast {
+    pub world_pos: [f32; 3],
+    pub current_radius_au: f32,
+    pub metals_mass_solar: f32,
+    pub blast_speed_au_s: f32,
+    pub ejecta_mass_solar: f32,
+    pub is_active: u32,
+}
+
+impl Default for GpuSupernovaBlast {
+    fn default() -> Self {
+        Self {
+            world_pos: [0.0, 0.0, 0.0],
+            current_radius_au: 0.0,
+            metals_mass_solar: 0.0,
+            blast_speed_au_s: 0.0,
+            ejecta_mass_solar: 0.0,
+            is_active: 0,
         }
     }
 }
@@ -55,8 +84,7 @@ impl Default for GpuSinkParticle {
 #[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
 pub struct GpuJeansCollapseEvent {
     pub grid_coords: [u32; 3],
-    #[allow(clippy::pub_underscore_fields, reason = "WGSL memory layout alignment")]
-    pub _pad0: u32,
+    pub metallicity: f32,
     pub world_pos: [f32; 3],
     pub local_mass_solar: f32,
     pub com_velocity: [f32; 3],
@@ -67,7 +95,7 @@ impl Default for GpuJeansCollapseEvent {
     fn default() -> Self {
         Self {
             grid_coords: [48, 48, 48],
-            _pad0: 0,
+            metallicity: 0.0,
             world_pos: [0.0, 0.0, 0.0],
             local_mass_solar: 1.0,
             com_velocity: [0.0, 0.0, 0.0],
@@ -76,7 +104,7 @@ impl Default for GpuJeansCollapseEvent {
     }
 }
 
-/// Uniforms buffer layout for the 3D GMC compute shader (560 bytes, 16-byte aligned).
+/// Uniforms buffer layout for the 3D GMC compute shader (816 bytes, 16-byte aligned).
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GmcFluidUniforms {
@@ -90,11 +118,10 @@ pub struct GmcFluidUniforms {
     pub g_astro: f32,
     pub collapse_threshold: f32,
     pub vacuum_rate: f32,
-    #[allow(clippy::pub_underscore_fields, reason = "WGSL memory layout alignment")]
-    pub _pad0: f32,
-    #[allow(clippy::pub_underscore_fields, reason = "WGSL memory layout alignment")]
-    pub _pad1: f32,
+    pub num_supernovae: u32,
+    pub elapsed_years: f32,
     pub sinks: [GpuSinkParticle; 16],
+    pub supernovae: [GpuSupernovaBlast; 8],
 }
 
 impl Default for GmcFluidUniforms {
@@ -110,9 +137,10 @@ impl Default for GmcFluidUniforms {
             g_astro: G_ASTRO as f32,
             collapse_threshold: 6.5e-11, // Lower threshold allows gas to condense and ignite naturally
             vacuum_rate: 1.0e-11,
-            _pad0: 0.0,
-            _pad1: 0.0,
+            num_supernovae: 0,
+            elapsed_years: 0.0,
             sinks: [GpuSinkParticle::default(); 16],
+            supernovae: [GpuSupernovaBlast::default(); 8],
         }
     }
 }
@@ -143,6 +171,8 @@ pub struct GmcFluidExtractedParams {
     pub elapsed_years: f64,
     pub sinks: [GpuSinkParticle; 16],
     pub num_sinks: u32,
+    pub supernovae: [GpuSupernovaBlast; 8],
+    pub num_supernovae: u32,
 }
 
 /// Receiver in Main App for GPU-to-CPU collapse events.
@@ -165,7 +195,7 @@ impl Plugin for GmcFluidPlugin {
         let (tx, rx) = flume::bounded::<Vec<GpuJeansCollapseEvent>>(4);
 
         app.insert_resource(GmcCollapseEventReceiver { rx });
-        app.add_systems(Update, receive_gmc_collapse_events);
+        app.add_systems(Update, super::gmc_collapse::receive_gmc_collapse_events);
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -179,13 +209,81 @@ impl Plugin for GmcFluidPlugin {
     }
 }
 
+/// Prioritizes and formats up to 16 sink particles for the GMC fluid simulation.
+/// Sinks are sorted by mass descending so massive black holes and giant stars always take priority
+/// over lower-mass protostars. Remnants do not radiate or vacuum gas.
+pub fn build_gmc_sinks<'a, I>(candidate_bodies: I) -> ([GpuSinkParticle; 16], u32)
+where
+    I: IntoIterator<
+        Item = (
+            &'a SimPosition,
+            &'a Mass,
+            &'a Luminosity,
+            Option<&'a IgnitionState>,
+            &'a CelestialBody,
+        ),
+    >,
+{
+    let mut candidates: Vec<(
+        &SimPosition,
+        &Mass,
+        &Luminosity,
+        Option<&IgnitionState>,
+        &CelestialBody,
+    )> = candidate_bodies
+        .into_iter()
+        .filter(|(_, _, _, _, body)| body.body_type.is_star_or_remnant())
+        .collect();
+
+    // Sort by mass descending
+    candidates.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+
+    let mut sinks = [GpuSinkParticle::default(); 16];
+    let mut num_sinks = 0u32;
+
+    for (pos, mass, lum, opt_ign, body) in candidates.into_iter().take(16) {
+        let is_remnant = body.body_type.is_remnant();
+        let is_ignited = !is_remnant && opt_ign.is_some_and(|ign| ign.is_ignited);
+        let rad_factor = if is_remnant {
+            0.0
+        } else {
+            (lum.0 as f32).clamp(0.0, 100.0)
+        };
+        let sink_radius_au = if is_remnant {
+            3.0
+        } else {
+            (25.0 * rad_factor.cbrt().max(1.0)).clamp(10.0, 120.0)
+        };
+
+        if let Some(sink_slot) = sinks.get_mut(num_sinks as usize) {
+            *sink_slot = GpuSinkParticle {
+                world_pos: [pos.x as f32, pos.y as f32, pos.z as f32],
+                sink_radius_au,
+                radiation_pressure_factor: rad_factor,
+                is_ignited: u32::from(is_ignited),
+                mass_solar: mass.0 as f32,
+                _pad: 0,
+            };
+            num_sinks += 1;
+        }
+    }
+
+    (sinks, num_sinks)
+}
+
 /// Extracts GMC simulation parameters and protostellar sinks from Main App to RenderApp.
-#[allow(clippy::type_complexity, reason = "Bevy Extract Query tuple")]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    reason = "Bevy Extract Query tuple and multi-subsystem simulation parameters"
+)]
 pub fn extract_gmc_fluid_data(
     mut commands: Commands,
     scenario_state: Extract<Option<Res<ActiveScenarioState>>>,
     time_warp: Extract<Res<TimeWarp>>,
     sim_time: Extract<Res<SimTime>>,
+    debris_pool: Extract<Option<Res<SupernovaDebrisPool>>>,
+    remnant_pool: Extract<Option<Res<PersistentRemnantPool>>>,
     sink_query: Extract<
         Query<
             (
@@ -209,24 +307,50 @@ pub fn extract_gmc_fluid_data(
 
     let mut sinks = [GpuSinkParticle::default(); 16];
     let mut num_sinks = 0u32;
+    let mut supernovae = [GpuSupernovaBlast::default(); 8];
+    let mut num_supernovae = 0u32;
 
     if is_active {
-        for (pos, _mass, lum, opt_ign, body) in sink_query.iter() {
-            if num_sinks >= 16 {
-                break;
-            }
-            if body.body_type.is_star_or_remnant() {
-                let is_ignited = opt_ign.is_some_and(|ign| ign.is_ignited);
-                let rad_factor = (lum.0 as f32).clamp(0.0, 100.0);
-                if let Some(sink_slot) = sinks.get_mut(num_sinks as usize) {
-                    *sink_slot = GpuSinkParticle {
-                        world_pos: [pos.x as f32, pos.y as f32, pos.z as f32],
-                        sink_radius_au: (25.0 * rad_factor.cbrt().max(1.0)).clamp(10.0, 120.0),
-                        radiation_pressure_factor: rad_factor,
-                        is_ignited: u32::from(is_ignited),
-                        _pad: [0, 0],
+        let (extracted_sinks, extracted_num) = build_gmc_sinks(sink_query.iter());
+        sinks = extracted_sinks;
+        num_sinks = extracted_num;
+
+        // Collect prompt supernova explosions
+        if let Some(debris) = debris_pool.as_ref() {
+            for exp in &debris.explosions {
+                if num_supernovae >= 8 {
+                    break;
+                }
+                if let Some(sn_slot) = supernovae.get_mut(num_supernovae as usize) {
+                    *sn_slot = GpuSupernovaBlast {
+                        world_pos: [exp.center.x, exp.center.y, exp.center.z],
+                        current_radius_au: exp.current_radius_au,
+                        metals_mass_solar: exp.metals_mass_solar,
+                        blast_speed_au_s: exp.blast_speed_au_s,
+                        ejecta_mass_solar: exp.ejecta_mass_solar,
+                        is_active: 1,
                     };
-                    num_sinks += 1;
+                    num_supernovae += 1;
+                }
+            }
+        }
+
+        // Collect persistent remnant blast shells
+        if let Some(remnants) = remnant_pool.as_ref() {
+            for rem in &remnants.remnants {
+                if num_supernovae >= 8 {
+                    break;
+                }
+                if let Some(sn_slot) = supernovae.get_mut(num_supernovae as usize) {
+                    *sn_slot = GpuSupernovaBlast {
+                        world_pos: [rem.center.x, rem.center.y, rem.center.z],
+                        current_radius_au: rem.current_radius_au,
+                        metals_mass_solar: rem.metals_mass_solar,
+                        blast_speed_au_s: rem.expansion_rate_au_yr * 0.1,
+                        ejecta_mass_solar: rem.ejecta_mass_solar,
+                        is_active: 1,
+                    };
+                    num_supernovae += 1;
                 }
             }
         }
@@ -239,178 +363,9 @@ pub fn extract_gmc_fluid_data(
         elapsed_years,
         sinks,
         num_sinks,
+        supernovae,
+        num_supernovae,
     });
-}
-
-/// Receives Jeans collapse events on the Main App CPU side and dynamically spawns protostellar entities.
-pub fn receive_gmc_collapse_events(
-    mut commands: Commands,
-    receiver: Res<GmcCollapseEventReceiver>,
-    scenario_state: Option<Res<ActiveScenarioState>>,
-    existing_bodies: Query<(&SimPosition, &CelestialBody)>,
-    mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
-) {
-    let Some(state) = scenario_state.as_ref() else {
-        while receiver.rx.try_recv().is_ok() {}
-        return;
-    };
-
-    if state.current_preset != ScenarioPreset::MolecularCloudCluster {
-        while receiver.rx.try_recv().is_ok() {}
-        return;
-    }
-
-    // Guard during initial cloud relaxation to guarantee completely starless genesis
-    if state.scenario_time_years < 0.20 {
-        while receiver.rx.try_recv().is_ok() {}
-        return;
-    }
-
-    let mut star_count = 0;
-    for (_, body) in existing_bodies.iter() {
-        if body.body_type.is_star_or_remnant() {
-            star_count += 1;
-        }
-    }
-
-    while let Ok(events) = receiver.rx.try_recv() {
-        for ev in events {
-            if star_count >= 1000 {
-                break;
-            }
-
-            let ev_pos = bevy::math::DVec3::new(
-                f64::from(ev.world_pos[0]),
-                f64::from(ev.world_pos[1]),
-                f64::from(ev.world_pos[2]),
-            );
-
-            // Guard: Stars can only spawn within the molecular cloud core (r < 220 AU)
-            let r_len = ev_pos.length();
-            if r_len > 220.0 {
-                continue;
-            }
-
-            // Avoid spawning if another star is already within 35 AU
-            let too_close = existing_bodies.iter().any(|(pos, body)| {
-                body.body_type.is_star_or_remnant() && (pos.0 - ev_pos).length_squared() < 1225.0
-            });
-
-            if too_close {
-                continue;
-            }
-
-            star_count += 1;
-            spawn_jeans_collapse_system(&mut commands, &ev, ev_pos, r_len, star_count, &mut toast);
-        }
-    }
-}
-
-fn spawn_jeans_collapse_system(
-    commands: &mut Commands,
-    ev: &GpuJeansCollapseEvent,
-    ev_pos: bevy::math::DVec3,
-    r_len: f64,
-    star_count: usize,
-    toast: &mut Option<ResMut<crate::game::ui::NotificationToast>>,
-) {
-    let raw_vel = bevy::math::DVec3::new(
-        f64::from(ev.com_velocity[0]),
-        f64::from(ev.com_velocity[1]),
-        f64::from(ev.com_velocity[2]),
-    );
-    let safe_r = r_len.max(10.0);
-    let v_circ = (crate::utils::constants::G_ASTRO * 24.0 * safe_r
-        / (safe_r * safe_r + 160.0 * 160.0).powf(1.5))
-    .sqrt();
-    let tangent = if ev_pos.cross(bevy::math::DVec3::Y).length_squared() > 1e-4 {
-        ev_pos.cross(bevy::math::DVec3::Y).normalize()
-    } else {
-        bevy::math::DVec3::new(0.0, 0.0, 1.0)
-    };
-    let seed_vel = (tangent * v_circ * 0.85 + raw_vel.clamp_length_max(v_circ * 0.35))
-        .clamp_length_max(v_circ * 1.15);
-    let local_speed =
-        (seed_vel.length() * crate::utils::constants::AU_PER_YR_TO_KM_PER_S).max(0.25);
-    let jeans_mass =
-        crate::simulation::scenarios::molecular_cloud::calculate_turbulent_jeans_mass_solar(
-            f64::from(ev.local_mass_solar / GMC_CELL_VOLUME_AU3).max(4.8e-11),
-            f64::from(ev.temperature_k),
-            local_speed,
-        );
-    let seed_mass = jeans_mass.clamp(0.35, 4.5);
-
-    let protostar_name = format!("Protostar Jeans-{star_count}");
-    commands.spawn((
-        CelestialBody {
-            body_type: BodyType::Protostar,
-            name: protostar_name.clone(),
-        },
-        Mass(seed_mass),
-        SimPosition(ev_pos),
-        SimVelocity(seed_vel),
-        SimAcceleration::default(),
-        Radius(3.5 * crate::utils::constants::SOLAR_RADIUS_AU),
-        Temperature(f64::from(ev.temperature_k).max(3800.0)),
-        Luminosity((seed_mass * 2.5).max(0.5)),
-        AngularMomentum::default(),
-        Composition::solar_gas(),
-        IgnitionState {
-            core_temperature: 1.2e7,
-            fusion_fraction: 1.0,
-            is_ignited: true,
-            shockwave_radius: 0.5,
-        },
-        StellarEvolutionState::default(),
-        SpinState {
-            rotation_period_hours: 48.0,
-            axial_tilt_degrees: 15.0,
-            spin_vector: bevy::math::DVec3::new(0.0, 1.0, 0.0),
-        },
-    ));
-
-    // Stage B: Promote to planetary system by seeding orbiting Protoplanets
-    let local_x = tangent;
-    let local_z = tangent.cross(bevy::math::DVec3::Y).normalize();
-    for i in 1..=3 {
-        let a_au = f64::from(i) * 8.5 + 4.0; // orbits at 12.5, 21.0, 29.5 AU
-        let m_p = 0.003; // ~3 Jupiter masses
-        let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
-        let angle = f64::from(i) * 2.4; // Phase offset
-
-        let p_pos = ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
-        let p_vel =
-            seed_vel + local_x * (-v_circ_p * angle.sin()) + local_z * (v_circ_p * angle.cos());
-
-        commands.spawn((
-            CelestialBody {
-                body_type: BodyType::Protoplanet,
-                name: format!("{protostar_name} b{i}"),
-            },
-            Mass(m_p),
-            SimPosition(p_pos),
-            SimVelocity(p_vel),
-            SimAcceleration::default(),
-            Radius(1.5 * 0.000_477), // 1.5x Jupiter Radius in AU
-            Temperature(1200.0 / (a_au).sqrt()),
-            Luminosity(0.0),
-            AngularMomentum::default(),
-            Composition::solar_gas(),
-        ));
-    }
-
-    if let Some(ref mut t) = toast {
-        t.message =
-            format!("✨ Jeans Instability Collapse: {protostar_name} formed ({seed_mass:.2} M☉)");
-        t.timer = 5.0;
-    }
-
-    bevy::log::info!(
-        "✨ Spawned new Protostar from GPU Jeans Collapse: {} at {:?}, mass {:.2} M☉",
-        protostar_name,
-        ev_pos,
-        seed_mass
-    );
 }
 
 /// Builds initial density, velocity, and temperature fields for the GMC core.
@@ -430,26 +385,56 @@ fn generate_initial_gmc_fields() -> (Vec<f32>, Vec<[f32; 4]>, Vec<f32>) {
                 let wz = (z as f32 + 0.5) * dx - half_domain;
                 let r_au = (wx * wx + wy * wy + wz * wz).sqrt();
 
-                // Dense Plummer-like molecular cloud core: rho(r) = rho_0 / (1 + (r/r_c)^2)^1.5
-                let r_core = 160.0;
-                let rho_0 = 3.4e-11f32; // M_sun / AU^3 (sub-critical at t=0 so cloud begins starless)
-                let profile = 1.0 / (1.0 + (r_au / r_core).powi(2)).powf(1.5);
+                // Extended GMC Disk with multiple dense nodes
+                let r_cyl = (wx * wx + wz * wz).sqrt().max(0.1);
 
-                // Supersonic turbulent density fluctuations seeded by velocity fields (Mach ~ 3-4 filaments)
+                // Base exponential disk profile
+                let disk_scale_r = 250.0;
+                let disk_scale_h = 45.0;
+                let rho_disk =
+                    1.8e-11 * f32::exp(-r_cyl / disk_scale_r) * f32::exp(-wy.abs() / disk_scale_h);
+
+                // Add several offset clumps/nodes
+                let c1_dist = ((wx - 150.0).powi(2) + wy.powi(2) + (wz + 120.0).powi(2)).sqrt();
+                let c2_dist = ((wx + 180.0).powi(2) + wy.powi(2) + (wz - 80.0).powi(2)).sqrt();
+                let c3_dist = ((wx - 80.0).powi(2) + wy.powi(2) + (wz - 200.0).powi(2)).sqrt();
+                let c4_dist = ((wx + 50.0).powi(2) + wy.powi(2) + (wz + 240.0).powi(2)).sqrt();
+
+                let clump1 = 2.0e-11 / (1.0 + (c1_dist / 60.0).powi(2)).powf(1.5);
+                let clump2 = 1.8e-11 / (1.0 + (c2_dist / 70.0).powi(2)).powf(1.5);
+                let clump3 = 1.5e-11 / (1.0 + (c3_dist / 65.0).powi(2)).powf(1.5);
+                let clump4 = 1.7e-11 / (1.0 + (c4_dist / 55.0).powi(2)).powf(1.5);
+
+                let central_core = 2.5e-11 / (1.0 + (r_au / 80.0).powi(2)).powf(1.5);
+
+                let base_rho = rho_disk + central_core + clump1 + clump2 + clump3 + clump4;
+
+                // Supersonic turbulent density fluctuations (filaments)
                 let turb_rho = 1.0
-                    + 0.16 * (wx * 0.025).sin() * (wz * 0.018).cos()
-                    + 0.12 * (wy * 0.022).cos() * (wx * 0.015).sin()
-                    + 0.10 * (wz * 0.028).sin() * (wy * 0.020).cos();
-                let rho = (rho_0 * profile * turb_rho.max(0.2)).max(1.0e-14);
+                    + 0.25 * (wx * 0.03).sin() * (wz * 0.02).cos()
+                    + 0.20 * (wy * 0.04).cos() * (wx * 0.025).sin()
+                    + 0.15 * (wz * 0.035).sin() * (wy * 0.03).cos();
+                let rho = (base_rho * turb_rho.max(0.1)).max(1.0e-14);
 
-                // Subsonic turbulent velocity fluctuations to allow local gravity to overcome kinetic energy
+                // Rotational velocity (Keplerian-ish) + Turbulence
                 let phase_x = (wx * 0.025).sin() * (wz * 0.018).cos();
                 let phase_y = (wy * 0.022).cos() * (wx * 0.015).sin();
                 let phase_z = (wz * 0.028).sin() * (wy * 0.020).cos();
 
-                let vx = phase_x * 0.044;
-                let vy = phase_y * 0.036;
-                let vz = phase_z * 0.040;
+                // Balance the global inward pull (g_cloud + NFW Dark Matter halo)
+                let v_rot = if r_cyl > 15.0 {
+                    let r_s = 150.0;
+                    let x = r_cyl / r_s;
+                    let mass_dm = 8000.0 * ((1.0 + x).ln() - x / (1.0 + x));
+                    let total_mass = 40.0 + mass_dm;
+                    (crate::utils::constants::G_ASTRO as f32 * total_mass / r_cyl).sqrt() * 0.95
+                } else {
+                    0.0
+                };
+
+                let vx = (-wz / r_cyl * v_rot) + phase_x * 0.044;
+                let vy = phase_y * 0.020;
+                let vz = (wx / r_cyl * v_rot) + phase_z * 0.040;
 
                 densities.push(rho);
                 velocities.push([vx, vy, vz, 0.0]);
@@ -834,17 +819,18 @@ pub fn step_gmc_fluid_simulation(
     drain_mapped_gmc_staging_buffer(&engine, &sender);
 
     // 2. Update uniforms buffer (calculate substepping for time warp scaling)
-    let num_substeps = if params.dt > 0.05 {
-        ((params.dt / 0.04).ceil() as usize).clamp(1, 4)
-    } else {
-        1
-    };
-    let sub_dt = (params.dt / num_substeps as f32).clamp(0.0001, 20.0);
+    // Fluid Eulerian grid requires bounded CFL step (<= 0.12 yr) so density filaments
+    // condense coherently into Jeans collapse peaks even at extreme fast-forward speeds.
+    let num_substeps = if params.dt > 0.10 { 2 } else { 1 };
+    let sub_dt = (params.dt / num_substeps as f32).clamp(0.0001, 0.12);
 
     let uniforms = GmcFluidUniforms {
         dt: sub_dt,
         num_sinks: params.num_sinks.min(16),
         sinks: params.sinks,
+        num_supernovae: params.num_supernovae.min(8),
+        supernovae: params.supernovae,
+        elapsed_years: params.elapsed_years as f32,
         ..Default::default()
     };
 
@@ -928,4 +914,7 @@ pub fn step_gmc_fluid_simulation(
                 }
             });
     }
+
+    // Drive WGPU submission queue to process map_async callbacks and eliminate shutdown timeout
+    let _ = render_dev.poll(wgpu::PollType::Poll);
 }

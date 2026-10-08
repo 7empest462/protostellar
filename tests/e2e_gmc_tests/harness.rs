@@ -41,7 +41,7 @@ pub const PROTOSTAR_IGNITION_TEMP_K: f64 = 1.0e7;
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct GpuJeansCollapseEvent {
     pub grid_coords: [u32; 3],
-    pub _pad0: u32,
+    pub metallicity: f32,
     pub world_pos: [f32; 3],
     pub local_mass_solar: f32,
     pub com_velocity: [f32; 3],
@@ -52,7 +52,7 @@ impl Default for GpuJeansCollapseEvent {
     fn default() -> Self {
         Self {
             grid_coords: [48, 48, 48],
-            _pad0: 0,
+            metallicity: 0.0,
             world_pos: [0.0, 0.0, 0.0],
             local_mass_solar: 1.0,
             com_velocity: [0.0, 0.0, 0.0],

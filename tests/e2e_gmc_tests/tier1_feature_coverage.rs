@@ -199,7 +199,7 @@ fn test_t1_r2_gpu_collapse_event_struct_memory_layout() {
 
     let event = GpuJeansCollapseEvent {
         grid_coords: [12, 34, 56],
-        _pad0: 0,
+        metallicity: 0.0,
         world_pos: [-120.5, 45.0, 210.25],
         local_mass_solar: 1.85,
         com_velocity: [0.12, -0.05, 0.31],

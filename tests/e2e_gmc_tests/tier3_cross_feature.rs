@@ -44,7 +44,7 @@ fn test_t3_fluid_advection_triggers_jeans_collapse() {
     let world_pos = grid_to_world_pos(collapse_coords[0], collapse_coords[1], collapse_coords[2]);
     let event = GpuJeansCollapseEvent {
         grid_coords: collapse_coords,
-        _pad0: 0,
+        metallicity: 0.0,
         world_pos: world_pos.to_array(),
         local_mass_solar: new_cell_mass as f32,
         com_velocity: [0.0, 0.1, 0.0],

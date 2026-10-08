@@ -1829,7 +1829,7 @@ fn fragment(
         let desat = 0.18;
 
         // A. Molten Magma Ocean
-        if (temp >= 1100.0 || lava_frac > 0.65) {
+        if ((temp >= 1100.0 || lava_frac > 0.65) && (!has_volatiles || ocean_frac < 0.04 || temp > 380.0)) {
             let magma = evaluate_magma_ocean_surface(p_surf, elev, temp, lava_frac, t);
             color = magma.color;
             pbr_input.material.emissive = vec4<f32>(magma.emissive, 1.0);
@@ -2097,11 +2097,12 @@ fn fragment(
             let magma = evaluate_magma_ocean_surface(p_surf, elev, temp, lava_frac, t);
             let magma_blend = clamp((temp - 450.0) / 650.0 + lava_frac * 0.5, 0.0, 1.0);
             let fissure_mask = 1.0 - magma.crust_mask;
-            let active_vent = clamp(magma_blend * 0.70 + fissure_mask * 0.88, 0.0, 1.0);
+            let subaerial_mask = 1.0 - clamp(water_mask, 0.0, 1.0);
+            let active_vent = clamp(magma_blend * 0.70 + fissure_mask * 0.88, 0.0, 1.0) * subaerial_mask;
             color = mix(color, magma.color, active_vent);
             pbr_input.material.emissive = vec4<f32>(
                 pbr_input.material.emissive.rgb
-                    + magma.emissive * (magma_blend * 0.60 + fissure_mask * 0.75),
+                    + magma.emissive * (magma_blend * 0.60 + fissure_mask * 0.75) * subaerial_mask,
                 1.0
             );
             pbr_input.material.perceptual_roughness = mix(

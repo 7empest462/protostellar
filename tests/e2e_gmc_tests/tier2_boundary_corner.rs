@@ -143,7 +143,7 @@ fn test_t2_r2_simultaneous_multi_peak_fragmentation() {
     // Simultaneous collapse in two adjacent cells
     let event1 = GpuJeansCollapseEvent {
         grid_coords: [40, 48, 48],
-        _pad0: 0,
+        metallicity: 0.0,
         world_pos: [-91.6, 0.0, 0.0],
         local_mass_solar: 1.5,
         com_velocity: [0.0, 0.2, 0.0],
@@ -151,7 +151,7 @@ fn test_t2_r2_simultaneous_multi_peak_fragmentation() {
     };
     let event2 = GpuJeansCollapseEvent {
         grid_coords: [44, 48, 48],
-        _pad0: 0,
+        metallicity: 0.0,
         world_pos: [-45.8, 0.0, 0.0],
         local_mass_solar: 2.1,
         com_velocity: [0.0, -0.2, 0.0],

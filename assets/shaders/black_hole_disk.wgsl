@@ -140,8 +140,8 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let b = length(vec2<f32>(u, v)); // Impact parameter (screen radius)
 
     // Scale boundaries (normalized to outer_radius = 1.0):
-    let r_shadow = 0.165; // Event horizon shadow (b_crit ~ 3√3 M)
-    let r_inner  = 0.185; // ISCO (3 r_s) inner edge
+    let r_shadow = 0.170; // Event horizon shadow (b_crit ~ 3√3 M)
+    let r_inner  = 0.190; // ISCO (3 r_s) inner edge
     let r_outer  = 0.88;  // Outer disk edge
 
     // ─── 2. Observer inclination ─────────────────────────────────────────────
@@ -152,15 +152,11 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 
     // ─── 3. Observer inclination geometry ────────────────────────────────────
     // cos_i = dot(cam_dir_local, spin_axis) = cam_dir_local.y in local space.
-    // Geometrically derived front-half condition (see derivation in docs):
-    //   A billboard pixel at (u, v) maps to a disk-space point. Its projection
-    //   onto the in-plane camera direction is proportional to v * cos_i.
-    //   v * cos_i > 0  →  near side (between observer and BH center).
-    //   v * cos_i < 0  →  far side (behind BH center).
-    //
-    // Physical disk height above disk plane for a billboard pixel:
-    //   height_above_disk = v * sin_i
-    //   (cam_up projected onto disk normal Y gives sin_i, u_right.y = 0 always)
+    // Geometrically derived near-side condition:
+    //   Screen Y (mesh v) maps to the tilt axis. Looking from above (cos_i > 0),
+    //   the bottom of the billboard (v < 0) is closer to the camera.
+    //   Looking from below (cos_i < 0), the top (v > 0) is closer to the camera.
+    //   Therefore v * cos_i < 0 represents the near side of the accretion disk!
 
     // ─── 4. Direct disk intersection (primary image) ─────────────────────────
     var hit_direct = false;
@@ -180,19 +176,19 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let h_disk  = 0.055 + 0.050 * (r_direct / r_outer);
     let v_thick = exp(-0.5 * pow((v * sin_i) / h_disk, 2.0));
 
-    // Front-half gate: disk only renders on near side (v*cos_i > 0).
+    // Near-side gate: disk renders directly in front of the black hole on the near side.
     // Side wings (|u| > r_shadow) are always visible from both directions.
     // Near edge-on (sin_i → 1) both halves converge to the equatorial strip.
-    let front_gate       = smoothstep(-0.015, 0.025, v * cos_i);
+    let near_gate        = smoothstep(0.02, -0.02, v * cos_i);
     let side_wing_factor = smoothstep(r_shadow * 0.75, r_shadow * 1.6, abs(u));
     let edge_on_factor   = smoothstep(0.80, 0.97, sin_i);
-    let disk_geo_mask    = clamp(front_gate + side_wing_factor + edge_on_factor, 0.0, 1.0);
+    let disk_geo_mask    = clamp(near_gate + side_wing_factor + edge_on_factor, 0.0, 1.0);
 
     if (r_direct >= r_shadow && r_direct <= r_outer && v_thick > 0.005) {
         let sample = sample_accretion_disk(r_direct, phi_direct, r_inner, r_outer, r_shadow, sin_i, disk.time);
         direct_emission = sample.emission;
         direct_alpha    = sample.alpha * v_thick * disk_geo_mask;
-        hit_direct      = direct_alpha > 0.02;
+        hit_direct      = direct_alpha > 0.01;
     }
 
     // ─── 5. Lensed arc (secondary image — photons bent around BH) ────────────
@@ -209,8 +205,6 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 
         // Arch profile: fades at inner edge (near shadow) and outer edge.
         // No angular mask — the lensed arc wraps the full circumference of the shadow.
-        // The atan2 approach (old code) created a 4-lobe butterfly pattern by clamping
-        // the arc to top/bottom only. We let it show all the way around.
         let arch_profile = pow(sin(t_arch * 3.14159), 0.65) * smoothstep(1.0, 0.12, t_arch);
 
         if (arch_profile > 0.01 && r_lensed >= r_shadow && r_lensed <= r_outer) {
@@ -234,23 +228,35 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // ─── 7. Shadow core & composite ──────────────────────────────────────────
-    var shadow_mask = smoothstep(r_shadow * 0.97, r_shadow * 1.015, b);
+    // in_shadow = 1.0 inside the event horizon shadow (b < r_shadow), smooth transition at boundary.
+    // The event horizon shadow is an absolute light trap: it NEVER discards and is NEVER transparent.
+    let in_shadow = 1.0 - smoothstep(r_shadow * 0.985, r_shadow * 1.01, b);
 
-    // Direct disk in FRONT of the BH (near side) overrides the shadow mask.
-    // Correct condition: v * cos_i > 0 (geometrically derived near-side test).
-    // We further require the pixel is physically within the disk slab (v_thick > 0.1).
-    let is_front = v * cos_i > 0.0;
-    if (hit_direct && is_front && v_thick > 0.10) {
-        shadow_mask = 1.0;
-    }
+    // Foreground: the near side of the accretion disk physically passing in front of the black hole
+    let is_front = (v * cos_i < 0.0) || (abs(cos_i) < 0.06);
+    let fg_emission = select(vec3<f32>(0.0), direct_emission, is_front);
+    let fg_alpha    = select(0.0, direct_alpha, is_front);
 
-    let total_emission = (direct_emission + lensed_emission * (1.0 - direct_alpha * 0.7) + photon_ring_em) * shadow_mask;
-    let total_alpha    = clamp(
-        (direct_alpha + lensed_alpha * (1.0 - direct_alpha * 0.7) + photon_ring_alpha),
-        0.0, 1.0
-    ) * shadow_mask + (1.0 - shadow_mask);
+    // Background: lensed arc, photon ring, and rear side of the direct disk.
+    // All light rays originating behind the event horizon are absorbed by the black hole!
+    let rear_disk_em = select(direct_emission, vec3<f32>(0.0), is_front);
+    let rear_disk_a  = select(direct_alpha, 0.0, is_front);
 
-    if (total_alpha < 0.005) {
+    let bg_transmission = 1.0 - in_shadow;
+    let bg_emission = (rear_disk_em + lensed_emission + photon_ring_em) * bg_transmission;
+    let bg_alpha    = (rear_disk_a + lensed_alpha + photon_ring_alpha) * bg_transmission;
+
+    // Inside the shadow, the black hole itself is an opaque, zero-emission black body.
+    // Outside the shadow, only the background emissions exist.
+    let mid_emission = bg_emission;
+    let mid_alpha    = clamp(in_shadow + bg_alpha, 0.0, 1.0);
+
+    // Composite foreground (near-side disk) over mid-layer (shadow + background):
+    let total_emission = fg_emission + mid_emission * (1.0 - fg_alpha * 0.75);
+    let total_alpha    = clamp(fg_alpha + mid_alpha * (1.0 - fg_alpha), 0.0, 1.0);
+
+    // Only discard outside the event horizon shadow where the quad is transparent to the skybox
+    if (in_shadow < 0.01 && total_alpha < 0.005) {
         discard;
     }
 

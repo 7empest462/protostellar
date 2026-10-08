@@ -70,7 +70,9 @@ pub fn update_thermodynamics(
     }
 
     let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
-    let is_gmc = scenario_state.is_some_and(|s| s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster);
+    let is_gmc = scenario_state.is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+    });
 
     // 1. Process Protostellar Core Heating, Ignition, and Multi-Branch Stellar Evolution
     for (
@@ -121,10 +123,11 @@ pub fn update_thermodynamics(
                 &mut temp,
                 &mut lum,
                 &mut body,
-                &ignition,
+                &mut ignition,
                 evo,
                 dt_yr,
                 &mut supernova_events,
+                is_gmc,
             );
         }
 
@@ -317,7 +320,10 @@ fn step_protostar_ignition_and_limits(
             };
 
             body.body_type = assigned_type;
-            let is_cluster = body.name.contains("Protostar") || body.name.contains("Jeans");
+            let is_cluster = is_gmc
+                || body.name.contains("Protostar")
+                || body.name.contains("Jeans")
+                || body.name.contains("NovaCore");
             if !is_genesis && !is_cluster {
                 body.name = name_str.to_string();
             } else if is_cluster && !body.name.contains('(') {
@@ -360,6 +366,7 @@ fn step_protostar_ignition_and_limits(
         temp,
         lum,
         body,
+        ignition,
         opt_evo,
         opt_em,
         supernova_events,
@@ -373,6 +380,7 @@ fn apply_stellar_collapse_limits(
     temp: &mut Temperature,
     lum: &mut Luminosity,
     body: &mut CelestialBody,
+    ignition: &mut IgnitionState,
     opt_evo: &mut Option<Mut<'_, StellarEvolutionState>>,
     opt_em: Option<Mut<'_, ElectromagneticFieldState>>,
     supernova_events: &mut MessageWriter<SupernovaEvent>,
@@ -383,6 +391,7 @@ fn apply_stellar_collapse_limits(
         radius.0 = 0.0001;
         temp.0 = 1_000_000.0;
         lum.0 = 100.0;
+        ignition.is_ignited = false;
         if let Some(ref mut evo) = opt_evo {
             evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
             evo.nebula_expansion_radius_au = 2.0;
@@ -394,6 +403,7 @@ fn apply_stellar_collapse_limits(
             em.jet_length_au = 3.5;
             em.synchrotron_intensity = 1.8;
         }
+        let ejected_mass = (mass.0 - 1.40).max(0.1);
         supernova_events.write(SupernovaEvent {
             star_entity: entity,
             star_name: body.name.clone(),
@@ -401,6 +411,8 @@ fn apply_stellar_collapse_limits(
             remnant_mass_solar: 1.40,
             remnant_type: BodyType::Pulsar,
             shockwave_velocity_km_s: 12_000.0,
+            ejected_metals_solar: ejected_mass * 0.25,
+            ejected_composition: Composition::supernova_ejecta(),
         });
         mass.0 = 1.40;
     } else if matches!(
@@ -410,9 +422,10 @@ fn apply_stellar_collapse_limits(
     {
         body.body_type = BodyType::BlackHole;
         body.name = "The Star (Stellar-Mass Black Hole)".to_string();
-        radius.0 = (2.95e-5 * mass.0).max(0.00005);
+        radius.0 = (1.974e-8 * mass.0).max(1e-7);
         temp.0 = 10.0;
-        lum.0 = 5000.0;
+        lum.0 = 0.0;
+        ignition.is_ignited = false;
         if let Some(ref mut evo) = opt_evo {
             evo.phase = StellarEvolutionPhase::BlackHoleRemnant;
         }
@@ -432,10 +445,11 @@ fn step_stellar_evolution_cycle(
     temp: &mut Temperature,
     lum: &mut Luminosity,
     body: &mut CelestialBody,
-    ignition: &IgnitionState,
+    ignition: &mut IgnitionState,
     evo: &mut StellarEvolutionState,
     dt_yr: f64,
     supernova_events: &mut MessageWriter<SupernovaEvent>,
+    is_gmc: bool,
 ) {
     evo.phase_timer_years += dt_yr;
 
@@ -447,103 +461,203 @@ fn step_stellar_evolution_cycle(
             }
         }
         StellarEvolutionPhase::MainSequence => {
-            let target_lum = mass.0.powf(3.5);
-            let target_temp = 5778.0 * mass.0.powf(0.505);
-            let target_rad = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.20);
-            let k = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
-            lum.0 += (target_lum - lum.0) * k;
-            temp.0 += (target_temp - temp.0) * k;
-            radius.0 += (target_rad - radius.0) * k;
-
-            let main_seq_lifetime_yr = (1.0e10 * (mass.0).powf(-2.5)).clamp(1.0e6, 1.0e13);
-            let fuel_burn_rate = (1.0 / main_seq_lifetime_yr) as f32;
-            evo.hydrogen_core_fraction =
-                (evo.hydrogen_core_fraction - fuel_burn_rate * dt_yr as f32).max(0.0);
-
-            if evo.hydrogen_core_fraction <= 0.0 {
-                evo.phase_timer_years = 0.0;
-                if mass.0 < 0.50 {
-                    evo.phase = StellarEvolutionPhase::WhiteDwarf;
-                    body.body_type = BodyType::WhiteDwarf;
-                    body.name = "The Star (Helium White Dwarf)".to_string();
-                    radius.0 = 0.009;
-                    temp.0 = 25_000.0;
-                } else if mass.0 < 8.0 {
-                    evo.phase = StellarEvolutionPhase::RedGiantBranch;
-                    body.body_type = BodyType::RedGiant;
-                    body.name = "The Star (Red Giant Branch)".to_string();
-                } else {
-                    evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
-                    body.body_type = BodyType::RedSupergiant;
-                    body.name = "The Star (Red Supergiant)".to_string();
-                }
-            }
+            step_main_sequence_evolution(mass, radius, temp, lum, body, evo, dt_yr, is_gmc);
         }
         StellarEvolutionPhase::RedGiantBranch => {
-            let target_r = (1.25 * mass.0.powf(0.3)).clamp(0.8, 2.5);
-            let k = (1.0 - (-0.008 * dt_yr).exp()).clamp(0.0, 1.0);
-            radius.0 += (target_r - radius.0) * k;
-            temp.0 += (3100.0 - temp.0) * k;
-            lum.0 += (2500.0 * mass.0 - lum.0) * k;
-
-            evo.helium_core_fraction = (evo.helium_core_fraction + 0.0003 * dt_yr as f32).min(1.0);
-            if evo.helium_core_fraction >= 1.0 || evo.phase_timer_years > 3000.0 {
-                evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
-                body.name = "The Star (AGB Supergiant)".to_string();
-                evo.phase_timer_years = 0.0;
-            }
+            step_red_giant_evolution(mass, radius, temp, lum, body, evo, dt_yr);
         }
         StellarEvolutionPhase::HeliumFlashAgb => {
-            let target_r = 1.50f64;
-            let k = (1.0 - (-0.010 * dt_yr).exp()).clamp(0.0, 1.0);
-            radius.0 += (target_r - radius.0) * k;
-            lum.0 += (3500.0 - lum.0) * k;
-            temp.0 += (2900.0 - temp.0) * k;
-
-            if evo.phase_timer_years > 2500.0 {
-                evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
-                body.name = "The Star (Planetary Nebula Ejection)".to_string();
-                evo.nebula_expansion_radius_au = 1.6;
-                evo.nebula_opacity = 1.0;
-                evo.phase_timer_years = 0.0;
-            }
+            step_agb_evolution(radius, temp, lum, body, evo, dt_yr);
         }
         StellarEvolutionPhase::RedSupergiantBranch => {
-            let target_r = (4.5 * (mass.0 / 15.0).powf(0.5)).clamp(2.5, 7.5);
-            let k = (1.0 - (-0.012 * dt_yr).exp()).clamp(0.0, 1.0);
-            radius.0 += (target_r - radius.0) * k;
-            lum.0 += (80_000.0 * (mass.0 / 15.0).powf(2.0) - lum.0) * k;
-            temp.0 += (3300.0 - temp.0) * k;
-
-            if evo.phase_timer_years > 2000.0 {
-                evo.phase = StellarEvolutionPhase::SupernovaExplosion;
-                evo.phase_timer_years = 0.0;
-                evo.nebula_expansion_radius_au = (radius.0 * 1.2) as f32;
-                evo.nebula_opacity = 1.0;
-
-                let is_black_hole = mass.0 >= 25.0;
-                let remnant_type = if is_black_hole {
-                    BodyType::BlackHole
-                } else {
-                    BodyType::Pulsar
-                };
-                let remnant_mass = if is_black_hole {
-                    (mass.0 * 0.25).clamp(3.0, 15.0)
-                } else {
-                    1.44
-                };
-
-                supernova_events.write(SupernovaEvent {
-                    star_entity: entity,
-                    star_name: body.name.clone(),
-                    initial_mass_solar: mass.0,
-                    remnant_mass_solar: remnant_mass,
-                    remnant_type,
-                    shockwave_velocity_km_s: 15_000.0,
-                });
-            }
+            step_red_supergiant_evolution(
+                entity,
+                mass,
+                radius,
+                temp,
+                lum,
+                body,
+                ignition,
+                evo,
+                dt_yr,
+                is_gmc,
+                supernova_events,
+            );
         }
         _ => step_stellar_remnant_evolution(mass, radius, temp, lum, body, evo, dt_yr),
+    }
+}
+
+fn step_main_sequence_evolution(
+    mass: &mut Mass,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    body: &mut CelestialBody,
+    evo: &mut StellarEvolutionState,
+    dt_yr: f64,
+    is_gmc: bool,
+) {
+    let target_lum = mass.0.powf(3.5);
+    let target_temp = 5778.0 * mass.0.powf(0.505);
+    let target_rad = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.20);
+    let k = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
+    lum.0 += (target_lum - lum.0) * k;
+    temp.0 += (target_temp - temp.0) * k;
+    radius.0 += (target_rad - radius.0) * k;
+
+    // In cluster environments, massive stars live accelerated lifecycles (2,000 - 7,500 yr)
+    // so core-collapse supernovae and enrichment occur naturally during simulation time warp.
+    let main_seq_lifetime_yr = if is_gmc && mass.0 >= 8.0 {
+        (3500.0 * (15.0 / mass.0).powf(1.1)).clamp(1500.0, 7500.0)
+    } else {
+        (1.0e10 * (mass.0).powf(-2.5)).clamp(1.0e6, 1.0e13)
+    };
+    let fuel_burn_rate = (1.0 / main_seq_lifetime_yr) as f32;
+    evo.hydrogen_core_fraction =
+        (evo.hydrogen_core_fraction - fuel_burn_rate * dt_yr as f32).max(0.0);
+
+    if evo.hydrogen_core_fraction <= 0.0 {
+        evo.phase_timer_years = 0.0;
+        if mass.0 < 0.50 {
+            evo.phase = StellarEvolutionPhase::WhiteDwarf;
+            body.body_type = BodyType::WhiteDwarf;
+            body.name = if is_gmc {
+                format!("{} (White Dwarf)", body.name)
+            } else {
+                "The Star (Helium White Dwarf)".to_string()
+            };
+            radius.0 = 0.009;
+            temp.0 = 25_000.0;
+        } else if mass.0 < 8.0 {
+            evo.phase = StellarEvolutionPhase::RedGiantBranch;
+            body.body_type = BodyType::RedGiant;
+            body.name = if is_gmc {
+                format!("{} (Red Giant)", body.name)
+            } else {
+                "The Star (Red Giant Branch)".to_string()
+            };
+        } else {
+            evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
+            body.body_type = BodyType::RedSupergiant;
+            body.name = if is_gmc {
+                format!("{} (Red Supergiant)", body.name)
+            } else {
+                "The Star (Red Supergiant)".to_string()
+            };
+        }
+    }
+}
+
+fn step_red_giant_evolution(
+    mass: &mut Mass,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    body: &mut CelestialBody,
+    evo: &mut StellarEvolutionState,
+    dt_yr: f64,
+) {
+    let target_r = (1.25 * mass.0.powf(0.3)).clamp(0.8, 2.5);
+    let k = (1.0 - (-0.008 * dt_yr).exp()).clamp(0.0, 1.0);
+    radius.0 += (target_r - radius.0) * k;
+    temp.0 += (3100.0 - temp.0) * k;
+    lum.0 += (2500.0 * mass.0 - lum.0) * k;
+
+    evo.helium_core_fraction = (evo.helium_core_fraction + 0.0003 * dt_yr as f32).min(1.0);
+    if evo.helium_core_fraction >= 1.0 || evo.phase_timer_years > 3000.0 {
+        evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
+        body.name = "The Star (AGB Supergiant)".to_string();
+        evo.phase_timer_years = 0.0;
+    }
+}
+
+fn step_agb_evolution(
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    body: &mut CelestialBody,
+    evo: &mut StellarEvolutionState,
+    dt_yr: f64,
+) {
+    let target_r = 1.50f64;
+    let k = (1.0 - (-0.010 * dt_yr).exp()).clamp(0.0, 1.0);
+    radius.0 += (target_r - radius.0) * k;
+    lum.0 += (3500.0 - lum.0) * k;
+    temp.0 += (2900.0 - temp.0) * k;
+
+    if evo.phase_timer_years > 2500.0 {
+        evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
+        body.name = "The Star (Planetary Nebula Ejection)".to_string();
+        evo.nebula_expansion_radius_au = 1.6;
+        evo.nebula_opacity = 1.0;
+        evo.phase_timer_years = 0.0;
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Stellar evolution phase logic requires access to all core thermodynamic components"
+)]
+fn step_red_supergiant_evolution(
+    entity: Entity,
+    mass: &mut Mass,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    body: &mut CelestialBody,
+    ignition: &mut IgnitionState,
+    evo: &mut StellarEvolutionState,
+    dt_yr: f64,
+    is_gmc: bool,
+    supernova_events: &mut MessageWriter<SupernovaEvent>,
+) {
+    let target_r = (4.5 * (mass.0 / 15.0).powf(0.5)).clamp(2.5, 7.5);
+    let k = (1.0 - (-0.012 * dt_yr).exp()).clamp(0.0, 1.0);
+    radius.0 += (target_r - radius.0) * k;
+    lum.0 += (80_000.0 * (mass.0 / 15.0).powf(2.0) - lum.0) * k;
+    temp.0 += (3300.0 - temp.0) * k;
+
+    let rsg_limit = if is_gmc { 600.0 } else { 2000.0 };
+    if evo.phase_timer_years > rsg_limit {
+        evo.phase = StellarEvolutionPhase::SupernovaExplosion;
+        evo.phase_timer_years = 0.0;
+        evo.nebula_expansion_radius_au = (radius.0 * 1.2) as f32;
+        evo.nebula_opacity = 1.0;
+        ignition.is_ignited = false;
+
+        let is_black_hole = mass.0 >= 25.0;
+        let remnant_type = if is_black_hole {
+            BodyType::BlackHole
+        } else {
+            BodyType::Pulsar
+        };
+        let remnant_mass = if is_black_hole {
+            (mass.0 * 0.25).clamp(3.0, 15.0)
+        } else {
+            1.44
+        };
+        let ejected_mass = (mass.0 - remnant_mass).max(0.1);
+        let ejected_metals = ejected_mass * 0.25;
+
+        supernova_events.write(SupernovaEvent {
+            star_entity: entity,
+            star_name: body.name.clone(),
+            initial_mass_solar: mass.0,
+            remnant_mass_solar: remnant_mass,
+            remnant_type,
+            shockwave_velocity_km_s: 15_000.0,
+            ejected_metals_solar: ejected_metals,
+            ejected_composition: Composition::supernova_ejecta(),
+        });
+
+        mass.0 = remnant_mass;
+        body.body_type = remnant_type;
+        body.name = if is_gmc {
+            format!("{} ({remnant_type:?} Remnant)", body.name)
+        } else {
+            format!("The Star ({remnant_type:?} Remnant)")
+        };
     }
 }
 
@@ -563,7 +677,7 @@ fn step_stellar_remnant_evolution(
             evo.nebula_opacity = (1.0 - (evo.nebula_expansion_radius_au / 200.0)).clamp(0.0, 1.0);
 
             let target_core_r = if mass.0 >= 25.0 {
-                (2.95e-5 * mass.0).max(0.00005)
+                (1.974e-8 * mass.0).max(1e-7)
             } else {
                 0.0001
             };
@@ -576,9 +690,9 @@ fn step_stellar_remnant_evolution(
                     body.body_type = BodyType::BlackHole;
                     body.name = "The Star (Stellar-Mass Black Hole)".to_string();
                     mass.0 = (mass.0 * 0.25).clamp(3.0, 15.0);
-                    radius.0 = 2.95e-5 * mass.0;
+                    radius.0 = (1.974e-8 * mass.0).max(1e-7);
                     temp.0 = 10.0;
-                    lum.0 = 5000.0;
+                    lum.0 = 0.0;
                 } else {
                     evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
                     body.body_type = BodyType::Pulsar;
