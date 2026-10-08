@@ -7,6 +7,7 @@ pub mod integrator;
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use rayon::prelude::*;
 
 use crate::simulation::components::*;
 use crate::simulation::disk_migration::apply_type_i_torque_acc;
@@ -179,6 +180,7 @@ fn run_physics_substeps(
     jupiter_entity: Option<Entity>,
     saturn_entity: Option<Entity>,
     ice_giant_entities: &hashbrown::HashSet<Entity>,
+    elapsed_years: f64,
 ) {
     for _ in 0..n_substeps {
         for body in body_data.iter_mut() {
@@ -202,8 +204,20 @@ fn run_physics_substeps(
             })
             .collect();
 
+        let cluster_com_mass = if is_gmc_cluster {
+            let mut total_m = 0.0;
+            for &(_, m_mass, _, _) in &massive_data {
+                if m_mass >= 0.5 {
+                    total_m += m_mass;
+                }
+            }
+            (DVec3::ZERO, total_m)
+        } else {
+            (DVec3::ZERO, 0.0)
+        };
+
         let new_accelerations: Vec<DVec3> = body_data
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(i, b)| {
                 compute_single_body_acc(
@@ -217,6 +231,8 @@ fn run_physics_substeps(
                     tractor,
                     is_little_red_dot,
                     is_gmc_cluster,
+                    cluster_com_mass,
+                    elapsed_years,
                 )
             })
             .collect();
@@ -291,6 +307,8 @@ fn analyze_physics_system(
     target_dt: f64,
     softening_sq: f64,
 ) -> PhysicsSystemContext {
+    let is_gmc_cluster =
+        scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
     let star_index = body_data.iter().position(|b| b.is_central_star);
     let (star_mass, star_pos, is_central_quasi) = if let Some(idx) = star_index {
         if let Some(b) = body_data.get(idx) {
@@ -298,41 +316,54 @@ fn analyze_physics_system(
         } else {
             (1.0, DVec3::ZERO, false)
         }
+    } else if is_gmc_cluster {
+        (0.0, DVec3::ZERO, false)
     } else {
         (1.0, DVec3::ZERO, false)
     };
 
     let has_black_hole = body_data.iter().any(|b| b.body_type == BodyType::BlackHole);
-    let is_little_red_dot = scenario_state
-        .is_some_and(|s| s.current_preset == ScenarioPreset::LittleRedDot)
-        || is_central_quasi
-        || has_black_hole
-        || star_mass >= 15.0;
+    // A cluster naturally grows massive stars and black holes; those must not flip the whole
+    // simulation into Little-Red-Dot mode (125x smaller timestep + LRD-specific clamps).
+    let is_little_red_dot = !is_gmc_cluster
+        && (scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::LittleRedDot)
+            || is_central_quasi
+            || has_black_hole
+            || star_mass >= 15.0);
 
     let is_compact_system = (star_mass < 0.25 && disk_params.outer_radius_au < 1.0)
         || scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System);
-    let is_gmc_cluster =
-        scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
-    let is_smbh = star_mass > 100_000.0;
-    let max_substeps = if is_smbh {
-        config.max_substeps_per_frame.max(256)
-    } else if is_little_red_dot || is_compact_system || is_gmc_cluster {
+    // GMC clusters have wide open orbits (>= 1.4 AU); a massive central black hole in a cluster
+    // must not trigger the relativistic microsecond pericenter clamps used for close-in S-stars.
+    let is_smbh = !is_gmc_cluster && star_mass > 100_000.0;
+    let max_substeps = if is_gmc_cluster {
+        // GMC clusters feature hundreds of stars and gas clumps; clamp substeps to 64 to guarantee
+        // smooth frame rates while enabling fast-forwarding up to 5+ years per frame (300+ yr/s at 60 FPS).
+        config.max_substeps_per_frame.clamp(1, 64)
+    } else if is_smbh || is_little_red_dot || is_compact_system {
         config.max_substeps_per_frame.max(128)
     } else {
         config.max_substeps_per_frame
     };
-    let eff_dt = if is_smbh {
+    let eff_dt = if is_gmc_cluster {
+        // GMC clusters feature wide planetary and stellar orbits (>= 1.4 AU).
+        // 0.08 yr (~29 days) per leapfrog step provides high symplectic orbital stability
+        // while allowing fast-forwarding smoothly without stalling.
+        0.08
+    } else if is_smbh {
         dt.min(0.000_005)
     } else if is_little_red_dot || is_compact_system {
         dt.min(0.00004)
-    } else if is_gmc_cluster {
-        dt.min(0.005) // Relaxed from 0.0005 to allow much faster time-warp without crashing
     } else {
         dt
     };
 
-    // CRITICAL: Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding!
-    let safe_target_dt = target_dt.min(max_substeps as f64 * eff_dt);
+    // Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding in chaotic GMC clusters
+    let safe_target_dt = if is_gmc_cluster {
+        target_dt.min(max_substeps as f64 * eff_dt)
+    } else {
+        target_dt
+    };
     let n_substeps = ((safe_target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
     let sub_dt = safe_target_dt / (n_substeps as f64);
 
@@ -394,6 +425,43 @@ pub fn update_simulation_visual_time(
 }
 
 /// Advances the N-body gravitational physics simulation using a Symplectic Kick-Drift-Kick Leapfrog integrator.
+fn enforce_dynamic_galactic_nucleus(
+    body_data: &mut [PhysicsBodyEntry],
+    is_gmc_cluster: bool,
+    commands: &mut Commands,
+) {
+    if is_gmc_cluster && !body_data.iter().any(|b| b.is_central_star) {
+        if let Some(anchor_idx) = body_data
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.body_type.is_star_or_remnant())
+            .max_by(|a, b| {
+                a.1.mass
+                    .partial_cmp(&b.1.mass)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(i, _)| i)
+        {
+            if let Some(anchor_b) = body_data.get(anchor_idx) {
+                let anchor_pos = anchor_b.pos;
+                let anchor_vel = anchor_b.vel;
+                let anchor_entity = anchor_b.entity;
+
+                // Smoothly translate the entire galaxy so the Nucleus is precisely at DVec3::ZERO!
+                for b in body_data.iter_mut() {
+                    b.pos -= anchor_pos;
+                    b.vel -= anchor_vel;
+                }
+
+                if let Some(anchor_mut) = body_data.get_mut(anchor_idx) {
+                    anchor_mut.is_central_star = true;
+                }
+                commands.entity(anchor_entity).insert(CentralStar);
+            }
+        }
+    }
+}
+
 #[allow(clippy::type_complexity, reason = "N-body Simulation State")]
 pub fn step_physics_simulation(
     config: Res<SimulationConfig>,
@@ -455,6 +523,12 @@ pub fn step_physics_simulation(
         )
         .collect();
 
+    // --- DYNAMIC GALACTIC NUCLEUS ANCHOR ---
+    let is_gmc_cluster = scenario_state
+        .as_deref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
+    enforce_dynamic_galactic_nucleus(&mut body_data, is_gmc_cluster, &mut commands);
+
     if body_data.is_empty() {
         sim_time.elapsed_years += target_dt;
         sim_time.current_dt_yr = target_dt;
@@ -501,6 +575,7 @@ pub fn step_physics_simulation(
         jupiter_entity,
         saturn_entity,
         &ice_giant_entities,
+        sim_time.elapsed_years,
     );
 
     if let (Some(target), Some(dv)) = (

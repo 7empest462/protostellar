@@ -523,9 +523,24 @@ fn compute_inelastic_merger_physics(
     };
     let new_temp = (b1_temp + delta_temp).min(10000.0);
 
-    let is_star_like = pair.p_type.is_star_or_remnant();
-    let updated_type = if is_star_like {
-        pair.p_type
+    let updated_type = if pair.p_type == BodyType::BlackHole || pair.s_type == BodyType::BlackHole {
+        BodyType::BlackHole
+    } else if pair.p_type.is_remnant() || pair.s_type.is_remnant() {
+        if total_mass >= 25.0 {
+            BodyType::BlackHole
+        } else if pair.p_type.is_remnant() {
+            pair.p_type
+        } else {
+            pair.s_type
+        }
+    } else if pair.p_type.is_star_or_remnant() || pair.s_type.is_star_or_remnant() {
+        if total_mass >= 25.0 {
+            BodyType::BlackHole // Direct collapse if merged mass is huge
+        } else if pair.p_type.is_star_or_remnant() {
+            pair.p_type
+        } else {
+            pair.s_type
+        }
     } else if pair.p_type == BodyType::Moon || pair.s_type == BodyType::Moon {
         if pair.p_type.is_planet() {
             classify_body_by_mass_and_comp(total_mass, &merged_comp, false)
@@ -590,16 +605,16 @@ pub fn handle_inelastic_merger(
         pos.0 = physics.merged_pos;
         vel.0 = physics.merged_vel;
         acc.0 = physics.new_acc;
-        if body.body_type == BodyType::BlackHole {
+        if physics.updated_type == BodyType::BlackHole {
             rad.0 = (1.974e-8 * physics.total_mass).max(1e-7);
-        } else if !is_star_like {
+        } else if !physics.updated_type.is_star_or_remnant() {
             rad.0 = physics.new_radius;
             t.0 = physics.new_temp;
         }
         *comp = physics.merged_comp;
         body.body_type = physics.updated_type;
 
-        update_merged_body_name(&mut body.name, physics.updated_type);
+        update_merged_body_name(&mut body.name, physics.updated_type, physics.total_mass);
 
         if let Some(mut diff) = opt_diff {
             diff.recalculate(physics.total_mass, physics.new_radius, &physics.merged_comp);
@@ -614,6 +629,11 @@ pub fn handle_inelastic_merger(
     // Only remove SatelliteOf from secondary (despawned) entity, preserving orbit for primary if it was a satellite!
     if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {
         cmd.remove::<SatelliteOf>();
+    }
+    if pair.s_is_central {
+        if let Ok(mut cmd) = ctx.commands.get_entity(pair.primary_entity) {
+            cmd.insert(CentralStar);
+        }
     }
 
     if ctx.player_state.selected_entity == Some(pair.secondary_entity) {
@@ -667,8 +687,16 @@ fn is_canonical_solar_name(name: &str) -> bool {
         || lower.contains("sol")
 }
 
-fn update_merged_body_name(name: &mut String, updated_type: BodyType) {
+fn update_merged_body_name(name: &mut String, updated_type: BodyType, total_mass: f64) {
     if is_canonical_solar_name(name) {
+        return;
+    }
+    if updated_type == BodyType::BlackHole {
+        if total_mass >= 40.0 {
+            *name = format!("Galactic Nucleus (SMBH Seed - {total_mass:.1} M☉)");
+        } else if total_mass >= 15.0 {
+            *name = format!("Intermediate-Mass Black Hole ({total_mass:.1} M☉)");
+        }
         return;
     }
     let is_named_minor = name.contains("Comet") || name.contains("Asteroid");

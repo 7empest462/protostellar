@@ -47,6 +47,11 @@ fn resolve_host_context(
     }
 
     if let Some((s_ent, s_pos, s_vel, s_mass)) = star_opt {
+        // Supermassive or intermediate black holes (> 100 M☉) at galactic centers
+        // do not act as local stellar hosts for planetary tidal dissipation.
+        if s_mass > 100.0 {
+            return None;
+        }
         let rel_pos = pos - s_pos;
         let rel_vel = vel - s_vel;
         let elements = state_vectors_to_orbital_elements(rel_pos, rel_vel, s_mass, mass)?;

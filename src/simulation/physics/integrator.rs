@@ -286,7 +286,7 @@ pub fn apply_velocity_kick_and_limits(
 
             let speed = body.vel.length();
             if is_gmc_cluster {
-                let max_gmc_speed = 8.0; // ~38 km/s (physical escape velocity in a 24 M_sun cloud is ~29 km/s)
+                let max_gmc_speed = if star_mass > 50.0 { 1000.0 } else { 8.0 }; // relax limit once SMBH forms
                 if speed > max_gmc_speed {
                     body.vel *= max_gmc_speed / speed;
                 }

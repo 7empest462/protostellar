@@ -121,7 +121,7 @@ impl SimulationConfig {
             // A 5-10 M_sun BH is compact (~0.0022-0.0028 AU), distinctly smaller than a 0.025 AU main-sequence star.
             // At 1,600 M_sun, it dynamically scales up to ~0.020 AU.
             let mass_factor = (physical_radius_au / 1.974e-8).max(1.0);
-            (0.0012 * (mass_factor.powf(0.38) as f32) * self.size_exaggeration).clamp(0.0012, 10.0)
+            (0.0012 * (mass_factor.powf(0.38) as f32) * self.size_exaggeration).clamp(0.0020, 2.50)
         } else {
             base_rad
         }

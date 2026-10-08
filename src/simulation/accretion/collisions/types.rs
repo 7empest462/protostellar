@@ -66,6 +66,7 @@ pub struct SortedPair {
     pub s_type: BodyType,
     pub s_spin: DVec3,
     pub s_name: String,
+    pub s_is_central: bool,
 }
 
 pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4, 'm5> {
@@ -108,5 +109,6 @@ pub fn sort_collision_pair(b1: &BodySnapshot, b2: &BodySnapshot) -> SortedPair {
         s_type: s.body_type,
         s_spin: s.spin,
         s_name: s.name.clone(),
+        s_is_central: s.is_central,
     }
 }

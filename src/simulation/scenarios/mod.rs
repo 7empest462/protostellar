@@ -25,11 +25,13 @@ pub use trappist::*;
 
 use bevy::prelude::*;
 
+use serde::{Deserialize, Serialize};
+
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
 /// Supported Sandbox Scenario Presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect, Default, Serialize, Deserialize)]
 pub enum ScenarioPreset {
     #[default]
     SolarNebulaMmsn,
@@ -125,7 +127,7 @@ pub struct ActiveScenarioState {
     pub rogue_planet_entity: Option<Entity>,
 }
 
-fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
+pub fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
     match preset {
         ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
         ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
@@ -223,7 +225,7 @@ fn reset_scenario_simulation_state(
     lhb_state.time_active_years = 0.0;
 }
 
-fn update_scenario_system_phase(
+pub fn update_scenario_system_phase(
     preset: ScenarioPreset,
     phase_mgr: &mut Option<ResMut<crate::game::phases::PhaseManager>>,
     next_phase: &mut Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,

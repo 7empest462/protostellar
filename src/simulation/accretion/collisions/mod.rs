@@ -85,6 +85,22 @@ pub fn process_accretion_and_collisions(
                 continue;
             }
 
+            // High-performance spatial broadphase: eliminate >98% of distant pairs before cloning
+            if let (Some(s1), Some(s2)) = (snapshots.get(i), snapshots.get(j)) {
+                let max_reach =
+                    if s1.body_type == BodyType::BlackHole || s2.body_type == BodyType::BlackHole {
+                        50.0
+                    } else {
+                        6.0
+                    };
+                let dx = (s1.pos.x - s2.pos.x).abs();
+                let dz = (s1.pos.z - s2.pos.z).abs();
+                let dy = (s1.pos.y - s2.pos.y).abs();
+                if dx > max_reach || dz > max_reach || dy > max_reach {
+                    continue;
+                }
+            }
+
             let Some(b2) = snapshots.get(j).cloned() else {
                 continue;
             };
@@ -201,13 +217,26 @@ fn compute_effective_collision_radius(
             } else {
                 (other_b, star_b)
             };
-            let bh_vis =
-                f64::from(config.calc_visual_radius_for_type(bh_b.radius, BodyType::BlackHole));
-            let r_tidal = target_b.radius * (bh_b.mass / target_b.mass.max(1e-12)).cbrt();
-            // Any body entering the black hole's visual shadow or tidal disruption boundary is devoured
-            (bh_vis + other_b.radius.max(r_other_vis * 0.40))
-                .max(r_phys)
-                .max(r_tidal.min(bh_vis * 2.0))
+            let r_isco = (1.974e-8 * bh_b.mass * 3.0).max(1e-6);
+            if target_b.body_type == BodyType::BlackHole {
+                // Dual black holes: physical coalescence occurs at relativistic ISCO or physical contact
+                // However, in our N-body simulation, gravitational wave emission is not explicitly modeled.
+                // To allow them to merge into a Supermassive Black Hole at the galactic center, we artificially
+                // expand their capture radius based on their masses to guarantee they fuse once they sink into a tight binary.
+                let capture = 0.5
+                    * (bh_b.mass.max(1.0).sqrt() + target_b.mass.max(1.0).sqrt()).clamp(1.0, 50.0);
+                capture.max(r_phys)
+            } else {
+                // Star or planet around Black Hole: devoured within tidal disruption or extended gravitational capture radius
+                let r_tidal = target_b.radius * (bh_b.mass / target_b.mass.max(1e-12)).cbrt();
+                let r_swallow = if bh_b.mass >= 5.0 && bh_b.mass < 1_000_000.0 {
+                    // Massive black holes in dense cluster / galactic cores actively capture plunging stars
+                    (0.18 * bh_b.mass.cbrt()).clamp(0.4, 2.5)
+                } else {
+                    r_tidal
+                };
+                (r_isco.max(r_swallow)).max(r_phys)
+            }
         } else {
             // Devourment occurs if body plunges into the star's visual photosphere
             (r_star_vis + other_b.radius.max(r_other_vis * 0.40)).max(r_phys)

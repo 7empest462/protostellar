@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::celestial::BodyType;
+use super::celestial::{BodyType, Composition};
 
 /// Ignition progress state for a forming star (0.0 = cold cloud, 1.0 = fully ignited).
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
@@ -412,6 +412,8 @@ pub struct SupernovaEvent {
     pub remnant_mass_solar: f64,
     pub remnant_type: BodyType,
     pub shockwave_velocity_km_s: f64,
+    pub ejected_metals_solar: f64,
+    pub ejected_composition: Composition,
 }
 
 /// Atmospheric escape and photoevaporative cometary tail component.

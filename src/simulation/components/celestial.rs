@@ -532,6 +532,17 @@ impl Composition {
         Self::solar_gas()
     }
 
+    /// Nucleosynthetic core-collapse supernova ejecta (enriched in iron-group metals and rock silicates)
+    pub fn supernova_ejecta() -> Self {
+        Self {
+            metal_frac: 0.25,
+            silicate_frac: 0.55,
+            ice_frac: 0.15,
+            organics_frac: 0.00,
+            gas_frac: 0.05,
+        }
+    }
+
     /// Cycles to next major chemical archetype
     pub fn cycle_next_composition(&self) -> Self {
         if self.silicate_frac > 0.6 {

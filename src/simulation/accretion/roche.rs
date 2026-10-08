@@ -181,6 +181,8 @@ pub fn process_classical_novae(
                 remnant_mass_solar: mass.0,
                 remnant_type: crate::simulation::components::BodyType::WhiteDwarf,
                 shockwave_velocity_km_s: 3000.0,
+                ejected_metals_solar: critical_mass * 0.15,
+                ejected_composition: crate::simulation::components::Composition::supernova_ejecta(),
             });
         }
     }

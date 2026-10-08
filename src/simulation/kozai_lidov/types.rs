@@ -39,6 +39,44 @@ impl KozaiRegime {
     }
 }
 
+fn default_infinity() -> f64 {
+    f64::INFINITY
+}
+
+fn default_zero() -> f64 {
+    0.0
+}
+
+/// Deserializes an optional/nullable float, mapping `null` or missing to `f64::INFINITY`.
+pub fn deserialize_nullable_f64_infinity<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<f64>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or(f64::INFINITY))
+}
+
+/// Serializes a float, clamping `f64::INFINITY` or `NaN` to a large finite number (1e12) for JSON validity.
+pub fn serialize_f64_finite_infinity<S>(val: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if val.is_infinite() || val.is_nan() {
+        serializer.serialize_f64(1.0e12)
+    } else {
+        serializer.serialize_f64(*val)
+    }
+}
+
+/// Deserializes an optional/nullable float, mapping `null` to `0.0`.
+pub fn deserialize_nullable_f64_zero<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<f64>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or(0.0))
+}
+
 /// Component tracking hierarchical triple Kozai-Lidov secular state and orbital forecasts.
 #[derive(Component, Debug, Clone, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
@@ -59,8 +97,17 @@ pub struct KozaiLidovState {
     /// Minimum periastron distance at peak eccentricity $q_{\min} = a(1 - e_{\max})$ in AU.
     pub min_periastron_au: f64,
     /// Characteristic secular Kozai-Lidov cycle timescale $\tau_{\text{KL}}$ in Earth years.
+    #[serde(
+        default = "default_infinity",
+        deserialize_with = "deserialize_nullable_f64_infinity",
+        serialize_with = "serialize_f64_finite_infinity"
+    )]
     pub kozai_period_years: f64,
     /// Ratio of Kozai timescale to 1PN relativistic precession timescale $\tau_{\text{KL}} / \tau_{\text{GR}}$.
+    #[serde(
+        default = "default_zero",
+        deserialize_with = "deserialize_nullable_f64_zero"
+    )]
     pub gr_precession_ratio: f64,
     /// Whether GR precession is actively suppressing or detuning the resonance.
     pub is_gr_suppressed: bool,
