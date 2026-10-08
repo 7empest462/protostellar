@@ -186,6 +186,7 @@ pub struct QuickBarState {
     pub is_minimized: bool,
     pub show_minor_bodies: bool,
     pub show_embryos: bool,
+    pub sort_by_mass: bool,
     /// Active astronomical belts expanded to reveal individual member buttons.
     pub expanded_belts: BTreeSet<BeltZone>,
 }
@@ -572,6 +573,7 @@ pub enum UiButtonAction {
     SelectKuiper,
     CycleTarget,
     ToggleMinimizeQuickBar,
+    ToggleListSortMode,
     ToggleMinorBodies,
     ToggleBelt(BeltZone),
     ExpandAllBelts,
@@ -785,6 +787,7 @@ impl UiButtonAction {
             UiButtonAction::QuickLoad => "[Shift+F12]: Quick Load saved solar system state from disk.",
             UiButtonAction::AdvanceCivilization => "Advance civilization: spawns a high-tech biosphere and activates city lights on the night side.",
             UiButtonAction::LaunchProbe => "Launch a Space Probe: sends an Orbiter or Rover from a technologically advanced world (or star) to explore the selected target.",
+            UiButtonAction::ToggleListSortMode => "Toggle whether the list of celestial bodies is sorted by distance from the central star or by descending mass.",
         }
     }
 }

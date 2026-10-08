@@ -136,7 +136,7 @@ fn test_system_worlds_numerical_ordering_and_reindexing() {
             Option<&CentralStar>,
         )>();
         let items: Vec<_> = query.iter(w).collect();
-        collect_sorted_system_worlds(items)
+        collect_sorted_system_worlds(items, false)
     };
 
     let worlds = query_and_sort(&mut world);

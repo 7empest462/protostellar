@@ -236,9 +236,10 @@ pub fn body_to_button_label_and_colors(
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn collect_embryo_and_minor_bodies(
     bodies: impl Iterator<Item = (Entity, CelestialBody, SimPosition, Mass, Radius, bool)>,
+    sort_by_mass: bool,
 ) -> (
-    Vec<(Entity, String, BodyType, bool, f64)>,
-    Vec<(Entity, String, BodyType, bool, f64)>,
+    Vec<(Entity, String, BodyType, bool, f64, f64)>,
+    Vec<(Entity, String, BodyType, bool, f64, f64)>,
 ) {
     let mut embryo_bodies = Vec::new();
     let mut minor_bodies = Vec::new();
@@ -250,14 +251,33 @@ fn collect_embryo_and_minor_bodies(
             0.0
         };
         if is_embryo_body(&body.name, body.body_type) {
-            embryo_bodies.push((ent, body.name.clone(), body.body_type, is_star, dist));
+            embryo_bodies.push((
+                ent,
+                body.name.clone(),
+                body.body_type,
+                is_star,
+                dist,
+                mass.0,
+            ));
         } else if !is_major_body(&body.name, body.body_type, is_star, mass.0) {
-            minor_bodies.push((ent, body.name.clone(), body.body_type, is_star, dist));
+            minor_bodies.push((
+                ent,
+                body.name.clone(),
+                body.body_type,
+                is_star,
+                dist,
+                mass.0,
+            ));
         }
     }
 
-    embryo_bodies.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
-    minor_bodies.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
+    if sort_by_mass {
+        embryo_bodies.sort_by(|a, b| b.5.partial_cmp(&a.5).unwrap_or(std::cmp::Ordering::Equal));
+        minor_bodies.sort_by(|a, b| b.5.partial_cmp(&a.5).unwrap_or(std::cmp::Ordering::Equal));
+    } else {
+        embryo_bodies.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
+        minor_bodies.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
+    }
 
     (embryo_bodies, minor_bodies)
 }
@@ -295,8 +315,8 @@ fn populate_minimized_quick_bar(
 fn populate_expanded_quick_bar(
     btn_row: &mut ChildSpawnerCommands,
     major_worlds: &[SystemWorld],
-    embryo_bodies: &[(Entity, String, BodyType, bool, f64)],
-    minor_bodies: &[(Entity, String, BodyType, bool, f64)],
+    embryo_bodies: &[(Entity, String, BodyType, bool, f64, f64)],
+    minor_bodies: &[(Entity, String, BodyType, bool, f64, f64)],
     probes: &[(Entity, ProbeType, String)],
     selected_entity: Option<Entity>,
     quick_bar_state: &QuickBarState,
@@ -309,6 +329,38 @@ fn populate_expanded_quick_bar(
         Color::srgb(0.9, 0.4, 0.6),
     );
 
+    let sort_label = if quick_bar_state.sort_by_mass {
+        "⚖️ Sort: Mass"
+    } else {
+        "📏 Sort: Dist"
+    };
+    create_compact_button(
+        btn_row,
+        UiButtonAction::ToggleListSortMode,
+        sort_label,
+        Color::srgba(0.12, 0.16, 0.22, 0.85),
+        Color::srgb(0.5, 0.7, 1.0),
+    );
+
+    populate_major_worlds(btn_row, major_worlds, selected_entity);
+    populate_probes(btn_row, probes, selected_entity);
+    populate_embryos(btn_row, embryo_bodies, selected_entity, quick_bar_state);
+    populate_minor_body_belts(btn_row, minor_bodies, selected_entity, quick_bar_state);
+
+    create_compact_button(
+        btn_row,
+        UiButtonAction::CycleTarget,
+        "Cycle [Tab]",
+        Color::srgba(0.12, 0.16, 0.26, 0.85),
+        Color::srgb(0.5, 0.7, 1.0),
+    );
+}
+
+fn populate_major_worlds(
+    btn_row: &mut ChildSpawnerCommands,
+    major_worlds: &[SystemWorld],
+    selected_entity: Option<Entity>,
+) {
     for world in major_worlds {
         let (raw_label, base_bg, base_border) =
             body_to_button_label_and_colors(&world.name, world.body_type, world.is_central_star);
@@ -341,7 +393,13 @@ fn populate_expanded_quick_bar(
             base_border,
         );
     }
+}
 
+fn populate_probes(
+    btn_row: &mut ChildSpawnerCommands,
+    probes: &[(Entity, ProbeType, String)],
+    selected_entity: Option<Entity>,
+) {
     for (probe_ent, probe_type, probe_name) in probes {
         let (base_bg, base_border) = match probe_type {
             ProbeType::Orbiter => (
@@ -374,10 +432,17 @@ fn populate_expanded_quick_bar(
             base_border,
         );
     }
+}
 
+fn populate_embryos(
+    btn_row: &mut ChildSpawnerCommands,
+    embryo_bodies: &[(Entity, String, BodyType, bool, f64, f64)],
+    selected_entity: Option<Entity>,
+    quick_bar_state: &QuickBarState,
+) {
     if !embryo_bodies.is_empty() {
         if quick_bar_state.show_embryos {
-            for (ent, name, b_type, is_star, _) in embryo_bodies {
+            for (ent, name, b_type, is_star, _, _) in embryo_bodies {
                 let (raw_label, base_bg, base_border) =
                     body_to_button_label_and_colors(name, *b_type, *is_star);
                 let is_selected = selected_entity == Some(*ent);
@@ -419,21 +484,11 @@ fn populate_expanded_quick_bar(
             );
         }
     }
-
-    populate_minor_body_belts(btn_row, minor_bodies, selected_entity, quick_bar_state);
-
-    create_compact_button(
-        btn_row,
-        UiButtonAction::CycleTarget,
-        "Cycle [Tab]",
-        Color::srgba(0.12, 0.16, 0.26, 0.85),
-        Color::srgb(0.5, 0.7, 1.0),
-    );
 }
 
 fn populate_minor_body_belts(
     btn_row: &mut ChildSpawnerCommands,
-    minor_bodies: &[(Entity, String, BodyType, bool, f64)],
+    minor_bodies: &[(Entity, String, BodyType, bool, f64, f64)],
     selected_entity: Option<Entity>,
     quick_bar_state: &QuickBarState,
 ) {
@@ -509,7 +564,7 @@ fn populate_minor_body_belts(
                 Color::srgb(1.0, 1.0, 1.0),
             );
 
-            for (ent, name, b_type, is_star, _) in zone_members {
+            for (ent, name, b_type, is_star, _, _) in zone_members {
                 let (raw_label, b_bg, b_border) =
                     body_to_button_label_and_colors(name, *b_type, *is_star);
                 let is_selected = selected_entity == Some(*ent);
@@ -622,8 +677,8 @@ pub fn update_quick_body_selector_bar(
         quick_bar_state.is_minimized = !quick_bar_state.is_minimized;
     }
 
-    let (embryo_bodies, minor_bodies) =
-        collect_embryo_and_minor_bodies(bodies_query.iter().map(|(e, b, p, m, r, s)| {
+    let (embryo_bodies, minor_bodies) = collect_embryo_and_minor_bodies(
+        bodies_query.iter().map(|(e, b, p, m, r, s)| {
             (
                 e,
                 b.clone(),
@@ -632,9 +687,12 @@ pub fn update_quick_body_selector_bar(
                 *r,
                 s.is_some() || b.body_type.is_star_or_remnant(),
             )
-        }));
+        }),
+        quick_bar_state.sort_by_mass,
+    );
 
-    let major_worlds = collect_sorted_system_worlds(bodies_query.iter());
+    let major_worlds =
+        collect_sorted_system_worlds(bodies_query.iter(), quick_bar_state.sort_by_mass);
     let probes: Vec<(Entity, ProbeType, String)> = probes_query
         .iter()
         .map(|(e, p, b)| (e, p.probe_type, b.name.clone()))

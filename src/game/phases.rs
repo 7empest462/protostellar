@@ -25,6 +25,8 @@ pub enum SystemPhase {
     MatureSolarSystem,
     /// Far-future stellar metamorphosis: Red Giant expansion and White Dwarf remnant
     StellarMetamorphosis,
+    /// Lin-Shu density wave organizes gas and star clusters into grand-design spiral arms
+    SpiralGalaxyEvolution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub enum MilestoneId {
     DynamoMagneticShield,
     BiosphereGenesis,
     StellarMetamorphosis,
+    SpiralArmsEmergence,
 }
 
 /// A scientific discovery milestone tracking solar system emergence.
@@ -208,6 +211,13 @@ impl Default for PhaseManager {
                     achieved: false,
                     achieve_timestamp: None,
                 },
+                ScientificMilestone {
+                    id: MilestoneId::SpiralArmsEmergence,
+                    title: "🌀 14. Grand Design Spiral Galaxy Evolution",
+                    prompt: "Lin-Shu density wave organizes gas and star clusters into grand-design logarithmic spiral arms.",
+                    achieved: false,
+                    achieve_timestamp: None,
+                },
             ],
             latest_unlocked_milestone: None,
             milestone_toast_timer: 0.0,
@@ -349,6 +359,9 @@ fn evaluate_scientific_milestones(
             MilestoneId::DynamoMagneticShield => stats.has_dynamo,
             MilestoneId::BiosphereGenesis => stats.has_biosphere,
             MilestoneId::StellarMetamorphosis => stats.is_red_giant_or_wd,
+            MilestoneId::SpiralArmsEmergence => {
+                current_sim_yr >= 2200.0 && (stats.planets + stats.protoplanets >= 2)
+            }
         };
 
         if passed {
@@ -371,6 +384,19 @@ fn evaluate_system_phase_transitions(
     next_phase: &mut NextState<SystemPhase>,
     current_sim_yr: f64,
 ) {
+    if (phase_mgr.current_phase == SystemPhase::MolecularCloudCollapse
+        || phase_mgr.current_phase == SystemPhase::SpiralGalaxyEvolution)
+        && current_sim_yr >= 1500.0
+    {
+        if phase_mgr.current_phase != SystemPhase::SpiralGalaxyEvolution {
+            phase_mgr.current_phase = SystemPhase::SpiralGalaxyEvolution;
+            phase_mgr.phase_description =
+                "🌀 Grand Design Spiral Galaxy! Rotating Lin-Shu density waves organize stars and gas into sweeping spiral arms.";
+            next_phase.set(SystemPhase::SpiralGalaxyEvolution);
+        }
+        return;
+    }
+
     if (current_sim_yr >= 800.0 || lhb_state.resonance_crossed)
         && matches!(
             phase_mgr.current_phase,

@@ -473,7 +473,7 @@ fn test_black_hole_scaling_and_devourment() {
 fn test_supermassive_seed_attraction_never_repels() {
     let m_supermassive = 100_000.0; // 100,000 M_sun supermassive seed
     let r_pos = DVec3::new(10.0, 0.0, 0.0);
-    let v_vel = DVec3::new(0.0, 0.0, 6.28);
+    let v_vel = DVec3::new(0.0, 0.0, std::f64::consts::TAU);
 
     // 1. Verify 1PN acceleration is strictly attractive (inward toward origin, negative in x)
     let a_1pn = calculate_1pn_acceleration(r_pos, v_vel, m_supermassive);

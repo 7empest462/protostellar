@@ -16,6 +16,8 @@ mod engulfment;
 mod genesis_scenario;
 #[path = "simulation_tests/geological_epochs.rs"]
 mod geological_epochs;
+#[path = "simulation_tests/gmc_black_hole_sinking.rs"]
+mod gmc_black_hole_sinking;
 #[path = "simulation_tests/gpu_and_particles.rs"]
 mod gpu_and_particles;
 #[path = "simulation_tests/inspector_and_minimization.rs"]
@@ -66,6 +68,8 @@ mod slingshot;
 mod space_weather;
 #[path = "simulation_tests/storms.rs"]
 mod storms;
+#[path = "simulation_tests/supernova_enrichment.rs"]
+mod supernova_enrichment;
 #[path = "simulation_tests/supernova_explosion.rs"]
 mod supernova_explosion;
 #[path = "simulation_tests/telemetry.rs"]

@@ -12,7 +12,7 @@ use crate::utils::constants::*;
 
 pub fn format_body_inspector_type(body_type: BodyType, mass_solar: f64) -> &'static str {
     match body_type {
-        BodyType::Protostar => "Central Star (Protostar)",
+        BodyType::Protostar => "Protostar (Young Stellar Object)",
         BodyType::MainSequenceStar => "Main Sequence Star",
         BodyType::BrownDwarf => "Brown Dwarf (Sub-Stellar)",
         BodyType::RedDwarf => "Red Dwarf Star (M-Type)",

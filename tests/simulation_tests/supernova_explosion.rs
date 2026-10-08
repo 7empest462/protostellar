@@ -23,6 +23,7 @@ fn test_supernova_explosion_classification_and_layer_generation() {
         35.0,
         3.5,
         BodyType::BlackHole,
+        0.0,
     );
     assert_eq!(pool.explosions.len(), 1);
     let hyper = &pool.explosions[0];
@@ -48,6 +49,7 @@ fn test_supernova_explosion_classification_and_layer_generation() {
         15.0,
         1.44,
         BodyType::Pulsar,
+        0.0,
     );
     assert_eq!(pool.explosions.len(), 1);
     let type_ii = &pool.explosions[0];
@@ -73,6 +75,7 @@ fn test_supernova_explosion_classification_and_layer_generation() {
         2.5,
         0.6,
         BodyType::WhiteDwarf,
+        0.0,
     );
     assert_eq!(pool.explosions.len(), 1);
     let pneb = &pool.explosions[0];
@@ -94,6 +97,7 @@ fn test_supernova_debris_kinematics_and_decay() {
         18.0,
         1.4,
         BodyType::Pulsar,
+        0.0,
     );
 
     let initial_r = pool.explosions[0].current_radius_au;
@@ -167,6 +171,7 @@ fn test_supernova_blast_clears_particle_swarm() {
             20.0,
             1.4,
             BodyType::Pulsar,
+            0.0,
         );
     }
 
@@ -251,6 +256,7 @@ fn test_supernova_blast_interacts_with_planets_and_asteroids() {
             22.0,
             1.44,
             BodyType::Pulsar,
+            0.0,
         );
     }
 
@@ -314,6 +320,8 @@ fn test_supernova_event_ingestion_in_bevy_schedule() {
         remnant_mass_solar: 3.5,
         remnant_type: BodyType::BlackHole,
         shockwave_velocity_km_s: 15_000.0,
+        ejected_metals_solar: 6.5,
+        ejected_composition: protostellar::simulation::components::Composition::supernova_ejecta(),
     });
 
     app.update();
@@ -374,6 +382,7 @@ fn test_supernova_visual_shell_ecs_sync() {
             28.0,
             3.0,
             BodyType::BlackHole,
+            0.0,
         );
     }
 
@@ -451,6 +460,7 @@ fn test_persistent_supernova_remnant_handoff_and_sedov_expansion() {
             12.0,
             1.4,
             BodyType::Pulsar,
+            0.0,
         );
         pool.explosions[0].timer = pool.explosions[0].max_timer; // Ready to hand off!
     }
@@ -528,6 +538,7 @@ fn test_supernova_visual_shell_persists_into_remnant() {
             20.0,
             1.4,
             BodyType::Pulsar,
+            0.0,
         );
     }
 
@@ -561,6 +572,8 @@ fn test_supernova_visual_shell_persists_into_remnant() {
             initial_radius_au: 20.0,
             current_radius_au: 80.0,
             expansion_rate_au_yr: 0.02,
+            ejecta_mass_solar: 18.6,
+            metals_mass_solar: 3.5,
             age_years: 500.0,
             max_age_years: 50_000.0,
             opacity: 0.85,

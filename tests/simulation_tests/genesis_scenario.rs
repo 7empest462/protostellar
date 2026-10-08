@@ -196,7 +196,7 @@ fn test_inner_terrestrial_clump_promotion_threshold() {
     let b_mass = 1e-10f32;
     let mut data = ParticleSwarmData {
         positions: vec![[1.0, 0.0, 0.0]],
-        velocities: vec![[0.0, 0.0, 6.28]],
+        velocities: vec![[0.0, 0.0, std::f32::consts::TAU]],
         masses: vec![(0.0025 * EARTH_MASS_SOLAR) as f32],
         compositions: vec![Composition::rocky()],
         temperatures: vec![300.0],

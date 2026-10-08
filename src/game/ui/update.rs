@@ -133,6 +133,9 @@ fn update_header_stats(
         crate::game::phases::SystemPhase::StellarMetamorphosis => {
             "STELLAR METAMORPHOSIS (RED GIANT / WHITE DWARF)"
         }
+        crate::game::phases::SystemPhase::SpiralGalaxyEvolution => {
+            "GRAND DESIGN SPIRAL GALAXY EVOLUTION"
+        }
     };
 
     let gas_status = if config.gas_density_scale > 0.05 {
@@ -158,6 +161,9 @@ fn update_header_stats(
             lhb_state.comets_scattered,
             lhb_state.water_delivered_earth_masses
         )
+    } else if phase_mgr.current_phase == crate::game::phases::SystemPhase::SpiralGalaxyEvolution {
+        "\n🌀 SPIRAL ARMS: Lin-Shu Waves | Pattern: 14 kyr | Pitch: 18° | Arm Resonance: Active"
+            .to_string()
     } else {
         String::new()
     };

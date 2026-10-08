@@ -455,7 +455,7 @@ fn test_spawn_protoplanetary_disk_spawns_pluto_and_planet_nine() {
         .iter(app.world())
         .collect();
 
-    let system_worlds = collect_sorted_system_worlds(query_items);
+    let system_worlds = collect_sorted_system_worlds(query_items, false);
     let world_names: Vec<&str> = system_worlds.iter().map(|w| w.name.as_str()).collect();
     assert!(
         world_names.iter().any(|n| n.contains("Pluto")),

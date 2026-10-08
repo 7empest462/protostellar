@@ -9,6 +9,9 @@
 2. [🎮 Flight Manual & How to Access Everything In-Game](#-flight-manual--how-to-access-everything-in-game)
    - [Camera & Viewport Controls](#camera--viewport-controls)
    - [Time Flow Engine](#time-flow-engine)
+   - [Giant Molecular Clouds & Volumetric Fluid Dynamics](#giant-molecular-clouds--volumetric-fluid-dynamics)
+   - [Interstellar Probes & Astronautics](#interstellar-probes--astronautics)
+   - [Exoplanet Civilizations & Megastructures](#exoplanet-civilizations--megastructures)
    - [Supernova Core-Collapse, Matter Ejection & Remnant Formation](#supernova-core-collapse-matter-ejection--remnant-formation)
    - [Persistent Supernova Remnant (SNR) Nebulae & Shaders](#persistent-supernova-remnant-snr-nebulae--shaders)
    - [Pristine Disk Genesis & Protostellar Thermonuclear Ignition](#pristine-disk-genesis--protostellar-thermonuclear-ignition)
@@ -48,6 +51,9 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 
 | System / Feature | Description | Primary In-Game Access |
 | :--- | :--- | :---: |
+| **Giant Molecular Clouds & Fluid Volumetrics** | Live WGPU compute shader volumetric fluid dynamics simulating $250,000\text{ AU}$ turbulent nebula gas. Features gravity-driven Jeans Collapse spawning Pop-I/II/III stars and HII region ionization bubbles that carve out the nebula via radiation pressure. | Click **`[Molecular Cloud]`** in Scenarios Bar |
+| **Interstellar Probes & Astronautics** | Launch and navigate robotic space probes across star systems. Uses continuous low-thrust ion drives for deep-space transit and automatic retrograde braking for orbital insertion or surface rover landings. | Open Inspector (**`[I]`**) $\to$ click **`[Launch Probe]`** |
+| **Exoplanet Civilizations & Megastructures** | Tracks geological-scale habitability over billions of years, allowing primitive biospheres to organically evolve into advanced spacefaring technosignatures. Advanced civilizations automatically construct massive light-intercepting Dyson Swarms around their host stars, permanently altering the system's thermodynamic balance. | Open Inspector (**`[I]`**) $\to$ click **`[Adv. Civ]`** or let a biosphere evolve natively |
 | **Supernova Core-Collapse & Ejecta Simulation** | High-energy stellar detonations with prompt breakout fireballs, supersonic multi-layer shockwaves, turbulent Rayleigh-Taylor matter clumps, SPH circumstellar disk clearing ($+15\text{ AU/s}$), and asteroid vaporization. Differentiated by progenitor mass: Hypernova / Collapsar ($\ge 25\ M_\odot \to$ Black Hole), Type II ($8 - 25\ M_\odot \to$ Pulsar), Type Ia ($> 1.44\ M_\odot \to$ Complete Disruption), and Planetary Nebula ($0.5 - 8\ M_\odot \to$ White Dwarf). | Open Inspector (**`[I]`**) $\to$ click **`[💥 Supernova]`**, or press **`[N]`** on star, or over-accrete a White Dwarf |
 | **Pristine Disk Genesis & Star Ignition** | Class II T-Tauri disk without starter planets. Features 100,000 SPH viscous particles, aerodynamic gas drag, $2.7\text{ AU}$ water snow line trap, protostellar gravitational contraction, and automatic thermonuclear ignition at $10.0\text{ MK}$ ($100\%$) with solar wind clearing. | Press **`[Shift + F1]`** or click **`[Disk Genesis]`** in Scenarios Bar |
 | **Secular Kozai-Lidov Resonance** | Quadrupole secular gravitational coupling in hierarchical triples, driving massive cyclic exchanges of orbital inclination and eccentricity ($e \leftrightarrow i$) up to $e \to 0.88+$, triggering extreme tidal heating, captures, or Roche shredding. | Press **`[F11]`** or click **`[HD 80606]`** in Scenarios Bar |
@@ -92,6 +98,24 @@ Protostellar features a multi-tiered symplectic time integrator allowing you to 
 - **`←` / `→`**: Incrementally step simulation speed down or up.
 
 ---
+
+### Giant Molecular Clouds & Volumetric Fluid Dynamics
+Immerse yourself in deep-space star formation through real-time 3D fluid volumetric raymarching. The simulation uses an Eulerian grid processed on the GPU to compute pressure, density, and turbulent velocity of cold hydrogen gas clouds.
+- **Jeans Collapse & Protostar Ignition**: When gas density and temperature exceed the critical Jeans mass, localized regions gravitationally collapse, autonomously spawning Pop-I, II, or Pop-III massive hypergiants and advanced planetary systems depending on the cloud's primordial metallicity.
+- **HII Ionization Bubbles**: As newborn stars ignite, their intense radiation pressure and stellar winds carve out massive, glowing cavities in the surrounding nebula.
+- **To use**: Open the Scenarios Bar and click **`[Molecular Cloud]`**.
+
+### Interstellar Probes & Astronautics
+Explore and survey your newly formed exoplanets by launching autonomous spacecraft.
+- **Ion-Drive Navigation**: Probes compute interception trajectories and use continuous low-thrust ion drives to transit between worlds.
+- **Orbiters vs. Rovers**: Upon arrival, Orbiters perform autonomous retrograde braking to circularize into orbit, while Rovers decelerate completely for a soft surface landing.
+- **To use**: Select any planet, open the Inspector (**`[I]`**), and click **`[Launch Probe]`**.
+
+### Exoplanet Civilizations & Megastructures
+Watch primitive biospheres organically transition into advanced spacefaring empires.
+- **Habitability Tracking**: Worlds in the habitable zone with liquid oceans and stable orbits accrue "biosphere" potential over geological timescales.
+- **Dyson Swarms**: Once a civilization reaches a Type-II Kardashev threshold (a high technosignature), it will begin constructing a massive Dyson Swarm around its host star. This megastructure intercepts stellar radiation, measurably cooling down outer planets.
+- **To use**: Select a habitable planet, open the Inspector (**`[I]`**), and click **`[Adv. Civ]`** to instantly artificially advance the species, or wait millions of years for natural evolution.
 
 ### Supernova Core-Collapse, Matter Ejection & Remnant Formation
 Witness the violent death of massive stars and the birth of exotic compact remnants through real-time 3D explosive hydrodynamic visuals:

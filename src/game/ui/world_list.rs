@@ -97,7 +97,7 @@ pub fn is_major_body(name: &str, body_type: BodyType, is_star: bool, mass_solar:
 /// - [0] is ALWAYS the Central Star.
 /// - [1..N] are all orbiting worlds (companions, black holes, super-earths, gas giants, embryos),
 ///   sorted strictly from innermost to outermost by distance from the star.
-pub fn collect_sorted_system_worlds<'a, I>(items: I) -> Vec<SystemWorld>
+pub fn collect_sorted_system_worlds<'a, I>(items: I, sort_by_mass: bool) -> Vec<SystemWorld>
 where
     I: IntoIterator<
         Item = (
@@ -173,11 +173,19 @@ where
         central_star = Some(cs);
     }
 
-    other_worlds.sort_by(|a, b| {
-        a.distance_au
-            .partial_cmp(&b.distance_au)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    if sort_by_mass {
+        other_worlds.sort_by(|a, b| {
+            b.mass_solar
+                .partial_cmp(&a.mass_solar)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    } else {
+        other_worlds.sort_by(|a, b| {
+            a.distance_au
+                .partial_cmp(&b.distance_au)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
 
     let mut result = Vec::with_capacity(1 + other_worlds.len());
     if let Some(mut cs) = central_star {

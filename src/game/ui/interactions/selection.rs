@@ -93,6 +93,7 @@ fn cycle_target_body(
         selected_query
             .iter()
             .map(|(e, m, r, p, _v, _c, b, s, ..)| (e, b, p, m, r, s)),
+        false,
     );
 
     if worlds.is_empty() {
@@ -193,6 +194,7 @@ pub fn handle_selection_action(
                 selected_query
                     .iter()
                     .map(|(e, m, r, p, _v, _c, b, s, ..)| (e, b, p, m, r, s)),
+                false,
             );
             if let Some(target) = worlds.first() {
                 player_state.selected_entity = Some(target.entity);
@@ -298,6 +300,16 @@ fn handle_quick_bar_action(
                 "🗕 Body Bar Minimized (Press [H] or click to Expand)".to_string()
             } else {
                 "🗖 Body Bar Expanded".to_string()
+            };
+            toast.timer = 3.0;
+            true
+        }
+        UiButtonAction::ToggleListSortMode => {
+            quick_bar_state.sort_by_mass = !quick_bar_state.sort_by_mass;
+            toast.message = if quick_bar_state.sort_by_mass {
+                "⚖️ List Sorting: By Mass (Descending)".to_string()
+            } else {
+                "📏 List Sorting: By Distance (Ascending)".to_string()
             };
             toast.timer = 3.0;
             true

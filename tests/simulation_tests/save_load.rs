@@ -115,6 +115,7 @@ fn test_system_save_data_serialization_round_trip() {
             lhb_active: false,
             lhb_resonance_crossed: true,
         },
+        scenario_preset: None,
     };
 
     let json =
@@ -183,6 +184,7 @@ fn test_save_and_load_file_io() {
         config_save: ConfigSave::default(),
         bodies: vec![body],
         event_flags: EventFlagsSave::default(),
+        scenario_preset: None,
     };
 
     save_system_to_file(&save_data, file_path).expect("Failed to write test save file");
@@ -264,11 +266,8 @@ fn test_bevy_save_system_event_handling() {
     let _ = std::fs::remove_file(save_path);
 }
 
-#[test]
-fn test_bevy_load_system_event_satellite_resolution() {
-    let load_path = "target/test_saves_load/bevy_load_test.json";
-
-    let earth_save = CelestialBodySave {
+fn make_satellite_test_earth_save() -> CelestialBodySave {
+    CelestialBodySave {
         name: "Earth".to_string(),
         body_type: BodyType::TerrestrialPlanet,
         position: DVec3::new(1.0, 0.0, 0.0),
@@ -295,9 +294,11 @@ fn test_bevy_load_system_event_satellite_resolution() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
-    };
+    }
+}
 
-    let moon_save = CelestialBodySave {
+fn make_satellite_test_moon_save() -> CelestialBodySave {
+    CelestialBodySave {
         name: "The Moon".to_string(),
         body_type: BodyType::Moon,
         position: DVec3::new(1.00257, 0.0, 0.0),
@@ -329,18 +330,30 @@ fn test_bevy_load_system_event_satellite_resolution() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
-    };
+    }
+}
 
-    let test_save = SystemSaveData {
+fn make_satellite_test_save_data() -> SystemSaveData {
+    SystemSaveData {
         version: 1,
         timestamp_epoch_yr: 999.0,
         step_count: 100,
         time_warp: TimeWarpSave::default(),
         disk_parameters: DiskParameters::default(),
         config_save: ConfigSave::default(),
-        bodies: vec![earth_save, moon_save],
+        bodies: vec![
+            make_satellite_test_earth_save(),
+            make_satellite_test_moon_save(),
+        ],
         event_flags: EventFlagsSave::default(),
-    };
+        scenario_preset: None,
+    }
+}
+
+#[test]
+fn test_bevy_load_system_event_satellite_resolution() {
+    let load_path = "target/test_saves_load/bevy_load_test.json";
+    let test_save = make_satellite_test_save_data();
 
     save_system_to_file(&test_save, load_path).expect("Failed to prepare load test file");
 
@@ -412,4 +425,48 @@ fn test_bevy_load_system_event_satellite_resolution() {
     assert_eq!(sat.semi_major_axis_au, 0.00257);
 
     let _ = std::fs::remove_file(load_path);
+}
+
+#[test]
+fn test_kozai_lidov_null_deserialization() {
+    use protostellar::simulation::kozai_lidov::types::KozaiLidovState;
+
+    let json = r#"{
+        "perturber_name": "Outer Star",
+        "mutual_inclination_deg": 45.0,
+        "critical_inclination_deg": 39.23,
+        "is_in_resonance": true,
+        "max_eccentricity_forecast": 0.85,
+        "min_periastron_au": 1.5,
+        "kozai_period_years": null,
+        "gr_precession_ratio": null,
+        "is_gr_suppressed": false,
+        "regime": "Circulation",
+        "cycle_phase": 0.25
+    }"#;
+
+    let kozai: KozaiLidovState =
+        serde_json::from_str(json).expect("Failed to deserialize KozaiLidovState with nulls");
+    assert!(kozai.kozai_period_years.is_infinite());
+    assert_eq!(kozai.gr_precession_ratio, 0.0);
+}
+
+#[test]
+fn test_load_real_quicksave_if_present() {
+    let quicksave_path = "saves/quicksave.json";
+    if std::path::Path::new(quicksave_path).exists() {
+        let loaded =
+            load_system_from_file(quicksave_path).expect("Failed to load real quicksave.json");
+        assert!(
+            loaded.bodies.len() > 1000,
+            "Expected thousands of bodies in quicksave"
+        );
+        let preset = loaded.scenario_preset.unwrap_or_else(|| {
+            protostellar::simulation::serialization::infer_scenario_preset(&loaded.bodies)
+        });
+        assert_eq!(
+            preset,
+            protostellar::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+        );
+    }
 }

@@ -38,6 +38,9 @@ pub struct SystemSaveData {
     /// System event flags (e.g. Moon formation, LHB).
     #[serde(default)]
     pub event_flags: EventFlagsSave,
+    /// Saved scenario preset (e.g. MolecularCloudCluster, Trappist1System, SolarNebulaMmsn).
+    #[serde(default)]
+    pub scenario_preset: Option<crate::simulation::scenarios::ScenarioPreset>,
 }
 
 /// Serialized time warp parameters.
@@ -184,6 +187,52 @@ pub fn load_system_from_file(path_str: &str) -> Result<SystemSaveData, std::io::
     Ok(data)
 }
 
+/// Infers the intended scenario preset from the contents of a saved celestial body list
+/// when the save file was created without an explicit `scenario_preset` tag.
+pub fn infer_scenario_preset(
+    bodies: &[CelestialBodySave],
+) -> crate::simulation::scenarios::ScenarioPreset {
+    use crate::simulation::scenarios::ScenarioPreset;
+
+    if bodies.iter().any(|b| {
+        b.name.contains("Protostar")
+            || b.name.contains("Supermassive Black Hole")
+            || b.name.contains("SMBH")
+            || b.name.contains("NovaCore")
+    }) || bodies.len() > 100
+    {
+        ScenarioPreset::MolecularCloudCluster
+    } else if bodies.iter().any(|b| b.name.contains("TRAPPIST-1")) {
+        ScenarioPreset::Trappist1System
+    } else if bodies.iter().any(|b| b.name.contains("Kepler-16")) {
+        ScenarioPreset::Kepler16Circumbinary
+    } else if bodies.iter().any(|b| b.name.contains("Little Red Dot")) {
+        ScenarioPreset::LittleRedDot
+    } else if bodies
+        .iter()
+        .any(|b| b.name.contains("PSR B1257+12") || b.name.contains("Lich"))
+    {
+        ScenarioPreset::PulsarSystem
+    } else if bodies.iter().any(|b| b.name.contains("SGR 1806-20")) {
+        ScenarioPreset::MagnetarOutburst
+    } else if bodies.iter().any(|b| b.name.contains("PSR B1913+16")) {
+        ScenarioPreset::RelativisticBinary
+    } else if bodies.iter().any(|b| b.name.contains("HD 80606")) {
+        ScenarioPreset::KozaiLidovTriple
+    } else if bodies
+        .iter()
+        .any(|b| b.name.contains("Sagittarius A*") || b.name.contains("S2"))
+    {
+        ScenarioPreset::SagittariusAStar
+    } else if bodies.iter().any(|b| b.name.contains("Rogue")) {
+        ScenarioPreset::RoguePlanetFlyby
+    } else if bodies.iter().any(|b| b.name.contains("Hot Jupiter")) {
+        ScenarioPreset::HotJupiterMigration
+    } else {
+        ScenarioPreset::SolarNebulaMmsn
+    }
+}
+
 #[allow(clippy::type_complexity, reason = "Query for full body serialization")]
 type BodySerializeQuery<'w, 's> = Query<
     'w,
@@ -308,6 +357,8 @@ pub fn handle_save_system_events(
     config: Res<SimulationConfig>,
     theia_state: Option<Res<crate::simulation::accretion::TheiaImpactState>>,
     lhb_state: Option<Res<crate::game::phases::LateHeavyBombardmentState>>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
     bodies_query: BodySerializeQuery,
 ) {
     for event in events.read() {
@@ -333,6 +384,7 @@ pub fn handle_save_system_events(
                 lhb_active: lhb_state.as_ref().is_some_and(|s| s.is_active),
                 lhb_resonance_crossed: lhb_state.as_ref().is_some_and(|s| s.resonance_crossed),
             },
+            scenario_preset: scenario_state.as_ref().map(|s| s.current_preset),
         };
 
         match save_system_to_file(&save_data, &path) {
@@ -342,9 +394,17 @@ pub fn handle_save_system_events(
                     save_data.bodies.len(),
                     path
                 );
+                if let Some(ref mut t) = toast {
+                    t.message = format!("💾 Saved {} bodies [{}]", save_data.bodies.len(), path);
+                    t.timer = 4.0;
+                }
             }
             Err(e) => {
                 error!("❌ Failed to save system state to {}: {}", path, e);
+                if let Some(ref mut t) = toast {
+                    t.message = format!("❌ Save failed: {e}");
+                    t.timer = 4.0;
+                }
             }
         }
     }
@@ -420,7 +480,179 @@ fn spawn_saved_body(commands: &mut Commands, save: &CelestialBodySave) -> Entity
     cmd.id()
 }
 
+fn despawn_active_bodies(
+    commands: &mut Commands,
+    bodies_query: &Query<Entity, With<CelestialBody>>,
+) {
+    for ent in bodies_query.iter() {
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            cmd.try_despawn();
+        }
+    }
+}
+
+fn restore_simulation_resources(
+    save_data: &SystemSaveData,
+    sim_time: &mut ResMut<SimTime>,
+    time_warp: &mut ResMut<TimeWarp>,
+    disk_params: &mut ResMut<DiskParameters>,
+    config: &mut ResMut<SimulationConfig>,
+    energy_monitor: &mut ResMut<EnergyMonitor>,
+    theia_state: &mut Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
+    lhb_state: &mut Option<ResMut<crate::game::phases::LateHeavyBombardmentState>>,
+) {
+    sim_time.elapsed_years = save_data.timestamp_epoch_yr;
+    sim_time.step_count = save_data.step_count;
+    time_warp.multiplier = save_data.time_warp.multiplier;
+    time_warp.is_paused = save_data.time_warp.is_paused;
+    **disk_params = save_data.disk_parameters.clone();
+    config.gas_density_scale = save_data.config_save.gas_density_scale;
+    config.size_exaggeration = save_data.config_save.size_exaggeration;
+
+    energy_monitor.initial_total_energy = 0.0;
+    energy_monitor.kinetic_energy = 0.0;
+    energy_monitor.potential_energy = 0.0;
+    energy_monitor.total_energy = 0.0;
+    energy_monitor.relative_energy_drift = 0.0;
+    energy_monitor.initialized = false;
+
+    if let Some(ref mut theia) = theia_state {
+        theia.intercept_active = false;
+        theia.moon_formed = save_data.event_flags.theia_moon_formed;
+        theia.intercept_start_year = None;
+        theia.manual_trigger_requested = false;
+        theia.intercept_steps = 0;
+        theia.target_primary = None;
+    }
+
+    if let Some(ref mut lhb) = lhb_state {
+        lhb.is_active = save_data.event_flags.lhb_active;
+        lhb.resonance_crossed = save_data.event_flags.lhb_resonance_crossed;
+    }
+}
+
+fn spawn_and_link_saved_bodies(
+    commands: &mut Commands,
+    bodies: &[CelestialBodySave],
+) -> (Option<Entity>, Option<Entity>) {
+    let mut name_to_entity = HashMap::new();
+    let mut pending_satellites = Vec::new();
+    let mut central_star_ent = None;
+    let mut first_body_ent = None;
+
+    for body_save in bodies {
+        let ent = spawn_saved_body(commands, body_save);
+        if first_body_ent.is_none() {
+            first_body_ent = Some(ent);
+        }
+        if body_save.is_central_star {
+            central_star_ent = Some(ent);
+        }
+        name_to_entity.insert(body_save.name.clone(), ent);
+
+        if let Some(ref sat) = body_save.satellite {
+            pending_satellites.push((ent, sat.clone()));
+        }
+    }
+
+    for (moon_ent, sat_save) in pending_satellites {
+        if let Some(&parent_ent) = name_to_entity.get(&sat_save.parent_name) {
+            if let Ok(mut moon_cmd) = commands.get_entity(moon_ent) {
+                moon_cmd.insert(SatelliteOf {
+                    parent: parent_ent,
+                    semi_major_axis_au: sat_save.semi_major_axis_au,
+                    orbital_period_years: sat_save.orbital_period_years,
+                    true_anomaly: sat_save.true_anomaly,
+                });
+            }
+        } else {
+            warn!(
+                "⚠️ Could not resolve parent '{}' for satellite",
+                sat_save.parent_name
+            );
+        }
+    }
+
+    (central_star_ent, first_body_ent)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Scenario and camera state restoration requires several subsystem references"
+)]
+fn apply_loaded_scenario_and_camera(
+    save_data: &SystemSaveData,
+    detected_preset: crate::simulation::scenarios::ScenarioPreset,
+    scenario_state: &mut Option<ResMut<crate::simulation::scenarios::ActiveScenarioState>>,
+    phase_mgr: &mut Option<ResMut<crate::game::phases::PhaseManager>>,
+    next_phase: &mut Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
+    disk_params: &DiskParameters,
+    config: &mut ResMut<SimulationConfig>,
+    swarm_mesh_query: &mut Query<
+        &mut Visibility,
+        With<crate::rendering::particle_swarm::ParticleSwarmMesh>,
+    >,
+    primary_ent: Option<Entity>,
+    camera_query: &mut Query<&mut crate::rendering::camera::PanOrbitCamera>,
+) {
+    if let Some(ref mut s_state) = scenario_state {
+        s_state.current_preset = detected_preset;
+        s_state.scenario_time_years = save_data.timestamp_epoch_yr;
+        s_state.migration_active = false;
+    }
+
+    crate::simulation::scenarios::update_scenario_system_phase(
+        detected_preset,
+        phase_mgr,
+        next_phase,
+    );
+
+    let is_empty_swarm = matches!(
+        detected_preset,
+        crate::simulation::scenarios::ScenarioPreset::PulsarSystem
+            | crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst
+            | crate::simulation::scenarios::ScenarioPreset::RelativisticBinary
+            | crate::simulation::scenarios::ScenarioPreset::KozaiLidovTriple
+            | crate::simulation::scenarios::ScenarioPreset::SagittariusAStar
+            | crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+    ) || disk_params.disk_mass <= 0.0;
+
+    config.active_particles = if is_empty_swarm {
+        0
+    } else {
+        config.target_particle_count as u32
+    };
+
+    for mut vis in swarm_mesh_query.iter_mut() {
+        *vis = if is_empty_swarm {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+
+    if let Some(mut cam) = camera_query.iter_mut().next() {
+        if let Some(target) = primary_ent {
+            cam.target_entity = Some(target);
+        }
+        if detected_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster {
+            let (target_r, target_yaw, target_pitch) =
+                crate::simulation::scenarios::scenario_preset_camera_pose(detected_preset);
+            cam.radius = target_r;
+            cam.target_radius = target_r;
+            cam.yaw = target_yaw;
+            cam.target_yaw = target_yaw;
+            cam.pitch = target_pitch;
+            cam.target_pitch = target_pitch;
+        }
+    }
+}
+
 /// System that listens for `LoadSystemEvent`, clears the current bodies, and instantiates the saved system.
+#[allow(
+    clippy::type_complexity,
+    reason = "System load requires comprehensive world and scenario state"
+)]
 pub fn handle_load_system_events(
     mut commands: Commands,
     mut events: MessageReader<LoadSystemEvent>,
@@ -430,11 +662,24 @@ pub fn handle_load_system_events(
     mut time_warp: ResMut<TimeWarp>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut config: ResMut<SimulationConfig>,
-    mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
-    mut lhb_state: Option<ResMut<crate::game::phases::LateHeavyBombardmentState>>,
+    (mut theia_state, mut lhb_state): (
+        Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
+        Option<ResMut<crate::game::phases::LateHeavyBombardmentState>>,
+    ),
     bodies_query: Query<Entity, With<CelestialBody>>,
     mut camera_query: Query<&mut crate::rendering::camera::PanOrbitCamera>,
-    mut swarm: Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
+    (mut swarm, mut swarm_mesh_query): (
+        Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
+        Query<&mut Visibility, With<crate::rendering::particle_swarm::ParticleSwarmMesh>>,
+    ),
+    (mut scenario_state, mut toast): (
+        Option<ResMut<crate::simulation::scenarios::ActiveScenarioState>>,
+        Option<ResMut<crate::game::ui::NotificationToast>>,
+    ),
+    (mut phase_mgr, mut next_phase): (
+        Option<ResMut<crate::game::phases::PhaseManager>>,
+        Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
+    ),
 ) {
     for event in events.read() {
         let path = normalize_save_path(&event.filename);
@@ -442,98 +687,54 @@ pub fn handle_load_system_events(
             Ok(data) => data,
             Err(e) => {
                 error!("❌ Failed to load system state from {}: {}", path, e);
+                if let Some(ref mut t) = toast {
+                    t.message = format!("❌ Load failed: {e}");
+                    t.timer = 5.0;
+                }
                 continue;
             }
         };
 
         // 1. Despawn existing celestial bodies
-        for ent in bodies_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.try_despawn();
-            }
-        }
+        despawn_active_bodies(&mut commands, &bodies_query);
 
         // 2. Restore simulation resources and flags
-        sim_time.elapsed_years = save_data.timestamp_epoch_yr;
-        sim_time.step_count = save_data.step_count;
-        time_warp.multiplier = save_data.time_warp.multiplier;
-        time_warp.is_paused = save_data.time_warp.is_paused;
-        *disk_params = save_data.disk_parameters;
-        config.gas_density_scale = save_data.config_save.gas_density_scale;
-        config.size_exaggeration = save_data.config_save.size_exaggeration;
-
-        energy_monitor.initial_total_energy = 0.0;
-        energy_monitor.kinetic_energy = 0.0;
-        energy_monitor.potential_energy = 0.0;
-        energy_monitor.total_energy = 0.0;
-        energy_monitor.relative_energy_drift = 0.0;
-        energy_monitor.initialized = false;
-
-        if let Some(ref mut theia) = theia_state {
-            theia.intercept_active = false;
-            theia.moon_formed = save_data.event_flags.theia_moon_formed;
-            theia.intercept_start_year = None;
-            theia.manual_trigger_requested = false;
-            theia.intercept_steps = 0;
-            theia.target_primary = None;
-        }
-
-        if let Some(ref mut lhb) = lhb_state {
-            lhb.is_active = save_data.event_flags.lhb_active;
-            lhb.resonance_crossed = save_data.event_flags.lhb_resonance_crossed;
-        }
+        restore_simulation_resources(
+            &save_data,
+            &mut sim_time,
+            &mut time_warp,
+            &mut disk_params,
+            &mut config,
+            &mut energy_monitor,
+            &mut theia_state,
+            &mut lhb_state,
+        );
 
         // 3. Spawn bodies & resolve satellite links
-        let mut name_to_entity = HashMap::new();
-        let mut pending_satellites = Vec::new();
-        let mut central_star_ent = None;
-        let mut first_body_ent = None;
+        let (central_star_ent, first_body_ent) =
+            spawn_and_link_saved_bodies(&mut commands, &save_data.bodies);
 
-        for body_save in &save_data.bodies {
-            let ent = spawn_saved_body(&mut commands, body_save);
-            if first_body_ent.is_none() {
-                first_body_ent = Some(ent);
-            }
-            if body_save.is_central_star {
-                central_star_ent = Some(ent);
-            }
-            name_to_entity.insert(body_save.name.clone(), ent);
-
-            if let Some(ref sat) = body_save.satellite {
-                pending_satellites.push((ent, sat.clone()));
-            }
-        }
-
-        // 4. Resolve satellite parent references
-        for (moon_ent, sat_save) in pending_satellites {
-            if let Some(&parent_ent) = name_to_entity.get(&sat_save.parent_name) {
-                if let Ok(mut moon_cmd) = commands.get_entity(moon_ent) {
-                    moon_cmd.insert(SatelliteOf {
-                        parent: parent_ent,
-                        semi_major_axis_au: sat_save.semi_major_axis_au,
-                        orbital_period_years: sat_save.orbital_period_years,
-                        true_anomaly: sat_save.true_anomaly,
-                    });
-                }
-            } else {
-                warn!(
-                    "⚠️ Could not resolve parent '{}' for satellite",
-                    sat_save.parent_name
-                );
-            }
-        }
-
-        // 5. Update selected entity and camera focus
+        // 4. Update scenario preset, system phase, and camera
+        let detected_preset = save_data
+            .scenario_preset
+            .unwrap_or_else(|| infer_scenario_preset(&save_data.bodies));
         let primary_ent = central_star_ent.or(first_body_ent);
         player_state.selected_entity = primary_ent;
 
-        if let Some(mut cam) = camera_query.iter_mut().next() {
-            if let Some(target) = primary_ent {
-                cam.target_entity = Some(target);
-            }
-        }
+        apply_loaded_scenario_and_camera(
+            &save_data,
+            detected_preset,
+            &mut scenario_state,
+            &mut phase_mgr,
+            &mut next_phase,
+            &disk_params,
+            &mut config,
+            &mut swarm_mesh_query,
+            primary_ent,
+            &mut camera_query,
+        );
 
-        // 6. Reseed particle swarm if present
+        // 5. Reseed particle swarm if present
         if let Some(ref mut swarm_data) = swarm {
             crate::rendering::particle_swarm::reseed_particle_swarm(
                 swarm_data,
@@ -542,9 +743,19 @@ pub fn handle_load_system_events(
             );
         }
 
+        if let Some(ref mut t) = toast {
+            t.message = format!(
+                "📂 Loaded {} bodies [{}]",
+                save_data.bodies.len(),
+                detected_preset.display_name()
+            );
+            t.timer = 5.0;
+        }
+
         info!(
-            "📂 Loaded solar system state ({} bodies) from: {}",
+            "📂 Loaded solar system state ({} bodies, {:?}) from: {}",
             save_data.bodies.len(),
+            detected_preset,
             path
         );
     }
