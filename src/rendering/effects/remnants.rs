@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::rendering::effects::supernova::{SupernovaExplosionInstance, SupernovaType};
 use crate::simulation::components::{BodyType, CelestialBody, CentralStar};
 use crate::simulation::resources::SimTime;
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 
 /// An individual ionized filament or knot in the expanding remnant shell.
 #[derive(Debug, Clone)]
@@ -25,6 +26,8 @@ pub struct PersistentSupernovaRemnant {
     pub initial_radius_au: f32,
     pub current_radius_au: f32,
     pub expansion_rate_au_yr: f32,
+    pub ejecta_mass_solar: f32,
+    pub metals_mass_solar: f32,
     pub age_years: f64,
     pub max_age_years: f64,
     pub opacity: f32,
@@ -43,6 +46,22 @@ impl PersistentRemnantPool {
     pub fn clear(&mut self) {
         self.remnants.clear();
     }
+
+    /// Samples heavy-element enrichment metallicity Z at world position (in AU).
+    /// Base primordial cloud has Z = 0.0; supernova ejecta raises Z to 0.01 - 0.08.
+    pub fn sample_metallicity(&self, world_pos: Vec3) -> f32 {
+        let mut total_z = 0.0f32;
+        for rem in &self.remnants {
+            let dist = (world_pos - rem.center).length();
+            if dist <= rem.current_radius_au * 1.15 {
+                let vol = (4.0 / 3.0) * std::f32::consts::PI * rem.current_radius_au.powi(3);
+                let metal_density = rem.metals_mass_solar / vol.max(100.0);
+                let z_contrib = (metal_density / 3.0e-6).clamp(0.006, 0.08);
+                total_z += z_contrib;
+            }
+        }
+        total_z
+    }
 }
 
 /// Spawns a persistent remnant from a completed prompt supernova explosion.
@@ -50,6 +69,7 @@ pub fn spawn_remnant_from_explosion(
     pool: &mut PersistentRemnantPool,
     exp: &SupernovaExplosionInstance,
     has_pulsar_or_magnetar: bool,
+    is_gmc: bool,
 ) {
     let mut filaments = Vec::with_capacity(36);
 
@@ -91,11 +111,36 @@ pub fn spawn_remnant_from_explosion(
         });
     }
 
-    let max_age = match exp.explosion_type {
-        SupernovaType::Hypernova => 150_000.0,
-        SupernovaType::TypeII => 100_000.0,
-        SupernovaType::TypeIa => 80_000.0,
-        SupernovaType::PlanetaryNebula => 50_000.0,
+    let max_age = if is_gmc {
+        match exp.explosion_type {
+            SupernovaType::Hypernova => 2500.0,
+            SupernovaType::TypeII => 2000.0,
+            SupernovaType::TypeIa => 1600.0,
+            SupernovaType::PlanetaryNebula => 1200.0,
+        }
+    } else {
+        match exp.explosion_type {
+            SupernovaType::Hypernova => 150_000.0,
+            SupernovaType::TypeII => 100_000.0,
+            SupernovaType::TypeIa => 80_000.0,
+            SupernovaType::PlanetaryNebula => 50_000.0,
+        }
+    };
+
+    let expansion_rate = if is_gmc {
+        match exp.explosion_type {
+            SupernovaType::Hypernova => 0.02,
+            SupernovaType::TypeII => 0.015,
+            SupernovaType::TypeIa => 0.01,
+            SupernovaType::PlanetaryNebula => 0.005,
+        }
+    } else {
+        match exp.explosion_type {
+            SupernovaType::Hypernova => 0.15,
+            SupernovaType::TypeII => 0.10,
+            SupernovaType::TypeIa => 0.08,
+            SupernovaType::PlanetaryNebula => 0.02,
+        }
     };
 
     pool.remnants.push(PersistentSupernovaRemnant {
@@ -104,12 +149,9 @@ pub fn spawn_remnant_from_explosion(
         remnant_type: exp.explosion_type,
         initial_radius_au: exp.max_radius_au,
         current_radius_au: exp.max_radius_au,
-        expansion_rate_au_yr: match exp.explosion_type {
-            SupernovaType::Hypernova => 0.15,
-            SupernovaType::TypeII => 0.10,
-            SupernovaType::TypeIa => 0.08,
-            SupernovaType::PlanetaryNebula => 0.02,
-        },
+        expansion_rate_au_yr: expansion_rate,
+        ejecta_mass_solar: exp.ejecta_mass_solar,
+        metals_mass_solar: exp.metals_mass_solar,
         age_years: 0.0,
         max_age_years: max_age,
         opacity: 0.95,
@@ -124,10 +166,15 @@ pub fn update_persistent_remnants(
     sim_time: Option<Res<SimTime>>,
     time: Res<Time>,
     star_query: Query<(Entity, &CelestialBody), With<CentralStar>>,
+    scenario_state: Option<Res<ActiveScenarioState>>,
 ) {
     if remnant_pool.remnants.is_empty() {
         return;
     }
+
+    let is_gmc = scenario_state
+        .as_deref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
 
     let dt_sim_yr = sim_time
         .as_deref()
@@ -157,13 +204,20 @@ pub fn update_persistent_remnants(
         }
 
         // Sedov-Taylor phase expansion: R(t) = R_0 * (1 + t / t_sedov)^0.38
-        let time_ratio = (rem.age_years / 400.0).max(0.0);
+        let is_galactic = is_gmc || rem.max_age_years <= 3000.0;
+        let (time_divisor, max_cap, decay_tau) = if is_galactic {
+            (120.0, 26.0f32, 550.0)
+        } else {
+            (400.0, 1000.0f32, 35_000.0)
+        };
+
+        let time_ratio = (rem.age_years / time_divisor).max(0.0);
         let growth_factor = (1.0 + time_ratio).powf(0.38) as f32;
-        rem.current_radius_au = rem.initial_radius_au * growth_factor;
+        rem.current_radius_au = (rem.initial_radius_au * growth_factor).min(max_cap);
 
         // Slow dissipation and radiative cooling
         let age_frac = (rem.age_years / rem.max_age_years).clamp(0.0, 1.0) as f32;
-        let cooling_decay = (-rem.age_years / 35_000.0).exp() as f32;
+        let cooling_decay = (-rem.age_years / decay_tau).exp() as f32;
         rem.opacity = ((1.0 - age_frac) * cooling_decay * 0.95).clamp(0.0, 1.0);
     }
 

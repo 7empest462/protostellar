@@ -366,9 +366,22 @@ fn compute_body_material_parameters(
     let b_em = opt_em.map_or(0.0, |e| e.magnetic_field_gauss as f32);
     let b_diff = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
     let mag_gauss = b_em.max(b_diff);
+    let liquid_ocean_frac = if temp_k > 380.0 {
+        0.0
+    } else if temp_k > 340.0 {
+        let boil_factor = (380.0 - temp_k) / 40.0;
+        (ocean_frac * boil_factor as f32).clamp(0.0, 1.0)
+    } else {
+        ocean_frac
+    };
+
     let tidal_lava_boost = opt_tidal.map_or(0.0, |t| {
         if t.tidal_heating_flux_w_m2 > 0.5 {
-            ((t.tidal_heating_flux_w_m2 as f32 - 0.5) / 2.5).clamp(0.0, 0.75)
+            if liquid_ocean_frac > 0.05 && temp_k < 380.0 {
+                0.0
+            } else {
+                ((t.tidal_heating_flux_w_m2 as f32 - 0.5) / 2.5).clamp(0.0, 0.75)
+            }
         } else {
             0.0
         }
@@ -379,15 +392,6 @@ fn compute_body_material_parameters(
         0.0
     };
     let lava_frac = (base_lava_frac + tidal_lava_boost).clamp(0.0, 1.0);
-
-    let liquid_ocean_frac = if temp_k > 380.0 {
-        0.0
-    } else if temp_k > 340.0 {
-        let boil_factor = (380.0 - temp_k) / 40.0;
-        (ocean_frac * boil_factor as f32).clamp(0.0, 1.0)
-    } else {
-        ocean_frac
-    };
 
     let climate_and_bio = Vec4::new(liquid_ocean_frac, ice_frac, biomass_frac, cloud_density);
     let atmosphere_params = Vec4::new(
@@ -644,16 +648,30 @@ pub type CelestialBodyQueryItem<'a> = (
 
 pub type CelestialBodyQuery<'w, 's> = Query<'w, 's, CelestialBodyQueryItem<'static>>;
 
-fn find_star_position_and_min_orbit(query: &CelestialBodyQuery) -> (Vec3, Option<Entity>, f32) {
+fn find_star_position_and_min_orbit(
+    query: &CelestialBodyQuery,
+) -> (Vec3, Option<Entity>, f32, Vec<(Entity, Vec3)>) {
     let mut s_pos = Vec3::ZERO;
     let mut s_ent = None;
+    let mut stars = Vec::with_capacity(8);
+
     for (e, p, _, _, _, _, b, ..) in query.iter() {
         if b.body_type.is_star_or_remnant() {
-            s_pos = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
-            s_ent = Some(e);
-            break;
+            let p_vec = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+            if stars.is_empty() {
+                s_pos = p_vec;
+                s_ent = Some(e);
+            }
+            stars.push((e, p_vec));
         }
     }
+
+    if stars.len() != 1 {
+        // Multi-star clusters (or starless genesis clouds) have wide orbits (>= 1.4 AU).
+        // Return min_orbit_r = 1.0 so compact TRAPPIST-1 scaling is never erroneously applied.
+        return (s_pos, s_ent, 1.0, stars);
+    }
+
     let mut min_r = f32::MAX;
     for (e, p, _, _, _, _, b, ..) in query.iter() {
         if Some(e) != s_ent && !b.body_type.is_star_or_remnant() && b.body_type != BodyType::Moon {
@@ -663,7 +681,12 @@ fn find_star_position_and_min_orbit(query: &CelestialBodyQuery) -> (Vec3, Option
             }
         }
     }
-    (s_pos, s_ent, if min_r < f32::MAX { min_r } else { 0.4 })
+    (
+        s_pos,
+        s_ent,
+        if min_r < f32::MAX { min_r } else { 0.4 },
+        stars,
+    )
 }
 
 fn collect_system_moons(
@@ -694,7 +717,7 @@ pub fn sync_celestial_transforms(
     mut light_query: Query<&mut PointLight>,
     mut query: CelestialBodyQuery,
 ) {
-    let (star_pos, _star_entity, min_orbit_r) = find_star_position_and_min_orbit(&query);
+    let (star_pos, _star_entity, min_orbit_r, stars) = find_star_position_and_min_orbit(&query);
     let all_moons = collect_system_moons(&query, &config, star_pos, min_orbit_r);
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
@@ -716,7 +739,25 @@ pub fn sync_celestial_transforms(
     ) in query.iter_mut()
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        let star_dir = (star_pos - transform.translation).normalize_or_zero();
+
+        let star_dir = if stars.is_empty() {
+            Vec3::Y
+        } else if stars.len() == 1 {
+            (star_pos - transform.translation).normalize_or_zero()
+        } else {
+            let closest = stars
+                .iter()
+                .filter(|(e, _)| *e != entity)
+                .min_by(|(_, p1), (_, p2)| {
+                    let d1 = (*p1 - transform.translation).length_squared();
+                    let d2 = (*p2 - transform.translation).length_squared();
+                    d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            closest.map_or(Vec3::Y, |(_, p)| {
+                (*p - transform.translation).normalize_or_zero()
+            })
+        };
+
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
         update_star_lights_and_strobes(
             opt_children,

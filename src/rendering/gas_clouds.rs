@@ -80,6 +80,7 @@ pub fn setup_gas_cloud_disk(
             Mesh3d(plane_mesh.clone()),
             MeshMaterial3d(gas_material.clone()),
             Transform::from_translation(Vec3::new(0.0, y_offset, 0.0)),
+            Visibility::default(),
             NotShadowCaster,
             NotShadowReceiver,
             GasCloudDisk,
@@ -92,8 +93,9 @@ pub fn update_gas_cloud_material(
     sim_time: Res<SimTime>,
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     mut materials: ResMut<Assets<GasCloudMaterial>>,
-    gas_query: Query<&MeshMaterial3d<GasCloudMaterial>, With<GasCloudDisk>>,
+    mut gas_query: Query<(&MeshMaterial3d<GasCloudMaterial>, &mut Visibility), With<GasCloudDisk>>,
     star_query: Query<
         (
             &Radius,
@@ -106,6 +108,22 @@ pub fn update_gas_cloud_material(
         With<CentralStar>,
     >,
 ) {
+    // The GMC scenario renders gas through the 3D volumetric nebula; the planar disk must not appear.
+    let is_gmc = scenario_state.is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+    });
+    let target_vis = if is_gmc {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for (_, mut vis) in &mut gas_query {
+        vis.set_if_neq(target_vis);
+    }
+    if is_gmc {
+        return;
+    }
+
     let is_massive = disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
     let is_compact = disk_params.outer_radius_au < 2.0;
     let is_remnant_or_pulsar = if let Ok((_, _, _, _, _, star_body)) = star_query.single() {
@@ -136,7 +154,7 @@ pub fn update_gas_cloud_material(
 
     let anim_time = (sim_time.elapsed_years * 60.0) as f32 + sim_time.visual_time_secs * 0.40;
 
-    for handle in gas_query.iter() {
+    for (handle, _) in &gas_query {
         if let Some(mut mat) = materials.get_mut(handle) {
             mat.extension.uniforms.time_data.x = anim_time;
             mat.extension.uniforms.time_data.w = density_scale;

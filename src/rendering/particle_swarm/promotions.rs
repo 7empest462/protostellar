@@ -220,7 +220,10 @@ pub fn replenish_cleared_particles(
     speed_mult: f32,
     mut active_count: u32,
 ) {
-    let max_allowed_particles = if ignition_is_ignited || config.gas_density_scale <= 0.05 {
+    let max_allowed_particles = if ignition_is_ignited
+        || config.gas_density_scale <= 0.05
+        || disk_params.disk_mass <= 0.0
+    {
         0u32
     } else {
         (config.target_particle_count as f32 * config.gas_density_scale.powf(1.5)) as u32

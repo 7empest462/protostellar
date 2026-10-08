@@ -73,6 +73,7 @@ impl Plugin for RenderingPlugin {
                         .after(spawn_missing_visuals),
                     sync_black_hole_accretion_disks
                         .after(sync_celestial_transforms)
+                        .after(update_pan_orbit_camera)
                         .after(spawn_missing_visuals),
                     sync_cometary_tails.after(sync_celestial_transforms),
                     sync_quasar_beams.after(sync_celestial_transforms),

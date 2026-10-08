@@ -62,6 +62,7 @@ pub struct SupernovaExplosionInstance {
     pub current_radius_au: f32,
     pub max_radius_au: f32,
     pub ejecta_mass_solar: f32,
+    pub metals_mass_solar: f32,
     pub remnant_type: BodyType,
     pub timer: f32,
     pub max_timer: f32,
@@ -176,6 +177,7 @@ pub fn trigger_supernova_explosion(
     initial_mass: f64,
     remnant_mass: f64,
     remnant_type: BodyType,
+    ejected_metals_solar: f64,
 ) {
     let explosion_type = determine_supernova_type(initial_mass, remnant_type);
 
@@ -187,6 +189,12 @@ pub fn trigger_supernova_explosion(
     };
 
     let fragments = spawn_ejecta_fragments(explosion_type, blast_speed_au_s, center);
+    let ejecta_m = (initial_mass - remnant_mass).max(0.1) as f32;
+    let metals_m = if ejected_metals_solar > 0.0 {
+        ejected_metals_solar as f32
+    } else {
+        ejecta_m * 0.25
+    };
 
     pool.explosions.push(SupernovaExplosionInstance {
         star_entity,
@@ -195,7 +203,8 @@ pub fn trigger_supernova_explosion(
         blast_speed_au_s,
         current_radius_au: prompt_breakout_au,
         max_radius_au,
-        ejecta_mass_solar: (initial_mass - remnant_mass).max(0.1) as f32,
+        ejecta_mass_solar: ejecta_m,
+        metals_mass_solar: metals_m,
         remnant_type,
         timer: 0.0,
         max_timer,
@@ -230,8 +239,12 @@ pub fn update_supernova_explosions(
     mut swarm: Option<ResMut<ParticleSwarmData>>,
     mut remnant_pool: Option<ResMut<crate::rendering::effects::remnants::PersistentRemnantPool>>,
     mut commands: Commands,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
 ) {
     let dt = time.delta_secs();
+    let is_gmc = scenario_state.as_deref().is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+    });
 
     // 1. Ingest SupernovaEvents
     for ev in supernova_events.read() {
@@ -248,7 +261,21 @@ pub fn update_supernova_explosions(
             ev.initial_mass_solar,
             ev.remnant_mass_solar,
             ev.remnant_type,
+            ev.ejected_metals_solar,
         );
+
+        if is_gmc {
+            if let Some(exp) = pool.explosions.last_mut() {
+                let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
+                    SupernovaType::Hypernova => (16.0, 24.0),
+                    SupernovaType::TypeII => (12.0, 18.0),
+                    SupernovaType::TypeIa => (9.0, 14.0),
+                    SupernovaType::PlanetaryNebula => (3.0, 8.0),
+                };
+                exp.blast_speed_au_s = scaled_blast_speed;
+                exp.max_radius_au = scaled_max_r;
+            }
+        }
     }
 
     // 2. Fallback check for stars entering SupernovaExplosion or PlanetaryNebulaEjection phase directly
@@ -275,7 +302,23 @@ pub fn update_supernova_explosions(
                 } else {
                     0.55
                 };
-                trigger_supernova_explosion(&mut pool, entity, center, mass.0, remnant_m, remnant);
+                let metals = (mass.0 - remnant_m).max(0.1) * 0.25;
+                trigger_supernova_explosion(
+                    &mut pool, entity, center, mass.0, remnant_m, remnant, metals,
+                );
+
+                if is_gmc {
+                    if let Some(exp) = pool.explosions.last_mut() {
+                        let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
+                            SupernovaType::Hypernova => (16.0, 24.0),
+                            SupernovaType::TypeII => (12.0, 18.0),
+                            SupernovaType::TypeIa => (9.0, 14.0),
+                            SupernovaType::PlanetaryNebula => (3.0, 8.0),
+                        };
+                        exp.blast_speed_au_s = scaled_blast_speed;
+                        exp.max_radius_au = scaled_max_r;
+                    }
+                }
             }
         }
     }
@@ -297,7 +340,7 @@ pub fn update_supernova_explosions(
             if exp.timer >= exp.max_timer {
                 let has_pwn = matches!(exp.remnant_type, BodyType::Pulsar | BodyType::Magnetar);
                 crate::rendering::effects::remnants::spawn_remnant_from_explosion(
-                    r_pool, exp, has_pwn,
+                    r_pool, exp, has_pwn, is_gmc,
                 );
             }
         }

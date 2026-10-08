@@ -225,6 +225,7 @@ pub fn setup_particle_swarm(
         Mesh3d(mesh_handle.clone()),
         MeshMaterial3d(material),
         Transform::from_translation(Vec3::ZERO),
+        Visibility::default(),
         NotShadowCaster,
         ParticleSwarmMesh,
     ));

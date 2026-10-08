@@ -13,6 +13,9 @@ use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct VolumetricNebulaVolume;
 
+/// Upper bound on the rendered ionization bubble radius (AU) so the cloud core survives star formation.
+pub const MAX_RENDERED_CAVITY_AU: f32 = 70.0;
+
 /// Calculates the radiation pressure / ionization cavity radius around a protostar in AU.
 pub fn calculate_ionization_cavity_radius_au(
     luminosity_l_sun: f32,
@@ -33,6 +36,7 @@ pub fn calculate_ionization_cavity_radius_au(
 pub fn sync_volumetric_nebula(
     mut commands: Commands,
     scenario_state: Option<Res<ActiveScenarioState>>,
+    sim_time: Option<Res<crate::simulation::resources::SimTime>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VolumetricNebulaMaterial>>,
     nebula_query: Query<
@@ -94,7 +98,10 @@ pub fn sync_volumetric_nebula(
             if body.body_type.is_star_or_remnant() {
                 let is_ignited = opt_ign.is_some_and(|ign| ign.is_ignited);
                 let lum_val = lum.0 as f32;
-                let cavity_r = calculate_ionization_cavity_radius_au(lum_val, 5.0e-11, is_ignited);
+                // Cap the rendered bubble so a single massive star (L ∝ M^3.5) cannot hollow out
+                // the entire ~240 AU core; matches the fluid sink radius scale.
+                let cavity_r = calculate_ionization_cavity_radius_au(lum_val, 5.0e-11, is_ignited)
+                    .min(MAX_RENDERED_CAVITY_AU);
 
                 let t_k = temp.0 as f32;
                 let r = (t_k / 4000.0).clamp(0.4, 1.0);
@@ -113,6 +120,7 @@ pub fn sync_volumetric_nebula(
         }
 
         mat.uniforms.num_stars = count;
+        mat.uniforms.elapsed_years = sim_time.as_deref().map_or(0.0, |t| t.elapsed_years as f32);
         mat.uniforms.star_positions_and_cavities = star_positions;
         mat.uniforms.star_colors_and_lum = star_colors;
     }

@@ -485,8 +485,7 @@ pub struct VolumetricNebulaUniforms {
     pub scattering_albedo: f32,
     pub phase_g: f32,
     pub num_stars: u32,
-    #[allow(clippy::pub_underscore_fields, reason = "WGSL memory layout alignment")]
-    pub _pad: u32,
+    pub elapsed_years: f32,
     pub star_positions_and_cavities: [Vec4; 16],
     pub star_colors_and_lum: [Vec4; 16],
 }
@@ -501,7 +500,7 @@ impl Default for VolumetricNebulaUniforms {
             scattering_albedo: 0.85,
             phase_g: 0.65,
             num_stars: 0,
-            _pad: 0,
+            elapsed_years: 0.0,
             star_positions_and_cavities: [Vec4::ZERO; 16],
             star_colors_and_lum: [Vec4::ZERO; 16],
         }
@@ -530,7 +529,7 @@ impl Material for VolumetricNebulaMaterial {
         _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = None;
+        descriptor.primitive.cull_mode = Some(bevy::render::render_resource::Face::Front);
         Ok(())
     }
 }
