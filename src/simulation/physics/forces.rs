@@ -441,10 +441,10 @@ pub fn gmc_spiral_density_wave_acc(pos: DVec3, elapsed_years: f64) -> DVec3 {
     let pattern_angle = omega_p * elapsed_years;
 
     // m = 2 (Two-armed grand design spiral)
-    let m = 2.0;
+    let m = 4.0; // 4-armed spiral (Milky Way style)
 
     // Pitch angle i ~ 18 deg -> k = 1 / tan(i) ~ 3.08
-    let k = 3.08;
+    let k = 6.16; // Adjusted for m=4 to maintain same pitch angle
     let r_0 = 60.0; // Reference radius in AU
 
     let phi = pos.z.atan2(pos.x);
@@ -474,7 +474,7 @@ pub fn gmc_spiral_density_wave_acc(pos: DVec3, elapsed_years: f64) -> DVec3 {
     }
 
     // Perturbation amplitude (~12-15% of background NFW halo force)
-    let a_0 = G_ASTRO * 550.0 * smooth_t;
+    let a_0 = -(G_ASTRO * 550.0 * smooth_t); // Negative so particles fall into the visual arms
     let phi_amp = a_0 * radial_profile * sech2_y;
 
     // Derivative d(radial_profile)/dr:

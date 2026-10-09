@@ -286,6 +286,7 @@ type PlanetSpec = (
     PlanetaryClimate,
     InternalDifferentiation,
     BodyType,
+    Option<BiosphereState>,
 );
 
 fn get_gen3_terra_spec(protostar_name: &str) -> PlanetSpec {
@@ -330,6 +331,7 @@ fn get_gen3_terra_spec(protostar_name: &str) -> PlanetSpec {
             llsvp_density_contrast: 0.0,
         },
         BodyType::TerrestrialPlanet,
+        None,
     )
 }
 
@@ -370,6 +372,7 @@ fn get_gen3_jovian_spec(protostar_name: &str) -> PlanetSpec {
             llsvp_density_contrast: 0.0,
         },
         BodyType::GasGiant,
+        None,
     )
 }
 
@@ -394,7 +397,7 @@ fn spawn_system_planets(
     local_z: bevy::math::DVec3,
     specs: impl IntoIterator<Item = PlanetSpec>,
 ) {
-    for (idx, (p_name, a_au, m_p, r_au, comp, vol, climate, diff, b_type)) in
+    for (idx, (p_name, a_au, m_p, r_au, comp, vol, climate, diff, b_type, bio)) in
         specs.into_iter().enumerate()
     {
         let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
@@ -405,7 +408,7 @@ fn spawn_system_planets(
         let p_vel =
             seed_vel + local_x * (-v_circ_p * angle.sin()) + local_z * (v_circ_p * angle.cos());
 
-        commands.spawn((
+        let mut ent = commands.spawn((
             CelestialBody {
                 body_type: b_type,
                 name: p_name,
@@ -430,6 +433,9 @@ fn spawn_system_planets(
                 true_anomaly: angle,
             },
         ));
+        if let Some(b) = bio {
+            ent.insert(b);
+        }
     }
 }
 
@@ -522,6 +528,7 @@ fn get_gen2_planet_specs(protostar_name: &str) -> [PlanetSpec; 3] {
                 llsvp_density_contrast: 0.0,
             },
             BodyType::Protoplanet,
+            None,
         ),
         // Habitable zone: Rocky Earth analogue
         (
@@ -565,6 +572,7 @@ fn get_gen2_planet_specs(protostar_name: &str) -> [PlanetSpec; 3] {
                 llsvp_density_contrast: 0.0,
             },
             BodyType::Protoplanet,
+            None,
         ),
         // Outer: Volatile / Ocean world
         (
@@ -608,6 +616,7 @@ fn get_gen2_planet_specs(protostar_name: &str) -> [PlanetSpec; 3] {
                 llsvp_density_contrast: 0.0,
             },
             BodyType::Protoplanet,
+            None,
         ),
     ]
 }

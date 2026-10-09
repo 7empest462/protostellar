@@ -142,7 +142,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let phi = atan2(sample_pos.z + 1e-5, sample_pos.x + 1e-5);
         let pattern_angle = 0.00045 * neb.elapsed_years;
         let r_norm_spiral = max(r_cyl / 60.0, 0.20);
-        let xi = 2.0 * (phi - pattern_angle) - 3.08 * log(r_norm_spiral);
+        let xi = 4.0 * (phi - pattern_angle) - 6.16 * log(r_norm_spiral);
         let spiral_modulation = 0.5 + 0.5 * cos(xi);
         let z_disk = exp(-abs(sample_pos.y) / 36.0);
 

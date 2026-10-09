@@ -224,8 +224,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let omega_p = 0.00045;
         let pattern_angle = omega_p * uniforms.elapsed_years;
-        let m = 2.0;
-        let k = 3.08;
+        let m = 4.0;
+        let k = 6.16;
         let r_0 = 60.0;
 
         let phi = atan2(world_pos.z, world_pos.x);
@@ -246,7 +246,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let u = r_cyl / r_scale;
         let radial_profile = (u / (1.0 + u * u)) * exp(-r_cyl / r_disk);
 
-        let a_0 = uniforms.g_astro * 550.0 * smooth_t;
+        let a_0 = -(uniforms.g_astro * 550.0 * smooth_t);
         let phi_amp = a_0 * radial_profile * sech2_y;
 
         let d_rad_prof = (1.0 - u * u) / (r_scale * pow(1.0 + u * u, 2.0)) - radial_profile / r_disk;
