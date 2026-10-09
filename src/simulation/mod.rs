@@ -131,6 +131,8 @@ impl Plugin for SimulationPlugin {
                 Update,
                 (
                     gmc_cluster_gas_accretion.after(step_physics_simulation),
+                    crate::simulation::accretion::black_holes::update_black_hole_accretion_jets
+                        .after(process_accretion_and_collisions),
                     update_guided_bombardment_projectiles.after(step_physics_simulation),
                     update_terraforming_atmospheres.after(update_thermodynamics),
                     update_trajectory_predictor,

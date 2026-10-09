@@ -47,6 +47,7 @@ pub enum ScenarioPreset {
     KozaiLidovTriple,
     SagittariusAStar,
     MolecularCloudCluster,
+    TidalDisruptionEvent,
 }
 
 impl ScenarioPreset {
@@ -65,6 +66,7 @@ impl ScenarioPreset {
             ScenarioPreset::KozaiLidovTriple => "HD 80606 (Kozai-Lidov Triple)",
             ScenarioPreset::SagittariusAStar => "Sagittarius A* & S-Stars (Galactic Center)",
             ScenarioPreset::MolecularCloudCluster => "GMC Cluster (Jeans Instability)",
+            ScenarioPreset::TidalDisruptionEvent => "Tidal Disruption Spaghetti",
         }
     }
 
@@ -109,6 +111,9 @@ impl ScenarioPreset {
             ScenarioPreset::MolecularCloudCluster => {
                 "Cold pre-stellar molecular cloud core (24 M☉, 550 AU) undergoing turbulent Jeans instability collapse, birthing an open cluster of protostellar seeds and infalling binaries."
             }
+            ScenarioPreset::TidalDisruptionEvent => {
+                "A doomed red giant star on a highly elliptical orbit plunges inside the Roche limit of a Supermassive Black Hole, triggering a violent Tidal Disruption Event (TDE)."
+            }
         }
     }
 }
@@ -142,6 +147,7 @@ pub fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
         ScenarioPreset::KozaiLidovTriple => (15.0, 0.785, 0.65),
         ScenarioPreset::SagittariusAStar => (1200.0, 0.785, 0.65),
         ScenarioPreset::MolecularCloudCluster => (850.0, 0.785, 0.65),
+        ScenarioPreset::TidalDisruptionEvent => (250.0, 0.785, 0.65),
     }
 }
 
@@ -187,6 +193,9 @@ fn spawn_scenario_preset(
         ScenarioPreset::MolecularCloudCluster => {
             spawn_molecular_cloud_cluster_scenario(commands, disk_params)
         }
+        ScenarioPreset::TidalDisruptionEvent => Some(
+            crate::simulation::scenarios::spawn_tde_scenario(commands, disk_params),
+        ),
     }
 }
 
@@ -447,3 +456,5 @@ pub fn update_active_scenarios(
         }
     }
 }
+pub mod tde;
+pub use tde::*;

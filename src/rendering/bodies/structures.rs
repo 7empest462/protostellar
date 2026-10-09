@@ -612,6 +612,7 @@ pub fn sync_black_hole_accretion_disks(
             &CelestialBody,
             &Transform,
             Option<&SpinState>,
+            Option<&RelativisticJetState>,
             Option<&Children>,
         ),
         (With<VisualBody>, Without<VisualBlackHoleDiskChild>),
@@ -631,7 +632,7 @@ pub fn sync_black_hole_accretion_disks(
         .next()
         .map_or(Vec3::new(0.0, 5.0, 10.0), |t| t.translation);
 
-    for (bh_entity, mass, _radius, body, bh_trans, _opt_spin, opt_children) in
+    for (bh_entity, mass, _radius, body, bh_trans, _opt_spin, opt_jet, opt_children) in
         black_holes_query.iter()
     {
         if body.body_type != BodyType::BlackHole {
@@ -643,6 +644,13 @@ pub fn sync_black_hole_accretion_disks(
         // A Plane3d mesh (size 1.0) scaled by 12.0 spans 6.0x the event horizon radius,
         // matching the physical extent of the ISCO through outer Shakura-Sunyaev disk (~18-24 r_s).
         let disk_scale = 12.0f32;
+        let accretion_rate = opt_jet.map_or(0.0, |jet| {
+            if jet.is_accreting {
+                1.0
+            } else {
+                (jet.accretion_timer_years / 5.0).clamp(0.0, 1.0)
+            }
+        });
 
         let cam_dir_world = (cam_pos - bh_trans.translation).normalize_or_zero();
         let cam_dir_local = bh_trans.rotation.inverse() * cam_dir_world;
@@ -680,8 +688,12 @@ pub fn sync_black_hole_accretion_disks(
                         mat.uniforms.spin_axis = Vec4::new(0.0, 1.0, 0.0, mass.0 as f32);
                         mat.uniforms.cam_dir_local =
                             Vec4::new(cam_dir_local.x, cam_dir_local.y, cam_dir_local.z, cos_theta);
-                        mat.uniforms.cam_up_local =
-                            Vec4::new(z_screen_col.x, z_screen_col.y, z_screen_col.z, 0.0);
+                        mat.uniforms.cam_up_local = Vec4::new(
+                            z_screen_col.x,
+                            z_screen_col.y,
+                            z_screen_col.z,
+                            accretion_rate,
+                        );
                     }
                 }
             }
@@ -702,7 +714,12 @@ pub fn sync_black_hole_accretion_disks(
                         cam_dir_local.z,
                         cos_theta,
                     ),
-                    cam_up_local: Vec4::new(z_screen_col.x, z_screen_col.y, z_screen_col.z, 0.0),
+                    cam_up_local: Vec4::new(
+                        z_screen_col.x,
+                        z_screen_col.y,
+                        z_screen_col.z,
+                        accretion_rate,
+                    ),
                 },
             });
 

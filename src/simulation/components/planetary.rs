@@ -307,6 +307,12 @@ pub struct RelativisticJetState {
     pub core_color: Vec4,
     /// Outer lobe / sheath emission color RGBA (normalized 0.0 to 1.0)
     pub lobe_color: Vec4,
+    /// Whether the compact object is actively accreting matter.
+    #[serde(default)]
+    pub is_accreting: bool,
+    /// Accretion activity cooldown timer in years.
+    #[serde(default)]
+    pub accretion_timer_years: f32,
 }
 
 impl Default for RelativisticJetState {
@@ -332,6 +338,8 @@ impl RelativisticJetState {
             doppler_boosting_enabled: true,
             core_color: Vec4::new(0.85, 0.95, 1.0, 1.0), // Violet-white incandescence
             lobe_color: Vec4::new(0.30, 0.65, 1.0, 0.85), // Electric cobalt blue
+            is_accreting: false,
+            accretion_timer_years: 0.0,
         }
     }
 
@@ -351,6 +359,8 @@ impl RelativisticJetState {
             doppler_boosting_enabled: true,
             core_color: Vec4::new(1.0, 0.85, 0.95, 1.0), // Magenta-white starquake
             lobe_color: Vec4::new(0.70, 0.20, 0.90, 0.90), // Deep ultraviolet/purple
+            is_accreting: false,
+            accretion_timer_years: 0.0,
         }
     }
 
@@ -371,6 +381,8 @@ impl RelativisticJetState {
             doppler_boosting_enabled: true,
             core_color: Vec4::new(0.95, 0.90, 1.0, 1.0), // Brilliant blazar core
             lobe_color: Vec4::new(0.20, 0.45, 0.95, 0.85), // Synchrotron jet sheath
+            is_accreting: false,
+            accretion_timer_years: 0.0,
         }
     }
 
@@ -390,6 +402,8 @@ impl RelativisticJetState {
             doppler_boosting_enabled: true,
             core_color: Vec4::new(1.0, 0.80, 0.40, 1.0), // Incandescent gold/amber
             lobe_color: Vec4::new(0.85, 0.35, 0.15, 0.80), // Deep infrared/crimson cocoon
+            is_accreting: false,
+            accretion_timer_years: 0.0,
         }
     }
 }

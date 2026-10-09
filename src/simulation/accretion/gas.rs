@@ -762,6 +762,7 @@ pub fn gmc_cluster_gas_accretion(
         Option<&mut Temperature>,
         Option<&IgnitionState>,
         Option<&mut VolatileInventory>,
+        Option<&mut crate::simulation::components::RelativisticJetState>,
     )>,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
@@ -788,8 +789,8 @@ pub fn gmc_cluster_gas_accretion(
     // 1. Collect all star positions and masses for planetary envelope accretion
     let stars: Vec<(Entity, bevy::math::DVec3, f64)> = bodies_query
         .iter()
-        .filter(|(_, _, _, _, _, _, body, _, _, _, _)| body.body_type.is_star_or_remnant())
-        .map(|(e, m, pos, _, _, _, _, _, _, _, _)| (e, pos.0, m.0))
+        .filter(|(_, _, _, _, _, _, body, _, _, _, _, _)| body.body_type.is_star_or_remnant())
+        .map(|(e, m, pos, _, _, _, _, _, _, _, _, _)| (e, pos.0, m.0))
         .collect();
 
     for (
@@ -804,6 +805,7 @@ pub fn gmc_cluster_gas_accretion(
         _opt_temp,
         opt_ign,
         mut opt_vol,
+        opt_jet,
     ) in bodies_query.iter_mut()
     {
         let m = mass.0;
@@ -842,6 +844,10 @@ pub fn gmc_cluster_gas_accretion(
             if d_mass > 1e-12 {
                 mass.0 = m + d_mass;
                 rad.0 = (1.974e-8 * mass.0).max(1e-7);
+                if let Some(mut jet) = opt_jet {
+                    jet.is_accreting = true;
+                    jet.accretion_timer_years = 5.0; // Keep active for 5 years after eating gas
+                }
             }
         } else if body.body_type == BodyType::Protoplanet || body.body_type.is_planet() {
             compute_protoplanet_envelope_accretion(

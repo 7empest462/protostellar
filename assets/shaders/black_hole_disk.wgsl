@@ -124,11 +124,12 @@ fn sample_accretion_disk(
     result.doppler_factor = beaming;
 
     let base_intensity = 12.0;
+    let accretion_rate = disk.cam_up_local.w;
 
-    result.emission = local_color * disk.disk_color.rgb * disk_flux * beaming * base_intensity * fine_rings * plasma_density;
+    result.emission = local_color * disk.disk_color.rgb * disk_flux * beaming * base_intensity * fine_rings * plasma_density * accretion_rate;
 
     let alpha_fade = smoothstep(r_shadow * 1.01, r_inner, r);
-    result.alpha = clamp(alpha_fade * outer_fade * (0.35 + 0.55 * min(beaming, 2.5)), 0.0, 0.98);
+    result.alpha = clamp(alpha_fade * outer_fade * (0.35 + 0.55 * min(beaming, 2.5)), 0.0, 0.98) * accretion_rate;
     return result;
 }
 

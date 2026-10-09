@@ -258,8 +258,14 @@ fn spawn_missing_jet_hierarchies(
     updated_targets: &HashSet<Entity>,
     elapsed: f32,
 ) {
-    for (&target, &(pos, _body, jet_state, opt_spin)) in active_map {
-        if updated_targets.contains(&target) || jet_state.jet_length_au <= 0.01 {
+    for (&target, &(pos, body, jet_state, opt_spin)) in active_map {
+        let is_jet_visible = if body.body_type == BodyType::BlackHole {
+            jet_state.is_accreting || jet_state.accretion_timer_years > 0.0
+        } else {
+            true
+        };
+
+        if updated_targets.contains(&target) || jet_state.jet_length_au <= 0.01 || !is_jet_visible {
             continue;
         }
 
@@ -353,8 +359,14 @@ pub fn sync_relativistic_jets(
 
     // 3. Update existing roots or despawn orphans
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
-        if let Some((pos, _body, jet_state, opt_spin)) = active_map.get(&root.target) {
-            if jet_state.jet_length_au <= 0.01 {
+        if let Some((pos, body, jet_state, opt_spin)) = active_map.get(&root.target) {
+            let is_jet_visible = if body.body_type == BodyType::BlackHole {
+                jet_state.is_accreting || jet_state.accretion_timer_years > 0.0
+            } else {
+                true
+            };
+
+            if jet_state.jet_length_au <= 0.01 || !is_jet_visible {
                 if let Ok(mut cmd) = commands.get_entity(root_entity) {
                     cmd.try_despawn();
                 }

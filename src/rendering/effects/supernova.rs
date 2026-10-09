@@ -182,10 +182,10 @@ pub fn trigger_supernova_explosion(
     let explosion_type = determine_supernova_type(initial_mass, remnant_type);
 
     let (blast_speed_au_s, max_radius_au, max_timer, prompt_breakout_au) = match explosion_type {
-        SupernovaType::Hypernova => (75.0, 150.0, 8.0, 3.0),
-        SupernovaType::TypeII => (45.0, 110.0, 7.5, 2.5),
-        SupernovaType::TypeIa => (35.0, 95.0, 6.5, 0.8),
-        SupernovaType::PlanetaryNebula => (4.5, 45.0, 12.0, 0.5),
+        SupernovaType::Hypernova => (75.0, 15.0, 3.0, 1.0),
+        SupernovaType::TypeII => (45.0, 11.0, 2.5, 0.8),
+        SupernovaType::TypeIa => (35.0, 9.5, 2.0, 0.4),
+        SupernovaType::PlanetaryNebula => (4.5, 4.5, 4.0, 0.2),
     };
 
     let fragments = spawn_ejecta_fragments(explosion_type, blast_speed_au_s, center);

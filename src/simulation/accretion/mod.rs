@@ -15,3 +15,5 @@ pub use gas::*;
 pub use impact_regimes::*;
 pub use roche::*;
 pub use theia::*;
+pub mod black_holes;
+pub use black_holes::*;

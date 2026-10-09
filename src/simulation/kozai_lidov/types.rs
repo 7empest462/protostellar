@@ -47,14 +47,77 @@ fn default_zero() -> f64 {
     0.0
 }
 
-/// Deserializes an optional/nullable float, mapping `null` or missing to `f64::INFINITY`.
-pub fn deserialize_nullable_f64_infinity<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt = Option::<f64>::deserialize(deserializer)?;
-    Ok(opt.unwrap_or(f64::INFINITY))
+macro_rules! define_deserialize_nullable_f64 {
+    (
+        $(#[$meta:meta])*
+        $func_name:ident, $fallback:expr
+    ) => {
+        $(#[$meta])*
+        pub fn $func_name<'de, D>(deserializer: D) -> Result<f64, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            struct F64OrNullVisitor;
+
+            impl<'de> serde::de::Visitor<'de> for F64OrNullVisitor {
+                type Value = f64;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    formatter.write_str("an f64 or null")
+                }
+
+                fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    Ok(value)
+                }
+
+                fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    Ok(value as f64)
+                }
+
+                fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    Ok(value as f64)
+                }
+
+                fn visit_unit<E>(self) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    Ok($fallback)
+                }
+
+                fn visit_none<E>(self) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    Ok($fallback)
+                }
+
+                fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+                where
+                    D: serde::Deserializer<'de>,
+                {
+                    deserializer.deserialize_f64(self)
+                }
+            }
+
+            deserializer.deserialize_any(F64OrNullVisitor)
+        }
+    };
 }
+
+define_deserialize_nullable_f64!(
+    /// Deserializes an optional/nullable float, mapping `null` or missing to `f64::INFINITY`.
+    deserialize_nullable_f64_infinity, f64::INFINITY
+);
 
 /// Serializes a float, clamping `f64::INFINITY` or `NaN` to a large finite number (1e12) for JSON validity.
 pub fn serialize_f64_finite_infinity<S>(val: &f64, serializer: S) -> Result<S::Ok, S::Error>
@@ -68,14 +131,10 @@ where
     }
 }
 
-/// Deserializes an optional/nullable float, mapping `null` to `0.0`.
-pub fn deserialize_nullable_f64_zero<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt = Option::<f64>::deserialize(deserializer)?;
-    Ok(opt.unwrap_or(0.0))
-}
+define_deserialize_nullable_f64!(
+    /// Deserializes an optional/nullable float, mapping `null` to `0.0`.
+    deserialize_nullable_f64_zero, 0.0
+);
 
 /// Component tracking hierarchical triple Kozai-Lidov secular state and orbital forecasts.
 #[derive(Component, Debug, Clone, PartialEq, Reflect, Serialize, Deserialize)]
