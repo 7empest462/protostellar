@@ -49,31 +49,35 @@
 
 Protostellar has evolved far beyond an N-body gravity toy into a comprehensive astrophysical sandbox. Here is a summary of all recent major systems:
 
-| System / Feature | Description | Primary In-Game Access |
-| :--- | :--- | :---: |
-| **Giant Molecular Clouds & Fluid Volumetrics** | Live WGPU compute shader volumetric fluid dynamics simulating $250,000\text{ AU}$ turbulent nebula gas. Features gravity-driven Jeans Collapse spawning Pop-I/II/III stars and HII region ionization bubbles that carve out the nebula via radiation pressure. | Click **`[Molecular Cloud]`** in Scenarios Bar |
-| **Interstellar Probes & Astronautics** | Launch and navigate robotic space probes across star systems. Uses continuous low-thrust ion drives for deep-space transit and automatic retrograde braking for orbital insertion or surface rover landings. | Open Inspector (**`[I]`**) $\to$ click **`[Launch Probe]`** |
-| **Exoplanet Civilizations & Megastructures** | Tracks geological-scale habitability over billions of years, allowing primitive biospheres to organically evolve into advanced spacefaring technosignatures. Advanced civilizations automatically construct massive light-intercepting Dyson Swarms around their host stars, permanently altering the system's thermodynamic balance. | Open Inspector (**`[I]`**) $\to$ click **`[Adv. Civ]`** or let a biosphere evolve natively |
-| **Supernova Core-Collapse & Ejecta Simulation** | High-energy stellar detonations with prompt breakout fireballs, supersonic multi-layer shockwaves, turbulent Rayleigh-Taylor matter clumps, SPH circumstellar disk clearing ($+15\text{ AU/s}$), and asteroid vaporization. Differentiated by progenitor mass: Hypernova / Collapsar ($\ge 25\ M_\odot \to$ Black Hole), Type II ($8 - 25\ M_\odot \to$ Pulsar), Type Ia ($> 1.44\ M_\odot \to$ Complete Disruption), and Planetary Nebula ($0.5 - 8\ M_\odot \to$ White Dwarf). | Open Inspector (**`[I]`**) $\to$ click **`[💥 Supernova]`**, or press **`[N]`** on star, or over-accrete a White Dwarf |
-| **Pristine Disk Genesis & Star Ignition** | Class II T-Tauri disk without starter planets. Features 100,000 SPH viscous particles, aerodynamic gas drag, $2.7\text{ AU}$ water snow line trap, protostellar gravitational contraction, and automatic thermonuclear ignition at $10.0\text{ MK}$ ($100\%$) with solar wind clearing. | Press **`[Shift + F1]`** or click **`[Disk Genesis]`** in Scenarios Bar |
-| **Secular Kozai-Lidov Resonance** | Quadrupole secular gravitational coupling in hierarchical triples, driving massive cyclic exchanges of orbital inclination and eccentricity ($e \leftrightarrow i$) up to $e \to 0.88+$, triggering extreme tidal heating, captures, or Roche shredding. | Press **`[F11]`** or click **`[HD 80606]`** in Scenarios Bar |
-| **Contextual Scenario-Specific HUD** | Dynamic toolbar and telemetry filtering that correlates HUD action menus, tools, and readouts to the currently loaded scenario, eliminating visual clutter while preserving universal sandbox tools everywhere. | Automatic across all 11 scenario presets |
-| **Interactive Orbital Slingshot Launcher** | Aim and inject projectiles, comets, or rogue planets with click-and-drag flight vectors. | Press **`[K]`** or click **`[🎯 Slingshot [K]]`** |
-| **Trajectory Predictor & Encounter Forecaster** | Conic Keplerian trajectory propagation forecasting closest approaches, Hill sphere entries, and direct impacts. | Press **`[N]`** or click **`[🎯 Forecast: ON [N]]`** |
-| **Deep-Time Geological Epoch Scrubber** | Scrub planets across 4.56 Gyr of planetary evolution: Hadean magma oceans, Archean Great Oxidation, supercontinents, and biosphere expansion. | Press **`[F11]`** or click **`[⏳ Epochs [F11]]`** |
-| **Relativistic Polar Jets & Synchrotron Cones** | Relativistic beaming ($\theta_{\text{beam}} = 1/\Gamma$), real-time camera Doppler boosting ($D = \delta^{3+\alpha}$), braided helical magnetic flux ropes, and shock knots. | Load **`[F7]`** Pulsar, **`[F9]`** Magnetar, or **`[F6]`** Quasi-Star |
-| **Targeted Terraforming & Guided Bombardment** | Precision-targeted projectile launcher delivering water oceans via icy comets, greenhouse breakout via carbonaceous chondrites, or dynamo activation. | Open Inspector (**`[I]`**) $\to$ Terraforming section buttons |
-| **Viscoelastic Tidal Heating & Volcanism** | Models tidal dissipation (Kaula/Efroimsky formulations), Io-like volcanism, surface lava lakes, and 1:1 spin-orbit tidal locking. | Open Inspector (**`[I]`**) $\to$ click **`[🌊 Tidal Lock]`** |
-| **Multi-Moon Solar Eclipses & Ring Shadows** | Dynamic ray-marched umbra/penumbra solar eclipse shadow discs on planet surfaces and Cassini-divided ring shadows across day/night sides. | Automatic in all systems with moons or rings (e.g. Saturn, Earth-Moon) |
-| **Atmospheric Photoevaporation & EUV Winds** | Energy-limited photoevaporative hydrodynamic escape stripping close-in envelopes down to bare chthonian cores with anti-stellar cometary ion tails. | Open Inspector (**`[I]`**) $\to$ click **`[💨 Strip Atm]`** |
-| **General Relativistic 1PN & GW Inspiral** | First Post-Newtonian (1PN) perihelion precession (Mercury) and Peters gravitational-wave orbital decay leading to ISCO coalescence and chirp mergers. | Open Inspector (**`[I]`**) $\to$ click **`[🌀 Inspiral]`** |
-| **Persistent Supernova Remnant (SNR) Nebulae & Shaders** | Custom volumetric WGSL shader (`supernova.wgsl`) transitioning prompt explosions into persistent filamentary nebulae expanding via Sedov-Taylor self-similar blast physics ($R(t) \propto t^{0.38}$), multi-element cooling wisps ($H\alpha$ ruby & $[\text{O III}]$ emerald), and central Pulsar Wind Nebula (PWN) synchrotron emission cores. | Automatic transition following any stellar core collapse or supernova detonation |
-| **Kilonova Fireballs & Binary Coalescence** | Compact binary mergers (BNS / NS-BH / BBH) driven by Peters GW orbital decay. Spawns relativistic polar short-GRB jets ($\Gamma \ge 25$), $r$-process radioactive lanthanide fireballs ($5,000\text{ K} \to 2,000\text{ K}$), expanding blast rings, BBH spacetime chirp ripples, and Quasi-Normal Mode (QNM) ringdown shimmer. | Load **`[HUD]`** PSR B1913+16 or trigger **`[🌀 Inspiral]`** on compact binaries |
-| **Realistic Black Hole Event Horizons** | Pure pitch-black unlit event horizons ($0\text{ lumen}$ emission), razor-sharp photon ring ($pow(1-N\cdot V, 36.0)$), physical Schwarzschild radius scaling ($r_{\text{vis}} \propto 2GM/c^2$, shrinking to ~0.005 AU for stellar-mass remnants), and active background star gravitational lensing. | Formed via Hypernova / Collapsar ($\ge 25\ M_\odot$), JWST Little Red Dot (**`[F6]`**), or over-accreting a Neutron Star |
-| **System Save / Load & Scenario Serializer** | Full JSON serialization preserving masses, compositions, climates, spins, rings, basins, tides, and orbital vectors. | Press **`[F12]`** (Save) / **`[Shift+F12]`** (Load) |
-| **Scrollable Target Inspector & Universal HUD Pills** | Clean, organized inspection panel with vertical scroll, categorized sections, and universal `🗕` minimization with glowing restore pills. | Press **`[I]`** or click any corner `🗕` button |
+### 1. Galactic Evolution & Active Galactic Nuclei (AGN)
+- **Supermassive Black Holes**: Relativistic accretion disks that ignite into brilliant Quasars when actively feeding on surrounding gas clouds or consumed stars.
+- **Tidal Disruption Events (TDEs)**: Stars plunging within the Roche limit of a black hole are spaghettified into glowing plasma ribbons that dynamically wind into the accretion disk.
+- **Relativistic Jets**: AGN and Magnetars fire highly collimated relativistic jets with synchronized Synchrotron radiation.
+- **Sagittarius A* System**: Simulates the extreme relativistic orbits (S-Stars) around the Milky Way's central supermassive black hole.
 
----
+### 2. Giant Molecular Clouds & Spiral Galaxies
+- **WGPU Gas Hydrodynamics**: Leverages GPU compute shaders for Eulerian fluid dynamics and shock compression.
+- **Lin-Shu Spiral Density Waves**: Stars and gas perfectly align into non-winding, grand-design spiral arms (4-armed Milky Way style).
+- **Jeans Instability**: Cold gas clumps dynamically fragment and collapse into new protostellar seeds and binary stars.
+- **HII Regions & Volumetric Rendering**: 3D raymarched nebulae where igniting stars blow away surrounding gas to reveal the new solar systems.
+
+### 3. Exoplanet Civilizations & Megastructures
+- **Habitability & Technosignatures**: Planets sustaining liquid water in the Goldilocks zone for eons spawn advanced biospheres.
+- **Dyson Swarms**: Kardashev Type II civilizations actively construct instanced Dyson Swarms that orbit and dynamically intercept their host star's luminosity.
+- **Night-Side City Lights**: Procedural civilizations cast emissive urban networks along their coastlines and temperate zones.
+
+### 4. Interstellar Probes & Astronautics
+- **Massless Spacecraft**: Launch AI-driven `SpaceProbe` entities (Orbiters, Rovers) capable of calculating Hohmann transfers and intercepting target planets without affecting gravity.
+- **Ion Drive Navigation**: Probes compute targeted Delta-V burns to achieve orbital insertion or surface landings dynamically.
+
+### 5. High-Fidelity 3D Terrain & Procedural Planets
+- **Vertex Displacement**: Planets are true 3D geometry displaced by procedural geological heightmaps (mountains, craters, tectonic ridges).
+- **Dynamic Sea Levels**: Water tables dynamically rise and fall, filling basins and creating smooth, reflective procedural oceans.
+- **Milankovitch Climate & Ice Caps**: Polar ice caps seamlessly advance and retreat based on orbital insolation, potentially triggering Snowball Earth events.
+
+### 6. Symplectic Physics & Memory Optimizations
+- Fully allocation-free hot path: Eliminates thousands of `Vec` allocations per frame during symplectic N-body timestepping.
+- High-warp multi-threading with Rayon `par_iter` and $O(N)$ index lookups for enormous performance gains during fast-forwarded cosmological timescales.
 
 ## 🎮 Flight Manual & How to Access Everything In-Game
 
