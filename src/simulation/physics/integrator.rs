@@ -155,6 +155,7 @@ pub fn advance_symplectic_leapfrog_drift(
     sub_dt: f64,
     star_pos: DVec3,
     star_mass: f64,
+    snapshot_buffer: &mut Vec<(Entity, DVec3, DVec3, f64, f64)>,
 ) {
     for body in body_data.iter_mut() {
         if body.satellite.is_none() {
@@ -170,15 +171,17 @@ pub fn advance_symplectic_leapfrog_drift(
         }
     }
 
-    let snapshot_positions: Vec<(Entity, DVec3, DVec3, f64, f64)> = body_data
-        .iter()
-        .map(|b| (b.entity, b.pos, b.vel, b.mass, b.radius))
-        .collect();
+    snapshot_buffer.clear();
+    snapshot_buffer.extend(
+        body_data
+            .iter()
+            .map(|b| (b.entity, b.pos, b.vel, b.mass, b.radius)),
+    );
 
     for body in body_data.iter_mut() {
         if let Some(ref mut sat) = body.satellite {
             if let Some(&(_, parent_pos, parent_vel, parent_mass, parent_radius)) =
-                snapshot_positions.iter().find(|(e, ..)| *e == sat.parent)
+                snapshot_buffer.iter().find(|(e, ..)| *e == sat.parent)
             {
                 let r_orbit = sat.semi_major_axis_au.max(1e-5);
                 if r_orbit < parent_radius * 1.05 {

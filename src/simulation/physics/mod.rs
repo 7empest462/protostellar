@@ -80,6 +80,8 @@ fn write_back_physics_results(
     >,
 ) {
     let mut escaped_minor_debris: Vec<Entity> = Vec::new();
+    let body_map: hashbrown::HashMap<Entity, &PhysicsBodyEntry> =
+        body_data.iter().map(|b| (b.entity, b)).collect();
 
     for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat, opt_central) in
         bodies_query.iter_mut()
@@ -88,7 +90,7 @@ fn write_back_physics_results(
             pos.0 = DVec3::ZERO;
             vel.0 = DVec3::ZERO;
             acc.0 = DVec3::ZERO;
-        } else if let Some(b) = body_data.iter().find(|b| b.entity == e) {
+        } else if let Some(&b) = body_map.get(&e) {
             let r_mag = b.pos.length();
             let debris_escape_radius = if is_little_red_dot { 15_000.0 } else { 2000.0 };
             if r_mag > debris_escape_radius
@@ -182,6 +184,10 @@ fn run_physics_substeps(
     ice_giant_entities: &hashbrown::HashSet<Entity>,
     elapsed_years: f64,
 ) {
+    let mut massive_data = Vec::with_capacity(massive_indices.len());
+    let mut snapshot_buffer = Vec::with_capacity(body_data.len());
+    let mut new_accelerations = vec![DVec3::ZERO; body_data.len()];
+
     for _ in 0..n_substeps {
         for body in body_data.iter_mut() {
             if body.is_central_star {
@@ -194,15 +200,19 @@ fn run_physics_substeps(
             }
         }
 
-        advance_symplectic_leapfrog_drift(body_data, sub_dt, star_pos, star_mass);
+        advance_symplectic_leapfrog_drift(
+            body_data,
+            sub_dt,
+            star_pos,
+            star_mass,
+            &mut snapshot_buffer,
+        );
 
-        let massive_data: Vec<(DVec3, f64, f64, usize)> = massive_indices
-            .iter()
-            .filter_map(|&idx| {
-                let b = body_data.get(idx)?;
-                Some((b.pos, b.mass, b.radius, idx))
-            })
-            .collect();
+        massive_data.clear();
+        massive_data.extend(massive_indices.iter().filter_map(|&idx| {
+            let b = body_data.get(idx)?;
+            Some((b.pos, b.mass, b.radius, idx))
+        }));
 
         let cluster_com_mass = if is_gmc_cluster {
             let mut total_m = 0.0;
@@ -216,11 +226,12 @@ fn run_physics_substeps(
             (DVec3::ZERO, 0.0)
         };
 
-        let new_accelerations: Vec<DVec3> = body_data
-            .par_iter()
+        new_accelerations
+            .par_iter_mut()
+            .zip(body_data.par_iter())
             .enumerate()
-            .map(|(i, b)| {
-                compute_single_body_acc(
+            .for_each(|(i, (acc_out, b))| {
+                *acc_out = compute_single_body_acc(
                     i,
                     b,
                     config,
@@ -233,9 +244,8 @@ fn run_physics_substeps(
                     is_gmc_cluster,
                     cluster_com_mass,
                     elapsed_years,
-                )
-            })
-            .collect();
+                );
+            });
 
         for (body, &new_acc) in body_data.iter_mut().zip(&new_accelerations) {
             if body.is_central_star {
