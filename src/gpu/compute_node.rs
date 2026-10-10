@@ -89,7 +89,34 @@ pub fn extract_gpu_sim_data(
         >,
     >,
     massive_query: Extract<Query<(&SimPosition, &Mass, &CelestialBody), Without<CentralStar>>>,
+    scenario_state: Extract<Option<Res<crate::simulation::scenarios::ActiveScenarioState>>>,
 ) {
+    if let Some(scenario_state) = scenario_state.as_ref() {
+        if scenario_state.current_preset == crate::simulation::scenarios::ScenarioPreset::GalacticCollision {
+            commands.insert_resource(GpuSimExtractedParams {
+                is_paused: time_warp.is_paused,
+                step_once: time_warp.step_once,
+                enable_gpu_compute: false, // DISABLE PREVIOUS COMPUTE NODE
+                dt: 0.0,
+                star_pos: [0.0; 3],
+                star_mass: 0.0,
+                gas_scale: 0.0,
+                inner_radius: 0.0,
+                outer_radius: 0.0,
+                enable_gas_drag: 0,
+                ref_temp_1au: 0.0,
+                shockwave_radius: 0.0,
+                softening_sq: 0.0,
+                num_massive_bodies: 0,
+                tractor_pos_mass: [0.0; 4],
+                massive_bodies: [MassiveBodyGpu::default(); 32],
+                count: 0,
+                disk_mass: 0.0,
+                elapsed_years: 0.0,
+            });
+            return;
+        }
+    }
     let mut star_pos = [0.0f32; 3];
     let mut star_mass = disk_params.central_star_mass as f32;
     let mut shockwave_radius = 0.0f32;
