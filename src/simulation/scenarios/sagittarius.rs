@@ -135,6 +135,12 @@ fn spawn_sagittarius_a_black_hole(commands: &mut Commands) -> Entity {
             Luminosity(120.0), // Quiescent Shakura-Sunyaev / RIAF accretion glow
             AngularMomentum::default(),
             Composition::pure_hydrogen(),
+            IgnitionState {
+                core_temperature: 0.0,
+                fusion_fraction: 0.0,
+                is_ignited: false,
+                shockwave_radius: 0.0,
+            },
             RelativisticState::default(),
         ))
         .id()
@@ -458,7 +464,7 @@ pub fn spawn_sagittarius_a_star_scenario(
     disk_params.central_star_mass = SGR_A_STAR_MASS_SOLAR;
     disk_params.inner_radius_au = 0.25;
     disk_params.outer_radius_au = 1500.0;
-    disk_params.disk_mass = 0.00001; // Quiescent gas background
+    disk_params.disk_mass = 0.0; // Empty particle swarm (S-star cluster & G1/G2 clouds are discrete ECS bodies)
 
     let sgr_a = spawn_sagittarius_a_black_hole(commands);
     spawn_inner_s_stars(commands);

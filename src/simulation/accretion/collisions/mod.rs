@@ -87,12 +87,16 @@ pub fn process_accretion_and_collisions(
 
             // High-performance spatial broadphase: eliminate >98% of distant pairs before cloning
             if let (Some(s1), Some(s2)) = (snapshots.get(i), snapshots.get(j)) {
-                let max_reach =
-                    if s1.body_type == BodyType::BlackHole || s2.body_type == BodyType::BlackHole {
-                        50.0
-                    } else {
-                        6.0
-                    };
+                let max_reach = if (s1.body_type == BodyType::BlackHole && s1.mass > 1_000_000.0)
+                    || (s2.body_type == BodyType::BlackHole && s2.mass > 1_000_000.0)
+                {
+                    5000.0
+                } else if s1.body_type == BodyType::BlackHole || s2.body_type == BodyType::BlackHole
+                {
+                    50.0
+                } else {
+                    6.0
+                };
                 let dx = (s1.pos.x - s2.pos.x).abs();
                 let dz = (s1.pos.z - s2.pos.z).abs();
                 let dy = (s1.pos.y - s2.pos.y).abs();
@@ -223,8 +227,13 @@ fn compute_effective_collision_radius(
                 // However, in our N-body simulation, gravitational wave emission is not explicitly modeled.
                 // To allow them to merge into a Supermassive Black Hole at the galactic center, we artificially
                 // expand their capture radius based on their masses to guarantee they fuse once they sink into a tight binary.
-                let capture = 0.5
-                    * (bh_b.mass.max(1.0).sqrt() + target_b.mass.max(1.0).sqrt()).clamp(1.0, 50.0);
+                let capture = if bh_b.mass > 1_000_000.0 && target_b.mass > 1_000_000.0 {
+                    2500.0
+                } else {
+                    let cap =
+                        f64::midpoint(bh_b.mass.max(1.0).sqrt(), target_b.mass.max(1.0).sqrt());
+                    cap.clamp(1.0, 50.0)
+                };
                 capture.max(r_phys)
             } else {
                 // Star or planet around Black Hole: devoured within tidal disruption or extended gravitational capture radius

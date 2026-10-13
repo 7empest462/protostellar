@@ -20,11 +20,13 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<SystemPhase>()
             .init_resource::<PhaseManager>()
+            .init_resource::<phases::GlobalTrophies>()
             .init_resource::<LateHeavyBombardmentState>()
             .init_resource::<crate::simulation::accretion::TheiaImpactState>()
             .init_resource::<QuickBarState>()
             .init_resource::<PlanetBuilderState>()
             .init_resource::<TelemetryPanelState>()
+            .init_resource::<crate::game::ui::types::TrophiesPanelState>()
             .init_resource::<HudVisibilityState>()
             .add_systems(Startup, setup_hud)
             .add_systems(
@@ -41,6 +43,7 @@ impl Plugin for GamePlugin {
                     update_quick_bar_highlights.after(update_quick_body_selector_bar),
                     update_planet_builder_ui,
                     update_telemetry_graph_ui,
+                    ui::trophies_panel::update_trophies_panel,
                     update_epoch_scrubber_ui,
                     handle_roche_disruption_toasts,
                 ),

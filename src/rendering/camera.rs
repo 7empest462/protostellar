@@ -49,7 +49,7 @@ impl Default for PanOrbitCamera {
             target_pitch: 0.62,
             target_entity: None,
             min_radius: 0.005,
-            max_radius: 250_000.0,
+            max_radius: 3_000_000.0,
             orbit_sensitivity: 0.005,
             zoom_sensitivity: 0.055,
             pan_sensitivity: 0.02,

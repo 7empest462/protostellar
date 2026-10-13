@@ -604,6 +604,7 @@ pub enum UiButtonAction {
     CycleOverlayMode,
     ToggleTractor,
     ToggleTrajectoryPredictor,
+    ToggleTrophiesPanel,
     // Live Celestial Body Editor
     IncreaseMass,
     DecreaseMass,
@@ -651,6 +652,7 @@ pub enum UiButtonAction {
     LoadScenarioKozaiTriple,
     LoadScenarioSagittariusAStar,
     LoadScenarioMolecularCloud,
+    LoadScenarioGalacticCollision,
     // JWST Little Red Dot / Quasi-Star Experiments
     ToggleSuperEddington,
     TriggerBlowoutCocoon,
@@ -709,6 +711,7 @@ impl UiButtonAction {
             UiButtonAction::BuilderExecuteSpawn => "Spawn the configured celestial world into orbit immediately!",
             UiButtonAction::SpawnSubRocheMoon => "Spawn a volatile-rich moon directly inside the selected planet's fluid Roche limit to trigger tidal shredding and ring creation!",
             UiButtonAction::ToggleTelemetryPanel => "[F10]: Open or close the planetary climate & habitability telemetry graphing panel.",
+            UiButtonAction::ToggleTrophiesPanel => "🏆 Trophies: View unlocked scientific milestones and scenario achievements.",
             UiButtonAction::SelectTelemetryMetric(_) => "Switch active telemetry graph metric (Habitability, Temperature, Ocean, Pressure, Orbit).",
             UiButtonAction::ExportTelemetryCsv => "Export current planetary telemetry history to a standard CSV file in ./exports/.",
             UiButtonAction::ToggleEpochScrubberPanel => "[F11]: Open or close the deep geological epoch scrubber and continental drift timeline.",
@@ -723,7 +726,7 @@ impl UiButtonAction {
             UiButtonAction::ToggleOrbitMode => "[Y]: Cycle orbit trails (All -> Selected Target Only -> Hidden).",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
-            UiButtonAction::ToggleTrajectoryPredictor => "[N]: Toggle real-time trajectory prediction and close-encounter / impact warning reticles.",
+    UiButtonAction::ToggleTrajectoryPredictor => "[N]: Toggle real-time trajectory prediction and close-encounter / impact warning reticles.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
             UiButtonAction::DecreaseMass => "[J]: Strip -20% outer envelope mass from selected planet.",
             UiButtonAction::ExpandOrbit => "[O]: Boost orbital energy to expand orbital radius +10%.",
@@ -767,6 +770,7 @@ impl UiButtonAction {
             UiButtonAction::LoadScenarioKozaiTriple => "[F11]: Load HD 80606 Kozai-Lidov hierarchical triple secular resonance and tidal migration.",
             UiButtonAction::LoadScenarioSagittariusAStar => "[F10]: Load Sagittarius A* supermassive black hole (4.3×10⁶ M☉) with relativistic S-star cluster.",
             UiButtonAction::LoadScenarioMolecularCloud => "Load Giant Molecular Cloud (24 M☉) Jeans instability cluster collapse with 10 protostellar seeds.",
+            UiButtonAction::LoadScenarioGalacticCollision => "Load Milkomeda Galactic Collision: N-Body Galaxy merger with Dark Matter Halos and 200,000 stars.",
             UiButtonAction::ToggleSuperEddington => "[X]: Toggle Super-Eddington hyper-accretion onto the central black hole seed.",
             UiButtonAction::TriggerBlowoutCocoon => "[B]: Trigger radiation envelope blowout to unveil the naked Supermassive Quasar.",
             UiButtonAction::SpawnInfallPop3Star => "[T]: Spawn an infalling Population III hypergiant star to observe a Tidal Disruption Event (TDE).",
@@ -933,3 +937,14 @@ pub struct SystemWorld {
 }
 
 pub use super::world_list::*;
+
+#[derive(Resource, Default)]
+pub struct TrophiesPanelState {
+    pub is_open: bool,
+}
+
+#[derive(Component)]
+pub enum TrophiesPanelElement {
+    Container,
+    Content,
+}

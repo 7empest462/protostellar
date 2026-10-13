@@ -18,6 +18,8 @@ mod genesis_scenario;
 mod geological_epochs;
 #[path = "simulation_tests/gmc_black_hole_sinking.rs"]
 mod gmc_black_hole_sinking;
+#[path = "simulation_tests/gmc_far_field.rs"]
+mod gmc_far_field;
 #[path = "simulation_tests/gpu_and_particles.rs"]
 mod gpu_and_particles;
 #[path = "simulation_tests/inspector_and_minimization.rs"]

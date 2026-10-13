@@ -13,7 +13,12 @@ pub fn update_billboard_mesh_quads(
     disk_params: &DiskParameters,
     p_render_scale: f32,
 ) {
-    let scale_mult = (disk_params.outer_radius_au / 45.0).clamp(0.02, 1.0) as f32;
+    let is_galaxy = disk_params.outer_radius_au >= 10_000.0;
+    let scale_mult = if is_galaxy {
+        (disk_params.outer_radius_au / 45.0).max(0.02) as f32
+    } else {
+        (disk_params.outer_radius_au / 45.0).clamp(0.02, 1.0) as f32
+    };
     let base_render_r = 0.080 * p_render_scale * scale_mult;
     let n = data.count;
     let b_mass = data.base_mass;
@@ -59,7 +64,11 @@ pub fn update_billboard_mesh_quads(
                         continue;
                     };
                     let p = Vec3::from_array(pos_val);
-                    let m_factor = (m / b_mass).cbrt().clamp(1.0, 8.0);
+                    let m_factor = if is_galaxy || b_mass <= 0.0 {
+                        1.0
+                    } else {
+                        (m / b_mass).cbrt().clamp(1.0, 1.35)
+                    };
                     let r_v = base_render_r * m_factor;
 
                     let right = cam_right * r_v;
@@ -70,7 +79,9 @@ pub fn update_billboard_mesh_quads(
                     *p2 = (p + right + up).to_array();
                     *p3 = (p - right + up).to_array();
 
-                    let alpha = if m <= 1.1 * b_mass {
+                    let alpha = if is_galaxy {
+                        1.0f32
+                    } else if m <= 1.1 * b_mass {
                         0.65f32
                     } else if m <= 3.0 * b_mass {
                         0.82f32

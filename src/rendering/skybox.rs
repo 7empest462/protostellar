@@ -103,6 +103,8 @@ pub fn update_skybox_uniforms(
     let target_blend = if let Some(ref state) = scenario_state {
         if state.current_preset == ScenarioPreset::LittleRedDot {
             1.0_f32
+        } else if state.current_preset == ScenarioPreset::GalacticCollision {
+            2.0_f32
         } else {
             0.0_f32
         }
@@ -145,7 +147,7 @@ pub fn update_skybox_uniforms(
             // Pre-blowout: subtle relativistic shimmer around the 60 AU envelope (R ~ 12 AU).
             // Post-blowout / Stellar-Mass BH: focuses onto the event horizon with a 2.1x photon sphere.
             let effective_lens_r = if is_blown_out {
-                (visual_r * 2.10).max(0.005)
+                (visual_r * 1.50).max(0.005)
             } else {
                 let r_cocoon_lens = (visual_r * 0.20).clamp(2.0, 12.0);
                 let r_bh_lens = (visual_r * 1.85).clamp(2.0, 6.0);

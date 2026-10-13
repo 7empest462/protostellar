@@ -8,6 +8,7 @@
 //! - Hayashi Minimum Mass Solar Nebula (Default Solar System)
 
 pub mod exotic;
+pub mod galaxy;
 pub mod genesis;
 pub mod kepler;
 pub mod molecular_cloud;
@@ -16,6 +17,7 @@ pub mod solar;
 pub mod trappist;
 
 pub use exotic::*;
+pub use galaxy::*;
 pub use genesis::*;
 pub use kepler::*;
 pub use molecular_cloud::*;
@@ -33,6 +35,7 @@ use crate::simulation::resources::*;
 /// Supported Sandbox Scenario Presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Reflect, Default, Serialize, Deserialize)]
 pub enum ScenarioPreset {
+    GalacticCollision,
     #[default]
     SolarNebulaMmsn,
     AccretionDiskGenesis,
@@ -53,6 +56,7 @@ pub enum ScenarioPreset {
 impl ScenarioPreset {
     pub fn display_name(&self) -> &'static str {
         match self {
+            ScenarioPreset::GalacticCollision => "N-Body Galaxy Merger",
             ScenarioPreset::SolarNebulaMmsn => "Hayashi Solar Nebula",
             ScenarioPreset::AccretionDiskGenesis => "Disk Genesis (Organic Planet Formation)",
             ScenarioPreset::Trappist1System => "TRAPPIST-1 (7 Resonant Earths)",
@@ -72,6 +76,7 @@ impl ScenarioPreset {
 
     pub fn description(&self) -> &'static str {
         match self {
+            ScenarioPreset::GalacticCollision => "Witness the collision of two massive 100,000 N-body star clusters bound by dark matter.",
             ScenarioPreset::SolarNebulaMmsn => {
                 "Default 4.5 Gyr Hayashi Minimum Mass Solar Nebula (MMSN) with central protostar and 10 protoplanetary embryos."
             }
@@ -134,6 +139,7 @@ pub struct ActiveScenarioState {
 
 pub fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
     match preset {
+        ScenarioPreset::GalacticCollision => (300_000.0, 0.0, 1.0),
         ScenarioPreset::Trappist1System => (0.12, 0.785, 0.75),
         ScenarioPreset::Kepler16Circumbinary => (2.2, 0.785, 0.65),
         ScenarioPreset::SolarNebulaMmsn => (16.0, 0.785, 0.62),
@@ -158,6 +164,12 @@ fn spawn_scenario_preset(
     scenario_state: &mut ActiveScenarioState,
 ) -> Option<Entity> {
     match preset {
+        ScenarioPreset::GalacticCollision => Some(
+            crate::simulation::scenarios::galaxy::spawn_galactic_collision_scenario(
+                commands,
+                disk_params,
+            ),
+        ),
         ScenarioPreset::SolarNebulaMmsn => Some(spawn_solar_nebula_mmsn(commands, disk_params)),
         ScenarioPreset::AccretionDiskGenesis => {
             Some(spawn_accretion_disk_genesis(commands, disk_params))
@@ -329,7 +341,11 @@ fn align_camera_to_scenario(
     if let Some(mut cam) = camera_query.iter_mut().next() {
         cam.focus = Vec3::ZERO;
         cam.target_focus = Vec3::ZERO;
-        cam.target_entity = central_star_ent;
+        cam.target_entity = if preset == ScenarioPreset::GalacticCollision {
+            None
+        } else {
+            central_star_ent
+        };
         let (target_r, target_yaw, target_pitch) = scenario_preset_camera_pose(preset);
         cam.radius = target_r;
         cam.target_radius = target_r;

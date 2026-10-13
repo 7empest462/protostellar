@@ -20,11 +20,19 @@ use crate::rendering::particle_swarm::*;
 use crate::rendering::skybox::*;
 use crate::simulation::resources::{ImpactShockwavePool, RocheDebrisPool, TidalDisruptionPool};
 
+fn configure_gpu_clustering(mut settings: ResMut<bevy_light::cluster::GlobalClusterSettings>) {
+    if let Some(ref mut gpu) = settings.gpu_clustering {
+        gpu.initial_z_slice_list_capacity = 65536;
+        gpu.initial_index_list_capacity = 8_388_608;
+    }
+}
+
 pub struct RenderingPlugin;
 
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ImpactShockwavePool>()
+        app.add_systems(Startup, configure_gpu_clustering)
+            .init_resource::<ImpactShockwavePool>()
             .init_resource::<crate::simulation::resources::ImpactEjectaPool>()
             .init_resource::<RocheDebrisPool>()
             .init_resource::<SupernovaDebrisPool>()
@@ -91,6 +99,7 @@ impl Plugin for RenderingPlugin {
                 Update,
                 (
                     draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
+                    draw_dark_matter_halos.after(update_pan_orbit_camera),
                     draw_bombardment_gizmos.after(update_pan_orbit_camera),
                     draw_persistent_remnants_gizmos.after(update_pan_orbit_camera),
                     draw_kilonova_gizmos.after(update_pan_orbit_camera),

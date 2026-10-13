@@ -556,3 +556,125 @@ fn test_climate_snowball_and_hothouse_regimes() {
         hothouse.albedo
     );
 }
+
+#[test]
+fn test_phase7_spectral_flora_pigment_classification() {
+    use protostellar::simulation::components::FloraPigmentClass;
+
+    // 1. Ultracool M-Dwarf (TRAPPIST-1 ~ 2566 K) -> RedDwarfCrimson
+    let m_dwarf_pigment = FloraPigmentClass::from_star_temperature(2566.0);
+    assert_eq!(m_dwarf_pigment, FloraPigmentClass::RedDwarfCrimson);
+    assert!((m_dwarf_pigment.shader_code() - 1.0).abs() < 1e-5);
+
+    // 2. K-Dwarf / Binary (Kepler-16 ~ 4450 K) -> OrangeDwarfCarotenoid
+    let k_dwarf_pigment = FloraPigmentClass::from_star_temperature(4450.0);
+    assert_eq!(k_dwarf_pigment, FloraPigmentClass::OrangeDwarfCarotenoid);
+    assert!((k_dwarf_pigment.shader_code() - 2.0).abs() < 1e-5);
+
+    // 3. Solar G-Dwarf (Sun ~ 5778 K) -> SolarChlorophyll
+    let g_dwarf_pigment = FloraPigmentClass::from_star_temperature(5778.0);
+    assert_eq!(g_dwarf_pigment, FloraPigmentClass::SolarChlorophyll);
+    assert!((g_dwarf_pigment.shader_code() - 0.0).abs() < 1e-5);
+
+    // 4. High-UV A-Star / White Dwarf Remnant (~ 9500 K) -> HighUvIndigo
+    let uv_pigment = FloraPigmentClass::from_star_temperature(9500.0);
+    assert_eq!(uv_pigment, FloraPigmentClass::HighUvIndigo);
+    assert!((uv_pigment.shader_code() - 3.0).abs() < 1e-5);
+}
+
+#[test]
+fn test_phase7_rover_geodesic_surface_navigation_and_sampling() {
+    use bevy::math::DVec3;
+    use protostellar::simulation::probes::navigation::probe_navigation_system;
+    use protostellar::simulation::probes::{FlightComputer, ProbeStatus, ProbeType, SpaceProbe};
+    use protostellar::simulation::resources::{SimTime, SimulationConfig, TimeWarp};
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.insert_resource(SimTime {
+        elapsed_years: 100.0,
+        current_dt_yr: 0.02,
+        visual_time_secs: 1.0,
+        ..Default::default()
+    });
+    app.insert_resource(TimeWarp {
+        multiplier: 1.0,
+        is_paused: false,
+        step_once: false,
+    });
+    app.insert_resource(SimulationConfig::default());
+    app.add_systems(Update, probe_navigation_system);
+
+    let planet = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::TerrestrialPlanet,
+                name: "TRAPPIST-1e".to_string(),
+            },
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::ZERO),
+            Radius(EARTH_RADIUS_AU),
+            Composition::rocky(),
+            PlanetaryClimate::default(),
+            BiosphereState {
+                habitability_score: 0.92,
+                biomass_coverage_frac: 0.65,
+                oxygen_fraction: 0.18,
+                emergence_year: Some(10.0),
+                flora_pigment: FloraPigmentClass::RedDwarfCrimson,
+                bioluminescence_intensity: 0.82,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    let rover = app
+        .world_mut()
+        .spawn((
+            SpaceProbe::new(ProbeType::Rover, 1),
+            FlightComputer {
+                target_entity: planet,
+                target_name: "TRAPPIST-1e".to_string(),
+                launch_pos: DVec3::new(0.95, 0.0, 0.0),
+                distance_to_target: 0.001,
+                relative_speed: 0.1,
+            },
+            SimPosition(DVec3::new(1.0005, 0.0, 0.0)),
+            SimVelocity(DVec3::ZERO),
+        ))
+        .id();
+
+    // First update: Rover touches down on TRAPPIST-1e and takes initial core sample
+    app.update();
+    {
+        let probe_state = app.world().get::<SpaceProbe>(rover).unwrap();
+        assert_eq!(probe_state.status, ProbeStatus::Landed);
+        assert_eq!(probe_state.samples_collected, 1);
+        assert!(probe_state.surface_lat_lon_deg().is_some());
+        assert!(probe_state.latest_assay.contains("NIR Anthocyanin"));
+    }
+
+    // Advance simulation steps: Rover drives along geodesic path, accumulates km and trail waypoints
+    for step in 1..=10 {
+        app.world_mut().resource_mut::<SimTime>().elapsed_years = 100.0 + f64::from(step) * 0.02;
+        app.update();
+    }
+
+    let probe_after = app.world().get::<SpaceProbe>(rover).unwrap();
+    let bio_after = app.world().get::<BiosphereState>(planet).unwrap();
+    assert!(
+        probe_after.distance_driven_km > 50.0,
+        "Rover must drive across the planetary surface (drove {:.1} km)",
+        probe_after.distance_driven_km
+    );
+    assert!(
+        probe_after.traverse_trail_unspun.len() >= 2,
+        "Rover must record breadcrumb trail waypoints (got {})",
+        probe_after.traverse_trail_unspun.len()
+    );
+    assert!(
+        probe_after.samples_collected >= 2 && bio_after.surface_samples_collected >= 2,
+        "Rover must collect additional crustal/astrobiological samples as it roves"
+    );
+}

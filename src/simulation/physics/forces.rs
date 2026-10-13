@@ -9,6 +9,29 @@ use crate::utils::constants::*;
 
 use super::integrator::*;
 
+/// Spatial-grid near field used together with the GPU far-field gravity (GMC cluster).
+pub struct GmcNearField<'a> {
+    /// Reciprocal of the grid cell size (cell size == near radius).
+    pub inv_cell: f64,
+    /// Squared near radius; pairs closer than this are integrated exactly on the CPU.
+    pub near_sq: f64,
+    /// Indices into `massive_data`, bucketed by cell (central star excluded).
+    pub grid: &'a hashbrown::HashMap<(i32, i32, i32), Vec<usize>>,
+    /// Index of the central star inside `massive_data`, always evaluated exactly.
+    pub star_slot: Option<usize>,
+    /// Latest GPU far-field acceleration per body.
+    pub far_acc: &'a hashbrown::HashMap<Entity, DVec3>,
+}
+
+/// Grid cell containing `pos` for the given reciprocal cell size.
+pub fn grid_cell(pos: DVec3, inv_cell: f64) -> (i32, i32, i32) {
+    (
+        (pos.x * inv_cell).floor() as i32,
+        (pos.y * inv_cell).floor() as i32,
+        (pos.z * inv_cell).floor() as i32,
+    )
+}
+
 fn compute_gmc_cluster_acc(
     pos: DVec3,
     vel: DVec3,
@@ -90,6 +113,120 @@ fn compute_gas_drag_acc(
     pert_acc
 }
 
+fn compute_smbh_halo_and_friction_pull(
+    r_vec: DVec3,
+    dist: f64,
+    dist_sq: f64,
+    eff_softening_sq: f64,
+    vel: DVec3,
+    m_vel: DVec3,
+    m_mass: f64,
+) -> DVec3 {
+    let m_halo = if m_mass > 50_000_000.0 {
+        1.4e12
+    } else {
+        1.0e12
+    };
+    let rs = 50_000.0;
+    let x = dist / rs;
+    let ln_term = (1.0 + x).ln();
+    let mass_enc = m_halo * (ln_term - x / (1.0 + x));
+    let mut pull = -(r_vec / dist) * (G_ASTRO * mass_enc / (dist_sq + eff_softening_sq));
+
+    // Chandrasekhar dynamical friction as the dark matter halos interpenetrate
+    let r_halo_overlap = 180_000.0;
+    if dist < r_halo_overlap {
+        let v_rel = vel - m_vel;
+        let overlap_frac = (1.0 - dist / r_halo_overlap).clamp(0.0, 1.0);
+        let gamma = 0.045 * overlap_frac * overlap_frac;
+        pull -= v_rel * gamma;
+    }
+    pull
+}
+
+fn accumulate_massive_body_pulls(
+    i: usize,
+    body: &PhysicsBodyEntry,
+    star_index: Option<usize>,
+    eff_softening_sq: f64,
+    massive_data: &[(DVec3, DVec3, f64, f64, usize)],
+    near_field: Option<&GmcNearField>,
+) -> (DVec3, DVec3) {
+    let pos = body.pos;
+    let vel = body.vel;
+    let b_mass = body.mass;
+    let mut pert_acc = DVec3::ZERO;
+    let mut star_acc = DVec3::ZERO;
+
+    let far = near_field.and_then(|nf| nf.far_acc.get(&body.entity).map(|f| (nf, *f)));
+    let mut accumulate_pair =
+        |&(m_pos, m_vel, m_mass, _m_rad, m_idx): &(DVec3, DVec3, f64, f64, usize)| {
+            if m_idx == i {
+                return;
+            }
+            let r_vec = pos - m_pos;
+            let dist_sq = r_vec.length_squared() + eff_softening_sq;
+            let dist = dist_sq.sqrt();
+            let mut pull = -(G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
+
+            if b_mass > 1_000_000.0 && m_mass > 1_000_000.0 {
+                pull += compute_smbh_halo_and_friction_pull(
+                    r_vec,
+                    dist,
+                    dist_sq,
+                    eff_softening_sq,
+                    vel,
+                    m_vel,
+                    m_mass,
+                );
+            }
+
+            if let Some(s_idx) = star_index {
+                if m_idx == s_idx {
+                    star_acc += pull;
+                } else {
+                    pert_acc += pull;
+                    if i != s_idx {
+                        let m_r_sq = m_pos.length_squared() + eff_softening_sq;
+                        let m_dist = m_r_sq.sqrt();
+                        pert_acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_pos;
+                    }
+                }
+            } else {
+                pert_acc += pull;
+            }
+        };
+
+    if let Some((nf, far_acc)) = far {
+        // Exact near field via the spatial grid; the GPU supplies everything beyond `near_sq`.
+        if let Some(star) = nf.star_slot.and_then(|slot| massive_data.get(slot)) {
+            accumulate_pair(star);
+        }
+        let (cx, cy, cz) = grid_cell(pos, nf.inv_cell);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let Some(list) = nf.grid.get(&(cx + dx, cy + dy, cz + dz)) else {
+                        continue;
+                    };
+                    for m in list.iter().filter_map(|&k| massive_data.get(k)) {
+                        if (m.0 - pos).length_squared() < nf.near_sq {
+                            accumulate_pair(m);
+                        }
+                    }
+                }
+            }
+        }
+        pert_acc += far_acc;
+    } else {
+        for m in massive_data {
+            accumulate_pair(m);
+        }
+    }
+
+    (pert_acc, star_acc)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Physics kernel requires all integration state explicitly for performance"
@@ -101,15 +238,15 @@ pub fn compute_single_body_acc(
     star_mass: f64,
     star_index: Option<usize>,
     softening_sq: f64,
-    massive_data: &[(DVec3, f64, f64, usize)],
+    massive_data: &[(DVec3, DVec3, f64, f64, usize)],
     tractor: Option<(DVec3, f64)>,
     is_little_red_dot: bool,
     is_gmc_cluster: bool,
     cluster_com_mass: (DVec3, f64),
     elapsed_years: f64,
+    near_field: Option<&GmcNearField>,
 ) -> DVec3 {
     let mut pert_acc = DVec3::ZERO;
-    let mut star_acc = DVec3::ZERO;
     let pos = body.pos;
     let vel = body.vel;
     let b_mass = body.mass;
@@ -126,34 +263,21 @@ pub fn compute_single_body_acc(
 
     let eff_softening_sq = if is_gmc_cluster {
         2.25 // 1.5 AU Plummer softening between stars in the open cluster
+    } else if b_mass > 1_000_000.0 {
+        1_000_000.0 // 1000 AU softening for supermassive black holes in galactic collisions
     } else {
         softening_sq
     };
 
-    for &(m_pos, m_mass, _m_rad, m_idx) in massive_data {
-        if m_idx == i {
-            continue;
-        }
-        let r_vec = pos - m_pos;
-        let dist_sq = r_vec.length_squared() + eff_softening_sq;
-        let dist = dist_sq.sqrt();
-        let pull = -(G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
-
-        if let Some(s_idx) = star_index {
-            if m_idx == s_idx {
-                star_acc += pull;
-            } else {
-                pert_acc += pull;
-                if i != s_idx {
-                    let m_r_sq = m_pos.length_squared() + eff_softening_sq;
-                    let m_dist = m_r_sq.sqrt();
-                    pert_acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_pos;
-                }
-            }
-        } else {
-            pert_acc += pull;
-        }
-    }
+    let (pair_pert_acc, star_acc) = accumulate_massive_body_pulls(
+        i,
+        body,
+        star_index,
+        eff_softening_sq,
+        massive_data,
+        near_field,
+    );
+    pert_acc += pair_pert_acc;
 
     if let Some((t_pos, t_mass)) = tractor {
         let r_vec = pos - t_pos;

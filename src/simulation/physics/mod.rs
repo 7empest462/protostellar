@@ -9,6 +9,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use rayon::prelude::*;
 
+use crate::gpu::gmc_far_field::{GMC_FAR_FIELD_MIN_BODIES, GMC_FAR_FIELD_NEAR_RADIUS_AU};
 use crate::simulation::components::*;
 use crate::simulation::disk_migration::apply_type_i_torque_acc;
 use crate::simulation::resources::*;
@@ -64,6 +65,7 @@ fn write_back_physics_results(
     commands: &mut Commands,
     body_data: &[PhysicsBodyEntry],
     is_little_red_dot: bool,
+    is_galaxy_collision: bool,
     bodies_query: &mut Query<
         (
             Entity,
@@ -86,7 +88,7 @@ fn write_back_physics_results(
     for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat, opt_central) in
         bodies_query.iter_mut()
     {
-        if opt_central.is_some() {
+        if opt_central.is_some() && !is_galaxy_collision {
             pos.0 = DVec3::ZERO;
             vel.0 = DVec3::ZERO;
             acc.0 = DVec3::ZERO;
@@ -160,8 +162,66 @@ fn identify_giant_planets(
     (jupiter_entity, saturn_entity, ice_giant_entities)
 }
 
+type GmcGridData<'a> = (
+    hashbrown::HashMap<(i32, i32, i32), Vec<usize>>,
+    Option<usize>,
+    &'a hashbrown::HashMap<Entity, DVec3>,
+    f64,
+);
+
+fn build_gmc_near_field_grid<'a>(
+    far_field: Option<&'a hashbrown::HashMap<Entity, DVec3>>,
+    is_gmc_cluster: bool,
+    massive_data: &[(DVec3, DVec3, f64, f64, usize)],
+    star_index: Option<usize>,
+) -> Option<GmcGridData<'a>> {
+    far_field
+        .filter(|_| is_gmc_cluster && massive_data.len() >= GMC_FAR_FIELD_MIN_BODIES)
+        .map(|far_acc| {
+            let inv_cell = 1.0 / GMC_FAR_FIELD_NEAR_RADIUS_AU;
+            let mut grid: hashbrown::HashMap<(i32, i32, i32), Vec<usize>> =
+                hashbrown::HashMap::with_capacity(massive_data.len());
+            let mut star_slot = None;
+            for (k, &(p, _, _, _, idx)) in massive_data.iter().enumerate() {
+                if Some(idx) == star_index {
+                    star_slot = Some(k);
+                } else {
+                    grid.entry(grid_cell(p, inv_cell)).or_default().push(k);
+                }
+            }
+            (grid, star_slot, far_acc, inv_cell)
+        })
+}
+
+fn apply_substep_type_i_migration(
+    body_data: &mut [PhysicsBodyEntry],
+    star_mass: f64,
+    gas_density_scale: f32,
+) {
+    if gas_density_scale <= 0.001 {
+        return;
+    }
+    for body in body_data.iter_mut() {
+        if body.is_central_star {
+            continue;
+        }
+        apply_type_i_torque_acc(
+            body.pos,
+            body.vel,
+            body.mass,
+            body.body_type,
+            body.is_central_star,
+            body.satellite.is_some(),
+            star_mass,
+            gas_density_scale,
+            &mut body.acc,
+        );
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
     reason = "Physics kernel requires all integration state explicitly for performance"
 )]
 fn run_physics_substeps(
@@ -178,11 +238,13 @@ fn run_physics_substeps(
     is_little_red_dot: bool,
     is_compact_system: bool,
     is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     jupiter_entity: Option<Entity>,
     saturn_entity: Option<Entity>,
     ice_giant_entities: &hashbrown::HashSet<Entity>,
     elapsed_years: f64,
+    far_field: Option<&hashbrown::HashMap<Entity, DVec3>>,
 ) {
     let mut massive_data = Vec::with_capacity(massive_indices.len());
     let mut snapshot_buffer = Vec::with_capacity(body_data.len());
@@ -190,7 +252,7 @@ fn run_physics_substeps(
 
     for _ in 0..n_substeps {
         for body in body_data.iter_mut() {
-            if body.is_central_star {
+            if body.is_central_star && !is_galaxy_collision {
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
@@ -206,17 +268,18 @@ fn run_physics_substeps(
             star_pos,
             star_mass,
             &mut snapshot_buffer,
+            is_galaxy_collision,
         );
 
         massive_data.clear();
         massive_data.extend(massive_indices.iter().filter_map(|&idx| {
             let b = body_data.get(idx)?;
-            Some((b.pos, b.mass, b.radius, idx))
+            Some((b.pos, b.vel, b.mass, b.radius, idx))
         }));
 
         let cluster_com_mass = if is_gmc_cluster {
             let mut total_m = 0.0;
-            for &(_, m_mass, _, _) in &massive_data {
+            for &(_, _, m_mass, _, _) in &massive_data {
                 if m_mass >= 0.5 {
                     total_m += m_mass;
                 }
@@ -225,6 +288,19 @@ fn run_physics_substeps(
         } else {
             (DVec3::ZERO, 0.0)
         };
+
+        let near_grid =
+            build_gmc_near_field_grid(far_field, is_gmc_cluster, &massive_data, star_index);
+        let near_field = near_grid
+            .as_ref()
+            .map(|(grid, star_slot, far_acc, inv_cell)| GmcNearField {
+                inv_cell: *inv_cell,
+                near_sq: GMC_FAR_FIELD_NEAR_RADIUS_AU * GMC_FAR_FIELD_NEAR_RADIUS_AU,
+                grid,
+                star_slot: *star_slot,
+                far_acc,
+            });
+        let near_field_ref = near_field.as_ref();
 
         new_accelerations
             .par_iter_mut()
@@ -244,36 +320,19 @@ fn run_physics_substeps(
                     is_gmc_cluster,
                     cluster_com_mass,
                     elapsed_years,
+                    near_field_ref,
                 );
             });
 
         for (body, &new_acc) in body_data.iter_mut().zip(&new_accelerations) {
-            if body.is_central_star {
+            if body.is_central_star && !is_galaxy_collision {
                 body.acc = DVec3::ZERO;
             } else {
                 body.acc = new_acc;
             }
         }
 
-        // Type-I / II migration while nebular gas remains
-        if config.gas_density_scale > 0.001 {
-            for body in body_data.iter_mut() {
-                if body.is_central_star {
-                    continue;
-                }
-                apply_type_i_torque_acc(
-                    body.pos,
-                    body.vel,
-                    body.mass,
-                    body.body_type,
-                    body.is_central_star,
-                    body.satellite.is_some(),
-                    star_mass,
-                    config.gas_density_scale,
-                    &mut body.acc,
-                );
-            }
-        }
+        apply_substep_type_i_migration(body_data, star_mass, config.gas_density_scale);
 
         apply_planetary_migration_and_lhb(
             body_data,
@@ -292,6 +351,7 @@ fn run_physics_substeps(
             star_pos,
             is_little_red_dot,
             is_gmc_cluster,
+            is_galaxy_collision,
         );
     }
 }
@@ -303,6 +363,7 @@ struct PhysicsSystemContext {
     is_little_red_dot: bool,
     is_compact_system: bool,
     is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
     n_substeps: usize,
     sub_dt: f64,
     massive_indices: Vec<usize>,
@@ -319,14 +380,21 @@ fn analyze_physics_system(
 ) -> PhysicsSystemContext {
     let is_gmc_cluster =
         scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
-    let star_index = body_data.iter().position(|b| b.is_central_star);
+    let is_galaxy_collision = scenario_state
+        .is_some_and(|s| s.current_preset == ScenarioPreset::GalacticCollision)
+        || disk_params.outer_radius_au >= 10_000.0;
+    let star_index = if is_galaxy_collision {
+        None
+    } else {
+        body_data.iter().position(|b| b.is_central_star)
+    };
     let (star_mass, star_pos, is_central_quasi) = if let Some(idx) = star_index {
         if let Some(b) = body_data.get(idx) {
             (b.mass, b.pos, b.body_type == BodyType::QuasiStar)
         } else {
             (1.0, DVec3::ZERO, false)
         }
-    } else if is_gmc_cluster {
+    } else if is_gmc_cluster || is_galaxy_collision {
         (0.0, DVec3::ZERO, false)
     } else {
         (1.0, DVec3::ZERO, false)
@@ -336,6 +404,7 @@ fn analyze_physics_system(
     // A cluster naturally grows massive stars and black holes; those must not flip the whole
     // simulation into Little-Red-Dot mode (125x smaller timestep + LRD-specific clamps).
     let is_little_red_dot = !is_gmc_cluster
+        && !is_galaxy_collision
         && (scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::LittleRedDot)
             || is_central_quasi
             || has_black_hole
@@ -345,8 +414,10 @@ fn analyze_physics_system(
         || scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System);
     // GMC clusters have wide open orbits (>= 1.4 AU); a massive central black hole in a cluster
     // must not trigger the relativistic microsecond pericenter clamps used for close-in S-stars.
-    let is_smbh = !is_gmc_cluster && star_mass > 100_000.0;
-    let max_substeps = if is_gmc_cluster {
+    let is_smbh = !is_gmc_cluster && !is_galaxy_collision && star_mass > 100_000.0;
+    let max_substeps = if is_galaxy_collision {
+        64
+    } else if is_gmc_cluster {
         // GMC clusters feature hundreds of stars and gas clumps; clamp substeps to 64 to guarantee
         // smooth frame rates while enabling fast-forwarding up to 5+ years per frame (300+ yr/s at 60 FPS).
         config.max_substeps_per_frame.clamp(1, 64)
@@ -355,7 +426,9 @@ fn analyze_physics_system(
     } else {
         config.max_substeps_per_frame
     };
-    let eff_dt = if is_gmc_cluster {
+    let eff_dt = if is_galaxy_collision {
+        0.25
+    } else if is_gmc_cluster {
         // GMC clusters feature wide planetary and stellar orbits (>= 1.4 AU).
         // 0.08 yr (~29 days) per leapfrog step provides high symplectic orbital stability
         // while allowing fast-forwarding smoothly without stalling.
@@ -369,7 +442,9 @@ fn analyze_physics_system(
     };
 
     // Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding in chaotic GMC clusters
-    let safe_target_dt = if is_gmc_cluster {
+    let safe_target_dt = if is_galaxy_collision {
+        target_dt.min(10.0)
+    } else if is_gmc_cluster {
         target_dt.min(max_substeps as f64 * eff_dt)
     } else {
         target_dt
@@ -416,6 +491,7 @@ fn analyze_physics_system(
         is_little_red_dot,
         is_compact_system,
         is_gmc_cluster,
+        is_galaxy_collision,
         n_substeps,
         sub_dt,
         massive_indices,
@@ -472,8 +548,49 @@ fn enforce_dynamic_galactic_nucleus(
     }
 }
 
+fn compute_effective_softening_au(
+    scenario_state: Option<&ActiveScenarioState>,
+    disk_params: &DiskParameters,
+    config: &SimulationConfig,
+) -> f64 {
+    let is_compact_system = scenario_state
+        .is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System)
+        || (disk_params.central_star_mass < 0.25 && disk_params.outer_radius_au < 1.0);
+    if is_compact_system {
+        0.00005
+    } else {
+        config.softening_au
+    }
+}
+
+fn active_tractor_beam(player_state: &PlayerInteractionState) -> Option<(DVec3, f64)> {
+    if player_state.active_tool == PlayerTool::GravitationalTractor {
+        player_state
+            .tractor_position
+            .filter(|_| player_state.tractor_mass > 0.0)
+            .map(|pos| (pos, player_state.tractor_mass))
+    } else {
+        None
+    }
+}
+
+fn apply_player_velocity_impulse(
+    body_data: &mut [PhysicsBodyEntry],
+    player_state: &PlayerInteractionState,
+) {
+    if let (Some(target), Some(dv)) = (
+        player_state.impulse_target_entity,
+        player_state.impulse_delta_v,
+    ) {
+        if let Some(b) = body_data.iter_mut().find(|b| b.entity == target) {
+            b.vel += dv;
+        }
+    }
+}
+
 #[allow(clippy::type_complexity, reason = "N-body Simulation State")]
 pub fn step_physics_simulation(
+    far_field: Option<Res<crate::gpu::gmc_far_field::GmcFarField>>,
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
     time_warp: Res<TimeWarp>,
@@ -504,15 +621,8 @@ pub fn step_physics_simulation(
 
     let dt = config.base_dt_yr;
     let target_dt = dt * time_warp.multiplier.max(TimeWarp::MIN_SPEED);
-    let is_compact_system = scenario_state
-        .as_deref()
-        .is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System)
-        || (disk_params.central_star_mass < 0.25 && disk_params.outer_radius_au < 1.0);
-    let eff_softening_au = if is_compact_system {
-        0.00005
-    } else {
-        config.softening_au
-    };
+    let eff_softening_au =
+        compute_effective_softening_au(scenario_state.as_deref(), &disk_params, &config);
     let softening_sq = eff_softening_au * eff_softening_au;
 
     let mut body_data: Vec<PhysicsBodyEntry> = bodies_query
@@ -533,7 +643,6 @@ pub fn step_physics_simulation(
         )
         .collect();
 
-    // --- DYNAMIC GALACTIC NUCLEUS ANCHOR ---
     let is_gmc_cluster = scenario_state
         .as_deref()
         .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
@@ -556,15 +665,7 @@ pub fn step_physics_simulation(
         softening_sq,
     );
 
-    let tractor = if player_state.active_tool == PlayerTool::GravitationalTractor {
-        player_state
-            .tractor_position
-            .filter(|_| player_state.tractor_mass > 0.0)
-            .map(|pos| (pos, player_state.tractor_mass))
-    } else {
-        None
-    };
-
+    let tractor = active_tractor_beam(&player_state);
     let (jupiter_entity, saturn_entity, ice_giant_entities) = identify_giant_planets(&body_data);
 
     run_physics_substeps(
@@ -581,26 +682,25 @@ pub fn step_physics_simulation(
         ctx.is_little_red_dot,
         ctx.is_compact_system,
         ctx.is_gmc_cluster,
+        ctx.is_galaxy_collision,
         &mut lhb_state,
         jupiter_entity,
         saturn_entity,
         &ice_giant_entities,
         sim_time.elapsed_years,
+        far_field
+            .as_deref()
+            .filter(|_| ctx.is_gmc_cluster)
+            .map(|f| &f.acc),
     );
 
-    if let (Some(target), Some(dv)) = (
-        player_state.impulse_target_entity,
-        player_state.impulse_delta_v,
-    ) {
-        if let Some(b) = body_data.iter_mut().find(|b| b.entity == target) {
-            b.vel += dv;
-        }
-    }
+    apply_player_velocity_impulse(&mut body_data, &player_state);
 
     write_back_physics_results(
         &mut commands,
         &body_data,
         ctx.is_little_red_dot,
+        ctx.is_galaxy_collision,
         &mut bodies_query,
     );
 

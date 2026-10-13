@@ -120,8 +120,17 @@ impl SimulationConfig {
             // Event horizon shadow: scales monotonically with mass from stellar-mass to supermassive.
             // A 5-10 M_sun BH is compact (~0.0022-0.0028 AU), distinctly smaller than a 0.025 AU main-sequence star.
             // At 1,600 M_sun, it dynamically scales up to ~0.020 AU.
+            // Above 1,600 M_sun (IMBH/SMBH regime, e.g. Sgr A* at 4.3e6 M_sun where true R_s = 0.0848 AU),
+            // it converges smoothly to the true physical Schwarzschild radius so it remains physically proportioned.
             let mass_factor = (physical_radius_au / 1.974e-8).max(1.0);
-            (0.0012 * (mass_factor.powf(0.38) as f32) * self.size_exaggeration).clamp(0.0020, 2.50)
+            let r_base = if mass_factor <= 1600.0 {
+                0.0012 * (mass_factor.powf(0.38) as f32)
+            } else {
+                let r_1600 = 0.0012 * (1600.0_f64.powf(0.38) as f32);
+                let excess = (mass_factor / 1600.0).powf(0.185) as f32;
+                (r_1600 * excess).max(physical_radius_au as f32)
+            };
+            (r_base * self.size_exaggeration).clamp(0.0020, 2.50)
         } else {
             base_rad
         }
@@ -436,6 +445,8 @@ pub enum DiagnosticOverlayMode {
     HillSpheresAndGaps,
     /// GPU-accelerated 3D volumetric magnetic field loops and magnetospheres
     MagneticFields,
+    /// Dark matter halos (NFW potential profile & gravitational contours)
+    DarkMatterHalos,
     /// Hide all diagnostic overlays for a clean view (no extra lines/gizmos)
     Hidden,
 }
@@ -446,7 +457,8 @@ impl DiagnosticOverlayMode {
             Self::Realistic => Self::SpectralComposition,
             Self::SpectralComposition => Self::HillSpheresAndGaps,
             Self::HillSpheresAndGaps => Self::MagneticFields,
-            Self::MagneticFields => Self::Hidden,
+            Self::MagneticFields => Self::DarkMatterHalos,
+            Self::DarkMatterHalos => Self::Hidden,
             Self::Hidden => Self::Realistic,
         }
     }
@@ -457,6 +469,7 @@ impl DiagnosticOverlayMode {
             Self::SpectralComposition => "Spectral Composition Map",
             Self::HillSpheresAndGaps => "Hill Spheres & Annular Gaps",
             Self::MagneticFields => "Magnetic Fields (GPU)",
+            Self::DarkMatterHalos => "Dark Matter Halos (NFW Potential)",
             Self::Hidden => "No Overlay",
         }
     }

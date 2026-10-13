@@ -480,6 +480,34 @@ fn voronoi_web3(p: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(f1, f2, f2 - f1, hash31(node_seed));
 }
 
+
+fn render_intergalactic(dir: vec3<f32>, time: f32) -> vec3<f32> {
+    // 1. Far background: Deep intergalactic void
+    var color = vec3<f32>(0.0005, 0.0008, 0.0012);
+
+    // 2. Extremely distant background galaxies (point-like)
+    let g_grid = dir * 25.0;
+    let g_cell = floor(g_grid);
+    let g_hash = hash33(g_cell);
+    if (g_hash.x > 0.8) {
+        let g_pos = g_hash * 0.7 + 0.15;
+        let g_d = length(fract(g_grid) - g_pos);
+        color += vec3<f32>(0.8, 0.85, 1.0) * exp(-g_d * 80.0) * 0.5 * (0.5 + g_hash.y);
+    }
+    
+    // 3. Very faint, sparse foreground stars (Halo stars)
+    let s_grid = dir * 15.0;
+    let s_cell = floor(s_grid);
+    let s_hash = hash33(s_cell + 13.0);
+    if (s_hash.x > 0.95) {
+        let s_pos = s_hash * 0.7 + 0.15;
+        let s_d = length(fract(s_grid) - s_pos);
+        color += vec3<f32>(1.0, 0.9, 0.8) * exp(-s_d * 40.0) * 0.8 * (0.5 + s_hash.y);
+    }
+
+    return color;
+}
+
 fn render_early_universe(dir: vec3<f32>, time: f32) -> vec3<f32> {
     // 1. Primordial Intergalactic Cosmic Web Filaments
     // Scale the direction sphere into 3D cellular filament space
@@ -663,7 +691,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal on celestial sphere is the exact unit viewing direction
     let raw_dir = normalize(in.world_normal);
     let time = skybox.params.x;
-    let blend = clamp(skybox.params.y, 0.0, 1.0);
+    let blend = clamp(skybox.params.y, 0.0, 2.0);
     let gc_blend = clamp(skybox.scenario_params.x, 0.0, 1.0);
 
     // Apply General Relativistic Gravitational Lensing & Warping
@@ -672,16 +700,19 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var base_color = vec3<f32>(0.0);
 
     if (blend <= 0.001) {
-        // Pure Modern Milky Way
         base_color = render_milky_way(dir, time);
-    } else if (blend >= 0.999) {
-        // Pure Early Universe High-Redshift Cosmic Web
+    } else if (blend >= 0.999 && blend < 1.001) {
         base_color = render_early_universe(dir, time);
-    } else {
-        // Smooth scenario interpolation between eras
+    } else if (blend >= 1.999) {
+        base_color = render_intergalactic(dir, time);
+    } else if (blend < 1.0) {
         let modern = render_milky_way(dir, time);
         let early = render_early_universe(dir, time);
         base_color = mix(modern, early, blend);
+    } else {
+        let early = render_early_universe(dir, time);
+        let ig = render_intergalactic(dir, time);
+        base_color = mix(early, ig, blend - 1.0);
     }
 
     // Blend into Galactic Center scenario if active

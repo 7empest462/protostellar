@@ -10,6 +10,7 @@ pub mod selector;
 pub mod setup;
 pub mod telemetry_format;
 pub mod telemetry_panel;
+pub mod trophies_panel;
 pub mod types;
 pub mod update;
 pub mod visibility;

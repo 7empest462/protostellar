@@ -72,7 +72,10 @@ fn handle_tab_selection(
     if let Ok((_, mut cam)) = camera_query.single_mut() {
         cam.target_entity = Some(target.entity);
         let visual_r = config.calc_visual_radius_for_type(target.radius_au, target.body_type);
-        let frame_r = if target.body_type == crate::simulation::components::celestial::BodyType::BlackHole && target.mass_solar > 1_000_000.0 {
+        let frame_r = if target.body_type
+            == crate::simulation::components::celestial::BodyType::BlackHole
+            && target.mass_solar > 1_000_000.0
+        {
             100_000.0 // Supermassive Black Holes (Galactic Centers) should zoom out to see the galaxy
         } else if target.name.starts_with("🚀") || visual_r < 0.001 {
             0.015f32.max(config.calc_camera_framing_radius(visual_r))
@@ -443,6 +446,8 @@ fn handle_planet_interaction_actions(
                     oxygen_fraction: 0.21,
                     emergence_year: Some(0.0),
                     technosignature: 0.0,
+                    bioluminescence_intensity: 0.25,
+                    ..Default::default()
                 },
                 PlanetaryClimate {
                     surface_temperature_k: 288.0,

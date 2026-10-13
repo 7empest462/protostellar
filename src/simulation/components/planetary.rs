@@ -162,6 +162,55 @@ impl Default for PlanetaryClimate {
     }
 }
 
+/// Photosynthetic pigment adaptation to the host star's spectral energy distribution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FloraPigmentClass {
+    /// G/F-type Solar spectrum (~5000–6800 K): Chlorophyll-a/b reflecting green (emerald/jade foliage).
+    #[default]
+    SolarChlorophyll,
+    /// M-type Red Dwarf spectrum (< 3900 K): Near-IR bacteriochlorophyll / anthocyanin absorbing red & NIR (crimson/burgundy foliage).
+    RedDwarfCrimson,
+    /// K-type Orange Dwarf / Binary spectrum (3900–5000 K): Carotenoid / phycobilin dominance (amber/gold/ochre foliage).
+    OrangeDwarfCarotenoid,
+    /// High-UV A/B-type or Compact Remnant spectrum (> 6800 K): UV-shielding scytonemin & fluorescent cyan pigments (indigo/cyan foliage).
+    HighUvIndigo,
+}
+
+impl FloraPigmentClass {
+    /// Determines optimal photosynthetic pigment class from host star effective temperature (K).
+    pub fn from_star_temperature(star_temp_k: f64) -> Self {
+        if star_temp_k < 3900.0 {
+            Self::RedDwarfCrimson
+        } else if star_temp_k < 5000.0 {
+            Self::OrangeDwarfCarotenoid
+        } else if star_temp_k <= 6800.0 {
+            Self::SolarChlorophyll
+        } else {
+            Self::HighUvIndigo
+        }
+    }
+
+    /// Numeric code passed in `PlanetUniforms::civilization_params.y` to `planet.wgsl`.
+    pub fn shader_code(self) -> f32 {
+        match self {
+            Self::SolarChlorophyll => 0.0,
+            Self::RedDwarfCrimson => 1.0,
+            Self::OrangeDwarfCarotenoid => 2.0,
+            Self::HighUvIndigo => 3.0,
+        }
+    }
+
+    /// Human-readable telemetry label for the Target Inspector HUD.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SolarChlorophyll => "Chlorophyll-A/B (Emerald Canopy)",
+            Self::RedDwarfCrimson => "NIR Anthocyanin (Crimson-Burgundy)",
+            Self::OrangeDwarfCarotenoid => "Carotenoid-Phycobilin (Amber-Gold)",
+            Self::HighUvIndigo => "UV-Shielded Scytonemin (Indigo-Cyan)",
+        }
+    }
+}
+
 /// Dynamic habitability and living biosphere on terrestrial worlds.
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BiosphereState {
@@ -175,6 +224,15 @@ pub struct BiosphereState {
     pub emergence_year: Option<f64>,
     #[serde(default)]
     pub technosignature: f32,
+    /// Dominant photosynthetic pigment adapted to the host star's spectrum
+    #[serde(default)]
+    pub flora_pigment: FloraPigmentClass,
+    /// Nocturnal and terminator bioluminescence intensity (0.0 to 1.0)
+    #[serde(default)]
+    pub bioluminescence_intensity: f32,
+    /// Cumulative crustal & astrobiological samples collected by surface rovers and orbiters
+    #[serde(default)]
+    pub surface_samples_collected: u32,
 }
 
 impl Default for BiosphereState {
@@ -185,6 +243,9 @@ impl Default for BiosphereState {
             oxygen_fraction: 0.0,
             emergence_year: None,
             technosignature: 0.0,
+            flora_pigment: FloraPigmentClass::SolarChlorophyll,
+            bioluminescence_intensity: 0.0,
+            surface_samples_collected: 0,
         }
     }
 }

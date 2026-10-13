@@ -268,7 +268,18 @@ fn update_gas_accretion_body_name(
         || body.name == "Jupiter"
         || body.name == "Saturn"
         || body.name == "Uranus"
-        || body.name == "Neptune";
+        || body.name == "Neptune"
+        || body.name.starts_with("S4")
+        || body.name.starts_with("S2")
+        || body.name.starts_with("S6")
+        || body.name.starts_with("S5")
+        || body.name.starts_with("S3")
+        || body.name.starts_with("S1")
+        || body.name == "S8"
+        || body.name == "S9"
+        || body.name.starts_with("Pistol")
+        || body.name.starts_with("G1")
+        || body.name.starts_with("G2");
 
     if !is_canonical_solar {
         body.name = match updated_type {

@@ -271,6 +271,7 @@ pub fn update_body_climate_and_biosphere(
             body_ent,
             b_mass_solar,
             thermal.surface_temp,
+            star_temp,
             ocean_frac,
             magnetic_field_gauss,
             atm_pressure,
@@ -281,11 +282,16 @@ pub fn update_body_climate_and_biosphere(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Biosphere evolution helper requires climate, magnetic, and stellar parameters"
+)]
 fn update_body_biosphere(
     _commands: &mut Commands,
     _body_ent: Entity,
     _b_mass_solar: f64,
     surface_temp: f64,
+    star_temp: f64,
     ocean_frac: f32,
     magnetic_field_gauss: f32,
     atm_pressure: f32,
@@ -323,5 +329,20 @@ fn update_body_biosphere(
             bio.biomass_coverage_frac = (bio.biomass_coverage_frac - 0.02 * dt_yr as f32).max(0.0);
         }
         bio.oxygen_fraction = (bio.biomass_coverage_frac * 0.24).clamp(0.0, 0.21);
+        if star_temp > 100.0 {
+            bio.flora_pigment = FloraPigmentClass::from_star_temperature(star_temp);
+        }
+        if bio.biomass_coverage_frac > 0.02 {
+            let spectral_biolum = match bio.flora_pigment {
+                FloraPigmentClass::RedDwarfCrimson => 0.85,
+                FloraPigmentClass::OrangeDwarfCarotenoid => 0.55,
+                FloraPigmentClass::HighUvIndigo => 0.90,
+                FloraPigmentClass::SolarChlorophyll => 0.35,
+            };
+            bio.bioluminescence_intensity =
+                (bio.biomass_coverage_frac * spectral_biolum).clamp(0.0, 1.0);
+        } else {
+            bio.bioluminescence_intensity = 0.0;
+        }
     }
 }

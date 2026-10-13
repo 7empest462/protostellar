@@ -490,6 +490,35 @@ fn compute_storm_uniforms(
     )
 }
 
+fn compute_civilization_uniforms(
+    mass_solar: f64,
+    opt_bio: Option<&BiosphereState>,
+    opt_tidal: Option<&TidalState>,
+) -> Vec4 {
+    let earth_masses = (mass_solar / crate::utils::constants::EARTH_MASS_SOLAR).max(0.01);
+    let surface_gravity_g = (earth_masses.powf(0.46) as f32).clamp(0.15, 5.0);
+    if let Some(bio) = opt_bio {
+        let tidal_biolum =
+            if opt_tidal.is_some_and(|t| t.is_tidally_locked) && bio.biomass_coverage_frac > 0.05 {
+                0.55 * bio.biomass_coverage_frac
+            } else {
+                0.0
+            };
+        let biolum = bio
+            .bioluminescence_intensity
+            .max(tidal_biolum)
+            .clamp(0.0, 1.0);
+        Vec4::new(
+            bio.technosignature,
+            bio.flora_pigment.shader_code(),
+            biolum,
+            surface_gravity_g,
+        )
+    } else {
+        Vec4::new(0.0, 0.0, 0.0, surface_gravity_g)
+    }
+}
+
 #[allow(clippy::too_many_arguments, reason = "Material sync system helper")]
 fn update_body_material_properties(
     mat: &mut PlanetMaterial,
@@ -582,6 +611,8 @@ fn update_body_material_properties(
     });
 
     mat.extension.uniforms.aurora_params = compute_aurora_uniforms(opt_aurora, params.mag_gauss);
+    mat.extension.uniforms.civilization_params =
+        compute_civilization_uniforms(mass.0, opt_bio, opt_tidal);
 
     let (storm_features, storm_dynamics) = compute_storm_uniforms(opt_storm, &body.name);
     mat.extension.uniforms.storm_features = storm_features;

@@ -109,13 +109,15 @@ fn step_particle_gpu_mode(
         let p_dist = (pdx * pdx + pdz * pdz).sqrt().max(0.001);
 
         let p_dist_au = p_pos.length() as f32;
+        let max_gpu_acc = if params.star_m > 10.0 { 0.85 } else { 0.012 };
         let acc_r = compute_body_accretion_radius(
             p_m,
             p_dist_au,
             is_major_body,
             params.star_m,
             params.speed_mult,
-        );
+        )
+        .min(max_gpu_acc);
 
         if p_dist < acc_r {
             chunk_accretions.push((p_ent, f64::from(m)));
@@ -501,7 +503,18 @@ fn update_growing_body_name(body: &mut CelestialBody, mass: f64, r_au: f64) {
         || body.name == "Jupiter"
         || body.name == "Saturn"
         || body.name == "Uranus"
-        || body.name == "Neptune";
+        || body.name == "Neptune"
+        || body.name.starts_with("S4")
+        || body.name.starts_with("S2")
+        || body.name.starts_with("S6")
+        || body.name.starts_with("S5")
+        || body.name.starts_with("S3")
+        || body.name.starts_with("S1")
+        || body.name == "S8"
+        || body.name == "S9"
+        || body.name.starts_with("Pistol")
+        || body.name.starts_with("G1")
+        || body.name.starts_with("G2");
 
     if is_canonical_solar {
         return;
@@ -744,6 +757,9 @@ fn try_merge_particles(
     b_mass: f32,
     is_beyond_snowline: bool,
 ) {
+    if b_mass > 0.0 && m_a >= 32.0 * b_mass {
+        return;
+    }
     let (vel_a_opt, vel_b_opt) = (
         data.velocities.get(idx_a).copied(),
         data.velocities.get(idx_b).copied(),

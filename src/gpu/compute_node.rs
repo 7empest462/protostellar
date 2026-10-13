@@ -33,6 +33,7 @@ pub struct GpuParticleOrbitEngine {
     pub is_ready: bool,
     pub last_disk_outer_r: f32,
     pub last_star_mass: f32,
+    pub last_elapsed_years: f64,
 }
 
 /// Resource in the Main world that receives GPU particle readback data.
@@ -92,7 +93,9 @@ pub fn extract_gpu_sim_data(
     scenario_state: Extract<Option<Res<crate::simulation::scenarios::ActiveScenarioState>>>,
 ) {
     if let Some(scenario_state) = scenario_state.as_ref() {
-        if scenario_state.current_preset == crate::simulation::scenarios::ScenarioPreset::GalacticCollision {
+        if scenario_state.current_preset
+            == crate::simulation::scenarios::ScenarioPreset::GalacticCollision
+        {
             commands.insert_resource(GpuSimExtractedParams {
                 is_paused: time_warp.is_paused,
                 step_once: time_warp.step_once,
@@ -285,9 +288,9 @@ fn create_gpu_orbit_pipeline(
 }
 
 /// Initializes the 100,000 particle VRAM storage buffers and compiles WGSL compute pipelines in RenderApp.
-pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) {
+pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
     let device = render_dev.wgpu_device();
-    let n_particles = 100_000u32;
+    let n_particles = count.max(100_000);
     let default_params = DiskParameters::default();
 
     let initial_particles = generate_initial_gpu_particles(n_particles, &default_params);
@@ -373,6 +376,7 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) 
         is_ready: true,
         last_disk_outer_r: default_params.outer_radius_au as f32,
         last_star_mass: default_params.central_star_mass as f32,
+        last_elapsed_years: 0.0,
     });
 }
 
@@ -381,7 +385,10 @@ fn check_and_reseed_scenario(
     params: &GpuSimExtractedParams,
     queue: &RenderQueue,
 ) {
-    if (params.outer_radius - engine.last_disk_outer_r).abs() <= 1.0
+    let scenario_restarted = params.elapsed_years < engine.last_elapsed_years;
+    engine.last_elapsed_years = params.elapsed_years;
+    if !scenario_restarted
+        && (params.outer_radius - engine.last_disk_outer_r).abs() <= 1.0
         && (params.star_mass - engine.last_star_mass).abs() <= 0.05
     {
         return;
@@ -560,6 +567,7 @@ pub fn step_gpu_simulation_render_world(
     sender: Option<Res<crate::gpu::GpuReadbackSender>>,
     gpu_engine: Option<ResMut<GpuParticleOrbitEngine>>,
     params: Option<Res<GpuSimExtractedParams>>,
+    galaxy_params: Option<Res<crate::gpu::nbody_galaxy::GpuGalaxyExtractedParams>>,
 ) {
     let Some(params) = params else {
         return;
@@ -568,8 +576,12 @@ pub fn step_gpu_simulation_render_world(
         return;
     }
 
+    if galaxy_params.is_some() {
+        return;
+    }
+
     let Some(mut engine) = gpu_engine else {
-        setup_gpu_simulation(&mut commands, &render_device);
+        setup_gpu_simulation(&mut commands, &render_device, params.count);
         return;
     };
     let queue = &render_queue;
@@ -636,8 +648,21 @@ pub fn receive_gpu_readback(
         return;
     };
 
+    if data.base_mass <= 0.0 {
+        let _ = receiver.recycle_tx.try_send(bytes);
+        return;
+    }
+
     {
         let particles: &[GpuParticle] = bytemuck::cast_slice(&bytes);
+        if let Some(first_active) = particles.iter().find(|p| p.pos_mass[3] > 0.0) {
+            let is_galaxy_buf = first_active.pos_mass[3] >= 0.5;
+            let is_galaxy_swarm = data.base_mass >= 0.5;
+            if is_galaxy_buf != is_galaxy_swarm {
+                let _ = receiver.recycle_tx.try_send(bytes);
+                return;
+            }
+        }
         let n = data.count.min(particles.len());
         let is_scenario_start = sim_time.is_some_and(|t| t.elapsed_years < 0.005);
         let crate::rendering::particle_swarm::ParticleSwarmData {

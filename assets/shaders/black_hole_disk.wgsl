@@ -118,7 +118,7 @@ fn sample_accretion_disk(
     let beta = clamp(sqrt(0.5 * r_shadow / max(r, r_shadow)), 0.05, 0.65);
     let gamma = 1.0 / sqrt(max(1.0 - beta * beta, 0.01));
 
-    let cos_theta = -sin(phi) * sin_i;
+    let cos_theta = cos(phi) * sin_i;
     let doppler = 1.0 / (gamma * (1.0 - beta * cos_theta));
     let beaming = pow(doppler, 3.5);
     result.doppler_factor = beaming;

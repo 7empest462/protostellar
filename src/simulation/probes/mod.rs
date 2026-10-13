@@ -29,6 +29,46 @@ pub struct SpaceProbe {
     pub landed_unspun_pos: Option<bevy::math::DVec3>,
     pub orbit_axis: Option<bevy::math::DVec3>,
     pub arrival_time: Option<f64>,
+    /// Unspun tangent heading vector for autonomous surface rover geodesic traversal
+    pub rover_heading_unspun: Option<bevy::math::DVec3>,
+    /// Cumulative distance driven across the planetary surface (km)
+    pub distance_driven_km: f64,
+    /// Number of crustal core / astrobiological samples collected
+    pub samples_collected: u32,
+    /// Recent surface traverse trail unit normals in the planet's unspun body frame
+    pub traverse_trail_unspun: Vec<bevy::math::DVec3>,
+    /// Latest scientific discovery / surface assay summary
+    pub latest_assay: String,
+}
+
+impl SpaceProbe {
+    pub fn new(probe_type: ProbeType, id: usize) -> Self {
+        Self {
+            probe_type,
+            status: ProbeStatus::Transit,
+            id,
+            orientation: bevy::math::DQuat::IDENTITY,
+            landed_unspun_pos: None,
+            orbit_axis: None,
+            arrival_time: None,
+            rover_heading_unspun: None,
+            distance_driven_km: 0.0,
+            samples_collected: 0,
+            traverse_trail_unspun: Vec::new(),
+            latest_assay: String::from("Deep-space telemetry nominal; awaiting target encounter"),
+        }
+    }
+
+    /// Returns planetographic `(latitude_deg, longitude_deg)` in the planet's body frame if landed.
+    pub fn surface_lat_lon_deg(&self) -> Option<(f64, f64)> {
+        let n = self.landed_unspun_pos?.normalize_or_zero();
+        if n.length_squared() < 0.5 {
+            return None;
+        }
+        let lat_deg = n.y.clamp(-1.0, 1.0).asin().to_degrees();
+        let lon_deg = n.z.atan2(n.x).to_degrees();
+        Some((lat_deg, lon_deg))
+    }
 }
 
 #[derive(Component, Debug, Clone)]
@@ -109,8 +149,6 @@ fn process_launch_requests(
             find_launch_origin(req.target, &candidates);
 
         // 2. Resolve destination target
-        // If the user triggered launch while inspecting the civilized origin itself (e.g. Earth),
-        // we automatically select the best planetary destination to explore (e.g. Moon, Mars, Venus)!
         let (
             effective_target,
             target_name,
@@ -129,7 +167,6 @@ fn process_launch_requests(
             &targets,
         );
 
-        // Aim probe vector directly from origin to target
         let to_target = target_pos - origin_pos;
         let dir = if to_target.length_squared() > 1e-8 {
             to_target.normalize()
@@ -142,12 +179,10 @@ fn process_launch_requests(
         });
 
         let dist_to_target = to_target.length();
-        // Start safely outside the origin world's visual surface/atmosphere, scaled appropriately for target proximity
         let spawn_offset = (origin_vis_rad * 1.25)
             .min(dist_to_target * 0.20)
             .max(0.0008);
         let start_pos = origin_pos + dir * spawn_offset;
-        // Initial cruise boost scaled by journey distance (gentle for moons, fast for outer planets)
         let initial_boost = (dist_to_target * 5.0).clamp(0.4, 4.0);
         let start_vel = origin_vel + dir * initial_boost;
 
@@ -162,21 +197,12 @@ fn process_launch_requests(
         };
 
         let full_name = format!("🚀 {probe_label} #{probe_id} (to {target_name})");
-
         let min_vis_r = config
             .as_ref()
             .map_or(0.00035, |c| c.min_body_visual_radius * 0.45);
 
         let probe_bundle = (
-            SpaceProbe {
-                probe_type,
-                status: ProbeStatus::Transit,
-                id: probe_id,
-                orientation: bevy::math::DQuat::IDENTITY,
-                landed_unspun_pos: None,
-                orbit_axis: None,
-                arrival_time: None,
-            },
+            SpaceProbe::new(probe_type, probe_id),
             FlightComputer {
                 target_entity: effective_target,
                 target_name: target_name.clone(),
@@ -213,8 +239,6 @@ fn process_launch_requests(
             spawn_probe_mesh_hierarchy(&mut commands, probe_entity, is_orbiter, meshes, materials);
         }
 
-        // NOTE: We intentionally DO NOT hijack player_state.selected_entity.
-        // Earth (or the origin world) remains selected so the player's UI and timeline remain intact!
         if let Some(ref mut t) = toast {
             t.message = format!(
                 "🚀 Launched {probe_label} #{probe_id} from {origin_name} to explore {target_name}! Click [{probe_label} #{probe_id}] below to track."
@@ -226,17 +250,26 @@ fn process_launch_requests(
     }
 }
 
-/// Renders persistent glowing beacons, trajectory guidelines, and targeting reticles for all probes.
+type GizmoTargetQueryData<'a> = (
+    &'a SimPosition,
+    Option<&'a Radius>,
+    &'a CelestialBody,
+    Option<&'a crate::simulation::components::celestial::SpinState>,
+);
+
+/// Renders persistent glowing beacons, trajectory guidelines, rover surface trails, and targeting reticles.
 pub fn draw_probe_navigation_gizmos(
     mut gizmos: Gizmos,
     probes: Query<(Entity, &SimPosition, &SpaceProbe, &FlightComputer)>,
-    targets: Query<&SimPosition>,
+    targets: Query<GizmoTargetQueryData, Without<SpaceProbe>>,
     player_state: Option<Res<PlayerInteractionState>>,
     camera_query: Query<&Transform, With<Camera>>,
     sim_time: Option<Res<crate::simulation::resources::SimTime>>,
+    config: Option<Res<SimulationConfig>>,
 ) {
     let cam_pos = camera_query.iter().next().map(|t| t.translation);
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+    let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
 
     for (probe_ent, pos, probe, computer) in probes.iter() {
         let probe_vec = pos.0.as_vec3();
@@ -257,11 +290,9 @@ pub fn draw_probe_navigation_gizmos(
             ),
         };
 
-        // Scale beacon size with camera distance so it is ALWAYS clearly visible across the entire solar system
         let pulse = (visual_time * 4.0).sin() * 0.15 + 1.0;
         let beacon_r = (cam_dist * 0.022 * pulse).clamp(0.015, 2.5);
 
-        // 1. Camera-facing billboard ring (never collapses edge-on from any viewing angle!)
         let to_cam = cam_pos.map_or(Vec3::Y, |cp| (cp - probe_vec).normalize_or_zero());
         let billboard_rot = if to_cam.length_squared() > 1e-6 {
             Quat::from_rotation_arc(Vec3::Z, to_cam)
@@ -280,7 +311,6 @@ pub fn draw_probe_navigation_gizmos(
             glow_color,
         );
 
-        // 2. 3D Gyroscope orthogonal rings (XZ horizontal and XY vertical)
         gizmos.circle(
             Isometry3d::new(
                 probe_vec,
@@ -295,7 +325,6 @@ pub fn draw_probe_navigation_gizmos(
             glow_color,
         );
 
-        // 3. Draw crosshairs in camera billboard plane
         let right = billboard_rot * Vec3::X;
         let up = billboard_rot * Vec3::Y;
         let tick_len = beacon_r * 0.45;
@@ -310,7 +339,6 @@ pub fn draw_probe_navigation_gizmos(
             main_color,
         );
 
-        // 4. Draw vertical skyward beacon so probe can be located even from extreme orbital angles
         let beacon_h = (cam_dist * 0.08).clamp(0.05, 8.0);
         gizmos.line(probe_vec, probe_vec + Vec3::Y * beacon_h, glow_color);
         gizmos.sphere(
@@ -319,8 +347,9 @@ pub fn draw_probe_navigation_gizmos(
             main_color,
         );
 
-        // 5. Draw trajectory guide line from probe directly to its destination planet
-        if let Ok(target_pos) = targets.get(computer.target_entity) {
+        if let Ok((target_pos, opt_rad, target_body, opt_spin)) =
+            targets.get(computer.target_entity)
+        {
             let target_vec = target_pos.0.as_vec3();
             let line_color = match probe.status {
                 ProbeStatus::Transit => main_color,
@@ -328,9 +357,26 @@ pub fn draw_probe_navigation_gizmos(
                 ProbeStatus::Landed => Color::srgba(1.0, 0.8, 0.3, 0.6),
             };
             gizmos.line(probe_vec, target_vec, line_color);
+
+            if probe.status == ProbeStatus::Landed && probe.probe_type == ProbeType::Rover {
+                let rad = opt_rad.map_or(0.001, |r| r.0);
+                let vis_rad = config.as_ref().map_or(rad as f32, |c| {
+                    c.calc_visual_radius_for_type(rad, target_body.body_type)
+                });
+                draw_rover_surface_trail_gizmos(
+                    &mut gizmos,
+                    probe,
+                    probe_vec,
+                    target_vec,
+                    vis_rad,
+                    beacon_r,
+                    elapsed_years,
+                    visual_time,
+                    opt_spin,
+                );
+            }
         }
 
-        // 6. If selected: Draw prominent targeting reticle and outer pulse ring
         if is_selected {
             let select_r = beacon_r * 1.5;
             gizmos.circle(
@@ -344,6 +390,55 @@ pub fn draw_probe_navigation_gizmos(
                 Color::srgba(1.0, 1.0, 1.0, 0.4),
             );
         }
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Rover surface traverse trail and laser spectrometer gizmo helper"
+)]
+fn draw_rover_surface_trail_gizmos(
+    gizmos: &mut Gizmos,
+    probe: &SpaceProbe,
+    probe_vec: Vec3,
+    target_vec: Vec3,
+    vis_rad: f32,
+    beacon_r: f32,
+    elapsed_years: f64,
+    visual_time: f32,
+    opt_spin: Option<&crate::simulation::components::celestial::SpinState>,
+) {
+    let (spin_dir, spin_angle) = navigation::compute_planet_spin_frame(opt_spin, elapsed_years);
+    let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
+    let surface_r = vis_rad * 1.016;
+
+    // 1. Render breadcrumb traverse trail rotating with the planetary crust
+    for pair in probe.traverse_trail_unspun.windows(2) {
+        if let (Some(u0), Some(u1)) = (pair.first(), pair.get(1)) {
+            let p0 = target_vec + (spin_rot * u0.as_vec3()) * surface_r;
+            let p1 = target_vec + (spin_rot * u1.as_vec3()) * surface_r;
+            gizmos.line(p0, p1, Color::srgba(1.0, 0.82, 0.25, 0.88));
+            gizmos.sphere(
+                Isometry3d::from_translation(p0),
+                (beacon_r * 0.10).max(0.0004),
+                Color::srgba(0.3, 1.0, 0.75, 0.75),
+            );
+        }
+    }
+    if let Some(last_unspun) = probe.traverse_trail_unspun.last() {
+        let p_last = target_vec + (spin_rot * last_unspun.as_vec3()) * surface_r;
+        gizmos.line(p_last, probe_vec, Color::srgba(1.0, 0.90, 0.40, 0.95));
+    }
+
+    // 2. Render pulsing Raman laser core-drill beam into the planetary regolith
+    if (visual_time * 6.0).sin() > -0.2 {
+        let surf_norm = (probe_vec - target_vec).normalize_or_zero();
+        let drill_target = target_vec + surf_norm * (vis_rad * 0.992);
+        gizmos.line(
+            probe_vec + surf_norm * (beacon_r * 0.15),
+            drill_target,
+            Color::srgba(0.2, 1.0, 0.85, 0.90),
+        );
     }
 }
 

@@ -83,6 +83,7 @@ fn dispatch_system_and_tool_actions(
     time_warp: &mut TimeWarp,
     hud_visibility: &mut HudVisibilityState,
     telemetry_panel_state: &mut TelemetryPanelState,
+    trophies_panel_state: &mut crate::game::ui::types::TrophiesPanelState,
     telemetry_history: &mut crate::simulation::telemetry::SimulationTelemetryHistory,
     opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     player_state: &mut PlayerInteractionState,
@@ -100,6 +101,16 @@ fn dispatch_system_and_tool_actions(
         return true;
     }
     if handle_telemetry_action(action, telemetry_panel_state, telemetry_history, toast) {
+        return true;
+    }
+    if matches!(action, UiButtonAction::ToggleTrophiesPanel) {
+        trophies_panel_state.is_open = !trophies_panel_state.is_open;
+        toast.message = if trophies_panel_state.is_open {
+            "🏆 Trophies & Milestones Tracker Opened".to_string()
+        } else {
+            "🏆 Trophies Tracker Closed".to_string()
+        };
+        toast.timer = 2.5;
         return true;
     }
     if super::epoch_scrubber::handle_epoch_scrubber_action(action, opt_scrubber, toast) {
@@ -136,6 +147,7 @@ pub fn handle_ui_button_interactions(
         mut builder_state,
         mut hud_visibility,
         mut telemetry_panel_state,
+        mut trophies_panel_state,
         mut telemetry_history,
     ): (
         ResMut<TimeWarp>,
@@ -145,6 +157,7 @@ pub fn handle_ui_button_interactions(
         ResMut<PlanetBuilderState>,
         ResMut<HudVisibilityState>,
         ResMut<TelemetryPanelState>,
+        ResMut<crate::game::ui::types::TrophiesPanelState>,
         ResMut<crate::simulation::telemetry::SimulationTelemetryHistory>,
     ),
     disk_params: Res<DiskParameters>,
@@ -184,6 +197,7 @@ pub fn handle_ui_button_interactions(
                 &mut time_warp,
                 &mut hud_visibility,
                 &mut telemetry_panel_state,
+                &mut trophies_panel_state,
                 &mut telemetry_history,
                 opt_scrubber.as_deref_mut(),
                 &mut player_state,

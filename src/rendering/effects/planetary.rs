@@ -208,7 +208,8 @@ pub fn draw_diagnostic_overlays(
         }
         DiagnosticOverlayMode::Realistic
         | DiagnosticOverlayMode::Hidden
-        | DiagnosticOverlayMode::MagneticFields => {}
+        | DiagnosticOverlayMode::MagneticFields
+        | DiagnosticOverlayMode::DarkMatterHalos => {}
     }
 }
 

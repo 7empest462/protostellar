@@ -1919,17 +1919,39 @@ fn fragment(
                 let land_micro = fbm(p_tectonic * 18.0);
 
                 let effective_bio = biomass * vegetation_mult;
+                let flora_type = planet.civilization_params.y;
+                let biolum = planet.civilization_params.z;
+                let gravity_g = max(planet.civilization_params.w, 0.25);
 
                 if (effective_bio > 0.02) {
-                    let lush = vec3<f32>(0.08, 0.28, 0.10);
-                    let meadow = vec3<f32>(0.18, 0.34, 0.12);
-                    let scrub = vec3<f32>(0.32, 0.30, 0.16);
+                    var lush = vec3<f32>(0.08, 0.28, 0.10);
+                    var meadow = vec3<f32>(0.18, 0.34, 0.12);
+                    var scrub = vec3<f32>(0.32, 0.30, 0.16);
+
+                    if (flora_type > 2.5) {
+                        // High-UV / Remnant Scytonemin Indigo-Cyan flora
+                        lush = vec3<f32>(0.06, 0.18, 0.34);
+                        meadow = vec3<f32>(0.12, 0.30, 0.42);
+                        scrub = vec3<f32>(0.22, 0.26, 0.36);
+                    } else if (flora_type > 1.5) {
+                        // K-Dwarf / Binary Carotenoid-Phycobilin Amber-Gold flora
+                        lush = vec3<f32>(0.36, 0.22, 0.05);
+                        meadow = vec3<f32>(0.48, 0.34, 0.08);
+                        scrub = vec3<f32>(0.40, 0.28, 0.14);
+                    } else if (flora_type > 0.5) {
+                        // M-Dwarf NIR Anthocyanin Crimson-Burgundy flora (e.g. TRAPPIST-1)
+                        lush = vec3<f32>(0.34, 0.05, 0.14);
+                        meadow = vec3<f32>(0.48, 0.12, 0.20);
+                        scrub = vec3<f32>(0.38, 0.20, 0.22);
+                    }
+
                     let rock = vec3<f32>(0.30, 0.28, 0.26);
                     let alpine = vec3<f32>(0.55, 0.54, 0.52);
+                    let treeline = 0.22 / clamp(sqrt(gravity_g), 0.65, 1.65);
 
                     var land: vec3<f32>;
-                    if (rel_elev > 0.22) {
-                        land = mix(rock, alpine, clamp((rel_elev - 0.22) * 3.5, 0.0, 1.0));
+                    if (rel_elev > treeline) {
+                        land = mix(rock, alpine, clamp((rel_elev - treeline) * 3.5, 0.0, 1.0));
                     } else if (rel_elev > 0.08) {
                         let veg = mix(meadow, lush, moisture);
                         land = mix(scrub, veg, clamp(effective_bio * 1.3, 0.0, 1.0));
@@ -1976,6 +1998,24 @@ fn fragment(
                         0.55,
                         beach
                     );
+                }
+
+                // Phase 7: Nocturnal & twilight terminator bioluminescent forest canopies
+                if (biolum > 0.02 && effective_bio > 0.05 && rel_elev < 0.18) {
+                    let bio_night = 1.0 - smoothstep(-0.18, 0.12, dot(norm, to_star));
+                    if (bio_night > 0.01) {
+                        let canopy_vein = smoothstep(0.58, 0.86, fbm(p_tectonic * 24.0 + vec3<f32>(0.7, -1.9, 3.1)));
+                        let coastal_bloom = 1.0 - smoothstep(0.0, 0.12, rel_elev);
+                        let polar_guard = 1.0 - smoothstep(0.55, 0.82, abs(sin_lat));
+                        let biolum_mask = canopy_vein * (0.45 + coastal_bloom * 0.55) * polar_guard * clamp(effective_bio, 0.0, 1.0);
+                        var biolum_hue = vec3<f32>(0.12, 0.95, 0.68);
+                        if (flora_type > 0.5 && flora_type < 1.5) {
+                            biolum_hue = vec3<f32>(0.92, 0.22, 0.68);
+                        } else if (flora_type > 1.5 && flora_type < 2.5) {
+                            biolum_hue = vec3<f32>(0.30, 0.92, 0.82);
+                        }
+                        pbr_input.material.emissive += vec4<f32>(biolum_hue * biolum_mask * bio_night * biolum * 1.35, 0.0);
+                    }
                 }
             }
 

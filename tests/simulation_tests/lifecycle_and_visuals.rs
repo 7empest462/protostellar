@@ -19,6 +19,7 @@ fn test_ui_button_interactions_query_schedule_no_aliasing_conflict() {
     app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
     app.add_message::<LoadScenarioEvent>();
     app.init_resource::<QuickBarState>();
+    app.init_resource::<protostellar::game::ui::types::TrophiesPanelState>();
     app.init_resource::<PlanetBuilderState>();
     app.init_resource::<TelemetryPanelState>();
     app.init_resource::<protostellar::simulation::telemetry::SimulationTelemetryHistory>();

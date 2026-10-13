@@ -112,7 +112,7 @@ fn spawn_scenario_presets_panel(center_col: &mut ChildSpawnerCommands) {
             BorderColor::all(Color::srgba(0.5, 0.3, 0.85, 0.6)),
         ))
         .with_children(|scenario_row| {
-            const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 12] = [
+            const SCENARIO_BUTTONS: [(UiButtonAction, &str, Color, Color); 13] = [
                 (
                     UiButtonAction::LoadScenarioSolar,
                     "Solar [F1]",
@@ -182,6 +182,12 @@ fn spawn_scenario_presets_panel(center_col: &mut ChildSpawnerCommands) {
                 (
                     UiButtonAction::LoadScenarioMolecularCloud,
                     "GMC Cluster",
+                    Color::srgba(0.06, 0.16, 0.22, 0.9),
+                    Color::srgb(0.45, 0.85, 1.0),
+                ),
+                (
+                    UiButtonAction::LoadScenarioGalacticCollision,
+                    "N-Body Galaxy",
                     Color::srgba(0.06, 0.16, 0.22, 0.9),
                     Color::srgb(0.45, 0.85, 1.0),
                 ),
@@ -390,6 +396,13 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
         "📈 Telemetry [F10]",
         Color::srgba(0.05, 0.18, 0.15, 0.90),
         Color::srgb(0.35, 0.95, 0.70),
+    );
+    create_compact_button(
+        col,
+        UiButtonAction::ToggleTrophiesPanel,
+        "🏆 Trophies",
+        Color::srgba(0.20, 0.15, 0.05, 0.90),
+        Color::srgb(0.95, 0.75, 0.25),
     );
     create_compact_button(
         col,
@@ -976,6 +989,7 @@ pub fn setup_hud(mut commands: Commands) {
             // MODAL DRAWERS (Absolute by default inside their spawn functions)
             super::builder_panel::spawn_planet_builder_panel(root);
             super::telemetry_panel::spawn_telemetry_panel(root);
+            super::trophies_panel::spawn_trophies_panel(root);
             super::epoch_scrubber::spawn_epoch_scrubber_panel(root);
         });
 }

@@ -228,6 +228,10 @@ pub fn setup_particle_swarm(
         Visibility::default(),
         NotShadowCaster,
         ParticleSwarmMesh,
+        bevy::camera::primitives::Aabb::from_min_max(
+            Vec3::splat(-3_000_000.0),
+            Vec3::splat(3_000_000.0),
+        ),
     ));
 
     commands.insert_resource(ParticleSwarmData {
@@ -271,6 +275,78 @@ pub fn reseed_particle_swarm(
             *p = [0.0, -5000.0, 0.0];
             *v = [0.0, 0.0, 0.0];
             *c = [0.0, 0.0, 0.0, 0.0];
+        }
+        data.is_dirty = true;
+        return;
+    }
+
+    if disk_params.outer_radius_au >= 10_000.0 {
+        data.base_mass = 1.0;
+        let mut rng = rand::rng();
+        let n_mw = n / 2;
+        let rs = 50_000.0_f32;
+
+        for i in 0..n {
+            let is_mw = i < n_mw;
+            let (center_pos, center_vel, smbh_mass, halo_mass, max_radius, base_col) = if is_mw {
+                (
+                    [-100_000.0_f32, -15_000.0_f32, -50_000.0_f32],
+                    [40.0_f32, 5.0_f32, 20.0_f32],
+                    4_300_000.0_f32,
+                    1.0e12_f32,
+                    80_000.0_f32,
+                    [1.0_f32, 0.95_f32, 0.85_f32, 1.0_f32],
+                )
+            } else {
+                (
+                    [100_000.0_f32, 15_000.0_f32, 50_000.0_f32],
+                    [-40.0_f32, -5.0_f32, -20.0_f32],
+                    140_000_000.0_f32,
+                    1.4e12_f32,
+                    120_000.0_f32,
+                    [0.85_f32, 0.92_f32, 1.20_f32, 1.0_f32],
+                )
+            };
+
+            let r = rng.random_range(5000.0..max_radius);
+            let phi = rng.random_range(0.0..2.0 * PI as f32);
+            let z = rng.random_range(-500.0..500.0);
+            let pos = [
+                center_pos[0] + r * phi.cos(),
+                center_pos[1] + z,
+                center_pos[2] + r * phi.sin(),
+            ];
+
+            let x = r / rs;
+            let mass_enclosed = halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
+            let v_circ = (G_ASTRO as f32 * (smbh_mass + mass_enclosed) / r).sqrt();
+            let vel = [
+                center_vel[0] - v_circ * phi.sin(),
+                center_vel[1],
+                center_vel[2] + v_circ * phi.cos(),
+            ];
+
+            let col_var = rng.random_range(0.85..1.15_f32);
+            let color = [
+                (base_col[0] * col_var).clamp(0.2, 1.5),
+                (base_col[1] * col_var).clamp(0.2, 1.5),
+                (base_col[2] * col_var).clamp(0.2, 1.5),
+                1.0,
+            ];
+
+            if let (Some(p), Some(v), Some(m), Some(t), Some(c)) = (
+                data.positions.get_mut(i),
+                data.velocities.get_mut(i),
+                data.masses.get_mut(i),
+                data.temperatures.get_mut(i),
+                data.colors.get_mut(i),
+            ) {
+                *p = pos;
+                *v = vel;
+                *m = 1.0;
+                *t = 5000.0;
+                *c = color;
+            }
         }
         data.is_dirty = true;
         return;

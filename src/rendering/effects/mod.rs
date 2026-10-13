@@ -1,5 +1,4 @@
-//! Visual effects, orbit path gizmos, impact shockwaves, and diagnostic overlays.
-
+pub mod dark_matter;
 pub mod impact_debris;
 pub mod kilonova;
 pub mod megastructures;
@@ -13,6 +12,7 @@ pub mod supernova;
 pub mod tde;
 pub mod tools;
 
+pub use dark_matter::draw_dark_matter_halos;
 pub use impact_debris::*;
 pub use roche_stream::*;
 
@@ -123,7 +123,11 @@ fn draw_star_effects(
 
         let current_visual_r =
             config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
-        let base_lens_r = (current_visual_r * 1.50).max(3.6);
+        let base_lens_r = if opt_quasi.is_some() || star_body.body_type == BodyType::QuasiStar {
+            (current_visual_r * 1.50).max(3.6)
+        } else {
+            (current_visual_r * 1.50).max(0.12)
+        };
         draw_black_hole_spacetime_curvature(gizmos, star_vec, base_lens_r, is_blown_out, elapsed);
     } else if star_body.body_type == BodyType::BlackHole {
         draw_standard_black_hole_jets(gizmos, star_vec);

@@ -390,9 +390,11 @@ fn append_probe_telemetry(
         crate::simulation::probes::ProbeStatus::Transit => {
             "EN ROUTE // AUTONOMOUS ION PROPULSION ACTIVE"
         }
-        crate::simulation::probes::ProbeStatus::InOrbit => "STABLE ORBIT INSERTION ACHIEVED",
+        crate::simulation::probes::ProbeStatus::InOrbit => {
+            "STABLE ORBIT INSERTION // REMOTE SPECTROMETRY ACTIVE"
+        }
         crate::simulation::probes::ProbeStatus::Landed => {
-            "SURFACE TOUCHDOWN // STATIONARY EXPLORATION"
+            "SURFACE TOUCHDOWN // AUTONOMOUS GEODESIC TRAVERSE & CORE DRILLING"
         }
     };
     let _ = write!(
@@ -408,6 +410,32 @@ fn append_probe_telemetry(
         comp.distance_to_target * AU_TO_KM,
         comp.relative_speed * AU_PER_YR_TO_KM_PER_S
     );
+
+    if probe.status == crate::simulation::probes::ProbeStatus::Landed {
+        if let Some((lat, lon)) = probe.surface_lat_lon_deg() {
+            let lat_hem = if lat >= 0.0 { 'N' } else { 'S' };
+            let lon_hem = if lon >= 0.0 { 'E' } else { 'W' };
+            let _ = write!(
+                text,
+                "\nSurface Coordinates: {:.2}° {lat_hem}, {:.2}° {lon_hem}\n\
+                 Traverse Distance: {:.1} km ({} Waypoints) | Core Samples: {}\n\
+                 Raman Assay: {}",
+                lat.abs(),
+                lon.abs(),
+                probe.distance_driven_km,
+                probe.traverse_trail_unspun.len(),
+                probe.samples_collected,
+                probe.latest_assay
+            );
+        }
+    } else if probe.status == crate::simulation::probes::ProbeStatus::InOrbit {
+        let _ = write!(
+            text,
+            "\nOrbital Surveys: {} Passes Completed\n\
+             Spectrometry: {}",
+            probe.samples_collected, probe.latest_assay
+        );
+    }
 }
 
 #[allow(

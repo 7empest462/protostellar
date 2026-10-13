@@ -39,7 +39,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (318 Tests)](#-automated-test-suite-318-tests)
+6. [🧪 Automated Test Suite (364 Tests)](#-automated-test-suite-364-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -50,25 +50,27 @@
 Protostellar has evolved far beyond an N-body gravity toy into a comprehensive astrophysical sandbox. Here is a summary of all recent major systems:
 
 ### 1. Galactic Evolution & Active Galactic Nuclei (AGN)
-- **Supermassive Black Holes**: Relativistic accretion disks that ignite into brilliant Quasars when actively feeding on surrounding gas clouds or consumed stars.
+- **True-Scale Supermassive Black Holes**: Supermassive black holes render at their authentic physical Schwarzschild radius ($R_s = 2GM/c^2 \approx 0.085\text{ AU}$ for Sagittarius A*'s $4.3 \times 10^6\ M_\odot$) with volumetric, Doppler-beamed relativistic MHD accretion disks and razor-sharp $1.5 R_s$ photon rings.
 - **Tidal Disruption Events (TDEs)**: Stars plunging within the Roche limit of a black hole are spaghettified into glowing plasma ribbons that dynamically wind into the accretion disk.
 - **Relativistic Jets**: AGN and Magnetars fire highly collimated relativistic jets with synchronized Synchrotron radiation.
-- **Sagittarius A* System**: Simulates the extreme relativistic orbits (S-Stars) around the Milky Way's central supermassive black hole.
+- **Sagittarius A\* System**: Simulates the extreme relativistic 1PN orbits and periastron velocity boosts of the galactic center S-star cluster (S2, S4714, S62, S0-102) around the Milky Way's central supermassive black hole.
 
-### 2. Giant Molecular Clouds & Spiral Galaxies
-- **WGPU Gas Hydrodynamics**: Leverages GPU compute shaders for Eulerian fluid dynamics and shock compression.
-- **Lin-Shu Spiral Density Waves**: Stars and gas perfectly align into non-winding, grand-design spiral arms (4-armed Milky Way style).
-- **Jeans Instability**: Cold gas clumps dynamically fragment and collapse into new protostellar seeds and binary stars.
-- **HII Regions & Volumetric Rendering**: 3D raymarched nebulae where igniting stars blow away surrounding gas to reveal the new solar systems.
+### 2. Giant Molecular Clouds & N-Body Spiral Galaxies
+- **WGPU Gas Hydrodynamics & GMC Far-Field Compute**: Leverages GPU compute shaders (`gmc_far_field.wgsl`) for Eulerian fluid dynamics, shock compression, and tile-shared $O(N)$ far-field gravitational acceleration across thousands of forming star systems.
+- **GPU N-Body Spiral Galaxies & Dark Matter Halos**: Simulates 100,000+ star particles bound inside analytical Navarro-Frenk-White (NFW) dark matter halos (`nbody_galaxy.wgsl`) with 3D gravimetric velocity field visualization and Andromeda–Milky Way galactic collisions.
+- **Lin-Shu Spiral Density Waves**: Stars and gas align into non-winding, grand-design spiral arms (4-armed Milky Way style).
+- **Jeans Instability & HII Ionization Bubbles**: Cold gas clumps dynamically fragment and collapse into new protostellar seeds while igniting stars carve glowing HII cavities in 3D raymarched nebulae.
 
-### 3. Exoplanet Civilizations & Megastructures
-- **Habitability & Technosignatures**: Planets sustaining liquid water in the Goldilocks zone for eons spawn advanced biospheres.
-- **Dyson Swarms**: Kardashev Type II civilizations actively construct instanced Dyson Swarms that orbit and dynamically intercept their host star's luminosity.
-- **Night-Side City Lights**: Procedural civilizations cast emissive urban networks along their coastlines and temperate zones.
+### 3. Procedural Exoplanet Flora, Bioluminescence & Megastructures (Phase 7)
+- **Spectral Photosynthetic Pigments**: Continental vegetation dynamically adapts its pigment palette to the host star's spectral energy distribution (`SolarChlorophyll` emerald-jade under G/F stars, `RedDwarfCrimson` near-infrared anthocyanin under M-dwarfs like TRAPPIST-1, `OrangeDwarfCarotenoid` amber-gold under K-dwarfs/binaries like Kepler-16, and `HighUvIndigo` UV-shielded scytonemin under hot stars and compact remnants).
+- **Bioluminescent Twilight & Nightside Ecospheres**: Tidally locked and vegetated exoplanets illuminate their twilight terminators and nightsides with glowing bioluminescent forest canopy veins and coastal plankton blooms.
+- **Gravity-Modulated Alpine Treelines**: Planetary surface gravity ($g / g_\oplus$) dynamically compresses or expands continental treeline elevations.
+- **Dyson Swarms & Night-Side City Lights**: Advanced civilizations cast emissive urban networks on the night hemisphere and construct instanced Dyson Swarms that orbit and intercept their host star's luminosity.
 
-### 4. Interstellar Probes & Astronautics
-- **Massless Spacecraft**: Launch AI-driven `SpaceProbe` entities (Orbiters, Rovers) capable of calculating Hohmann transfers and intercepting target planets without affecting gravity.
-- **Ion Drive Navigation**: Probes compute targeted Delta-V burns to achieve orbital insertion or surface landings dynamically.
+### 4. Interstellar Probes, Geodesic Surface Rovers & Astrobiology Telemetry (Phase 7)
+- **Autonomous Ion-Drive Spacecraft**: Launch `SpaceProbe` entities (Orbiters and Rovers) that compute intercept trajectories and execute continuous low-thrust ion burns.
+- **Geodesic Rover Surface Navigation & 3D Trails**: Upon touchdown, Rovers autonomously traverse the rotating 3D planetary crust along great-circle geodesics with terrain-avoidance steering, rendering persistent amber-gold breadcrumb trails and pulsing cyan Raman laser core-drill beams.
+- **Crustal Core Drilling & Orbital Spectrometry**: Rovers and Orbiters collect surface cores and atmospheric transmission spectra, reporting planetographic `Lat / Lon` coordinates, kilometers driven, and biosignature/mineralogical assays in the Target Inspector HUD.
 
 ### 5. High-Fidelity 3D Terrain & Procedural Planets
 - **Vertex Displacement**: Planets are true 3D geometry displaced by procedural geological heightmaps (mountains, craters, tectonic ridges).
@@ -109,17 +111,18 @@ Immerse yourself in deep-space star formation through real-time 3D fluid volumet
 - **HII Ionization Bubbles**: As newborn stars ignite, their intense radiation pressure and stellar winds carve out massive, glowing cavities in the surrounding nebula.
 - **To use**: Open the Scenarios Bar and click **`[Molecular Cloud]`**.
 
-### Interstellar Probes & Astronautics
-Explore and survey your newly formed exoplanets by launching autonomous spacecraft.
+### Interstellar Probes, Surface Rovers & Astrobiology
+Explore and survey your exoplanets by launching autonomous orbital and surface spacecraft:
 - **Ion-Drive Navigation**: Probes compute interception trajectories and use continuous low-thrust ion drives to transit between worlds.
-- **Orbiters vs. Rovers**: Upon arrival, Orbiters perform autonomous retrograde braking to circularize into orbit, while Rovers decelerate completely for a soft surface landing.
+- **Orbital Spectrometry vs. Geodesic Surface Roving**: Upon arrival, Orbiters circularize into polar/inclined survey orbits to conduct IR/UV atmospheric transmission spectroscopy, while Rovers touch down on the crust, orient tangent to the terrain, and autonomously rove across the rotating planetary surface along great-circle geodesics.
+- **3D Surface Trails & Raman Core Drilling**: Landed Rovers leave a rotating 3D breadcrumb trail on the planet's surface, fire a pulsing cyan Raman spectrometer laser into the regolith, and report real-time planetographic `Lat / Lon` coordinates, traverse distance (`km`), core sample counts, and biosignature findings in the Target Inspector.
 - **To use**: Select any planet, open the Inspector (**`[I]`**), and click **`[Launch Probe]`**.
 
-### Exoplanet Civilizations & Megastructures
-Watch primitive biospheres organically transition into advanced spacefaring empires.
-- **Habitability Tracking**: Worlds in the habitable zone with liquid oceans and stable orbits accrue "biosphere" potential over geological timescales.
-- **Dyson Swarms**: Once a civilization reaches a Type-II Kardashev threshold (a high technosignature), it will begin constructing a massive Dyson Swarm around its host star. This megastructure intercepts stellar radiation, measurably cooling down outer planets.
-- **To use**: Select a habitable planet, open the Inspector (**`[I]`**), and click **`[Adv. Civ]`** to instantly artificially advance the species, or wait millions of years for natural evolution.
+### Exoplanet Civilizations, Spectral Flora & Megastructures
+Watch primitive biospheres adapt to their host star's spectrum and transition into advanced spacefaring empires:
+- **Habitability & Spectral Flora Adaptation**: Worlds in the habitable zone with liquid oceans evolve photosynthetic flora tuned to their star's spectrum—emerald chlorophyll under Solar G-stars, deep crimson-burgundy NIR anthocyanins on M-dwarf worlds (`TRAPPIST-1`), amber-gold carotenoids on K-dwarf/circumbinary worlds (`Kepler-16`), and bioluminescent twilight/nightside canopies.
+- **Dyson Swarms**: Once a civilization reaches a Type-II Kardashev threshold (a high technosignature), it constructs a massive Dyson Swarm around its host star that intercepts stellar radiation and measurably cools outer planets.
+- **To use**: Select a habitable planet, open the Inspector (**`[I]`**), and click **`[Seed Life]`** or **`[Adv. Civ]`**, or wait millions of years for natural evolution.
 
 ### Supernova Core-Collapse, Matter Ejection & Remnant Formation
 Witness the violent death of massive stars and the birth of exotic compact remnants through real-time 3D explosive hydrodynamic visuals:
@@ -429,6 +432,9 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | **SGR 1806-20 Magnetar** | `[F9]` | Ultra-magnetized $10^{15}\text{ G}$ magnetar with starquake flares, 3D magnetic flux loops, and LBV 1806-20 hypergiant cluster companion. |
 | **PSR B1913+16 Relativistic Binary** | `[HUD]` | Hulse-Taylor binary pulsar ($1.44\ M_\odot + 1.38\ M_\odot$) in an eccentric $0.013\text{ AU}$ orbit demonstrating $4.22^\circ/\text{yr}$ 1PN periastron advance and GW inspiral decay. |
 | **HD 80606 Kozai-Lidov Triple** | `[F11]` | Hierarchical triple system demonstrating periodic eccentricity and inclination exchange via the Kozai-Lidov mechanism ($e \to 0.88+$). |
+| **Sagittarius A\* (Galactic Center)** | `[HUD]` | $4.3 \times 10^6\ M_\odot$ supermassive black hole at true Schwarzschild scale ($0.085\text{ AU}$) orbited by relativistic S-stars (S2, S4714, S62, S0-102) and G2 gas cloud. |
+| **Giant Molecular Cloud (GMC)** | `[HUD]` | Volumetric 3D raymarched star-forming nebula with GPU Eulerian hydrodynamics, Jeans collapse, HII ionization bubbles, and GPU far-field cluster gravity. |
+| **Milky Way & Andromeda Collision** | `[HUD]` | GPU N-body spiral galaxies bound in NFW dark matter halos with 4-arm Lin-Shu spiral density waves and tidal tail mergers. |
 
 ---
 
@@ -502,7 +508,10 @@ protostellar/
 │   └── shaders/
 │       ├── supernova.wgsl        # Ray-marched volumetric supernova fireball, shock fronts & ionization shells
 │       ├── skybox.wgsl           # Milky Way & Cosmic Web procedural skybox with gravitational lensing
-│       ├── planet.wgsl           # PBR crusts, magma oceans, Ray-marched ring shadows & eclipses
+│       ├── planet.wgsl           # PBR crusts, spectral exoplanet flora, bioluminescence, ring shadows & eclipses
+│       ├── black_hole_disk.wgsl  # Relativistic MHD accretion disk with Doppler beaming & Kerr photon ring
+│       ├── nbody_galaxy.wgsl     # WGPU N-body spiral galaxy & NFW dark matter halo compute shader
+│       ├── gmc_far_field.wgsl    # Tile-shared GPU far-field gravity compute shader for GMC star clusters
 │       ├── atmosphere.wgsl       # Multi-layer Rayleigh/Mie atmospheric scattering & twilight ring
 │       ├── relativistic_jet.wgsl # Relativistic polar jet beaming, Doppler flaring & shock knots
 │       ├── gas_cloud.wgsl        # 15-layer flared 3D protoplanetary gas disk
@@ -510,46 +519,50 @@ protostellar/
 │       ├── particle_orbit.wgsl   # WebGPU compute shader for 100k particles
 │       └── particle_render.wgsl  # GPU instanced particle swarm rendering
 ├── src/
-│   ├── gpu/                      # WebGPU compute nodes & async double-buffered staging
+│   ├── gpu/                      # WebGPU compute nodes (SPH gas, N-body galaxy, GMC far-field, collapse)
 │   ├── simulation/
 │   │   ├── accretion/            # Collision regimes, Theia giant impact, impact melt basins
 │   │   ├── atmosphere_escape/    # Hydrodynamic EUV escape & cometary ion tails
-│   │   ├── components/           # ECS definitions (Mass, Position, Climate, JetState, SpinState, etc.)
+│   │   ├── biology/              # Habitability tracking, spectral flora adaptation & technosignature evolution
+│   │   ├── components/           # ECS definitions (Mass, Position, Climate, BiosphereState, SpinState, etc.)
 │   │   ├── disk/                 # Protoplanetary disk structure, gas drag, pebble drift
 │   │   ├── geology/              # Deep-time epochs, continental drift, Great Oxidation Event
 │   │   ├── kozai_lidov/          # Hierarchical triple resonance & secular orbital tilt exchange
+│   │   ├── physics/              # Modular symplectic leapfrog N-body integrator & forces
 │   │   ├── predictor.rs          # Real-time Keplerian trajectory predictor & encounter forecaster
-│   │   ├── relativity/           # 1PN precession, GW Peters orbital decay, relativistic jets
-│   │   ├── scenarios/            # 11 scenario presets (Solar, Genesis, TRAPPIST, Kepler-16, Pulsar, Magnetar, etc.)
+│   │   ├── probes/               # Autonomous Orbiters, geodesic surface Rovers, 3D trails & Raman assays
+│   │   ├── relativity/           # 1PN precession, GW Peters orbital decay, relativistic jets & TDEs
+│   │   ├── scenarios/            # 16 scenario presets (Solar, Genesis, TRAPPIST, Kepler-16, Sag A*, Galaxy, etc.)
 │   │   ├── serialization.rs      # System JSON save/load serializer
 │   │   ├── space_weather/        # CMEs, stellar flares, magnetospheric stand-off & auroral ovals
 │   │   ├── telemetry.rs          # Symplectic energy auditing, metrics history & CSV export
 │   │   ├── terraforming/         # Targeted bombardment spawner & dynamic climate modification
 │   │   ├── thermodynamics/       # Stellar evolution, habitability indexing & multi-zone climate regimes
-│   │   ├── tides/                # Viscoelastic tidal heating, volcanism & spin-orbit locking
-│   │   └── physics.rs            # Symplectic leapfrog N-body integrator
+│   │   └── tides/                # Viscoelastic tidal heating, volcanism & spin-orbit locking
 │   ├── rendering/
-│   │   ├── bodies/               # Meshes, atmospheres, relativistic jets, ring systems
-│   │   ├── effects/              # Supernova & Kilonova explosions, persistent SNR nebulae, GW ripples, conics, ribbons
+│   │   ├── bodies/               # Meshes, atmospheres, relativistic jets, ring systems & shader uniform sync
+│   │   ├── effects/              # Supernovae, Kilonovae, SNR nebulae, Dyson swarms, dark matter halos & conics
 │   │   ├── materials.rs          # Custom Bevy PBR & volumetric shader materials
 │   │   └── camera.rs             # Pan-orbit camera, zoom, target tracking
 │   ├── game/
-│   │   ├── ui/                   # Full HUD suite: Inspector, Builder, Scrubber, Telemetry, Quick Bar
+│   │   ├── ui/                   # Full HUD suite: Inspector, Builder, Scrubber, Telemetry, Trophies, Quick Bar
 │   │   ├── interaction.rs        # Keyboard shortcuts, selection, live editing
 │   │   ├── slingshot.rs          # Interactive orbital slingshot launcher
 │   │   └── time_control.rs       # Time warp, pause, speed stepping
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 37 specialized test suites covering 318 automated tests
+    └── simulation_tests/         # 38 specialized test suites covering 364 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (318 Tests)
+## 🧪 Automated Test Suite (364 Tests)
 
-Protostellar enforces rigorous physical validity through **318 comprehensive integration tests** across 37 specialized test suites:
+Protostellar enforces rigorous physical validity through **364 comprehensive integration tests** across 38 specialized test suites:
 
+- **Exoplanet Biospheres, Spectral Flora & Rover Surface Exploration**: Host-star spectral flora pigment adaptation (`SolarChlorophyll`, `RedDwarfCrimson`, `OrangeDwarfCarotenoid`, `HighUvIndigo`), bioluminescent twilight/nightside canopies, autonomous rover geodesic surface traversal, breadcrumb trail recording, and Raman core-drilling sample collection.
+- **GPU Far-Field GMC Gravity & N-Body Galaxies**: Tile-shared GPU far-field gravitational softening, CPU/GPU parity within $10^{-4}$, NFW dark matter halo rotation curves, and Jeans collapse star formation.
 - **Supernova Core-Collapse & Persistent Remnant Nebulae**: Mass-differentiated explosion regimes (Hypernova, Type II, Type Ia, Planetary Nebula), prompt breakout fireball decay, high-velocity ejecta kinematics, SPH disk blast clearing, handoff to persistent Sedov-Taylor nebulae ($R(t) \propto t^{0.38}$), multi-element filamentary cooling, and Pulsar Wind Nebula (PWN) synchrotron cores.
 - **Kilonova Fireballs & Relativistic Remnants**: Peters GW orbital inspiral coalescence, relativistic short-GRB polar jets, $r$-process lanthanide fireball radioactive cooling, BBH spacetime metric chirp ripples, Kerr QNM ringdown shimmer, and Schwarzschild black hole event horizon scaling ($r_{\text{vis}} \propto 2GM/c^2$) with grazing photon ring lensing.
 - **Pristine Disk Genesis & Star Ignition**: Organic coagulation from 100,000 SPH particles, water-ice snow line trapping, protostellar core contraction, and automatic 10.0 MK fusion ignition.

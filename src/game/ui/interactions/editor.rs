@@ -562,6 +562,8 @@ fn handle_shatter_and_life(
                             oxygen_fraction: 0.21,
                             emergence_year: Some(0.0),
                             technosignature: 1.0,
+                            bioluminescence_intensity: 0.35,
+                            ..Default::default()
                         });
                         toast.message =
                             "🏙️ Civilization Emerged! Observe the night side.".to_string();
@@ -603,6 +605,8 @@ fn handle_shatter_and_life(
                                 oxygen_fraction: 0.21,
                                 emergence_year: Some(sim_time_years),
                                 technosignature: 0.0,
+                                bioluminescence_intensity: 0.25,
+                                ..Default::default()
                             },
                             PlanetaryClimate {
                                 surface_temperature_k: 288.0,

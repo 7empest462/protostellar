@@ -162,6 +162,9 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
             oxygen_fraction: 0.20,
             emergence_year: Some(10.0),
             technosignature: 0.0,
+            flora_pigment: FloraPigmentClass::OrangeDwarfCarotenoid,
+            bioluminescence_intensity: 0.42,
+            ..Default::default()
         },
     ));
 
@@ -206,6 +209,9 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
             oxygen_fraction: 0.21,
             emergence_year: Some(50.0),
             technosignature: 0.0,
+            flora_pigment: FloraPigmentClass::OrangeDwarfCarotenoid,
+            bioluminescence_intensity: 0.55,
+            ..Default::default()
         },
     ));
 }

@@ -156,10 +156,11 @@ pub fn advance_symplectic_leapfrog_drift(
     star_pos: DVec3,
     star_mass: f64,
     snapshot_buffer: &mut Vec<(Entity, DVec3, DVec3, f64, f64)>,
+    is_galaxy_collision: bool,
 ) {
     for body in body_data.iter_mut() {
         if body.satellite.is_none() {
-            if body.is_central_star {
+            if body.is_central_star && !is_galaxy_collision {
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
@@ -269,9 +270,10 @@ pub fn apply_velocity_kick_and_limits(
     star_pos: DVec3,
     is_little_red_dot: bool,
     is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
 ) {
     for body in body_data.iter_mut() {
-        if body.is_central_star {
+        if body.is_central_star && !is_galaxy_collision {
             body.pos = DVec3::ZERO;
             body.vel = DVec3::ZERO;
             body.acc = DVec3::ZERO;
@@ -304,6 +306,11 @@ pub fn apply_velocity_kick_and_limits(
                 let universal_c_limit = SPEED_OF_LIGHT_AU_YR * 0.999;
                 if speed > universal_c_limit {
                     body.vel *= universal_c_limit / speed;
+                } else if is_galaxy_collision {
+                    let max_galaxy_speed = 60_000.0;
+                    if speed > max_galaxy_speed {
+                        body.vel *= max_galaxy_speed / speed;
+                    }
                 } else if !is_little_red_dot {
                     let max_planetary_speed = 3500.0;
                     if speed > max_planetary_speed {

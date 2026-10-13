@@ -132,6 +132,12 @@ fn handle_scenario_preset_load(
             toast.timer = 5.0;
             true
         }
+        UiButtonAction::LoadScenarioGalacticCollision => {
+            scenario_events.write(LoadScenarioEvent(ScenarioPreset::GalacticCollision));
+            toast.message = "✨ Loaded Scenario: Milkomeda Galactic Collision (N-Body)".to_string();
+            toast.timer = 5.0;
+            true
+        }
         _ => false,
     }
 }

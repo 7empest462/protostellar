@@ -29,7 +29,7 @@ pub enum SystemPhase {
     SpiralGalaxyEvolution,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MilestoneId {
     DustCoagulation,
     PlanetesimalGrowth,
@@ -45,6 +45,17 @@ pub enum MilestoneId {
     BiosphereGenesis,
     StellarMetamorphosis,
     SpiralArmsEmergence,
+    // GMC
+    GmcProtostar,
+    GmcStarCluster,
+    // Exoplanets
+    TrappistSurvival,
+    HotJupiterParked,
+    // Relativity
+    SgrACloseApproach,
+    QuasarIgnition,
+    TidalDisruption,
+    KozaiTiltExchange,
 }
 
 /// A scientific discovery milestone tracking solar system emergence.
@@ -86,6 +97,12 @@ impl Default for LateHeavyBombardmentState {
 }
 
 /// Resource tracking phase milestone metrics and statistics.
+/// Resource tracking globally unlocked trophies.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct GlobalTrophies {
+    pub unlocked: hashbrown::HashSet<MilestoneId>,
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct PhaseManager {
     pub current_phase: SystemPhase,
@@ -213,6 +230,8 @@ impl Default for PhaseManager {
                 },
                 ScientificMilestone {
                     id: MilestoneId::SpiralArmsEmergence,
+    // GMC
+
                     title: "🌀 14. Grand Design Spiral Galaxy Evolution",
                     prompt: "Lin-Shu density wave organizes gas and star clusters into grand-design logarithmic spiral arms.",
                     achieved: false,
@@ -336,6 +355,7 @@ fn evaluate_scientific_milestones(
     phase_mgr: &mut PhaseManager,
     lhb_state: &LateHeavyBombardmentState,
     current_sim_yr: f64,
+    global_trophies: &mut GlobalTrophies,
 ) {
     let is_star_ignited = phase_mgr.is_star_ignited;
     let mut unlock_name = None;
@@ -351,7 +371,7 @@ fn evaluate_scientific_milestones(
             MilestoneId::StellarIgnition => is_star_ignited,
             MilestoneId::GapClearing => stats.planets >= 1,
             MilestoneId::CoreDifferentiation => stats.has_differentiated,
-            MilestoneId::StableMultiPlanet => stats.planets >= 3,
+            MilestoneId::StableMultiPlanet | MilestoneId::GmcStarCluster => stats.planets >= 3,
             MilestoneId::GiantPlanetResonance => lhb_state.resonance_crossed,
             MilestoneId::LateHeavyBombardment => lhb_state.is_active,
             MilestoneId::VolatileOceanDelivery => stats.total_delivered_water >= 0.0005,
@@ -362,12 +382,20 @@ fn evaluate_scientific_milestones(
             MilestoneId::SpiralArmsEmergence => {
                 current_sim_yr >= 2200.0 && (stats.planets + stats.protoplanets >= 2)
             }
+            MilestoneId::GmcProtostar => stats.planets >= 1 || is_star_ignited,
+            MilestoneId::TrappistSurvival => current_sim_yr >= 1000.0 && stats.planets >= 6,
+            MilestoneId::HotJupiterParked => current_sim_yr >= 200.0,
+            MilestoneId::SgrACloseApproach => current_sim_yr >= 50.0,
+            MilestoneId::QuasarIgnition => current_sim_yr >= 20.0,
+            MilestoneId::TidalDisruption => current_sim_yr >= 10.0,
+            MilestoneId::KozaiTiltExchange => current_sim_yr >= 100.0,
         };
 
         if passed {
             milestone.achieved = true;
             milestone.achieve_timestamp = Some(current_sim_yr);
             unlock_name = Some(milestone.title.to_string());
+            global_trophies.unlocked.insert(milestone.id);
         }
     }
 
@@ -455,6 +483,7 @@ pub fn monitor_phase_transitions(
     mut lhb_state: ResMut<LateHeavyBombardmentState>,
     mut next_phase: ResMut<NextState<SystemPhase>>,
     mut phase_mgr: ResMut<PhaseManager>,
+    mut global_trophies: ResMut<GlobalTrophies>,
     mut ignition_events: MessageReader<StarIgnitionEvent>,
     star_query: Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
     bodies_query: Query<
@@ -498,7 +527,13 @@ pub fn monitor_phase_transitions(
     }
 
     let current_sim_yr = sim_time.elapsed_years;
-    evaluate_scientific_milestones(&stats, &mut phase_mgr, &lhb_state, current_sim_yr);
+    evaluate_scientific_milestones(
+        &stats,
+        &mut phase_mgr,
+        &lhb_state,
+        current_sim_yr,
+        &mut global_trophies,
+    );
     evaluate_system_phase_transitions(
         &stats,
         &mut phase_mgr,

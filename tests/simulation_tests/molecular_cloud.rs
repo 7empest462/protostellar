@@ -205,6 +205,7 @@ fn test_molecular_cloud_cluster_scenario_phase_mapping() {
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.init_state::<SystemPhase>();
     app.init_resource::<PhaseManager>();
+    app.init_resource::<protostellar::game::phases::GlobalTrophies>();
     app.init_resource::<ActiveScenarioState>();
     app.init_resource::<DiskParameters>();
     app.init_resource::<SimTime>();

@@ -37,6 +37,7 @@ pub struct GalaxyUniforms {
     pub num_massive_bodies: u32,
     pub pad1: f32,
     pub massive_bodies: [MassiveBodyGpu; 32], // xyz: pos, w: mass
+    pub massive_body_velocities: [[f32; 4]; 32], // xyz: vel, w: unused
 }
 
 #[derive(Resource)]
@@ -54,11 +55,13 @@ pub struct GpuGalaxyOrbitEngine {
 
 #[derive(Resource, Default, Clone)]
 pub struct GpuGalaxyExtractedParams {
+    pub count: u32,
     pub is_paused: bool,
     pub step_once: bool,
     pub dt: f32,
     pub num_massive_bodies: u32,
     pub massive_bodies: [MassiveBodyGpu; 32],
+    pub massive_body_velocities: [[f32; 4]; 32],
 
     pub halo_mass: f32,
     pub halo_scale_radius: f32,
@@ -67,26 +70,46 @@ pub struct GpuGalaxyExtractedParams {
     pub spiral_amplitude: f32,
     pub spiral_pitch: f32,
 }
-
+#[allow(
+    clippy::type_complexity,
+    reason = "Bevy Extract Query tuple and multi-subsystem simulation parameters"
+)]
 pub fn extract_galaxy_sim_data(
     mut commands: Commands,
     time_warp: Extract<Res<TimeWarp>>,
     scenario_state: Extract<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     sim_time: Extract<Res<crate::simulation::resources::SimTime>>,
-    massive_query: Extract<Query<(&SimPosition, &Mass, &CelestialBody)>>,
+    massive_query: Extract<
+        Query<(
+            &SimPosition,
+            &Mass,
+            (
+                Entity,
+                Option<&crate::simulation::components::SimVelocity>,
+                &CelestialBody,
+            ),
+        )>,
+    >,
+    swarm: Extract<Option<Res<crate::rendering::particle_swarm::ParticleSwarmData>>>,
 ) {
     if scenario_state.current_preset
         != crate::simulation::scenarios::ScenarioPreset::GalacticCollision
     {
         commands.remove_resource::<GpuGalaxyExtractedParams>();
+        commands.remove_resource::<GpuGalaxyOrbitEngine>();
         return;
     }
 
     let mut massive_bodies = [MassiveBodyGpu::default(); 32];
+    let mut massive_body_velocities = [[0.0; 4]; 32];
     let mut num_bodies = 0u32;
 
-    for (pos, mass, _) in massive_query.iter() {
-        if let Some(body_slot) = massive_bodies.get_mut(num_bodies as usize) {
+    let total_massive_query_count = massive_query.iter().count();
+    for (pos, mass, (_, vel_maybe, _)) in massive_query.iter() {
+        if let (Some(body_slot), Some(vel_slot)) = (
+            massive_bodies.get_mut(num_bodies as usize),
+            massive_body_velocities.get_mut(num_bodies as usize),
+        ) {
             *body_slot = MassiveBodyGpu {
                 pos_mass: [
                     pos.0.x as f32,
@@ -95,6 +118,15 @@ pub fn extract_galaxy_sim_data(
                     mass.0 as f32,
                 ],
             };
+            let v = vel_maybe.map_or(bevy::math::DVec3::ZERO, |v| v.0);
+            let halo_m = if total_massive_query_count <= 1 {
+                2.4e12_f32 // Merged Milkomeda halo
+            } else if mass.0 > 50_000_000.0 {
+                1.4e12_f32 // Andromeda halo
+            } else {
+                1.0e12_f32 // Milky Way halo
+            };
+            *vel_slot = [v.x as f32, v.y as f32, v.z as f32, halo_m];
             num_bodies += 1;
         } else {
             break; // Maximum massive bodies reached
@@ -104,19 +136,26 @@ pub fn extract_galaxy_sim_data(
     // Use the exact same timestep as the CPU simulation for perfect sync
     let dt = sim_time.current_dt_yr as f32;
 
+    let count = if let Some(s) = swarm.as_ref() {
+        s.count as u32
+    } else {
+        100_000
+    };
     commands.insert_resource(GpuGalaxyExtractedParams {
+        count,
         is_paused: time_warp.is_paused,
         step_once: time_warp.step_once,
         dt,
         num_massive_bodies: num_bodies,
         massive_bodies,
+        massive_body_velocities,
 
         halo_mass: 1.0e12,           // 1 trillion solar masses
         halo_scale_radius: 50_000.0, // AU proxy for scale radius
-        pattern_speed: 0.0001,
-        spiral_arms: 4.0,
-        spiral_amplitude: 0.05,
-        spiral_pitch: 0.2,
+        pattern_speed: 0.0,
+        spiral_arms: 0.0,
+        spiral_amplitude: 0.0,
+        spiral_pitch: 0.0,
     });
 }
 
@@ -133,60 +172,38 @@ fn create_galaxy_orbit_pipeline(
     )
 }
 
-fn generate_milky_way_particles(n_mw: u32, initial_particles: &mut Vec<GpuParticle>) {
-    let mut rng = rand::rng();
-    let mw_mass = 4_300_000.0;
-    for _ in 0..n_mw {
-        let r = rng.random_range(5000.0..80_000.0);
-        let phi = rng.random_range(0.0..std::f32::consts::TAU);
-        let z = rng.random_range(-500.0..500.0);
-        let pos = [r * phi.cos(), z, r * phi.sin(), 1.0];
-
-        // Calculate enclosed NFW halo mass at radius r
-        let rs = 50_000.0_f32;
-        let halo_mass = 1.0e12_f32;
-        let x = r / rs;
-        let mass_enclosed = halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
-        // Circular velocity accounts for both SMBH and Dark Matter
-        let v_circ =
-            (crate::utils::constants::G_ASTRO as f32 * (mw_mass + mass_enclosed) / r).sqrt();
-
-        let vel = [-v_circ * phi.sin(), 0.0, v_circ * phi.cos(), 5000.0];
-        initial_particles.push(GpuParticle {
-            pos_mass: pos,
-            vel_temp: vel,
-            composition: [0.0, 0.0, 0.0, 0.0],
-        });
-    }
+struct GalaxyDiskConfig {
+    count: u32,
+    smbh_mass: f32,
+    center_pos: [f32; 3],
+    center_vel: [f32; 3],
+    max_radius: f32,
+    halo_mass: f32,
 }
 
-fn generate_andromeda_particles(n_m31: u32, initial_particles: &mut Vec<GpuParticle>) {
+fn generate_galaxy_particles(cfg: &GalaxyDiskConfig, initial_particles: &mut Vec<GpuParticle>) {
     let mut rng = rand::rng();
-    let m31_mass = 140_000_000.0;
-    let m31_pos = [2_500_000.0, 50_000.0, 1_000_000.0];
-    let m31_vel = [-100.0, -2.0, -40.0];
-    for _ in 0..n_m31 {
-        let r = rng.random_range(5000.0..120_000.0);
+    let rs = 50_000.0_f32;
+    for _ in 0..cfg.count {
+        let r = rng.random_range(5000.0..cfg.max_radius);
         let phi = rng.random_range(0.0..std::f32::consts::TAU);
         let z = rng.random_range(-500.0..500.0);
         let pos = [
-            m31_pos[0] + r * phi.cos(),
-            m31_pos[1] + z,
-            m31_pos[2] + r * phi.sin(),
+            cfg.center_pos[0] + r * phi.cos(),
+            cfg.center_pos[1] + z,
+            cfg.center_pos[2] + r * phi.sin(),
             1.0,
         ];
 
-        let rs = 50_000.0_f32;
-        let halo_mass = 1.0e12_f32;
         let x = r / rs;
-        let mass_enclosed = halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
+        let mass_enclosed = cfg.halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
         let v_circ =
-            (crate::utils::constants::G_ASTRO as f32 * (m31_mass + mass_enclosed) / r).sqrt();
+            (crate::utils::constants::G_ASTRO as f32 * (cfg.smbh_mass + mass_enclosed) / r).sqrt();
 
         let vel = [
-            m31_vel[0] - v_circ * phi.sin(),
-            m31_vel[1],
-            m31_vel[2] + v_circ * phi.cos(),
+            cfg.center_vel[0] - v_circ * phi.sin(),
+            cfg.center_vel[1],
+            cfg.center_vel[2] + v_circ * phi.cos(),
             5000.0,
         ];
         initial_particles.push(GpuParticle {
@@ -197,15 +214,35 @@ fn generate_andromeda_particles(n_m31: u32, initial_particles: &mut Vec<GpuParti
     }
 }
 
-pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice) {
+pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
     let device = render_dev.wgpu_device();
-    let n_particles = 200_000u32;
+    let n_particles = count;
     let mut initial_particles = Vec::with_capacity(n_particles as usize);
     let n_mw = n_particles / 2;
     let n_m31 = n_particles - n_mw;
 
-    generate_milky_way_particles(n_mw, &mut initial_particles);
-    generate_andromeda_particles(n_m31, &mut initial_particles);
+    generate_galaxy_particles(
+        &GalaxyDiskConfig {
+            count: n_mw,
+            smbh_mass: 4_300_000.0,
+            center_pos: [-45_000.0, -6_000.0, -22_500.0],
+            center_vel: [90.0, 12.0, 45.0],
+            max_radius: 50_000.0,
+            halo_mass: 1.0e12,
+        },
+        &mut initial_particles,
+    );
+    generate_galaxy_particles(
+        &GalaxyDiskConfig {
+            count: n_m31,
+            smbh_mass: 140_000_000.0,
+            center_pos: [45_000.0, 6_000.0, 22_500.0],
+            center_vel: [-90.0, -12.0, -45.0],
+            max_radius: 65_000.0,
+            halo_mass: 1.4e12,
+        },
+        &mut initial_particles,
+    );
 
     let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Galaxy Particle Buffer"),
@@ -216,19 +253,20 @@ pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderD
     });
 
     let initial_uniforms = GalaxyUniforms {
-        dt: 100.0,
+        dt: 0.0,
         g_const: crate::utils::constants::G_ASTRO as f32,
-        softening_sq: 1000.0,
+        softening_sq: 1_000_000.0,
         num_particles: n_particles,
         halo_mass: 1.0e12,
         halo_scale_radius: 50_000.0,
-        pattern_speed: 0.0001,
-        spiral_arms: 4.0,
-        spiral_amplitude: 0.05,
-        spiral_pitch: 0.2,
+        pattern_speed: 0.0,
+        spiral_arms: 0.0,
+        spiral_amplitude: 0.0,
+        spiral_pitch: 0.0,
         num_massive_bodies: 0,
         pad1: 0.0,
         massive_bodies: [MassiveBodyGpu::default(); 32],
+        massive_body_velocities: [[0.0; 4]; 32],
     };
 
     let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -295,14 +333,15 @@ pub fn step_galaxy_simulation_render_world(
     let Some(params) = params else {
         return;
     };
+
+    let Some(mut engine) = gpu_engine else {
+        setup_galaxy_gpu_simulation(&mut commands, &render_device, params.count);
+        return;
+    };
+
     if params.is_paused && !params.step_once {
         return;
     }
-
-    let Some(mut engine) = gpu_engine else {
-        setup_galaxy_gpu_simulation(&mut commands, &render_device);
-        return;
-    };
     let queue = &render_queue;
     let device = render_device.wgpu_device();
 
@@ -313,7 +352,7 @@ pub fn step_galaxy_simulation_render_world(
     let uniforms = GalaxyUniforms {
         dt: params.dt,
         g_const: G_ASTRO as f32,
-        softening_sq: 1000.0,
+        softening_sq: 1_000_000.0,
         num_particles: engine.num_particles,
         halo_mass: params.halo_mass,
         halo_scale_radius: params.halo_scale_radius,
@@ -324,6 +363,7 @@ pub fn step_galaxy_simulation_render_world(
         num_massive_bodies: params.num_massive_bodies,
         pad1: 0.0,
         massive_bodies: params.massive_bodies,
+        massive_body_velocities: params.massive_body_velocities,
     };
 
     queue.write_buffer(&engine.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

@@ -22,6 +22,8 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
             if filename == "particle_orbit.wgsl"
                 || filename == "particle_render.wgsl"
                 || filename == "gmc_fluid.wgsl"
+                || filename == "nbody_galaxy.wgsl"
+                || filename == "gmc_far_field.wgsl"
             {
                 continue;
             }
@@ -110,19 +112,34 @@ fn test_black_hole_disk_wgsl_naga_validation() {
     );
 }
 
-#[test]
-fn test_gmc_fluid_wgsl_naga_validation() {
-    let source = std::fs::read_to_string("assets/shaders/gmc_fluid.wgsl")
-        .expect("assets/shaders/gmc_fluid.wgsl must exist");
+fn validate_wgsl_compute_shader_with_naga(shader_path: &str) {
+    let source = std::fs::read_to_string(shader_path)
+        .unwrap_or_else(|_| panic!("{} must exist", shader_path));
     let res = wgpu::naga::front::wgsl::parse_str(&source);
     if let Err(ref err) = res {
-        eprintln!("assets/shaders/gmc_fluid.wgsl WGSL Parse Error: {:?}", err);
+        eprintln!("{} WGSL Parse Error: {:?}", shader_path, err);
     }
     assert!(
         res.is_ok(),
-        "assets/shaders/gmc_fluid.wgsl must parse cleanly with naga without syntax errors: {:?}",
+        "{} must parse cleanly with naga without syntax errors: {:?}",
+        shader_path,
         res.err()
     );
+}
+
+#[test]
+fn test_gmc_fluid_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/gmc_fluid.wgsl");
+}
+
+#[test]
+fn test_gmc_far_field_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/gmc_far_field.wgsl");
+}
+
+#[test]
+fn test_nbody_galaxy_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/nbody_galaxy.wgsl");
 }
 
 #[test]

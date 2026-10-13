@@ -284,6 +284,28 @@ pub fn format_climate_biosphere_telemetry(
             bio.oxygen_fraction * 100.0,
             bio.habitability_score * 100.0
         );
+        if bio.biomass_coverage_frac >= 0.02 || bio.surface_samples_collected > 0 {
+            let biolum_str = if bio.bioluminescence_intensity > 0.02 {
+                format!(
+                    " | Bioluminescence: {:.0}%",
+                    bio.bioluminescence_intensity * 100.0
+                )
+            } else {
+                String::new()
+            };
+            let samples_str = if bio.surface_samples_collected > 0 {
+                format!(" | Samples Assayed: {}", bio.surface_samples_collected)
+            } else {
+                String::new()
+            };
+            let _ = write!(
+                out,
+                "\nEcosphere: {}{}{}",
+                bio.flora_pigment.label(),
+                biolum_str,
+                samples_str
+            );
+        }
     }
 
     if let Some(tide) = opt_tide {

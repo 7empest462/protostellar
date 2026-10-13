@@ -3,6 +3,7 @@
 pub mod buffers;
 pub mod compute_node;
 pub mod gmc_collapse;
+pub mod gmc_far_field;
 pub mod gmc_fluid;
 pub mod nbody_galaxy;
 pub mod particle_pipeline;
@@ -25,7 +26,11 @@ pub struct GpuSimPlugin;
 
 impl Plugin for GpuSimPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((ParticleRenderPlugin, gmc_fluid::GmcFluidPlugin));
+        app.add_plugins((
+            ParticleRenderPlugin,
+            gmc_fluid::GmcFluidPlugin,
+            gmc_far_field::GmcFarFieldPlugin,
+        ));
 
         // Create cross-world readback channel and recycling channel
         let (tx, rx) = flume::bounded::<Vec<u8>>(2);

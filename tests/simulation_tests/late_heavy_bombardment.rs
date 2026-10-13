@@ -103,6 +103,7 @@ fn test_late_heavy_bombardment_automatic_phase_transition_at_800_yr() {
         .init_state::<SystemPhase>()
         .init_resource::<Time>()
         .init_resource::<PhaseManager>()
+        .init_resource::<protostellar::game::phases::GlobalTrophies>()
         .init_resource::<LateHeavyBombardmentState>()
         .init_resource::<SimTime>()
         .add_message::<StarIgnitionEvent>()

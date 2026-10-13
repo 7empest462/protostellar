@@ -147,8 +147,10 @@ fn evaluate_compact_coalescence(
         return None;
     }
 
-    // ~5% of rest mass radiated as gravitational waves (Peters & Thorne 1974, Abbott et al. 2016)
-    let radiated_gw_mass = m_total * 0.05;
+    // Gravitational wave mass loss scales with symmetric mass ratio eta = (m1 * m2) / (m1 + m2)^2:
+    // ~5% of total rest mass for equal-mass binaries (eta = 0.25 -> 0.20 * eta = 0.05),
+    // and ~20% of the infalling companion mass for extreme-mass-ratio inspirals into an SMBH.
+    let radiated_gw_mass = 0.20 * (host_mass * companion_mass) / m_total.max(1e-12);
     let remnant_mass = m_total - radiated_gw_mass;
 
     let remnant_type = if companion_type == BodyType::BlackHole || remnant_mass > TOV_LIMIT_SOLAR {

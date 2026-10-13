@@ -18,7 +18,9 @@ fn setup_lhb_test_app() -> (App, Entity) {
     app.add_plugins(MinimalPlugins);
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.init_state::<SystemPhase>();
-    app.init_resource::<PhaseManager>();
+    app.init_resource::<PhaseManager>()
+        .init_resource::<protostellar::game::phases::GlobalTrophies>();
+    app.init_resource::<protostellar::game::phases::GlobalTrophies>();
     app.init_resource::<LateHeavyBombardmentState>();
     app.init_resource::<TimeWarp>();
     app.init_resource::<SimTime>();
@@ -337,7 +339,9 @@ fn verify_solar_system_scenario_belts() {
     app.init_resource::<SimulationConfig>();
     app.init_resource::<SimTime>();
     app.init_resource::<TimeWarp>();
-    app.init_resource::<PhaseManager>();
+    app.init_resource::<PhaseManager>()
+        .init_resource::<protostellar::game::phases::GlobalTrophies>();
+    app.init_resource::<protostellar::game::phases::GlobalTrophies>();
     app.init_resource::<LateHeavyBombardmentState>();
     app.add_message::<protostellar::simulation::thermodynamics::StarIgnitionEvent>();
     app.add_systems(Update, monitor_phase_transitions);
@@ -487,6 +491,7 @@ fn setup_quick_selector_app() -> (App, Entity, Entity, Entity) {
     app.init_resource::<ButtonInput<KeyCode>>();
     app.init_resource::<TimeWarp>();
     app.init_resource::<QuickBarState>();
+    app.init_resource::<protostellar::game::ui::types::TrophiesPanelState>();
     app.init_resource::<PlayerInteractionState>();
     app.init_resource::<SimulationConfig>();
     app.init_resource::<DiskParameters>();

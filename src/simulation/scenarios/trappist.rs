@@ -176,6 +176,9 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
             oxygen_fraction: if is_hab { 0.18 } else { 0.001 },
             emergence_year: if is_hab { Some(100.0) } else { None },
             technosignature: 0.0,
+            flora_pigment: FloraPigmentClass::RedDwarfCrimson,
+            bioluminescence_intensity: if is_hab { 0.82 } else { 0.0 },
+            ..Default::default()
         },
         TidalState {
             host_entity: None,

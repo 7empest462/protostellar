@@ -44,7 +44,7 @@ pub struct PlanetUniforms {
     pub storm_dynamics: Vec4,
     /// xyz: planet center in world coordinates, w: visual radius
     pub planet_center_and_radius: Vec4,
-    /// x: technosignature (0.0 to 2.0), yzw: unused
+    /// x: technosignature (0.0 to 2.0), y: flora_pigment_type (0..=3), z: bioluminescence_intensity (0..=1), w: surface_gravity_g
     pub civilization_params: Vec4,
 }
 

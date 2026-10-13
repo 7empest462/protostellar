@@ -692,7 +692,12 @@ fn update_merged_body_name(name: &mut String, updated_type: BodyType, total_mass
         return;
     }
     if updated_type == BodyType::BlackHole {
-        if total_mass >= 40.0 {
+        if total_mass >= 1_000_000.0 {
+            *name = format!(
+                "Merged Supermassive Black Hole (Milkomeda SMBH - {:.1}M M☉)",
+                total_mass / 1_000_000.0
+            );
+        } else if total_mass >= 40.0 {
             *name = format!("Galactic Nucleus (SMBH Seed - {total_mass:.1} M☉)");
         } else if total_mass >= 15.0 {
             *name = format!("Intermediate-Mass Black Hole ({total_mass:.1} M☉)");
