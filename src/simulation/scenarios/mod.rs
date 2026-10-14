@@ -251,43 +251,57 @@ pub fn update_scenario_system_phase(
     phase_mgr: &mut Option<ResMut<crate::game::phases::PhaseManager>>,
     next_phase: &mut Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
 ) {
-    let (target_phase, desc) = match preset {
+    let (target_phase, desc, milestones) = match preset {
         ScenarioPreset::SolarNebulaMmsn => (
             crate::game::phases::SystemPhase::ProtoplanetaryDisk,
             "Dense protoplanetary disk orbiting young protostar. Dust and pebbles are accreting.",
+            crate::game::phases::default_milestones(),
         ),
         ScenarioPreset::AccretionDiskGenesis => (
             crate::game::phases::SystemPhase::ProtoplanetaryDisk,
             "🌌 Protoplanetary Disk Genesis: SPH viscous gas fluid, aerodynamic drag, snow line trap & electrostatic coagulation.",
+            crate::game::phases::default_milestones(),
         ),
         ScenarioPreset::MolecularCloudCluster => (
             crate::game::phases::SystemPhase::MolecularCloudCollapse,
             "🌌 Cold Molecular Cloud core undergoing gravitational Jeans collapse and fragmentation.",
+            crate::game::phases::gmc_cluster_milestones(),
+        ),
+        ScenarioPreset::GalacticCollision => (
+            crate::game::phases::SystemPhase::SpiralGalaxyEvolution,
+            "🌀 Collision of two massive N-body spiral galaxies bound by dark matter halos.",
+            crate::game::phases::default_milestones(),
         ),
         ScenarioPreset::Trappist1System => (
             crate::game::phases::SystemPhase::MatureSolarSystem,
             "🌟 TRAPPIST-1: Resonant 7-planet architecture orbiting ultracool red dwarf.",
+            crate::game::phases::default_milestones(),
         ),
         ScenarioPreset::Kepler16Circumbinary => (
             crate::game::phases::SystemPhase::MatureSolarSystem,
             "🌟 Kepler-16: Circumbinary gas giant orbiting close stellar pair.",
+            crate::game::phases::default_milestones(),
         ),
         ScenarioPreset::PulsarSystem => (
             crate::game::phases::SystemPhase::MatureSolarSystem,
             "🌟 Pulsar System: Diamond and rocky worlds surviving extreme pulsar wind.",
+            crate::game::phases::default_milestones(),
         ),
         ScenarioPreset::SagittariusAStar => (
             crate::game::phases::SystemPhase::MatureSolarSystem,
             "🌌 Galactic Center: Relativistic S-star orbits around supermassive black hole Sgr A*.",
+            crate::game::phases::default_milestones(),
         ),
         _ => (
             crate::game::phases::SystemPhase::MatureSolarSystem,
             "🌟 Mature stellar and planetary system.",
+            crate::game::phases::default_milestones(),
         ),
     };
     if let Some(ref mut pm) = phase_mgr {
         pm.current_phase = target_phase;
         pm.phase_description = desc;
+        pm.milestones = milestones;
     }
     if let Some(ref mut np) = next_phase {
         np.set(target_phase);

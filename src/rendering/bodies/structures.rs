@@ -44,9 +44,21 @@ pub fn sync_planetary_rings(
             Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
         });
 
-    for (planet_entity, ring_sys, radius, _body, planet_trans, _opt_spin, opt_children) in
+    for (planet_entity, ring_sys, radius, body, planet_trans, _opt_spin, opt_children) in
         planets_with_rings_query.iter()
     {
+        if body.body_type == BodyType::BlackHole {
+            if let Some(children) = opt_children {
+                for child in children.iter() {
+                    if ring_children_query.get(child).is_ok() {
+                        if let Ok(mut cmd) = commands.get_entity(child) {
+                            cmd.despawn();
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
             (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
         } else {
@@ -683,11 +695,11 @@ fn calculate_disk_geometry_and_uniforms(
     visual_time: f32,
 ) -> (Transform, BlackHoleDiskUniforms) {
     let disk_scale = 12.0f32;
-    let accretion_rate = opt_jet.map_or(0.0, |jet| {
+    let accretion_rate = opt_jet.map_or(1.0, |jet| {
         if jet.is_accreting {
             1.0
         } else {
-            (jet.accretion_timer_years / 5.0).clamp(0.0, 1.0)
+            (jet.accretion_timer_years / 5.0).clamp(0.4, 1.0)
         }
     });
 
@@ -706,7 +718,7 @@ fn calculate_disk_geometry_and_uniforms(
     let disk_rotation = Quat::from_mat3(&Mat3::from_cols(u_right, cam_dir_local, z_screen_col));
     let cos_theta = cam_dir_local.dot(spin_axis).clamp(-1.0, 1.0);
 
-    let target_transform = Transform::from_translation(cam_dir_local * 1.05)
+    let target_transform = Transform::from_translation(cam_dir_local * 0.02)
         .with_scale(Vec3::new(disk_scale, 1.0, disk_scale))
         .with_rotation(disk_rotation);
 

@@ -607,6 +607,11 @@ pub fn handle_inelastic_merger(
         acc.0 = physics.new_acc;
         if physics.updated_type == BodyType::BlackHole {
             rad.0 = (1.974e-8 * physics.total_mass).max(1e-7);
+            if let Ok(mut cmd) = ctx.commands.get_entity(pair.primary_entity) {
+                cmd.remove::<PlanetaryRingSystem>();
+                cmd.remove::<PlanetaryClimate>();
+                cmd.remove::<BiosphereState>();
+            }
         } else if !physics.updated_type.is_star_or_remnant() {
             rad.0 = physics.new_radius;
             t.0 = physics.new_temp;

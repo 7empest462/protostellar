@@ -109,15 +109,18 @@ pub fn update_trophies_panel(
                                 MilestoneId::DynamoMagneticShield => "🛡️ Dynamo Magnetic Shield",
                                 MilestoneId::BiosphereGenesis => "🧬 Biosphere Genesis",
                                 MilestoneId::StellarMetamorphosis => "🌟 Stellar Metamorphosis",
-                                MilestoneId::SpiralArmsEmergence => "🌀 Spiral Galaxy",
+                                MilestoneId::GmcJeansCollapse => "🌌 Turbulent Fragmentation",
                                 MilestoneId::GmcProtostar => "⭐ Protostar Ignition",
                                 MilestoneId::GmcStarCluster => "✨ Open Cluster",
+                                MilestoneId::GmcRadiationFeedback => "💨 Ionization Cavity Blowout",
+                                MilestoneId::GmcClusterNucleus => "🕳️ Runaway Cluster Core / IMBH",
                                 MilestoneId::TrappistSurvival => "🪐 TRAPPIST Resonant Stability",
                                 MilestoneId::HotJupiterParked => "🛑 Hot Jupiter Orbital Parking",
                                 MilestoneId::SgrACloseApproach => "🕳️ Sgr A* Extreme Perihelion",
                                 MilestoneId::QuasarIgnition => {
                                     "🔥 Quasar Awakening / Feeding Frenzy"
                                 }
+                                MilestoneId::SpiralArmsEmergence => "🌀 Spiral Arms Emergence",
                                 MilestoneId::TidalDisruption => "🍝 Spaghettification TDE",
                                 MilestoneId::KozaiTiltExchange => "🔄 Kozai-Lidov Tilt Exchange",
                             };

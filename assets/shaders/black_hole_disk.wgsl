@@ -166,29 +166,18 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 
     // Elliptical foreshortening: disk at inclination i appears with semi_minor = |cos_i|.
     // r_direct = sqrt(u² + (v/cos_i)²) inverts the projection to get true disk radius.
-    let semi_minor = sqrt(cos_i * cos_i + 0.0015); // epsilon keeps disk visible edge-on
+    // Clamping minimum semi_minor to ~0.045 provides physical vertical disk thickness edge-on.
+    let semi_minor = max(abs(cos_i), 0.045);
     let r_direct   = sqrt(u * u + (v / semi_minor) * (v / semi_minor));
     let phi_direct = atan2(v / semi_minor, u);
 
-    // Vertical thickness Gaussian — physically correct form:
-    //   height above disk plane = v * sin_i.
-    //   When face-on (sin_i=0): height=0 everywhere → full ring visible.
-    //   When edge-on (sin_i=1): height = v → thin equatorial strip.
-    let h_disk  = 0.055 + 0.050 * (r_direct / r_outer);
-    let v_thick = exp(-0.5 * pow((v * sin_i) / h_disk, 2.0));
+    // Soft Gaussian vertical taper when viewed near edge-on
+    let edge_on_v_taper = select(1.0, exp(-0.5 * pow(v / 0.045, 2.0)), abs(cos_i) < 0.06);
 
-    // Near-side gate: disk renders directly in front of the black hole on the near side.
-    // Side wings (|u| > r_shadow) are always visible from both directions.
-    // Near edge-on (sin_i → 1) both halves converge to the equatorial strip.
-    let near_gate        = smoothstep(0.02, -0.02, v * cos_i);
-    let side_wing_factor = smoothstep(r_shadow * 0.75, r_shadow * 1.6, abs(u));
-    let edge_on_factor   = smoothstep(0.80, 0.97, sin_i);
-    let disk_geo_mask    = clamp(near_gate + side_wing_factor + edge_on_factor, 0.0, 1.0);
-
-    if (r_direct >= r_shadow && r_direct <= r_outer && v_thick > 0.005) {
+    if (r_direct >= r_shadow && r_direct <= r_outer) {
         let sample = sample_accretion_disk(r_direct, phi_direct, r_inner, r_outer, r_shadow, sin_i, disk.time);
         direct_emission = sample.emission;
-        direct_alpha    = sample.alpha * v_thick * disk_geo_mask;
+        direct_alpha    = sample.alpha * edge_on_v_taper;
         hit_direct      = direct_alpha > 0.01;
     }
 
@@ -197,21 +186,20 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     var lensed_alpha = 0.0;
 
     let delta_b    = b - r_shadow;
-    let max_arch_b = 0.58;
+    let max_arch_b = 0.52;
     if (delta_b > 0.001 && delta_b < max_arch_b) {
         let t_arch = delta_b / max_arch_b;
         // Inverted lens mapping: b → r in rear disk
-        let r_lensed   = r_shadow + pow(t_arch, 0.82) * (r_outer * 0.85 - r_shadow);
-        let phi_lensed = atan2(-v / semi_minor, -u);
+        let r_lensed   = r_shadow + pow(t_arch, 0.85) * (r_outer * 0.80 - r_shadow);
+        let phi_lensed = atan2(-v, -u);
 
-        // Arch profile: fades at inner edge (near shadow) and outer edge.
-        // No angular mask — the lensed arc wraps the full circumference of the shadow.
-        let arch_profile = pow(sin(t_arch * 3.14159), 0.65) * smoothstep(1.0, 0.12, t_arch);
+        // Arch profile: smoothly wraps shadow, prominent when inclined
+        let arch_profile = pow(sin(t_arch * 3.14159), 0.75) * smoothstep(1.0, 0.12, t_arch) * (0.25 + 0.75 * sin_i);
 
         if (arch_profile > 0.01 && r_lensed >= r_shadow && r_lensed <= r_outer) {
             let sample = sample_accretion_disk(r_lensed, phi_lensed, r_inner, r_outer, r_shadow, sin_i, disk.time);
-            lensed_emission = sample.emission * arch_profile * 0.90;
-            lensed_alpha    = sample.alpha   * arch_profile * 0.92;
+            lensed_emission = sample.emission * arch_profile * 0.85;
+            lensed_alpha    = sample.alpha   * arch_profile * 0.85;
         }
     }
 
@@ -234,7 +222,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let in_shadow = 1.0 - smoothstep(r_shadow * 0.985, r_shadow * 1.01, b);
 
     // Foreground: the near side of the accretion disk physically passing in front of the black hole
-    let is_front = (v * cos_i < 0.0) || (abs(cos_i) < 0.06);
+    let is_front = (v * cos_i <= 0.0);
     let fg_emission = select(vec3<f32>(0.0), direct_emission, is_front);
     let fg_alpha    = select(0.0, direct_alpha, is_front);
 
@@ -253,7 +241,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let mid_alpha    = clamp(in_shadow + bg_alpha, 0.0, 1.0);
 
     // Composite foreground (near-side disk) over mid-layer (shadow + background):
-    let total_emission = fg_emission + mid_emission * (1.0 - fg_alpha * 0.75);
+    let total_emission = fg_emission + mid_emission * (1.0 - fg_alpha);
     let total_alpha    = clamp(fg_alpha + mid_alpha * (1.0 - fg_alpha), 0.0, 1.0);
 
     // Only discard outside the event horizon shadow where the quad is transparent to the skybox

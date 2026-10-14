@@ -48,8 +48,8 @@ fn update_star_lights_and_strobes(
     for child in children.iter() {
         if let Ok(mut light) = light_query.get_mut(child) {
             if body_type == BodyType::BlackHole {
-                // Gravitational lensing ring — no photon emission
-                light.intensity = 2_000_000.0;
+                // Event horizon absorbs all interior photons
+                light.intensity = 0.0;
             } else if body_type == BodyType::QuasiStar {
                 light.color = Color::srgb(1.0, 0.10, 0.02);
                 light.intensity = if is_blown_out {
@@ -99,7 +99,8 @@ fn update_star_material(
 ) {
     if body_type == BodyType::BlackHole || (body_type == BodyType::QuasiStar && is_blown_out) {
         mat.extension.uniforms.planet_type = 5;
-        mat.base.unlit = false;
+        mat.base.unlit = true;
+        mat.base.base_color = Color::BLACK;
         mat.base.emissive = LinearRgba::BLACK;
     } else if body_type == BodyType::QuasiStar {
         mat.extension.uniforms.planet_type = 7;
