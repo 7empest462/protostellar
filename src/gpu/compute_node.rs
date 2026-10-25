@@ -402,7 +402,7 @@ fn check_and_reseed_scenario(
     } else if params.star_mass > 10.0 {
         500.0
     } else {
-        0.00010
+        f64::from(params.disk_mass)
     };
 
     if is_empty_disk {

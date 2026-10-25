@@ -152,9 +152,11 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let arm_profile = exp(-r_cyl / 250.0) * z_disk * (0.08 + 2.50 * pow(spiral_modulation, 2.2));
         let spiral_composite = mix(bulge_profile, arm_profile, arm_weight);
 
-        // Smooth evolution over cosmic time from turbulent collapse into rotating spiral galaxy
+        // Smooth evolution over cosmic time from turbulent collapse into rotating spiral galaxy,
+        // with a spherical boundary fade so density vanishes cleanly before the 550 AU cube faces.
         let t_spiral = clamp((neb.elapsed_years - 600.0) / 1400.0, 0.0, 1.0);
-        let eff_profile = mix(core_profile, spiral_composite, t_spiral);
+        let boundary_fade = 1.0 - smoothstep(360.0, 515.0, r_core);
+        let eff_profile = mix(core_profile, spiral_composite, t_spiral) * boundary_fade;
         
         var density = 0.0;
         var fbm_turb = 0.5;
@@ -188,7 +190,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
                 // Ionization shock front glow: H-alpha (656 nm, crimson) and [O III] (501 nm, teal)
                 let edge_dist = abs(light_dist - cav_radius);
                 if (edge_dist < 25.0) {
-                    let front_intensity = (1.0 - edge_dist / 25.0) * clamp(star_lum * 0.45, 0.4, 5.0);
+                    let front_intensity = (1.0 - edge_dist / 25.0) * clamp(star_lum * 0.15, 0.1, 1.8);
                     let h_alpha = vec3<f32>(1.0, 0.15, 0.35); // Crimson / magenta ionization
                     let o_iii = vec3<f32>(0.1, 0.85, 0.9);    // Forbidden teal [O III] line
                     // Reuse the previously calculated fbm_turb instead of computing an entirely new fbm3 inside an O(N) loop
@@ -201,7 +203,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             let cos_theta = dot(ray_dir, light_dir);
             let phase = henyey_greenstein(cos_theta, neb.phase_g);
 
-            let illuminance = (star_color * star_lum * 12.0) / (light_dist * light_dist + 100.0);
+            let eff_lum = clamp(star_lum, 0.1, 20.0);
+            let illuminance = (star_color * eff_lum * 1.8) / (light_dist * light_dist + 80.0);
             in_scatter = in_scatter + illuminance * phase;
         }
 
@@ -222,8 +225,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         // Spiral arm contrast: luminous cyan/blue arm ridges and deep amber/smoky dust lanes
         let arm_tint = mix(vec3<f32>(0.22, 0.12, 0.08), vec3<f32>(0.35, 0.95, 1.45), pow(spiral_modulation, 1.8));
         let final_gas_color = mix(gas_color, arm_tint, t_spiral * 0.85);
-        let ambient_gas = final_gas_color * density * 2.2;
-        let ambient_scatter = vec3<f32>(0.25, 0.45, 0.85) * density * neb.scattering_albedo;
+        let ambient_gas = final_gas_color * density * 0.11;
+        let ambient_scatter = vec3<f32>(0.25, 0.45, 0.85) * density * neb.scattering_albedo * 0.05;
 
         let total_emission = ambient_gas + ambient_scatter + in_scatter * neb.scattering_albedo + cavity_glow;
         accumulated_color = accumulated_color + transmittance * total_emission * (1.0 - step_transmittance);
@@ -232,7 +235,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         current_t = current_t + ds;
     }
 
-    let alpha = clamp(1.0 - transmittance, 0.0, 0.96);
-    out.color = vec4<f32>(accumulated_color, alpha);
+    let alpha = clamp(1.0 - transmittance, 0.0, 0.72);
+    let safe_color = clamp(accumulated_color, vec3<f32>(0.0), vec3<f32>(2.2));
+    out.color = vec4<f32>(safe_color, alpha);
     return out;
 }

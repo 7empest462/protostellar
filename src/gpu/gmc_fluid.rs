@@ -160,6 +160,8 @@ pub struct GpuGmcFluidEngine {
     pub pipeline: wgpu::ComputePipeline,
     pub ping_pong_idx: usize,
     pub is_initialized: bool,
+    pub last_elapsed_years: f64,
+    pub was_active: bool,
 }
 
 /// Extracted parameters passed from Main App to RenderApp every frame.
@@ -762,6 +764,8 @@ fn setup_gmc_fluid_pipeline(commands: &mut Commands, device: &wgpu::Device) {
         pipeline,
         ping_pong_idx: 0,
         is_initialized: true,
+        last_elapsed_years: 0.0,
+        was_active: true,
     });
 }
 
@@ -790,6 +794,76 @@ fn drain_mapped_gmc_staging_buffer(engine: &GpuGmcFluidEngine, sender: &GmcColla
     }
 }
 
+fn reseed_gmc_fluid_buffers(engine: &mut GpuGmcFluidEngine, queue: &RenderQueue) {
+    let (init_d, init_v, init_t) = generate_initial_gmc_fields();
+    queue.write_buffer(&engine.density_buffers[0], 0, bytemuck::cast_slice(&init_d));
+    queue.write_buffer(&engine.density_buffers[1], 0, bytemuck::cast_slice(&init_d));
+    queue.write_buffer(
+        &engine.velocity_buffers[0],
+        0,
+        bytemuck::cast_slice(&init_v),
+    );
+    queue.write_buffer(
+        &engine.velocity_buffers[1],
+        0,
+        bytemuck::cast_slice(&init_v),
+    );
+    queue.write_buffer(&engine.temperature_buffer, 0, bytemuck::cast_slice(&init_t));
+    engine.ping_pong_idx = 0;
+}
+
+fn schedule_gmc_staging_readback(
+    engine: &mut GpuGmcFluidEngine,
+    mut encoder: wgpu::CommandEncoder,
+    queue: &RenderQueue,
+) {
+    let mut copy_initiated = false;
+    if engine
+        .staging_state
+        .compare_exchange(
+            STAGING_STATE_IDLE,
+            STAGING_STATE_MAPPING,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        )
+        .is_ok()
+    {
+        encoder.copy_buffer_to_buffer(
+            &engine.collapse_counter_buffer,
+            0,
+            &engine.staging_buffer,
+            0,
+            4,
+        );
+        encoder.copy_buffer_to_buffer(
+            &engine.collapse_event_buffer,
+            0,
+            &engine.staging_buffer,
+            16,
+            32 * std::mem::size_of::<GpuJeansCollapseEvent>() as u64,
+        );
+        copy_initiated = true;
+    }
+
+    // Submit compute and (if initiated) copy commands to queue
+    queue.submit(Some(encoder.finish()));
+
+    // Map the staging buffer AFTER queue.submit has been executed
+    if copy_initiated {
+        let state_clone = Arc::clone(&engine.staging_state);
+        engine
+            .staging_buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |res| {
+                if res.is_ok() {
+                    state_clone.store(STAGING_STATE_MAPPED, Ordering::Release);
+                } else {
+                    state_clone.store(STAGING_STATE_IDLE, Ordering::Release);
+                }
+            });
+    }
+}
+
 /// Steps the GMC 3D fluid simulation in the RenderApp.
 pub fn step_gmc_fluid_simulation(
     mut commands: Commands,
@@ -800,6 +874,9 @@ pub fn step_gmc_fluid_simulation(
     sender: Res<GmcCollapseEventSender>,
 ) {
     if !params.is_active {
+        if let Some(mut engine) = engine_opt {
+            engine.was_active = false;
+        }
         return;
     }
 
@@ -808,12 +885,21 @@ pub fn step_gmc_fluid_simulation(
         return;
     };
 
+    let was_inactive = !engine.was_active;
+    engine.was_active = true;
+    let scenario_restarted = params.elapsed_years < engine.last_elapsed_years || was_inactive;
+    engine.last_elapsed_years = params.elapsed_years;
+
+    let queue = &render_queue;
+    if scenario_restarted {
+        reseed_gmc_fluid_buffers(&mut engine, queue);
+    }
+
     if params.is_paused {
         return;
     }
 
     let device = render_dev.wgpu_device();
-    let queue = &render_queue;
 
     // 1. Drain previously mapped staging buffer if ready
     drain_mapped_gmc_staging_buffer(&engine, &sender);
@@ -869,51 +955,7 @@ pub fn step_gmc_fluid_simulation(
     }
 
     // 4. Asynchronous staging readback (safe zero-stall handoff)
-    let mut copy_initiated = false;
-    if engine
-        .staging_state
-        .compare_exchange(
-            STAGING_STATE_IDLE,
-            STAGING_STATE_MAPPING,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        )
-        .is_ok()
-    {
-        encoder.copy_buffer_to_buffer(
-            &engine.collapse_counter_buffer,
-            0,
-            &engine.staging_buffer,
-            0,
-            4,
-        );
-        encoder.copy_buffer_to_buffer(
-            &engine.collapse_event_buffer,
-            0,
-            &engine.staging_buffer,
-            16,
-            32 * std::mem::size_of::<GpuJeansCollapseEvent>() as u64,
-        );
-        copy_initiated = true;
-    }
-
-    // Submit compute and (if initiated) copy commands to queue
-    queue.submit(Some(encoder.finish()));
-
-    // Map the staging buffer AFTER queue.submit has been executed
-    if copy_initiated {
-        let state_clone = Arc::clone(&engine.staging_state);
-        engine
-            .staging_buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |res| {
-                if res.is_ok() {
-                    state_clone.store(STAGING_STATE_MAPPED, Ordering::Release);
-                } else {
-                    state_clone.store(STAGING_STATE_IDLE, Ordering::Release);
-                }
-            });
-    }
+    schedule_gmc_staging_readback(&mut engine, encoder, queue);
 
     // Drive WGPU submission queue to process map_async callbacks and eliminate shutdown timeout
     let _ = render_dev.poll(wgpu::PollType::Poll);

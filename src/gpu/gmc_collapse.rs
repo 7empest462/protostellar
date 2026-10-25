@@ -29,16 +29,17 @@ pub fn receive_gmc_collapse_events(
         return;
     }
 
-    let mut star_count = 0;
-    for (_, body) in existing_bodies.iter() {
-        if body.body_type.is_star_or_remnant() {
-            star_count += 1;
-        }
-    }
+    let mut star_positions: Vec<bevy::math::DVec3> = existing_bodies
+        .iter()
+        .filter(|(_, body)| body.body_type.is_star_or_remnant())
+        .map(|(pos, _)| pos.0)
+        .collect();
+    let mut star_count = star_positions.len();
+    let mut spawned_this_frame = 0usize;
 
     while let Ok(events) = receiver.rx.try_recv() {
         for ev in events {
-            if star_count >= 1000 {
+            if star_count >= 120 || spawned_this_frame >= 2 {
                 break;
             }
 
@@ -54,16 +55,18 @@ pub fn receive_gmc_collapse_events(
                 continue;
             }
 
-            // Avoid spawning if another star is already within 14 AU
-            let too_close = existing_bodies.iter().any(|(pos, body)| {
-                body.body_type.is_star_or_remnant() && (pos.0 - ev_pos).length_squared() < 196.0
-            });
+            // Avoid spawning if another star (including ones spawned earlier this frame) is within 32 AU
+            let too_close = star_positions
+                .iter()
+                .any(|p| (*p - ev_pos).length_squared() < 1024.0);
 
             if too_close {
                 continue;
             }
 
+            star_positions.push(ev_pos);
             star_count += 1;
+            spawned_this_frame += 1;
             spawn_jeans_collapse_system(&mut commands, &ev, ev_pos, r_len, star_count, &mut toast);
         }
     }
@@ -128,16 +131,38 @@ fn determine_protostar_properties(
     let is_gen3 = metallicity >= 0.045;
     let is_gen2 = metallicity >= 0.005 && !is_gen3;
 
+    let imf_slot = star_count % 20;
     let seed_mass = if is_gen3 {
-        // Gen-3: High metallicity cooling leads to small, solar-mass stars and planetary systems
-        jeans_mass.clamp(0.4, 3.5)
+        // Gen-3: High metallicity cooling leads to solar/sub-solar stars and planetary systems
+        let imf_mult = match imf_slot {
+            0..=5 => 0.32,  // Red Dwarf (M-type)
+            6..=10 => 0.68, // Orange Dwarf (K-type)
+            11..=15 => 1.0, // Yellow Dwarf (G-type)
+            16..=18 => 1.3, // Yellow-White / White Main Sequence (F/A-type)
+            _ => 2.4,       // Intermediate B/A star
+        };
+        (jeans_mass * imf_mult).clamp(0.22, 3.2)
     } else if is_gen2 {
-        // Gen-2: Intermediate metallicity leads to intermediate stars
-        jeans_mass.clamp(1.5, 12.0)
+        // Gen-2: Intermediate metallicity spans solar analogues to OB stars
+        let imf_mult = match imf_slot {
+            0..=4 => 0.45,
+            5..=10 => 0.95,
+            11..=15 => 2.2,
+            16..=18 => 5.5,
+            _ => 12.0,
+        };
+        (jeans_mass.clamp(0.8, 2.5) * imf_mult).clamp(0.35, 22.0)
     } else {
-        // Gen-1 (Pop III): Pristine primordial gas lacks metal cooling (T ~ 200-300 K),
-        // naturally yielding massive hypergiant/supergiant stars (15 - 48 M_sun)
-        (jeans_mass * 40.0).clamp(15.0, 48.0)
+        // Gen-1: Cluster IMF spanning low-mass dwarfs, OB stars, supernova progenitors, and rare Pop-III hypergiants
+        match imf_slot {
+            0..=3 => 0.35,                              // Red Dwarf (M-type)
+            4..=7 => 0.72,                              // Orange Dwarf (K-type)
+            8..=10 => 1.02,                             // Yellow Dwarf (G-type)
+            11..=13 => 1.75,                            // White Main Sequence (A-type)
+            14..=16 => 4.8,                             // Blue Giant (B-type)
+            17..=18 => 16.5, // Blue Supergiant (O-type core-collapse supernova progenitor)
+            _ => (jeans_mass * 32.0).clamp(32.0, 48.0), // Rare Pop-III Hypergiant
+        }
     };
 
     let (name, composition) = if is_gen3 {
@@ -187,11 +212,18 @@ fn spawn_jeans_collapse_system(
     let kinematics = compute_collapse_kinematics(ev, ev_pos, r_len);
     let props = determine_protostar_properties(ev.metallicity, kinematics.jeans_mass, star_count);
 
+    let star_name =
+        if !props.is_gen3 && !props.is_gen2 && r_len < 45.0 && star_count.is_multiple_of(5) {
+            format!("Gen-I Dark Star Protostar-{star_count}")
+        } else {
+            props.name.clone()
+        };
+
     let star_entity = commands
         .spawn((
             CelestialBody {
                 body_type: BodyType::Protostar,
-                name: props.name.clone(),
+                name: star_name,
             },
             Mass(props.seed_mass),
             SimPosition(ev_pos),
@@ -389,7 +421,7 @@ fn get_gen3_planet_specs(protostar_name: &str) -> [PlanetSpec; 2] {
 )]
 fn spawn_system_planets(
     commands: &mut Commands,
-    star_entity: Entity,
+    _star_entity: Entity,
     ev_pos: bevy::math::DVec3,
     seed_mass: f64,
     seed_vel: bevy::math::DVec3,
@@ -402,7 +434,6 @@ fn spawn_system_planets(
     {
         let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
         let angle = (idx as f64 + 1.0) * 2.1;
-        let p_yr = (a_au.powi(3) / seed_mass.max(0.01)).sqrt();
 
         let p_pos = ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
         let p_vel =
@@ -426,12 +457,6 @@ fn spawn_system_planets(
             vol,
             climate,
             SpinState::default(),
-            SatelliteOf {
-                parent: star_entity,
-                semi_major_axis_au: a_au,
-                orbital_period_years: p_yr,
-                true_anomaly: angle,
-            },
         ));
         if let Some(b) = bio {
             ent.insert(b);
@@ -627,7 +652,7 @@ fn get_gen2_planet_specs(protostar_name: &str) -> [PlanetSpec; 3] {
 )]
 fn spawn_gen1_planetary_system(
     commands: &mut Commands,
-    star_entity: Entity,
+    _star_entity: Entity,
     ev_pos: bevy::math::DVec3,
     seed_mass: f64,
     seed_vel: bevy::math::DVec3,
@@ -641,7 +666,6 @@ fn spawn_gen1_planetary_system(
         let m_p = 0.003; // ~3 Jupiter masses
         let v_circ_p = (crate::utils::constants::G_ASTRO * seed_mass / a_au).sqrt();
         let angle = f64::from(i) * 2.4; // Phase offset
-        let p_yr = (a_au.powi(3) / seed_mass.max(0.01)).sqrt();
 
         let p_pos = ev_pos + local_x * (a_au * angle.cos()) + local_z * (a_au * angle.sin());
         let p_vel =
@@ -679,12 +703,6 @@ fn spawn_gen1_planetary_system(
                 cloud_coverage_frac: 0.95,
                 climate_regime: ClimateRegime::GasGiantEnvelope,
                 polar_ice_cap_latitude_deg: 90.0,
-            },
-            SatelliteOf {
-                parent: star_entity,
-                semi_major_axis_au: a_au,
-                orbital_period_years: p_yr,
-                true_anomaly: angle,
             },
         ));
     }

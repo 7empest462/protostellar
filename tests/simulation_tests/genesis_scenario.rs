@@ -463,3 +463,71 @@ fn test_key_i_triggers_star_ignition_and_cme() {
     assert!(app.world().get::<StellarFlareState>(star_entity).is_some());
     assert!(toast.message.contains("CME Coronal Mass Ejection Erupted"));
 }
+
+#[test]
+fn test_genesis_protostar_hayashi_contraction_density_growth_and_ignition() {
+    let mut app = App::new();
+    app.add_plugins(bevy::time::TimePlugin);
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_plugins(protostellar::simulation::SimulationPlugin);
+
+    use protostellar::simulation::scenarios::LoadScenarioEvent;
+    app.world_mut()
+        .resource_mut::<Messages<LoadScenarioEvent>>()
+        .write(LoadScenarioEvent(ScenarioPreset::AccretionDiskGenesis));
+    app.update();
+
+    // Set time warp to 10,000x (~300 yr/sec)
+    {
+        let mut time_warp = app.world_mut().resource_mut::<TimeWarp>();
+        time_warp.multiplier = 10_000.0;
+        time_warp.is_paused = false;
+    }
+
+    let mut densities = Vec::new();
+    let mut radii = Vec::new();
+    let mut ignited = false;
+
+    for _frame in 0..100 {
+        app.update();
+        let mut star_query = app
+            .world_mut()
+            .query::<(&CelestialBody, &IgnitionState, &Radius, &Mass)>();
+        for (b, ign, rad, m) in star_query.iter(app.world()) {
+            if b.name.contains("Genesis") || b.name.contains("Star") {
+                let volume_au3 = (4.0 / 3.0) * std::f64::consts::PI * rad.0.powi(3);
+                let conv = SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0);
+                let rho = (m.0 / volume_au3) * conv;
+                densities.push(rho);
+                radii.push(rad.0);
+                if ign.is_ignited {
+                    ignited = true;
+                    break;
+                }
+            }
+        }
+        if ignited {
+            break;
+        }
+    }
+
+    assert!(densities.len() >= 2, "Must track at least 2 frames");
+    let initial_rho = densities.first().unwrap();
+    let final_rho = densities.last().unwrap();
+    assert!(
+        (initial_rho - 0.09).abs() < 0.02,
+        "Initial density must be ~0.09 g/cm3 (got {initial_rho})"
+    );
+    assert!(
+        final_rho > initial_rho,
+        "Density must increase as protostar contracts towards ignition (initial {initial_rho}, final {final_rho})"
+    );
+    assert!(
+        radii.last().unwrap() < radii.first().unwrap(),
+        "Radius must contract along Hayashi track"
+    );
+    assert!(
+        ignited,
+        "Genesis protostar must successfully ignite without freezing"
+    );
+}

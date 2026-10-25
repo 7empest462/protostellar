@@ -95,9 +95,9 @@ pub fn sync_volumetric_nebula(
             if count >= 16 {
                 break;
             }
-            if body.body_type.is_star_or_remnant() {
+            if body.body_type.is_star_or_remnant() && body.body_type != BodyType::BlackHole {
                 let is_ignited = opt_ign.is_some_and(|ign| ign.is_ignited);
-                let lum_val = lum.0 as f32;
+                let lum_val = (lum.0 as f32).clamp(0.1, 5000.0);
                 // Cap the rendered bubble so a single massive star (L ∝ M^3.5) cannot hollow out
                 // the entire ~240 AU core; matches the fluid sink radius scale.
                 let cavity_r = calculate_ionization_cavity_radius_au(lum_val, 5.0e-11, is_ignited)
@@ -113,7 +113,7 @@ pub fn sync_volumetric_nebula(
                     star_colors.get_mut(count as usize),
                 ) {
                     *pos_slot = Vec4::new(pos.x as f32, pos.y as f32, pos.z as f32, cavity_r);
-                    *color_slot = Vec4::new(r, g, b, lum_val.max(0.1));
+                    *color_slot = Vec4::new(r, g, b, lum_val);
                     count += 1;
                 }
             }
