@@ -34,6 +34,12 @@ pub struct PanOrbitCamera {
     pub orbit_sensitivity: f32,
     pub zoom_sensitivity: f32,
     pub pan_sensitivity: f32,
+    /// Phase 9B: First-Person Rover / Planetary Surface Horizon Camera Mode
+    pub surface_horizon_mode: bool,
+    pub surface_azimuth: f32,
+    pub surface_elevation: f32,
+    pub surface_lat_lon: Vec2,
+    pub surface_altitude_scale: f32,
 }
 
 impl Default for PanOrbitCamera {
@@ -53,6 +59,11 @@ impl Default for PanOrbitCamera {
             orbit_sensitivity: 0.005,
             zoom_sensitivity: 0.055,
             pan_sensitivity: 0.02,
+            surface_horizon_mode: false,
+            surface_azimuth: 0.0,
+            surface_elevation: 0.12,
+            surface_lat_lon: Vec2::new(0.32, 0.0),
+            surface_altitude_scale: 0.022,
         }
     }
 }
@@ -111,12 +122,12 @@ pub fn setup_camera(mut commands: Commands) {
 /// Configures Bevy's Gizmo rendering parameters:
 /// - depth_bias: -1.0 so that orbit ribbons, conic tracks, targeting reticles, and AU rings
 ///   are never occluded or clipped by 3D volumetric gas planes, planet spheres, or depth buffer limits.
-/// - line.width: 2.5 for crisp, radiant, high-visibility vector graphics.
+/// - line.width: 1.35 for fine, high-precision astronomical telemetry lines.
 pub fn setup_gizmo_configuration(mut config_store: ResMut<GizmoConfigStore>) {
     let (config, _) = config_store.config_mut::<DefaultGizmoConfigGroup>();
     config.depth_bias = -1.0;
-    config.line.width = 2.5;
-    info!("✅ setup_gizmo_configuration: depth_bias set to -1.0, line.width set to 2.5");
+    config.line.width = 1.35;
+    info!("✅ setup_gizmo_configuration: depth_bias set to -1.0, line.width set to 1.35");
 }
 
 fn is_little_red_dot(body: &CelestialBody) -> bool {
@@ -262,7 +273,7 @@ fn handle_camera_target_picking(
                 || config.calc_visual_radius_for_type(rad.0, body.body_type),
                 |t| t.scale.x,
             );
-            let hit_radius = (vis_r * 4.0).clamp(0.005, 3.0);
+            let hit_radius = (vis_r * 4.0).clamp(0.015, 3.0);
             let to_center = center - ray.origin;
             let proj = to_center.dot(*ray.direction);
             if proj > 0.0 {
@@ -277,7 +288,7 @@ fn handle_camera_target_picking(
     }
 
     if best_target.is_none() {
-        let mut min_screen_dist = 40.0f32;
+        let mut min_screen_dist = 42.0f32;
         for (entity, pos, _rad, _body, _mass, _opt_t) in targets_query.iter() {
             let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             if let Ok(screen_pos) = camera_comp.world_to_viewport(global_transform, center) {
@@ -298,7 +309,7 @@ fn handle_camera_target_picking(
                 || config.calc_visual_radius_for_type(radius.0, body.body_type),
                 |t| t.scale.x,
             );
-            let frame_radius = if body.name.starts_with("🚀") || visual_radius < 0.001 {
+            let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
                 0.015f32.max(config.calc_camera_framing_radius(visual_radius))
             } else {
                 config.calc_camera_framing_radius(visual_radius)
@@ -334,7 +345,7 @@ fn handle_camera_keyboard_flight(
                     || config.calc_visual_radius_for_type(radius.0, body.body_type),
                     |t| t.scale.x,
                 );
-                let frame_radius = if body.name.starts_with("🚀") || visual_radius < 0.001 {
+                let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
                     0.015f32.max(config.calc_camera_framing_radius(visual_radius))
                 } else {
                     config.calc_camera_framing_radius(visual_radius)
@@ -458,7 +469,55 @@ fn handle_camera_mouse_controls(
     }
 }
 
+/// Smoothly adapts HDR Bloom intensity and prefilter knee based on proximity to luminous stars
+/// so close-up photosphere inspection preserves convective granulation contrast without white-out.
+fn adapt_camera_bloom_to_star_proximity(
+    opt_bloom: Option<Mut<Bloom>>,
+    cam_pos: Vec3,
+    targets_query: &Query<
+        (
+            Entity,
+            &SimPosition,
+            &Radius,
+            &CelestialBody,
+            &Mass,
+            Option<&Transform>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
+) {
+    let Some(mut bloom) = opt_bloom else {
+        return;
+    };
+
+    let mut min_star_ratio = f32::MAX;
+    for (_, pos, rad, body, _, opt_trans) in targets_query.iter() {
+        if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
+            if body.body_type == BodyType::BlackHole {
+                continue;
+            }
+            let star_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let vis_r = opt_trans.map_or(rad.0 as f32, |t| t.scale.x).max(0.0005);
+            let ratio = cam_pos.distance(star_pos) / vis_r;
+            if ratio < min_star_ratio {
+                min_star_ratio = ratio;
+            }
+        }
+    }
+
+    // t = 0 when right at stellar photosphere (ratio <= 3.0), t = 1 at orbital distances (ratio >= 18.0)
+    let t = ((min_star_ratio - 3.0) / 15.0).clamp(0.0, 1.0);
+    let target_intensity = 0.095 + 0.070 * t;
+    let target_threshold = 2.30 - 0.58 * t;
+    let target_lf_boost = 0.06 + 0.06 * t;
+
+    bloom.intensity += (target_intensity - bloom.intensity) * 0.15;
+    bloom.prefilter.threshold += (target_threshold - bloom.prefilter.threshold) * 0.15;
+    bloom.low_frequency_boost += (target_lf_boost - bloom.low_frequency_boost) * 0.15;
+}
+
 /// Handles user mouse, keyboard camera control, and 3D raycast click selection of celestial bodies.
+#[allow(clippy::type_complexity, reason = "Camera and target picking queries")]
 pub fn update_pan_orbit_camera(
     windows: Query<&Window>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -484,13 +543,15 @@ pub fn update_pan_orbit_camera(
             &mut PanOrbitCamera,
             &mut Transform,
             &GlobalTransform,
+            Option<&mut Bloom>,
         ),
         With<PanOrbitCamera>,
     >,
     ui_interaction_query: Query<&Interaction>,
     ui_nodes_query: Query<(&ComputedNode, &GlobalTransform), With<Node>>,
 ) {
-    let Ok((camera_comp, mut camera, mut transform, global_transform)) = camera_query.single_mut()
+    let Ok((camera_comp, mut camera, mut transform, global_transform, opt_bloom)) =
+        camera_query.single_mut()
     else {
         return;
     };
@@ -503,6 +564,19 @@ pub fn update_pan_orbit_camera(
     let cursor_over_ui = ui_interaction_query
         .iter()
         .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+
+    if camera.surface_horizon_mode {
+        player_state.just_selected_via_ui = false;
+        if keyboard_input.just_pressed(KeyCode::KeyF)
+            || keyboard_input.just_pressed(KeyCode::KeyR)
+            || keyboard_input.just_pressed(KeyCode::Escape)
+        {
+            camera.surface_horizon_mode = false;
+        } else {
+            adapt_camera_bloom_to_star_proximity(opt_bloom, transform.translation, &targets_query);
+            return;
+        }
+    }
 
     handle_camera_target_picking(
         window,
@@ -553,4 +627,5 @@ pub fn update_pan_orbit_camera(
 
     transform.translation = translation;
     transform.rotation = rot;
+    adapt_camera_bloom_to_star_proximity(opt_bloom, translation, &targets_query);
 }

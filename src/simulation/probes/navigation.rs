@@ -19,6 +19,7 @@ type NavigationTargetData<'a> = (
     Option<&'a Composition>,
     Option<&'a PlanetaryClimate>,
     Option<&'a mut BiosphereState>,
+    Option<&'a Transform>,
 );
 
 pub fn probe_navigation_system(
@@ -32,16 +33,15 @@ pub fn probe_navigation_system(
     sim_time: Res<SimTime>,
     time_warp: Res<crate::simulation::resources::TimeWarp>,
     config: Option<Res<SimulationConfig>>,
+    opt_techs: Option<Res<crate::simulation::economy::UnlockedTechs>>,
     mut toast: Option<ResMut<NotificationToast>>,
 ) {
-    if time_warp.is_paused && !time_warp.step_once {
-        return;
-    }
-
-    let dt = sim_time.current_dt_yr;
-    if dt <= 0.0 {
-        return;
-    }
+    let is_paused = time_warp.is_paused && !time_warp.step_once;
+    let dt = if is_paused {
+        0.0
+    } else {
+        sim_time.current_dt_yr.max(0.0)
+    };
 
     for (mut probe_vel, mut probe_pos, mut probe, mut computer) in probes.iter_mut() {
         if let Ok((
@@ -53,14 +53,20 @@ pub fn probe_navigation_system(
             opt_comp,
             opt_climate,
             mut opt_bio,
+            opt_transform,
         )) = targets.get_mut(computer.target_entity)
         {
             let to_target = target_pos.0 - probe_pos.0;
             let distance = to_target.length();
             let radius = target_radius.map_or(0.001, |r| r.0);
-            let vis_rad = config.as_ref().map_or(radius, |c| {
-                f64::from(c.calc_visual_radius_for_type(radius, target_body.body_type))
-            });
+            let vis_rad = opt_transform
+                .map(|t| f64::from(t.scale.x))
+                .filter(|&s| s > 1e-6)
+                .unwrap_or_else(|| {
+                    config.as_ref().map_or(radius, |c| {
+                        f64::from(c.calc_visual_radius_for_type(radius, target_body.body_type))
+                    })
+                });
 
             computer.distance_to_target = distance;
             computer.relative_speed = (probe_vel.0 - target_vel.0).length();
@@ -69,15 +75,18 @@ pub fn probe_navigation_system(
             let mut arrived = distance <= threshold;
 
             if !arrived && probe.status == ProbeStatus::Transit {
-                arrived = steer_probe_transit(
-                    &mut probe_pos.0,
-                    &mut probe_vel.0,
-                    target_pos.0,
-                    target_vel.0,
-                    distance,
-                    threshold,
-                    dt,
-                );
+                if dt > 0.0 {
+                    arrived = steer_probe_transit(
+                        &mut probe_pos.0,
+                        &mut probe_vel.0,
+                        target_pos.0,
+                        target_vel.0,
+                        distance,
+                        threshold,
+                        dt,
+                        opt_techs.as_deref(),
+                    );
+                }
             } else {
                 arrived = true;
             }
@@ -112,7 +121,9 @@ pub fn probe_navigation_system(
             );
         } else {
             probe.status = ProbeStatus::Transit;
-            probe_pos.0 += probe_vel.0 * dt;
+            if dt > 0.0 {
+                probe_pos.0 += probe_vel.0 * dt;
+            }
         }
     }
 }
@@ -125,19 +136,33 @@ fn steer_probe_transit(
     distance: f64,
     threshold: f64,
     dt: f64,
+    opt_techs: Option<&crate::simulation::economy::UnlockedTechs>,
 ) -> bool {
-    let to_target = target_pos - *probe_pos;
-    let cruise_speed = (distance * 6.0).clamp(0.4, 5.0);
+    let drifted_probe_pos = *probe_pos + target_vel * dt;
+    let rel_to_target = target_pos - drifted_probe_pos;
+    let rel_distance = rel_to_target.length();
+    let effective_dist = distance.min(rel_distance);
 
-    let dir = if to_target.length_squared() > 1e-10 {
-        to_target.normalize()
+    let mut cruise_speed = (effective_dist * 6.0).clamp(0.8, 5.0);
+
+    // Apply propulsion speed bonuses if researched in Tech Tree
+    if let Some(techs) = opt_techs {
+        if techs.has(crate::simulation::economy::TechnologyId::AntimatterDrive) {
+            cruise_speed = (cruise_speed * 4.5).clamp(1.8, 22.5);
+        } else if techs.has(crate::simulation::economy::TechnologyId::IonDrive) {
+            cruise_speed = (cruise_speed * 2.0).clamp(1.2, 10.0);
+        }
+    }
+
+    let dir = if rel_to_target.length_squared() > 1e-12 {
+        rel_to_target / rel_distance
     } else {
         DVec3::X
     };
 
     let brake_zone = threshold * 3.5;
-    let speed_multiplier = if distance < brake_zone {
-        ((distance - threshold) / (brake_zone - threshold)).clamp(0.15, 1.0)
+    let speed_multiplier = if rel_distance < brake_zone {
+        ((rel_distance - threshold) / (brake_zone - threshold).max(1e-6)).clamp(0.45, 1.0)
     } else {
         1.0
     };
@@ -145,7 +170,22 @@ fn steer_probe_transit(
     let desired_speed = cruise_speed * speed_multiplier;
     let desired_vel = target_vel + dir * desired_speed;
 
-    let steer_factor = 1.0 - (-dt * 20.0).exp();
+    // If a single frame step at desired closing speed reaches the target, capture directly
+    if rel_distance <= threshold || desired_speed * dt >= rel_distance - threshold * 0.5 {
+        *probe_vel = desired_vel;
+        *probe_pos = target_pos - dir * (threshold * 0.5);
+        return true;
+    }
+
+    let steer_rate = if rel_distance < threshold * 6.0 {
+        240.0
+    } else {
+        40.0
+    };
+    let mut steer_factor = 1.0 - (-dt * steer_rate).exp();
+    if rel_distance < threshold * 6.0 {
+        steer_factor = steer_factor.clamp(0.45, 1.0);
+    }
     *probe_vel = probe_vel.lerp(desired_vel, steer_factor);
 
     let old_pos = *probe_pos;
@@ -484,16 +524,16 @@ fn handle_rover_arrival_and_traverse(
     let unspun_pos = probe.landed_unspun_pos.unwrap_or(DVec3::Y);
     let rotated_dir = DQuat::from_axis_angle(spin_dir, spin_angle) * unspun_pos;
 
-    probe_pos.0 = target_pos + rotated_dir * (vis_rad * 1.015);
+    probe_pos.0 = target_pos + rotated_dir * (vis_rad * 1.008);
     probe_vel.0 = target_vel;
 
     if just_arrived {
         if let Some(ref mut t) = toast {
             t.message = format!(
-                "🛬 Rover #{} touched down on {}! Autonomous surface roving & core drilling active.",
+                "🛬 Rover #{} touched down on {}! Click [🎥 Surface [Shift-V]] or press Shift+V for Rover Cam.",
                 probe.id, computer.target_name
             );
-            t.timer = 5.0;
+            t.timer = 6.0;
         }
         bevy::log::info!(
             "🛬 Rover #{} touched down on {}",

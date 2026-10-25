@@ -153,7 +153,7 @@ fn process_launch_requests(
             effective_target,
             target_name,
             target_pos,
-            _target_vel,
+            target_vel,
             _target_rad,
             is_gas_giant_or_star,
         ) = resolve_destination_target(
@@ -183,8 +183,13 @@ fn process_launch_requests(
             .min(dist_to_target * 0.20)
             .max(0.0008);
         let start_pos = origin_pos + dir * spawn_offset;
-        let initial_boost = (dist_to_target * 5.0).clamp(0.4, 4.0);
-        let start_vel = origin_vel + dir * initial_boost;
+        let initial_boost = (dist_to_target * 5.0).clamp(0.8, 4.0);
+        let base_vel = if dist_to_target < 0.05 {
+            target_vel
+        } else {
+            origin_vel
+        };
+        let start_vel = base_vel + dir * initial_boost;
 
         probe_counter.0 += 1;
         let probe_id = probe_counter.0;
@@ -255,6 +260,7 @@ type GizmoTargetQueryData<'a> = (
     Option<&'a Radius>,
     &'a CelestialBody,
     Option<&'a crate::simulation::components::celestial::SpinState>,
+    Option<&'a Transform>,
 );
 
 /// Renders persistent glowing beacons, trajectory guidelines, rover surface trails, and targeting reticles.
@@ -291,7 +297,8 @@ pub fn draw_probe_navigation_gizmos(
         };
 
         let pulse = (visual_time * 4.0).sin() * 0.15 + 1.0;
-        let beacon_r = (cam_dist * 0.022 * pulse).clamp(0.015, 2.5);
+        let min_beacon = if cam_dist < 0.05 { 0.00015 } else { 0.012 };
+        let beacon_r = (cam_dist * 0.022 * pulse).clamp(min_beacon, 2.5);
 
         let to_cam = cam_pos.map_or(Vec3::Y, |cp| (cp - probe_vec).normalize_or_zero());
         let billboard_rot = if to_cam.length_squared() > 1e-6 {
@@ -339,7 +346,8 @@ pub fn draw_probe_navigation_gizmos(
             main_color,
         );
 
-        let beacon_h = (cam_dist * 0.08).clamp(0.05, 8.0);
+        let min_beacon_h = if cam_dist < 0.05 { 0.0004 } else { 0.05 };
+        let beacon_h = (cam_dist * 0.08).clamp(min_beacon_h, 8.0);
         gizmos.line(probe_vec, probe_vec + Vec3::Y * beacon_h, glow_color);
         gizmos.sphere(
             Isometry3d::from_translation(probe_vec + Vec3::Y * beacon_h),
@@ -347,7 +355,7 @@ pub fn draw_probe_navigation_gizmos(
             main_color,
         );
 
-        if let Ok((target_pos, opt_rad, target_body, opt_spin)) =
+        if let Ok((target_pos, opt_rad, target_body, opt_spin, opt_transform)) =
             targets.get(computer.target_entity)
         {
             let target_vec = target_pos.0.as_vec3();
@@ -360,9 +368,14 @@ pub fn draw_probe_navigation_gizmos(
 
             if probe.status == ProbeStatus::Landed && probe.probe_type == ProbeType::Rover {
                 let rad = opt_rad.map_or(0.001, |r| r.0);
-                let vis_rad = config.as_ref().map_or(rad as f32, |c| {
-                    c.calc_visual_radius_for_type(rad, target_body.body_type)
-                });
+                let vis_rad = opt_transform
+                    .map(|t| t.scale.x)
+                    .filter(|&s| s > 1e-6)
+                    .unwrap_or_else(|| {
+                        config.as_ref().map_or(rad as f32, |c| {
+                            c.calc_visual_radius_for_type(rad, target_body.body_type)
+                        })
+                    });
                 draw_rover_surface_trail_gizmos(
                     &mut gizmos,
                     probe,
@@ -410,7 +423,7 @@ fn draw_rover_surface_trail_gizmos(
 ) {
     let (spin_dir, spin_angle) = navigation::compute_planet_spin_frame(opt_spin, elapsed_years);
     let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
-    let surface_r = vis_rad * 1.016;
+    let surface_r = vis_rad * 1.009;
 
     // 1. Render breadcrumb traverse trail rotating with the planetary crust
     for pair in probe.traverse_trail_unspun.windows(2) {
