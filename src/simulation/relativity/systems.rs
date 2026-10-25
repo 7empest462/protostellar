@@ -5,6 +5,7 @@ use std::f64::consts::PI;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 
+use super::kerr::*;
 use super::post_newtonian::*;
 use super::types::*;
 use crate::simulation::components::*;
@@ -17,7 +18,10 @@ pub struct RelativisticHostContext {
     pub host_entity: Entity,
     pub host_mass: f64,
     pub host_pos: DVec3,
+    pub host_vel: DVec3,
     pub host_radius: f64,
+    pub is_host_remnant: bool,
+    pub kerr_spin: Option<(f64, DVec3)>,
     pub rel_pos: DVec3,
     pub rel_vel: DVec3,
     pub semi_major_axis: f64,
@@ -25,13 +29,16 @@ pub struct RelativisticHostContext {
     pub orbital_period_years: f64,
 }
 
+/// Primary host properties tuple: `(Entity, pos, vel, mass, radius, is_remnant, kerr_spin)`.
+pub type PrimaryHostContextTuple = (Entity, DVec3, DVec3, f64, f64, bool, Option<(f64, DVec3)>);
+
 /// Resolves the orbital host context for a body relative to the central star or parent planet.
 pub fn resolve_relativistic_host_context(
     body_pos: DVec3,
     body_vel: DVec3,
     body_mass: f64,
     opt_sat: Option<&SatelliteOf>,
-    star_opt: Option<(Entity, DVec3, DVec3, f64, f64)>,
+    star_opt: Option<PrimaryHostContextTuple>,
 ) -> Option<RelativisticHostContext> {
     if let Some(sat) = opt_sat {
         let r_orbit = sat.semi_major_axis_au.max(1e-6);
@@ -41,7 +48,10 @@ pub fn resolve_relativistic_host_context(
             host_entity: sat.parent,
             host_mass,
             host_pos: body_pos,
+            host_vel: DVec3::ZERO,
             host_radius: 0.001,
+            is_host_remnant: false,
+            kerr_spin: None,
             rel_pos: DVec3::new(r_orbit, 0.0, 0.0),
             rel_vel: body_vel,
             semi_major_axis: r_orbit,
@@ -50,7 +60,8 @@ pub fn resolve_relativistic_host_context(
         });
     }
 
-    let (star_entity, star_pos, star_vel, star_mass, star_rad) = star_opt?;
+    let (star_entity, star_pos, star_vel, star_mass, star_rad, is_host_remnant, kerr_spin) =
+        star_opt?;
     if star_mass <= 1e-6 {
         return None;
     }
@@ -88,7 +99,10 @@ pub fn resolve_relativistic_host_context(
         host_entity: star_entity,
         host_mass: star_mass,
         host_pos: star_pos,
+        host_vel: star_vel,
         host_radius: star_rad,
+        is_host_remnant,
+        kerr_spin,
         rel_pos,
         rel_vel,
         semi_major_axis: a,
@@ -137,9 +151,13 @@ fn evaluate_compact_coalescence(
     companion_type: BodyType,
     pos: DVec3,
     sep_au: f64,
+    opt_kerr_spin: Option<f64>,
 ) -> Option<(f64, f64, BodyType)> {
     let m_total = host_mass + companion_mass;
-    let r_isco = calculate_isco_radius(m_total);
+    let r_isco = opt_kerr_spin.map_or_else(
+        || calculate_isco_radius(m_total),
+        |spin| calculate_kerr_isco_radius(m_total, spin),
+    );
     let r_contact = companion_rad + 0.0001;
     let threshold = r_isco.max(r_contact);
 
@@ -198,12 +216,18 @@ fn apply_relativistic_kinematics_and_telemetry(
     rel_config: &RelativityConfig,
     ctx: &RelativisticHostContext,
     body_type: BodyType,
+    is_satellite: bool,
     m_body: f64,
     dt_yr: f64,
     effective_dt_yr: f64,
+    pos: &mut SimPosition,
     vel: &mut SimVelocity,
     rel_state: &mut RelativisticState,
 ) {
+    if is_satellite {
+        return;
+    }
+
     let a = ctx.semi_major_axis;
     let e = ctx.eccentricity;
     let m_host = ctx.host_mass;
@@ -240,31 +264,78 @@ fn apply_relativistic_kinematics_and_telemetry(
     rel_state.total_redshift_z = z_tot;
     rel_state.beta_v_over_c = beta;
 
-    // 3. Apply 1PN Relativistic Precession to Velocity
+    let mut current_rel_pos = ctx.rel_pos;
+    let mut current_rel_vel = ctx.rel_vel;
+
+    // 3. Apply 1PN Relativistic Precession (Rigid Apsidal Rotation of both r_rel and v_rel around h_hat)
+    // Rotating both position and velocity in the orbital plane preserves |r|, |v|, and |r x v|
+    // to machine precision while advancing the argument of periapsis by `d_theta`.
     if rel_config.enable_1pn_precession && accumulated_delta.abs() > 1e-12 {
-        let h_vec = ctx.rel_pos.cross(ctx.rel_vel);
+        let h_vec = current_rel_pos.cross(current_rel_vel);
         let h_len = h_vec.length();
         if h_len > 1e-8 {
             let h_hat = h_vec / h_len;
-            // Precess velocity around orbital normal by accumulated 1PN angle.
-            // Strict Rodriguez rotation preserves kinetic energy (|v_rot| == |v|) identically,
-            // preventing artificial kinetic energy pumping and orbital escape.
             let max_angle = 0.05f64;
             let d_theta = accumulated_delta.clamp(-max_angle, max_angle);
             let (sin_t, cos_t) = d_theta.sin_cos();
-            let v_perp = h_hat.cross(ctx.rel_vel);
-            let v_rot = ctx.rel_vel * cos_t + v_perp * sin_t;
-            if v_rot.is_finite() {
-                vel.0 = v_rot;
+
+            let r_perp = h_hat.cross(current_rel_pos);
+            let r_rot = current_rel_pos * cos_t + r_perp * sin_t;
+
+            let v_perp = h_hat.cross(current_rel_vel);
+            let v_rot = current_rel_vel * cos_t + v_perp * sin_t;
+
+            if r_rot.is_finite() && v_rot.is_finite() {
+                current_rel_pos = r_rot;
+                current_rel_vel = v_rot;
+                pos.0 = ctx.host_pos + current_rel_pos;
+                vel.0 = ctx.host_vel + current_rel_vel;
+            }
+        }
+    }
+
+    // 3b. Apply Kerr Metric Lense-Thirring Precession & Frame Dragging
+    if let Some((a_star, spin_axis)) = ctx.kerr_spin {
+        let (lt_rate_rad_yr, lt_rate_arcsec_cy) =
+            calculate_lense_thirring_precession_rate(m_host, a_star, a, e);
+        rel_state.lense_thirring_rate_arcsec_century = lt_rate_arcsec_cy;
+        rel_state.kerr_spin_param = a_star;
+
+        if rel_config.enable_lense_thirring && lt_rate_rad_yr.abs() > 1e-15 {
+            let delta_omega = (lt_rate_rad_yr * dt_yr).clamp(-0.05, 0.05);
+            let s_hat = if spin_axis.length_squared() > 1e-12 {
+                spin_axis.normalize()
+            } else {
+                DVec3::Y
+            };
+            let (sin_o, cos_o) = delta_omega.sin_cos();
+
+            let r_cross_s = s_hat.cross(current_rel_pos);
+            let r_dot_s = s_hat.dot(current_rel_pos);
+            let r_rot =
+                current_rel_pos * cos_o + r_cross_s * sin_o + s_hat * (r_dot_s * (1.0 - cos_o));
+
+            let v_cross_s = s_hat.cross(current_rel_vel);
+            let v_dot_s = s_hat.dot(current_rel_vel);
+            let v_rot =
+                current_rel_vel * cos_o + v_cross_s * sin_o + s_hat * (v_dot_s * (1.0 - cos_o));
+
+            if r_rot.is_finite() && v_rot.is_finite() {
+                current_rel_pos = r_rot;
+                current_rel_vel = v_rot;
+                pos.0 = ctx.host_pos + current_rel_pos;
+                vel.0 = ctx.host_vel + current_rel_vel;
             }
         }
     }
 
     // 4. Apply Peters Secular Gravitational Wave Orbital Decay
-    if rel_config.enable_inspiral_decay && (body_type.is_remnant() || a < 0.25) {
+    if rel_config.enable_inspiral_decay
+        && (body_type.is_remnant() || (ctx.is_host_remnant && a < 0.25))
+    {
         apply_gravitational_wave_orbital_decay(
-            ctx.rel_pos,
-            ctx.rel_vel,
+            current_rel_pos,
+            current_rel_vel,
             vel,
             da_dt,
             effective_dt_yr,
@@ -292,13 +363,14 @@ pub fn update_relativity_evolution(
             &mut Mass,
             &mut Radius,
             Option<&mut CelestialBody>,
+            Option<&mut KerrBlackHole>,
         ),
         With<CentralStar>,
     >,
     mut bodies_query: Query<
         (
             Entity,
-            &SimPosition,
+            &mut SimPosition,
             &mut SimVelocity,
             &Mass,
             &Radius,
@@ -309,7 +381,10 @@ pub fn update_relativity_evolution(
         Without<CentralStar>,
     >,
 ) {
-    if !rel_config.enable_1pn_precession && !rel_config.enable_gw_radiation {
+    if !rel_config.enable_1pn_precession
+        && !rel_config.enable_gw_radiation
+        && !rel_config.enable_lense_thirring
+    {
         return;
     }
 
@@ -318,9 +393,14 @@ pub fn update_relativity_evolution(
     let star_opt = star_query
         .iter()
         .next()
-        .map(|(e, p, v, m, r, _)| (e, p.0, v.0, m.0, r.0));
+        .map(|(e, p, v, m, r, b, opt_kerr)| {
+            let is_rem = b.as_ref().is_some_and(|body| body.body_type.is_remnant());
+            let kerr = opt_kerr.as_ref().map(|k| (k.spin_param, k.spin_axis));
+            (e, p.0, v.0, m.0, r.0, is_rem, kerr)
+        });
 
-    for (entity, pos, mut vel, mass, rad, body, opt_sat, mut opt_rel) in bodies_query.iter_mut() {
+    for (entity, mut pos, mut vel, mass, rad, body, opt_sat, mut opt_rel) in bodies_query.iter_mut()
+    {
         let Some(ctx) = resolve_relativistic_host_context(pos.0, vel.0, mass.0, opt_sat, star_opt)
         else {
             continue;
@@ -339,58 +419,67 @@ pub fn update_relativity_evolution(
             &rel_config,
             &ctx,
             body.body_type,
+            opt_sat.is_some(),
             m_body,
             dt_yr,
             effective_dt_yr,
+            &mut pos,
             &mut vel,
             &mut rel_state,
         );
-        let sep_au = ctx.rel_pos.length();
-        let companion_type = body.body_type;
-        if let Some((remnant_mass, new_radius, remnant_type)) = evaluate_compact_coalescence(
-            &mut commands,
-            &mut merger_events,
-            ctx.host_entity,
-            entity,
-            m_host,
-            m_body,
-            rad.0,
-            companion_type,
-            pos.0,
-            sep_au,
-        ) {
-            // Apply remnant mass and type to primary host
-            if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body)) = star_query
-                .iter_mut()
-                .find(|(star_e, _, _, _, _, _)| *star_e == ctx.host_entity)
-            {
-                s_mass.0 = remnant_mass;
-                s_rad.0 = new_radius;
-                if let Some(ref mut b) = opt_s_body {
-                    b.body_type = remnant_type;
-                    b.name = format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)");
+
+        let is_both_remnant = ctx.is_host_remnant && body.body_type.is_remnant();
+        if is_both_remnant && opt_sat.is_none() {
+            let sep_au = ctx.rel_pos.length();
+            let companion_type = body.body_type;
+            if let Some((remnant_mass, new_radius, remnant_type)) = evaluate_compact_coalescence(
+                &mut commands,
+                &mut merger_events,
+                ctx.host_entity,
+                entity,
+                m_host,
+                m_body,
+                rad.0,
+                companion_type,
+                pos.0,
+                sep_au,
+                ctx.kerr_spin.map(|(a, _)| a),
+            ) {
+                // Apply remnant mass and type to primary host
+                if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) =
+                    star_query
+                        .iter_mut()
+                        .find(|(star_e, _, _, _, _, _, _)| *star_e == ctx.host_entity)
+                {
+                    s_mass.0 = remnant_mass;
+                    s_rad.0 = new_radius;
+                    if let Some(ref mut b) = opt_s_body {
+                        b.body_type = remnant_type;
+                        b.name = format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)");
+                    }
+                    if let Some(ref mut kerr) = opt_kerr {
+                        kerr.recalculate(remnant_mass);
+                    }
                 }
-            }
 
-            if let Ok(mut host_cmd) = commands.get_entity(ctx.host_entity) {
-                host_cmd.insert((
-                    Mass(remnant_mass),
-                    Radius(new_radius),
-                    CelestialBody {
-                        name: format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)"),
-                        body_type: remnant_type,
-                    },
-                ));
-            }
+                if let Ok(mut host_cmd) = commands.get_entity(ctx.host_entity) {
+                    host_cmd.insert((
+                        Mass(remnant_mass),
+                        Radius(new_radius),
+                        CelestialBody {
+                            name: format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)"),
+                            body_type: remnant_type,
+                        },
+                    ));
+                }
 
-            // Companion was despawned: do NOT insert components on despawned entity
-            continue;
+                // Companion was despawned: do NOT insert components on despawned entity
+                continue;
+            }
         }
 
         if let Some(ref mut r) = opt_rel {
             **r = rel_state;
-        } else if let Ok(mut entity_cmd) = commands.get_entity(entity) {
-            entity_cmd.try_insert(rel_state);
         }
     }
 }

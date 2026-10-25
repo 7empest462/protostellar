@@ -252,6 +252,7 @@ fn draw_quasar_beam_filaments_and_lobes(
     star_vec: Vec3,
     jet_len: f32,
     pole_start: f32,
+    visual_radius: f32,
     elapsed: f32,
 ) {
     for &(dir, sign) in &[(Vec3::Y, 1.0f32), (-Vec3::Y, -1.0f32)] {
@@ -260,7 +261,7 @@ fn draw_quasar_beam_filaments_and_lobes(
 
         gizmos.line(base, tip, Color::WHITE);
 
-        let core_r = 0.06f32;
+        let core_r = (visual_radius * 0.12).clamp(0.002, 0.04);
         for k in 0..8 {
             let theta = (k as f32) * (std::f32::consts::PI / 4.0);
             let offset = Vec3::new(theta.cos() * core_r, 0.0, theta.sin() * core_r);
@@ -271,7 +272,7 @@ fn draw_quasar_beam_filaments_and_lobes(
             );
         }
 
-        let sheath_r = 0.18f32;
+        let sheath_r = (visual_radius * 0.28).clamp(0.005, 0.09);
         for k in 0..12 {
             let theta = (k as f32) * (std::f32::consts::PI / 6.0);
             let base_offset = Vec3::new(
@@ -291,11 +292,12 @@ fn draw_quasar_beam_filaments_and_lobes(
         let helix_len = jet_len.min(400.0);
         let n_segments = 100;
         let dz = (helix_len - pole_start).max(1.0) / (n_segments as f32);
+        let helix_r0 = (visual_radius * 0.22).clamp(0.003, 0.08);
         for s in 0..n_segments {
             let z1 = pole_start + (s as f32) * dz;
             let z2 = pole_start + ((s + 1) as f32) * dz;
-            let r1 = 0.12 + 0.0002 * z1;
-            let r2 = 0.12 + 0.0002 * z2;
+            let r1 = helix_r0 + 0.0002 * z1;
+            let r2 = helix_r0 + 0.0002 * z2;
             let ang1 = z1 * 0.28 - elapsed * 16.0;
             let ang2 = z2 * 0.28 - elapsed * 16.0;
 
@@ -310,11 +312,11 @@ fn draw_quasar_beam_filaments_and_lobes(
             gizmos.line(p1_b, p2_b, Color::srgba(0.85, 0.35, 1.0, 0.80));
         }
 
-        let mut kd = 25.0f32;
-        let mut step = 40.0f32;
+        let mut kd = (pole_start * 2.0).max(5.0);
+        let mut step = 15.0f32;
         while kd < jet_len && kd < 5000.0 {
             let knot_pos = star_vec + dir * kd;
-            let knot_r = 0.14 + kd * 0.0005;
+            let knot_r = (visual_radius * 0.25).clamp(0.004, 0.08) + kd * 0.0003;
             gizmos.circle(
                 Isometry3d::new(knot_pos, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
                 knot_r,
@@ -329,7 +331,7 @@ fn draw_quasar_beam_filaments_and_lobes(
             step *= 1.35;
         }
 
-        let lobe_r = 0.55f32;
+        let lobe_r = (visual_radius * 0.85).clamp(0.02, 0.35);
         gizmos.sphere(
             Isometry3d::from_translation(tip),
             lobe_r,
@@ -393,7 +395,7 @@ fn draw_quasar_isco_particles(gizmos: &mut Gizmos, star_vec: Vec3, isco_r: f32, 
                     y_wobble,
                     orbit_r * head_theta.sin(),
                 );
-            let cross_size = 0.12f32;
+            let cross_size = (orbit_r * 0.05).clamp(0.002, 0.08);
             gizmos.line(
                 head_pt - Vec3::X * cross_size,
                 head_pt + Vec3::X * cross_size,
@@ -429,11 +431,18 @@ pub fn draw_quasar_relativistic_jets(
     if is_blown_out && light_dist > 0.5 {
         let jet_len = light_dist;
         let current_visual_radius = config.calc_visual_radius_for_type(star_radius, body_type);
-        let pole_start = (current_visual_radius * 0.90).max(0.05);
+        let pole_start = (current_visual_radius * 0.90).max(0.002);
 
-        draw_quasar_beam_filaments_and_lobes(gizmos, star_vec, jet_len, pole_start, elapsed);
+        draw_quasar_beam_filaments_and_lobes(
+            gizmos,
+            star_vec,
+            jet_len,
+            pole_start,
+            current_visual_radius,
+            elapsed,
+        );
 
-        let isco_r = (current_visual_radius * 1.15).max(2.8);
+        let isco_r = (current_visual_radius * 1.50).max(0.02);
         draw_quasar_isco_particles(gizmos, star_vec, isco_r, elapsed);
     }
 
@@ -658,27 +667,112 @@ pub fn draw_black_hole_spacetime_curvature(
     }
 }
 
+/// Draws the oblate ergosphere (static limit surface) and Lense-Thirring frame-dragging vortex for a Kerr black hole.
+pub fn draw_kerr_ergosphere(
+    gizmos: &mut Gizmos,
+    star_vec: Vec3,
+    kerr: &crate::simulation::relativity::kerr::KerrBlackHole,
+    base_lens_r: f32,
+    elapsed: f32,
+) {
+    let a_star = kerr.spin_param as f32;
+    if a_star.abs() < 0.01 {
+        return;
+    }
+
+    let a2 = a_star * a_star;
+    let r_plus_ratio = f32::midpoint(1.0, (1.0 - a2).max(0.0).sqrt());
+    let r_eq = base_lens_r; // Static limit at equator: r_E(pi/2) = 2 r_g = r_s
+    let r_pole = base_lens_r * r_plus_ratio; // At poles: r_E(0) = r_+
+
+    let spin_axis = kerr.spin_axis.as_vec3().normalize_or_zero();
+    let s_hat = if spin_axis.length_squared() > 0.5 {
+        spin_axis
+    } else {
+        Vec3::Y
+    };
+
+    // 1. Equatorial Static Limit Ring (r_E = r_s, Cyan Glow)
+    let rot_equator = Quat::from_rotation_arc(Vec3::Y, s_hat);
+    gizmos.circle(
+        Isometry3d::new(
+            star_vec,
+            rot_equator * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        ),
+        r_eq,
+        Color::srgba(0.25, 0.90, 1.0, 0.85),
+    );
+
+    // 2. Inner Event Horizon Polar Ring (r_+, Amber Glow)
+    gizmos.circle(
+        Isometry3d::new(
+            star_vec,
+            rot_equator * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        ),
+        r_pole,
+        Color::srgba(1.0, 0.70, 0.15, 0.90),
+    );
+
+    // 3. Oblate Ergosphere Meridian Cross-Sections (4 rotated meridians)
+    // Equation: r_E(theta) = r_g (1 + sqrt(1 - a_*^2 cos^2(theta)))
+    let n_meridians = 4;
+    for m in 0..n_meridians {
+        let phi = (m as f32) * (std::f32::consts::PI / n_meridians as f32);
+        let m_rot = rot_equator * Quat::from_rotation_y(phi);
+        let n_pts = 32;
+        let mut prev_pt: Option<Vec3> = None;
+        let mut first_pt: Option<Vec3> = None;
+
+        for i in 0..=n_pts {
+            let theta = (i as f32) * (std::f32::consts::TAU / n_pts as f32);
+            let cos_t = theta.cos();
+            let sin_t = theta.sin();
+            let r_factor = f32::midpoint(1.0, (1.0 - a2 * cos_t * cos_t).max(0.0).sqrt());
+            let r_e = base_lens_r * r_factor;
+
+            let local_p = Vec3::new(r_e * sin_t, r_e * cos_t, 0.0);
+            let world_p = star_vec + m_rot * local_p;
+
+            if let Some(prev) = prev_pt {
+                gizmos.line(prev, world_p, Color::srgba(0.55, 0.35, 1.0, 0.40));
+            } else {
+                first_pt = Some(world_p);
+            }
+            prev_pt = Some(world_p);
+        }
+        if let (Some(prev), Some(first)) = (prev_pt, first_pt) {
+            gizmos.line(prev, first, Color::srgba(0.55, 0.35, 1.0, 0.40));
+        }
+    }
+
+    // 4. Lense-Thirring Spacetime Frame-Dragging Whirlpool Geodesics
+    let n_streamlines = 8;
+    let spin_speed = a_star * 1.5;
+    let vortex_rot = rot_equator * Quat::from_rotation_y(elapsed * spin_speed);
+    for s in 0..n_streamlines {
+        let base_phi = (s as f32) * (std::f32::consts::TAU / n_streamlines as f32);
+        let mut prev_v: Option<Vec3> = None;
+        let steps = 16;
+        for step in 0..=steps {
+            let frac = step as f32 / steps as f32;
+            let r_val = r_eq * (1.8 - frac * 0.85);
+            let twist = frac * 2.5 * a_star.signum();
+            let phi_curr = base_phi + twist;
+            let y_pos = (frac * 0.7 - 0.35) * r_pole;
+
+            let local_v = Vec3::new(r_val * phi_curr.cos(), y_pos, r_val * phi_curr.sin());
+            let world_v = star_vec + vortex_rot * local_v;
+
+            if let Some(prev) = prev_v {
+                let alpha = (1.0 - frac * 0.5) * 0.50;
+                gizmos.line(prev, world_v, Color::srgba(0.2, 0.85, 0.95, alpha));
+            }
+            prev_v = Some(world_v);
+        }
+    }
+}
+
 pub fn draw_standard_black_hole_jets(gizmos: &mut Gizmos, star_vec: Vec3) {
-    let disk_inner = 0.08f32;
-    let disk_outer = 0.55f32;
-    let disk_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-
-    gizmos.circle(
-        Isometry3d::new(star_vec, disk_rot),
-        disk_inner,
-        Color::srgba(1.0, 0.9, 0.4, 0.90),
-    );
-    gizmos.circle(
-        Isometry3d::new(star_vec, disk_rot),
-        disk_inner * 2.0,
-        Color::srgba(1.0, 0.55, 0.15, 0.70),
-    );
-    gizmos.circle(
-        Isometry3d::new(star_vec, disk_rot),
-        disk_outer,
-        Color::srgba(0.85, 0.25, 0.05, 0.45),
-    );
-
     let jet_len = 12.0f32;
     let jet_color = Color::srgba(0.4, 0.85, 1.0, 0.75);
     gizmos.line(star_vec, star_vec + Vec3::Y * jet_len, jet_color);

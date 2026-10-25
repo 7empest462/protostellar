@@ -51,6 +51,7 @@ pub struct GpuGalaxyOrbitEngine {
     pub pipeline: wgpu::ComputePipeline,
     pub num_particles: u32,
     pub is_ready: bool,
+    pub last_elapsed_years: f64,
 }
 
 #[derive(Resource, Default, Clone)]
@@ -59,6 +60,7 @@ pub struct GpuGalaxyExtractedParams {
     pub is_paused: bool,
     pub step_once: bool,
     pub dt: f32,
+    pub elapsed_years: f64,
     pub num_massive_bodies: u32,
     pub massive_bodies: [MassiveBodyGpu; 32],
     pub massive_body_velocities: [[f32; 4]; 32],
@@ -146,6 +148,7 @@ pub fn extract_galaxy_sim_data(
         is_paused: time_warp.is_paused,
         step_once: time_warp.step_once,
         dt,
+        elapsed_years: sim_time.elapsed_years,
         num_massive_bodies: num_bodies,
         massive_bodies,
         massive_body_velocities,
@@ -214,10 +217,8 @@ fn generate_galaxy_particles(cfg: &GalaxyDiskConfig, initial_particles: &mut Vec
     }
 }
 
-pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
-    let device = render_dev.wgpu_device();
-    let n_particles = count;
-    let mut initial_particles = Vec::with_capacity(n_particles as usize);
+fn generate_colliding_galaxies(n_particles: u32) -> Vec<GpuParticle> {
+    let mut particles = Vec::with_capacity(n_particles as usize);
     let n_mw = n_particles / 2;
     let n_m31 = n_particles - n_mw;
 
@@ -230,7 +231,7 @@ pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderD
             max_radius: 50_000.0,
             halo_mass: 1.0e12,
         },
-        &mut initial_particles,
+        &mut particles,
     );
     generate_galaxy_particles(
         &GalaxyDiskConfig {
@@ -241,8 +242,16 @@ pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderD
             max_radius: 65_000.0,
             halo_mass: 1.4e12,
         },
-        &mut initial_particles,
+        &mut particles,
     );
+
+    particles
+}
+
+pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
+    let device = render_dev.wgpu_device();
+    let n_particles = count;
+    let initial_particles = generate_colliding_galaxies(n_particles);
 
     let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Galaxy Particle Buffer"),
@@ -319,6 +328,7 @@ pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderD
         pipeline,
         num_particles: n_particles,
         is_ready: true,
+        last_elapsed_years: 0.0,
     });
 }
 
@@ -339,10 +349,22 @@ pub fn step_galaxy_simulation_render_world(
         return;
     };
 
+    let scenario_restarted = params.elapsed_years < engine.last_elapsed_years;
+    engine.last_elapsed_years = params.elapsed_years;
+
+    let queue = &render_queue;
+    if scenario_restarted {
+        let initial_particles = generate_colliding_galaxies(engine.num_particles);
+        queue.write_buffer(
+            &engine.particle_buffer,
+            0,
+            bytemuck::cast_slice(&initial_particles),
+        );
+    }
+
     if params.is_paused && !params.step_once {
         return;
     }
-    let queue = &render_queue;
     let device = render_device.wgpu_device();
 
     if !engine.is_ready {
@@ -447,4 +469,6 @@ pub fn step_galaxy_simulation_render_world(
     } else {
         queue.submit(Some(encoder.finish()));
     }
+
+    let _ = render_device.poll(wgpu::PollType::Poll);
 }

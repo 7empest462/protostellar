@@ -36,6 +36,12 @@ pub struct RelativisticState {
     pub total_redshift_z: f64,
     /// Relativistic velocity fraction $\beta = v / c$.
     pub beta_v_over_c: f64,
+    /// Lense-Thirring frame dragging nodal precession rate in arcseconds per century.
+    #[serde(default)]
+    pub lense_thirring_rate_arcsec_century: f64,
+    /// Cached primary black hole dimensionless Kerr spin parameter $a_* \in (-1.0, 1.0)$.
+    #[serde(default)]
+    pub kerr_spin_param: f64,
 }
 
 impl Default for RelativisticState {
@@ -54,6 +60,8 @@ impl Default for RelativisticState {
             eccentricity: 0.0,
             total_redshift_z: 0.0,
             beta_v_over_c: 0.0,
+            lense_thirring_rate_arcsec_century: 0.0,
+            kerr_spin_param: 0.0,
         }
     }
 }
@@ -75,6 +83,8 @@ impl RelativisticState {
             eccentricity: 0.2056,
             total_redshift_z: 1.48e-8,
             beta_v_over_c: 0.00016,
+            lense_thirring_rate_arcsec_century: 0.0,
+            kerr_spin_param: 0.0,
         }
     }
 
@@ -108,6 +118,8 @@ impl RelativisticState {
             eccentricity,
             total_redshift_z: 0.0,
             beta_v_over_c: 0.0,
+            lense_thirring_rate_arcsec_century: 0.0,
+            kerr_spin_param: 0.0,
         }
     }
 }
@@ -122,6 +134,8 @@ pub struct RelativityConfig {
     pub enable_gw_radiation: bool,
     /// Enable secular orbital semi-major axis and eccentricity decay from gravitational radiation.
     pub enable_inspiral_decay: bool,
+    /// Enable Kerr metric Lense-Thirring frame dragging nodal precession.
+    pub enable_lense_thirring: bool,
     /// Interactive time-scale multiplier for gravitational wave inspiral decay (default 1.0).
     pub time_scale: f64,
 }
@@ -132,6 +146,7 @@ impl Default for RelativityConfig {
             enable_1pn_precession: true,
             enable_gw_radiation: true,
             enable_inspiral_decay: true,
+            enable_lense_thirring: true,
             time_scale: 1.0,
         }
     }

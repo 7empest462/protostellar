@@ -1,11 +1,12 @@
 // PROTOSTELLAR: General Relativistic Black Hole Accretion Disk & Gravitational Lensing Shader
 // Physically grounded Schwarzschild black hole accretion disk with:
-// 1. Shakura-Sunyaev r^(-3) flux falloff profile (steep core-to-rim contrast)
+// 1. Shakura-Sunyaev r^(-2.5) flux falloff profile (steep core-to-rim contrast)
 // 2. Multi-stop chromaticity: Deep Infrared Red -> Golden Amber -> Blazing Blue-White
-// 3. Unclamped relativistic Doppler beaming (I ~ delta^3.5): iconic EHT/Gargantua crescent asymmetry
+// 3. Relativistic Doppler beaming with natural, balanced visual contrast
 // 4. Absolute light-trapping event horizon shadow void (b < r_shadow -> pure black)
-// 5. Asymptotic photon ring sampling inner disk emission with e^(-pi) geometric compression
-// 6. Proper 3D geometry: front/back determined by dot product with disk normal, not 2D sign heuristics
+// 5. Symmetric gravitational lensing arches warping over the top and under the bottom of the black hole
+// 6. Near-side accretion disk wrapping seamlessly in front of the black hole shadow
+// 7. Razor-sharp asymptotic photon ring tracing the event horizon boundary
 
 #import bevy_pbr::mesh_view_bindings::view
 #import bevy_pbr::forward_io::VertexOutput
@@ -76,16 +77,16 @@ fn sample_accretion_disk(
     result.alpha = 0.0;
     result.doppler_factor = 1.0;
 
-    if (r <= r_shadow * 1.01 || r > r_outer) {
+    if (r <= r_shadow * 0.96 || r > r_outer) {
         return result;
     }
 
     let r_norm = max(r / r_inner, 0.8);
 
     // A. Flux profile: plunge-region stress + outer fade
-    let stress_factor = smoothstep(r_shadow * 1.02, r_inner * 1.8, r);
-    let outer_fade = smoothstep(r_outer, r_outer * 0.55, r);
-    var disk_flux = pow(r_norm, -3.0) * stress_factor * outer_fade;
+    let stress_factor = smoothstep(r_shadow * 0.94, r_inner * 1.30, r);
+    let outer_fade = 1.0 - smoothstep(r_outer * 0.65, r_outer, r);
+    var disk_flux = pow(r_norm, -2.5) * stress_factor * outer_fade;
 
     // Peak flux normalization for chromatic mapping
     let t_val = clamp((disk_flux / 0.8) * 1.4, 0.0, 1.0);
@@ -114,22 +115,24 @@ fn sample_accretion_disk(
     let turbulence_val = mri_turbulent_noise(vec2<f32>(u_coord * 4.0, v_coord * 8.0));
     let plasma_density = 0.6 + 0.7 * turbulence_val;
 
-    // C. Relativistic Keplerian velocity & Doppler beaming (I ~ delta^3.5)
+    // C. Relativistic Keplerian velocity & Doppler beaming
     let beta = clamp(sqrt(0.5 * r_shadow / max(r, r_shadow)), 0.05, 0.65);
     let gamma = 1.0 / sqrt(max(1.0 - beta * beta, 0.01));
 
     let cos_theta = cos(phi) * sin_i;
     let doppler = 1.0 / (gamma * (1.0 - beta * cos_theta));
-    let beaming = pow(doppler, 3.5);
+    let a_star = clamp(disk.spin_axis.w, -0.999, 0.999);
+    let spin_boost = 1.0 + max(a_star, 0.0) * 0.65;
+    let beaming = clamp(pow(doppler, 1.8), 0.35, 3.2 * spin_boost);
     result.doppler_factor = beaming;
 
-    let base_intensity = 12.0;
+    let base_intensity = 14.0;
     let accretion_rate = disk.cam_up_local.w;
 
     result.emission = local_color * disk.disk_color.rgb * disk_flux * beaming * base_intensity * fine_rings * plasma_density * accretion_rate;
 
-    let alpha_fade = smoothstep(r_shadow * 1.01, r_inner, r);
-    result.alpha = clamp(alpha_fade * outer_fade * (0.35 + 0.55 * min(beaming, 2.5)), 0.0, 0.98) * accretion_rate;
+    let alpha_fade = smoothstep(r_shadow * 0.95, r_inner, r);
+    result.alpha = clamp(alpha_fade * outer_fade * (0.65 + 0.35 * min(beaming, 2.0)), 0.0, 0.98) * accretion_rate;
     return result;
 }
 
@@ -140,70 +143,78 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let v = (0.5 - mesh.uv.y) * 2.0;
     let b = length(vec2<f32>(u, v)); // Impact parameter (screen radius)
 
-    // Scale boundaries (normalized to outer_radius = 1.0):
-    let r_shadow = 0.170; // Event horizon shadow (b_crit ~ 3√3 M)
-    let r_inner  = 0.190; // ISCO (3 r_s) inner edge
-    let r_outer  = 0.88;  // Outer disk edge
+    // Scale boundaries (normalized to billboard quad extent 1.0):
+    // Quad half-extent is 6.0 * visual_radius.
+    // Dynamic Kerr parameters from uniforms:
+    let r_shadow = max(disk.schwa_radius, 0.04);
+    let r_inner  = max(disk.inner_radius, r_shadow * 1.04);
+    let r_outer  = max(disk.outer_radius * 0.780, r_inner * 1.5);
 
     // ─── 2. Observer inclination ─────────────────────────────────────────────
-    // cos_i: camera direction dotted with spin axis (Y-up in local space)
     let cos_i = clamp(disk.cam_dir_local.w, -1.0, 1.0);
+    let abs_cos_i = abs(cos_i);
     let sin_i = sqrt(max(1.0 - cos_i * cos_i, 0.0));
 
+    // Disk physical scale height H(r)
+    let h_disk = 0.024 + 0.012 * min(b / r_outer, 1.0);
 
-    // ─── 3. Observer inclination geometry ────────────────────────────────────
-    // cos_i = dot(cam_dir_local, spin_axis) = cam_dir_local.y in local space.
-    // Geometrically derived near-side condition:
-    //   Screen Y (mesh v) maps to the tilt axis. Looking from above (cos_i > 0),
-    //   the bottom of the billboard (v < 0) is closer to the camera.
-    //   Looking from below (cos_i < 0), the top (v > 0) is closer to the camera.
-    //   Therefore v * cos_i < 0 represents the near side of the accretion disk!
+    // semi_minor: projected vertical factor for the flat disk
+    // In top-down view (abs_cos_i -> 1.0): semi_minor -> 1.0 (circular disk).
+    // In edge-on view (abs_cos_i -> 0.0): semi_minor -> h_disk (finite physical slab thickness).
+    let semi_minor = sqrt(abs_cos_i * abs_cos_i + h_disk * h_disk);
 
-    // ─── 4. Direct disk intersection (primary image) ─────────────────────────
-    var hit_direct = false;
+    // ─── 3. Direct disk intersection (primary image) ─────────────────────────
     var direct_emission = vec3<f32>(0.0);
     var direct_alpha = 0.0;
 
-    // Elliptical foreshortening: disk at inclination i appears with semi_minor = |cos_i|.
-    // r_direct = sqrt(u² + (v/cos_i)²) inverts the projection to get true disk radius.
-    // Clamping minimum semi_minor to ~0.045 provides physical vertical disk thickness edge-on.
-    let semi_minor = max(abs(cos_i), 0.045);
-    let r_direct   = sqrt(u * u + (v / semi_minor) * (v / semi_minor));
-    let phi_direct = atan2(v / semi_minor, u);
+    let z_dir = -v / semi_minor;
+    let r_direct = sqrt(u * u + z_dir * z_dir);
+    let phi_direct = atan2(z_dir, u);
 
-    // Soft Gaussian vertical taper when viewed near edge-on
-    let edge_on_v_taper = select(1.0, exp(-0.5 * pow(v / 0.045, 2.0)), abs(cos_i) < 0.06);
+    // Near side passes directly in front of the black hole
+    // In top-down view (abs_cos_i > 0.88), the full circular disk faces the observer
+    // In inclined/side view, v * cos_i <= 0 represents the near side closer to the camera
+    let is_front = (abs_cos_i > 0.88) || (v * cos_i <= 0.0);
 
-    if (r_direct >= r_shadow && r_direct <= r_outer) {
+    if (r_direct >= r_shadow * 0.95 && r_direct <= r_outer) {
         let sample = sample_accretion_disk(r_direct, phi_direct, r_inner, r_outer, r_shadow, sin_i, disk.time);
+
         direct_emission = sample.emission;
-        direct_alpha    = sample.alpha * edge_on_v_taper;
-        hit_direct      = direct_alpha > 0.01;
+        direct_alpha    = clamp(sample.alpha, 0.0, 1.0);
     }
 
-    // ─── 5. Lensed arc (secondary image — photons bent around BH) ────────────
+    // ─── 4. Lensed arches (secondary image — photons bent around the black hole) ────
     var lensed_emission = vec3<f32>(0.0);
     var lensed_alpha = 0.0;
 
-    let delta_b    = b - r_shadow;
-    let max_arch_b = 0.52;
-    if (delta_b > 0.001 && delta_b < max_arch_b) {
-        let t_arch = delta_b / max_arch_b;
-        // Inverted lens mapping: b → r in rear disk
-        let r_lensed   = r_shadow + pow(t_arch, 0.85) * (r_outer * 0.80 - r_shadow);
-        let phi_lensed = atan2(-v, -u);
+    let arch_weight = pow(sin_i, 1.25);
+    // Gate arches to strictly the upper (v > 0) and lower (v < 0) visual field,
+    // smoothly tapering near the equator so the lateral disk is never distorted
+    let v_gate = smoothstep(0.015, 0.075, abs(v));
 
-        // Arch profile: smoothly wraps shadow, prominent when inclined
-        let arch_profile = pow(sin(t_arch * 3.14159), 0.75) * smoothstep(1.0, 0.12, t_arch) * (0.25 + 0.75 * sin_i);
+    if (arch_weight > 0.01 && v_gate > 0.001 && abs(u) <= r_outer * 0.98 && b >= r_shadow) {
+        let y_arch = sqrt(max(1.0 - (u / r_outer) * (u / r_outer), 0.0));
+        let sign_v = select(-1.0, 1.0, v >= 0.0);
+        // Looking from above (cos_i > 0), the upper arch (v > 0) is larger and higher
+        let tilt_bias = 0.06 * sign_v * cos_i;
+        let arch_scale = max((0.22 + tilt_bias) * sin_i, 0.015);
+        let b_max = r_shadow + arch_scale * y_arch;
 
-        if (arch_profile > 0.01 && r_lensed >= r_shadow && r_lensed <= r_outer) {
+        if (b <= b_max) {
+            let t_arch = clamp((b - r_shadow) / max(b_max - r_shadow, 0.001), 0.0, 1.0);
+            let r_lensed = r_inner + pow(t_arch, 0.85) * (r_outer - r_inner);
+            let z_rear = -sqrt(max(r_lensed * r_lensed - u * u, 0.001));
+            let phi_lensed = atan2(z_rear, u);
+
+            let outer_fade = (1.0 - smoothstep(0.72, 1.0, t_arch)) * arch_weight * v_gate;
             let sample = sample_accretion_disk(r_lensed, phi_lensed, r_inner, r_outer, r_shadow, sin_i, disk.time);
-            lensed_emission = sample.emission * arch_profile * 0.85;
-            lensed_alpha    = sample.alpha   * arch_profile * 0.85;
+
+            lensed_emission = sample.emission * outer_fade;
+            lensed_alpha    = sample.alpha    * outer_fade;
         }
     }
 
-    // ─── 6. Photon Ring (asymptotic, full circumference) ─────────────────────
+    // ─── 5. Photon Ring (asymptotic, full circumference) ─────────────────────
     var photon_ring_em    = vec3<f32>(0.0);
     var photon_ring_alpha = 0.0;
     let photon_ring_b = r_shadow * 1.018;
@@ -211,22 +222,22 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let ring_width    = r_shadow * 0.016;
     if (ring_dist < ring_width * 2.5) {
         let ring_profile   = exp(-0.5 * pow(ring_dist / ring_width, 2.0));
-        let isco_sample    = sample_accretion_disk(r_inner * 1.12, atan2(-v, -u), r_inner, r_outer, r_shadow, sin_i, disk.time);
+        let ring_phi       = atan2(abs(v), u);
+        let isco_sample    = sample_accretion_disk(r_inner * 1.05, ring_phi, r_inner, r_outer, r_shadow, sin_i, disk.time);
         photon_ring_em    = isco_sample.emission * ring_profile * 1.5;
-        photon_ring_alpha = ring_profile * 0.96;
+        photon_ring_alpha = ring_profile * 0.95;
     }
 
-    // ─── 7. Shadow core & composite ──────────────────────────────────────────
+    // ─── 6. Shadow core & composite ──────────────────────────────────────────
     // in_shadow = 1.0 inside the event horizon shadow (b < r_shadow), smooth transition at boundary.
     // The event horizon shadow is an absolute light trap: it NEVER discards and is NEVER transparent.
-    let in_shadow = 1.0 - smoothstep(r_shadow * 0.985, r_shadow * 1.01, b);
+    let in_shadow = 1.0 - smoothstep(r_shadow * 0.985, r_shadow * 1.012, b);
 
     // Foreground: the near side of the accretion disk physically passing in front of the black hole
-    let is_front = (v * cos_i <= 0.0);
     let fg_emission = select(vec3<f32>(0.0), direct_emission, is_front);
     let fg_alpha    = select(0.0, direct_alpha, is_front);
 
-    // Background: lensed arc, photon ring, and rear side of the direct disk.
+    // Background: rear side of the direct disk, lensed arches, and photon ring.
     // All light rays originating behind the event horizon are absorbed by the black hole!
     let rear_disk_em = select(direct_emission, vec3<f32>(0.0), is_front);
     let rear_disk_a  = select(direct_alpha, 0.0, is_front);
@@ -235,14 +246,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let bg_emission = (rear_disk_em + lensed_emission + photon_ring_em) * bg_transmission;
     let bg_alpha    = (rear_disk_a + lensed_alpha + photon_ring_alpha) * bg_transmission;
 
-    // Inside the shadow, the black hole itself is an opaque, zero-emission black body.
-    // Outside the shadow, only the background emissions exist.
-    let mid_emission = bg_emission;
-    let mid_alpha    = clamp(in_shadow + bg_alpha, 0.0, 1.0);
-
     // Composite foreground (near-side disk) over mid-layer (shadow + background):
-    let total_emission = fg_emission + mid_emission * (1.0 - fg_alpha);
-    let total_alpha    = clamp(fg_alpha + mid_alpha * (1.0 - fg_alpha), 0.0, 1.0);
+    let total_emission = fg_emission + bg_emission * (1.0 - fg_alpha);
+    let total_alpha    = clamp(fg_alpha + (in_shadow + bg_alpha) * (1.0 - fg_alpha), 0.0, 1.0);
 
     // Only discard outside the event horizon shadow where the quad is transparent to the skybox
     if (in_shadow < 0.01 && total_alpha < 0.005) {

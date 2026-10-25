@@ -1,4 +1,5 @@
 use crate::simulation::components::*;
+use crate::simulation::relativity::kerr::KerrBlackHole;
 use crate::simulation::relativity::types::RelativisticState;
 use crate::simulation::resources::*;
 use bevy::math::DVec3;
@@ -38,28 +39,31 @@ pub fn spawn_galactic_collision_scenario(
             RelativisticState::default(),
             SpinState::default(),
         ))
+        .insert(KerrBlackHole::sagittarius_a())
         .id();
 
     // Andromeda SMBH incoming
     let m31_mass = 140_000_000.0; // Andromeda SMBH is much larger
-    commands.spawn((
-        CelestialBody {
-            name: "Andromeda SMBH".to_string(),
-            body_type: BodyType::BlackHole,
-        },
-        Mass(m31_mass),
-        Radius(2.76),
-        SimPosition(DVec3::new(45_000.0, 6_000.0, 22_500.0)),
-        SimVelocity(DVec3::new(-90.0, -12.0, -45.0)),
-        SimAcceleration::default(),
-        Temperature(1e-7),
-        Luminosity(500.0),
-        IgnitionState::default(),
-        Composition::pure_hydrogen(),
-        AngularMomentum::default(),
-        RelativisticState::default(),
-        SpinState::default(),
-    ));
+    commands
+        .spawn((
+            CelestialBody {
+                name: "Andromeda SMBH".to_string(),
+                body_type: BodyType::BlackHole,
+            },
+            Mass(m31_mass),
+            Radius(2.76),
+            SimPosition(DVec3::new(45_000.0, 6_000.0, 22_500.0)),
+            SimVelocity(DVec3::new(-90.0, -12.0, -45.0)),
+            SimAcceleration::default(),
+            Temperature(1e-7),
+            Luminosity(500.0),
+            IgnitionState::default(),
+            Composition::pure_hydrogen(),
+            AngularMomentum::default(),
+            RelativisticState::default(),
+            SpinState::default(),
+        ))
+        .insert(KerrBlackHole::new(m31_mass, 0.85, DVec3::Y));
 
     mw_smbh
 }

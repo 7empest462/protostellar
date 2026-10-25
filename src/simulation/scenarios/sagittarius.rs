@@ -12,6 +12,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
+use crate::simulation::relativity::kerr::KerrBlackHole;
 use crate::simulation::relativity::types::RelativisticState;
 use crate::simulation::resources::DiskParameters;
 use crate::utils::constants::*;
@@ -142,6 +143,14 @@ fn spawn_sagittarius_a_black_hole(commands: &mut Commands) -> Entity {
                 shockwave_radius: 0.0,
             },
             RelativisticState::default(),
+        ))
+        .insert((
+            KerrBlackHole::sagittarius_a(),
+            SpinState {
+                rotation_period_hours: 0.18,
+                axial_tilt_degrees: 0.0,
+                spin_vector: DVec3::Y,
+            },
         ))
         .id()
 }
