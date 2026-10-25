@@ -127,14 +127,11 @@ pub fn compute_eclipse_moons_data(
     visual_radius: f32,
     star_dir: Vec3,
     all_moons: &[(Entity, Vec3, f32, Option<Entity>)],
-) -> ([Vec4; 2], [Vec4; 2]) {
-    let mut moons_pos = [Vec4::ZERO; 2];
-    let mut moons_data = [Vec4::ZERO; 2];
-    let mut slot = 0;
+) -> ([Vec4; 4], [Vec4; 4]) {
+    let mut moons_pos = [Vec4::ZERO; 4];
+    let mut moons_data = [Vec4::ZERO; 4];
+    let mut candidates: Vec<(f32, Vec4)> = Vec::new();
     for &(m_ent, m_pos, m_rad, opt_parent) in all_moons {
-        if slot >= 2 {
-            break;
-        }
         if m_ent == entity {
             continue;
         }
@@ -144,20 +141,30 @@ pub fn compute_eclipse_moons_data(
             let d_vec = m_pos - planet_pos;
             let s = d_vec.dot(star_dir);
             if s > 0.0 {
-                let d_perp_sq = d_vec.length_squared() - s * s;
-                let max_touch_dist = visual_radius + m_rad * 1.5;
+                let d_perp_sq = (d_vec.length_squared() - s * s).max(0.0);
+                let max_touch_dist = visual_radius + m_rad * 1.6;
                 if d_perp_sq < max_touch_dist * max_touch_dist {
-                    let norm_pos = d_vec / visual_radius.max(1e-5);
-                    let norm_rad = (m_rad / visual_radius.max(1e-5)).clamp(0.01, 1.0);
-                    if let (Some(pos_slot), Some(data_slot)) =
-                        (moons_pos.get_mut(slot), moons_data.get_mut(slot))
-                    {
-                        *pos_slot = Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad);
-                        *data_slot = Vec4::new(1.0, 0.25, 0.96, 0.0);
-                        slot += 1;
+                    let mut norm_pos = d_vec / visual_radius.max(1e-5);
+                    let s_norm = norm_pos.dot(star_dir);
+                    if s_norm < 1.30 {
+                        norm_pos += star_dir * (1.30 - s_norm);
                     }
+                    let norm_rad = (m_rad / visual_radius.max(1e-5)).clamp(0.08, 0.65);
+                    candidates.push((
+                        d_perp_sq,
+                        Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad),
+                    ));
                 }
             }
+        }
+    }
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (slot, (_, pos_vec)) in candidates.into_iter().take(4).enumerate() {
+        if let (Some(pos_slot), Some(data_slot)) =
+            (moons_pos.get_mut(slot), moons_data.get_mut(slot))
+        {
+            *pos_slot = pos_vec;
+            *data_slot = Vec4::new(1.0, 0.25, 0.96, 0.0);
         }
     }
     (moons_pos, moons_data)

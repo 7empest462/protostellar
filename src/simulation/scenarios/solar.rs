@@ -415,6 +415,9 @@ pub fn spawn_solar_nebula_mmsn(
         .into_iter()
         .chain(get_mmsn_outer_seeds());
 
+    let mut jupiter_info = None;
+    let mut saturn_info = None;
+
     for (r_au, mass_s, rad_au, name, comp, b_type, phi_off) in all_seeds {
         let (pos, vel) = compute_mmsn_seed_kinematics(name, r_au, phi_off);
 
@@ -458,7 +461,276 @@ pub fn spawn_solar_nebula_mmsn(
         ));
 
         attach_mmsn_special_components(&mut entity_cmds, name, rad_au);
+        let spawned_id = entity_cmds.id();
+
+        if name.contains("Jupiter") {
+            jupiter_info = Some((spawned_id, pos, vel, mass_s));
+        } else if name.contains("Saturn") {
+            saturn_info = Some((spawned_id, pos, vel, mass_s));
+        }
     }
 
+    spawn_mmsn_satellites(commands, jupiter_info, saturn_info);
+
     star
+}
+
+fn spawn_mmsn_satellites(
+    commands: &mut Commands,
+    jupiter_info: Option<(Entity, DVec3, DVec3, f64)>,
+    saturn_info: Option<(Entity, DVec3, DVec3, f64)>,
+) {
+    if let Some((j_ent, j_pos, j_vel, j_mass)) = jupiter_info {
+        spawn_jupiter_satellites(commands, j_ent, j_pos, j_vel, j_mass);
+    }
+
+    if let Some((s_ent, s_pos, s_vel, s_mass)) = saturn_info {
+        spawn_saturn_satellites(commands, s_ent, s_pos, s_vel, s_mass);
+    }
+}
+
+struct SatelliteMoonParams<'a> {
+    name: &'a str,
+    semi_major_axis_au: f64,
+    mass: f64,
+    radius: f64,
+    temperature: f64,
+    composition: Composition,
+    initial_anomaly: f64,
+    volcanic_state: Option<VolcanicState>,
+    tidal_state: Option<TidalState>,
+}
+
+fn spawn_satellite_moon(
+    commands: &mut Commands,
+    parent_ent: Entity,
+    parent_pos: DVec3,
+    parent_vel: DVec3,
+    parent_mass: f64,
+    params: SatelliteMoonParams,
+) {
+    let a = params.semi_major_axis_au;
+    let period_yr = 2.0 * PI * (a * a * a / (G_ASTRO * parent_mass.max(1e-8))).sqrt();
+    let v_circ = (G_ASTRO * parent_mass.max(1e-8) / a).sqrt();
+    let (sin_anom, cos_anom) = params.initial_anomaly.sin_cos();
+    let pos = parent_pos + DVec3::new(a * cos_anom, 0.0, a * sin_anom);
+    let vel = parent_vel + DVec3::new(-v_circ * sin_anom, 0.0, v_circ * cos_anom);
+
+    let mut diff = InternalDifferentiation::default();
+    diff.recalculate(params.mass, params.radius, &params.composition);
+
+    let mut ent_cmd = commands.spawn((
+        CelestialBody {
+            body_type: BodyType::Moon,
+            name: params.name.to_string(),
+        },
+        Mass(params.mass),
+        SimPosition(pos),
+        SimVelocity(vel),
+        SimAcceleration::default(),
+        Radius(params.radius),
+        Temperature(params.temperature),
+        Luminosity(0.0),
+        AngularMomentum(pos.cross(vel) * params.mass),
+        params.composition,
+        diff,
+        SpinState::default(),
+        VolatileInventory::default(),
+    ));
+
+    ent_cmd.insert(SatelliteOf {
+        parent: parent_ent,
+        semi_major_axis_au: a,
+        orbital_period_years: period_yr,
+        true_anomaly: params.initial_anomaly,
+    });
+
+    if let Some(volc) = params.volcanic_state {
+        ent_cmd.insert(volc);
+    }
+    if let Some(tidal) = params.tidal_state {
+        ent_cmd.insert(tidal);
+    }
+}
+
+fn spawn_jupiter_satellites(
+    commands: &mut Commands,
+    j_ent: Entity,
+    j_pos: DVec3,
+    j_vel: DVec3,
+    j_mass: f64,
+) {
+    // 1. Io (Hyperactive Sulfur Volcanism)
+    spawn_satellite_moon(
+        commands,
+        j_ent,
+        j_pos,
+        j_vel,
+        j_mass,
+        SatelliteMoonParams {
+            name: "Io (Volcanic Moon)",
+            semi_major_axis_au: 0.0068,
+            mass: 0.015 * EARTH_MASS_SOLAR,
+            radius: EARTH_RADIUS_AU * 0.286,
+            temperature: 130.0,
+            composition: Composition::rocky(),
+            initial_anomaly: PI - 0.12,
+            volcanic_state: Some(VolcanicState::io()),
+            tidal_state: Some(TidalState {
+                host_entity: Some(j_ent),
+                love_number_k2: 0.15,
+                tidal_q: 36.0,
+                is_tidally_locked: true,
+                locking_progress: 1.0,
+                resonance_ratio: 1.0,
+                tidal_heating_power_watts: 1.0e14,
+                tidal_heating_flux_w_m2: 2.5,
+                circularization_rate_per_myr: 0.0,
+                circularization_timescale_yr: 1e6,
+                sync_timescale_yr: 1e4,
+            }),
+        },
+    );
+
+    // 2. Europa (Cryotectonic Water-Ice World)
+    spawn_satellite_moon(
+        commands,
+        j_ent,
+        j_pos,
+        j_vel,
+        j_mass,
+        SatelliteMoonParams {
+            name: "Europa (Cryotectonic Moon)",
+            semi_major_axis_au: 0.0095,
+            mass: 0.008 * EARTH_MASS_SOLAR,
+            radius: EARTH_RADIUS_AU * 0.245,
+            temperature: 102.0,
+            composition: Composition::icy(),
+            initial_anomaly: PI + 0.10,
+            volcanic_state: Some(VolcanicState::europa()),
+            tidal_state: Some(TidalState {
+                host_entity: Some(j_ent),
+                love_number_k2: 0.25,
+                tidal_q: 100.0,
+                is_tidally_locked: true,
+                locking_progress: 1.0,
+                resonance_ratio: 1.0,
+                tidal_heating_power_watts: 3.5e12,
+                tidal_heating_flux_w_m2: 0.12,
+                circularization_rate_per_myr: 0.0,
+                circularization_timescale_yr: 1e7,
+                sync_timescale_yr: 1e5,
+            }),
+        },
+    );
+
+    // 3. Ganymede (Magnetic Giant Water-Ice World)
+    spawn_satellite_moon(
+        commands,
+        j_ent,
+        j_pos,
+        j_vel,
+        j_mass,
+        SatelliteMoonParams {
+            name: "Ganymede (Magnetic Moon)",
+            semi_major_axis_au: 0.0130,
+            mass: 0.025 * EARTH_MASS_SOLAR,
+            radius: EARTH_RADIUS_AU * 0.413,
+            temperature: 110.0,
+            composition: Composition::icy(),
+            initial_anomaly: PI - 0.28,
+            volcanic_state: None,
+            tidal_state: Some(TidalState {
+                host_entity: Some(j_ent),
+                love_number_k2: 0.20,
+                tidal_q: 120.0,
+                is_tidally_locked: true,
+                locking_progress: 1.0,
+                resonance_ratio: 1.0,
+                tidal_heating_power_watts: 8.0e11,
+                tidal_heating_flux_w_m2: 0.04,
+                circularization_rate_per_myr: 0.0,
+                circularization_timescale_yr: 2e7,
+                sync_timescale_yr: 2e5,
+            }),
+        },
+    );
+
+    // 4. Callisto (Heavily Cratered Ice-Rock World)
+    spawn_satellite_moon(
+        commands,
+        j_ent,
+        j_pos,
+        j_vel,
+        j_mass,
+        SatelliteMoonParams {
+            name: "Callisto (Cratered Moon)",
+            semi_major_axis_au: 0.0175,
+            mass: 0.018 * EARTH_MASS_SOLAR,
+            radius: EARTH_RADIUS_AU * 0.378,
+            temperature: 120.0,
+            composition: Composition {
+                metal_frac: 0.05,
+                silicate_frac: 0.48,
+                ice_frac: 0.47,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            initial_anomaly: PI + 0.32,
+            volcanic_state: None,
+            tidal_state: Some(TidalState {
+                host_entity: Some(j_ent),
+                love_number_k2: 0.18,
+                tidal_q: 150.0,
+                is_tidally_locked: true,
+                locking_progress: 1.0,
+                resonance_ratio: 1.0,
+                tidal_heating_power_watts: 1.0e11,
+                tidal_heating_flux_w_m2: 0.01,
+                circularization_rate_per_myr: 0.0,
+                circularization_timescale_yr: 5e7,
+                sync_timescale_yr: 5e5,
+            }),
+        },
+    );
+}
+
+fn spawn_saturn_satellites(
+    commands: &mut Commands,
+    s_ent: Entity,
+    s_pos: DVec3,
+    s_vel: DVec3,
+    s_mass: f64,
+) {
+    // Enceladus (Cryovolcanic Water-Ice Geysers Feeding E-Ring)
+    spawn_satellite_moon(
+        commands,
+        s_ent,
+        s_pos,
+        s_vel,
+        s_mass,
+        SatelliteMoonParams {
+            name: "Enceladus (Cryo Moon)",
+            semi_major_axis_au: 0.0055,
+            mass: 1.8e-5 * EARTH_MASS_SOLAR,
+            radius: EARTH_RADIUS_AU * 0.0395,
+            temperature: 75.0,
+            composition: Composition::icy(),
+            initial_anomaly: PI * 0.95,
+            volcanic_state: Some(VolcanicState::enceladus()),
+            tidal_state: Some(TidalState {
+                host_entity: Some(s_ent),
+                love_number_k2: 0.02,
+                tidal_q: 20.0,
+                is_tidally_locked: true,
+                locking_progress: 1.0,
+                resonance_ratio: 1.0,
+                tidal_heating_power_watts: 5.0e9,
+                tidal_heating_flux_w_m2: 0.08,
+                circularization_rate_per_myr: 0.0,
+                circularization_timescale_yr: 1e6,
+                sync_timescale_yr: 1e4,
+            }),
+        },
+    );
 }

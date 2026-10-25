@@ -158,10 +158,13 @@ fn test_theia_precision_rendezvous_and_moon_formation() {
 
     // Verify Moon state
     let mut moon_found = false;
-    let mut moon_query = app
-        .world_mut()
-        .query::<(&CelestialBody, &Mass, Option<&SatelliteOf>)>();
-    for (body, mass, sat) in moon_query.iter(app.world()) {
+    let mut moon_query = app.world_mut().query::<(
+        &CelestialBody,
+        &Mass,
+        Option<&SatelliteOf>,
+        Option<&SpinState>,
+    )>();
+    for (body, mass, sat, opt_spin) in moon_query.iter(app.world()) {
         if body.name == "The Moon" {
             moon_found = true;
             assert_eq!(body.body_type, BodyType::Moon);
@@ -180,6 +183,12 @@ fn test_theia_precision_rendezvous_and_moon_formation() {
                 sat_of.semi_major_axis_au > 0.005 && sat_of.semi_major_axis_au < 0.015,
                 "Lunar orbital radius must be stable outside visual mesh (found {})",
                 sat_of.semi_major_axis_au
+            );
+            let moon_spin = opt_spin.expect("The Moon must have SpinState");
+            assert!(
+                moon_spin.rotation_period_hours > 600.0 && moon_spin.rotation_period_hours < 700.0,
+                "The Moon must have synchronous lunar rotation period (~655-665 hours), got {:.2} hours",
+                moon_spin.rotation_period_hours
             );
         }
     }
@@ -785,5 +794,152 @@ fn test_the_moon_retains_spherical_planet_mesh_under_gas_and_pebble_accretion() 
         select_body_mesh(&sibling_moon, 0.00001, vis),
         planet_mesh,
         "Sibling moons must always select planet_mesh"
+    );
+}
+
+#[test]
+fn test_rover_accurately_intercepts_and_lands_on_the_moon() {
+    use protostellar::simulation::physics::step_physics_simulation;
+    use protostellar::simulation::probes::{
+        navigation::probe_navigation_system, FlightComputer, ProbeStatus, ProbeType, SpaceProbe,
+    };
+
+    let mut app = App::new();
+    let mut config = SimulationConfig::default();
+    config.enable_gpu_compute = false;
+    app.insert_resource(config)
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<protostellar::game::phases::LateHeavyBombardmentState>()
+        .init_resource::<ActiveScenarioState>()
+        .add_systems(
+            Update,
+            (
+                step_physics_simulation,
+                probe_navigation_system.after(step_physics_simulation),
+            ),
+        );
+
+    // Central star (Sun)
+    app.world_mut().spawn((
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+        Mass(1.0),
+        Radius(0.00465),
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::MainSequenceStar,
+        },
+        CentralStar,
+    ));
+
+    // Earth at 1 AU
+    let earth_vel = DVec3::new(0.0, 0.0, (G_ASTRO * 1.0 / 1.0_f64).sqrt());
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            Composition::rocky(),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(earth_vel),
+            SimAcceleration(DVec3::ZERO),
+        ))
+        .id();
+
+    // The Moon at 0.0120 AU separation with physical 27.32-day period (0.0748 yr)
+    let orbit_dist_au = 0.0120;
+    let p_moon_yr = 0.0748;
+    let v_moon_orb = (std::f64::consts::TAU / p_moon_yr) * orbit_dist_au;
+    let moon_radius = EARTH_RADIUS_AU * 0.272;
+    let mut moon_spin = SpinState::default();
+    moon_spin.set_period_and_tilt(
+        p_moon_yr * YEAR_SECONDS / 3600.0,
+        1.54,
+        0.0123 * EARTH_MASS_SOLAR,
+        moon_radius,
+    );
+    let moon_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "The Moon".to_string(),
+                body_type: BodyType::Moon,
+            },
+            Mass(0.0123 * EARTH_MASS_SOLAR),
+            Radius(moon_radius),
+            Composition::rocky(),
+            SimPosition(DVec3::new(1.0 + orbit_dist_au, 0.0, 0.0)),
+            SimVelocity(earth_vel + DVec3::new(0.0, 0.0, v_moon_orb)),
+            SimAcceleration(DVec3::ZERO),
+            moon_spin,
+            SatelliteOf {
+                parent: earth_ent,
+                semi_major_axis_au: orbit_dist_au,
+                orbital_period_years: p_moon_yr,
+                true_anomaly: 0.0,
+            },
+        ))
+        .id();
+
+    // Spawn a Rover near Earth aimed at The Moon
+    let start_pos = DVec3::new(1.001, 0.0, 0.0);
+    let rover_ent = app
+        .world_mut()
+        .spawn((
+            SpaceProbe::new(ProbeType::Rover, 1),
+            FlightComputer {
+                target_entity: moon_ent,
+                target_name: "The Moon".to_string(),
+                launch_pos: start_pos,
+                distance_to_target: orbit_dist_au - 0.001,
+                relative_speed: 0.8,
+            },
+            SimPosition(start_pos),
+            SimVelocity(earth_vel + DVec3::new(0.8, 0.0, v_moon_orb)),
+            SimAcceleration::default(),
+            Mass(0.0),
+            Radius(1e-7),
+            CelestialBody {
+                name: "Rover #1 (to The Moon)".to_string(),
+                body_type: BodyType::Asteroid,
+            },
+        ))
+        .id();
+
+    // Advance simulation in small real-time-like steps until touchdown
+    for _ in 0..60 {
+        app.update();
+    }
+
+    let probe = app.world().get::<SpaceProbe>(rover_ent).unwrap();
+    assert_eq!(
+        probe.status,
+        ProbeStatus::Landed,
+        "Rover launched from Earth must intercept and land on The Moon instead of missing it"
+    );
+
+    let probe_pos = app.world().get::<SimPosition>(rover_ent).unwrap().0;
+    let moon_pos = app.world().get::<SimPosition>(moon_ent).unwrap().0;
+    let moon_vis_rad = f64::from(
+        app.world()
+            .resource::<SimulationConfig>()
+            .calc_visual_radius_for_type(moon_radius, BodyType::Moon),
+    );
+    let dist_from_moon_center = (probe_pos - moon_pos).length();
+    let expected_surface_dist = moon_vis_rad * 1.008;
+    assert!(
+        (dist_from_moon_center - expected_surface_dist).abs() < 1e-5,
+        "Landed rover must sit directly on The Moon's surface (expected {:.6} AU, got {:.6} AU)",
+        expected_surface_dist,
+        dist_from_moon_center
     );
 }
