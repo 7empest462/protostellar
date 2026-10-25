@@ -31,9 +31,9 @@ pub struct PlanetUniforms {
     /// x: inner_radius_ratio, y: outer_radius_ratio, z: optical_depth, w: has_rings (1.0 or 0.0)
     pub ring_shadow_params: Vec4,
     /// xyz: relative moon pos in planet radii, w: moon radius in planet radii
-    pub eclipse_moons_pos: [Vec4; 2],
+    pub eclipse_moons_pos: [Vec4; 4],
     /// x: active flag (1.0 or 0.0), y: penumbra softness, z: shadow depth, w: reserved
-    pub eclipse_moons_data: [Vec4; 2],
+    pub eclipse_moons_data: [Vec4; 4],
     /// x: geological_age_gyr (0.0=Hadean, 4.56=Modern), y: continental_drift_phase, z: ocean_oxidation_progress (0.0=Archean iron-green, 1.0=blue), w: terrestrial_vegetation_fraction (0.0=craton rock, 1.0=lush flora)
     pub geological_params: Vec4,
     /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
@@ -46,6 +46,8 @@ pub struct PlanetUniforms {
     pub planet_center_and_radius: Vec4,
     /// x: technosignature (0.0 to 2.0), y: flora_pigment_type (0..=3), z: bioluminescence_intensity (0..=1), w: surface_gravity_g
     pub civilization_params: Vec4,
+    /// xyz: unit 3D direction toward dominant tidal perturber in world space, w: packed (roche_stretch 0.0..0.78 + 2.0 if tidally locked)
+    pub tidal_deformation: Vec4,
 }
 
 impl Default for PlanetUniforms {
@@ -66,14 +68,15 @@ impl Default for PlanetUniforms {
             star_dir_and_lum: Vec4::new(0.0, 1.0, 0.0, 1.0),
             scattering_params: Vec4::new(0.28, 0.65, 1.0, 0.82),
             ring_shadow_params: Vec4::ZERO,
-            eclipse_moons_pos: [Vec4::ZERO; 2],
-            eclipse_moons_data: [Vec4::ZERO; 2],
+            eclipse_moons_pos: [Vec4::ZERO; 4],
+            eclipse_moons_data: [Vec4::ZERO; 4],
             geological_params: Vec4::new(4.56, 0.0, 1.0, 1.0),
             aurora_params: Vec4::ZERO,
             storm_features: Vec4::ZERO,
             storm_dynamics: Vec4::new(0.0, 1.0, 0.0, 0.5),
             planet_center_and_radius: Vec4::new(0.0, 0.0, 0.0, 1.0),
             civilization_params: Vec4::ZERO,
+            tidal_deformation: Vec4::ZERO,
         }
     }
 }
@@ -101,16 +104,20 @@ pub struct AtmosphereUniforms {
     pub rayleigh_params: Vec4,
     /// x, y, z: Mie aerosol scattering coefficients beta_M (RGB), w: scale height H_M
     pub mie_params: Vec4,
-    /// x: Mie asymmetry parameter g (0.76 - 0.85), y: surface pressure bar, z: inner planet radius, w: outer atmosphere radius
+    /// x: Mie asymmetry parameter g (0.76 - 0.85), y: surface pressure bar (< 0.0 = Stellar Corona Mode), z: inner planet radius, w: outer atmosphere radius
     pub optical_params: Vec4,
     /// x, y, z: unit direction to central star in world coordinates, w: star intensity factor
     pub star_dir_and_intensity: Vec4,
     /// x, y, z: planet world position, w: visual scale factor
     pub planet_center: Vec4,
-    /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index
+    /// x: oval_colatitude_rad, y: oval_width_rad, z: auroral_intensity, w: geomagnetic_kp_index (or time in Corona Mode)
     pub aurora_params: Vec4,
-    /// x, y, z: unit 3D spin axis in world coordinates, w: reserved
+    /// x, y, z: unit 3D spin axis in world coordinates, w: rotational oblateness (0.0..0.25)
     pub spin_axis: Vec4,
+    /// x: inner_ring_ratio, y: outer_ring_ratio, z: ring_optical_depth, w: packed (1.0 = ozone layer, +2.0 = has rings)
+    pub ring_and_ozone_params: Vec4,
+    /// xyz: unit 3D direction toward dominant tidal perturber in world space, w: roche_stretch (0.0..0.85)
+    pub tidal_deformation: Vec4,
 }
 
 impl Default for AtmosphereUniforms {
@@ -123,6 +130,8 @@ impl Default for AtmosphereUniforms {
             planet_center: Vec4::ZERO,
             aurora_params: Vec4::ZERO,
             spin_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
+            ring_and_ozone_params: Vec4::ZERO,
+            tidal_deformation: Vec4::ZERO,
         }
     }
 }
@@ -530,6 +539,65 @@ impl Material for VolumetricNebulaMaterial {
         _key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = Some(bevy::render::render_resource::Face::Front);
+        Ok(())
+    }
+}
+
+/// GPU uniform parameters for 3D volumetric circumstellar environments (LBV Homunculus bipolar
+/// nebulae, Wolf-Rayet colliding-wind pinwheel spirals, AGB Carbon/Hypergiant detached shells,
+/// Boson/Quark star relativistic lensing rings, and Herbig Ae/Be flared accretion envelopes).
+#[derive(Clone, ShaderType, Debug, PartialEq)]
+pub struct CircumstellarUniforms {
+    /// xyz: star world position (AU), w: outer envelope radius (AU)
+    pub center_and_outer_r: Vec4,
+    /// x: inner star visual radius (AU), y: env_type (0..=5), z: sub_mode (0..=2), w: elapsed time (s)
+    pub mode_and_time: Vec4,
+    /// xyz: unit 3D spin / bipolar symmetry axis in world space, w: asymmetry / bipolarity factor
+    pub spin_axis_and_asymmetry: Vec4,
+    /// Primary emission / scattering color RGBA (inner ionized / reflection zone)
+    pub primary_color: Vec4,
+    /// Secondary emission / dust absorption color RGBA (outer shock / soot shell)
+    pub secondary_color: Vec4,
+    /// x: wind spiral pitch / shell frequency, y: clumping turbulence, z: optical density, w: pulse rate
+    pub kinematics: Vec4,
+}
+
+impl Default for CircumstellarUniforms {
+    fn default() -> Self {
+        Self {
+            center_and_outer_r: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            mode_and_time: Vec4::new(0.25, 0.0, 0.0, 0.0),
+            spin_axis_and_asymmetry: Vec4::new(0.0, 1.0, 0.0, 1.0),
+            primary_color: Vec4::new(0.45, 0.95, 1.65, 1.0),
+            secondary_color: Vec4::new(1.35, 0.45, 0.22, 1.0),
+            kinematics: Vec4::new(12.0, 1.0, 1.2, 1.0),
+        }
+    }
+}
+
+/// Custom Bevy material for 3D volumetric circumstellar nebulae, wind pinwheels, and relativistic lensing shells.
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct CircumstellarMaterial {
+    #[uniform(0)]
+    pub uniforms: CircumstellarUniforms,
+}
+
+impl Material for CircumstellarMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/circumstellar.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
         Ok(())
     }
 }

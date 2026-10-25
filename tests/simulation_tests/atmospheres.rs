@@ -437,3 +437,53 @@ fn test_minor_bodies_do_not_spawn_atmosphere_shells() {
         "Asteroid must never spawn an atmospheric shell child"
     );
 }
+
+#[test]
+fn test_stellar_corona_uniforms_and_impact_blackbody_cooling() {
+    use protostellar::rendering::effects::shockwaves::compute_impact_blackbody_color;
+
+    let (sun_uniforms, sun_scale) = compute_stellar_corona_uniforms(
+        BodyType::YellowDwarf,
+        5778.0,
+        0.05,
+        Vec3::ZERO,
+        Vec4::Y,
+        Vec4::ZERO,
+        0.0,
+        42.0,
+    );
+    assert!(
+        sun_uniforms.optical_params.y < -0.5,
+        "Stellar corona mode sentinel must set optical_params.y < -0.5, got {}",
+        sun_uniforms.optical_params.y
+    );
+    assert!(
+        sun_scale > 2.2,
+        "Solar corona shell scale must extend well beyond photosphere, got {}",
+        sun_scale
+    );
+
+    let (o_uniforms, _o_scale) = compute_stellar_corona_uniforms(
+        BodyType::BlueGiant,
+        28000.0,
+        0.10,
+        Vec3::ZERO,
+        Vec4::Y,
+        Vec4::ZERO,
+        0.0,
+        10.0,
+    );
+    assert!(
+        o_uniforms.rayleigh_params.z > sun_uniforms.rayleigh_params.z,
+        "O/B blue giant corona must be bluer than solar G-type corona"
+    );
+
+    let base = Srgba::new(1.0, 0.4, 0.1, 1.0);
+    let flash_early = compute_impact_blackbody_color(base, 0.02, 1.0).to_srgba();
+    let flash_mid = compute_impact_blackbody_color(base, 0.35, 1.0).to_srgba();
+    let flash_late = compute_impact_blackbody_color(base, 0.85, 1.0).to_srgba();
+    assert!(
+        flash_early.blue > flash_mid.blue && flash_mid.red > flash_late.red,
+        "Impact fireball blackbody color must cool from blue-white to orange-red to dull ember"
+    );
+}

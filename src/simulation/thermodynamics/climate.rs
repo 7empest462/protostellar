@@ -117,7 +117,9 @@ fn determine_climate_coverage(
     current_ice: f32,
     comp_gas_frac: f32,
 ) -> (ClimateRegime, f32, f32, f32) {
-    let climate_regime = if matches!(body_type, BodyType::GasGiant | BodyType::IceGiant) {
+    let climate_regime = if comp_gas_frac > 0.20
+        || matches!(body_type, BodyType::GasGiant | BodyType::IceGiant)
+    {
         ClimateRegime::GasGiantEnvelope
     } else if atm_pressure < 0.02 {
         ClimateRegime::AirlessVacuum

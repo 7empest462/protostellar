@@ -8,6 +8,147 @@ use crate::utils::constants::*;
 use super::palettes::*;
 use super::{VisualAssets, VisualBody};
 
+fn resolve_star_material_mode(
+    body_type: BodyType,
+    base_color: Color,
+) -> (u32, bool, LinearRgba, AlphaMode, Color) {
+    match body_type {
+        BodyType::BlackHole => (
+            5u32,
+            true,
+            LinearRgba::BLACK,
+            AlphaMode::Blend,
+            Color::srgba(0.0, 0.0, 0.0, 0.0),
+        ),
+        BodyType::QuasiStar => (
+            7u32,
+            true,
+            // Quasi-star: deep UV-infrared furnace; high emissive for bloom corona
+            LinearRgba::from(Color::srgb(1.0, 0.10, 0.02)) * 160.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::WhiteDwarf => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 220.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar | BodyType::QuarkStar => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 280.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::BlackDwarf | BodyType::IronStar => {
+            (0u32, true, LinearRgba::BLACK, AlphaMode::Opaque, base_color)
+        }
+        BodyType::BosonStar => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 45.0,
+            AlphaMode::Blend,
+            base_color,
+        ),
+        BodyType::DarkStar => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 160.0,
+            AlphaMode::Blend,
+            base_color,
+        ),
+        BodyType::PopulationIIIStar | BodyType::LuminousBlueVariable => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 420.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::Protostar | BodyType::TTauriStar | BodyType::HerbigAeBeStar => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 65.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::RedDwarf | BodyType::OrangeDwarf => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 85.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::BrownDwarf => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 28.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::RedGiant
+        | BodyType::RedSupergiant
+        | BodyType::CarbonStar
+        | BodyType::ThorneZytkow => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 105.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::BlueGiant
+        | BodyType::BlueSupergiant
+        | BodyType::Hypergiant
+        | BodyType::YellowHypergiant
+        | BodyType::BlueStraggler => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 350.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        BodyType::WolfRayet => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 310.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+        // Sun-like main sequence — 120× produces a visible bloom corona at typical orbital distances
+        _ => (
+            0u32,
+            true,
+            LinearRgba::from(base_color) * 120.0,
+            AlphaMode::Opaque,
+            base_color,
+        ),
+    }
+}
+
+fn resolve_initial_star_light_intensity(body_type: BodyType) -> f32 {
+    // HDR-scaled initial intensity — update_star_lights_and_strobes will
+    // refine this every frame, but we seed it at the HDR level so the
+    // first frame doesn't show a dark star surrounded by an unlit void.
+    if body_type == BodyType::BlackHole
+        || body_type == BodyType::BlackDwarf
+        || body_type == BodyType::IronStar
+    {
+        0.0
+    } else if body_type == BodyType::QuasiStar || body_type == BodyType::PopulationIIIStar {
+        60_000_000.0
+    } else if matches!(
+        body_type,
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar | BodyType::QuarkStar
+    ) {
+        30_000_000.0
+    } else if body_type == BodyType::WhiteDwarf {
+        25_000_000.0
+    } else {
+        18_000_000.0
+    }
+}
+
 fn spawn_star_visual(
     entity_cmd: &mut EntityCommands,
     body: &CelestialBody,
@@ -19,38 +160,16 @@ fn spawn_star_visual(
     star_mesh: Handle<Mesh>,
     materials: &mut Assets<PlanetMaterial>,
 ) {
-    let (p_type, unlit_flag, emissive_val) = match body.body_type {
-        BodyType::BlackHole => (5u32, false, LinearRgba::BLACK),
-        BodyType::QuasiStar => (
-            7u32,
-            true,
-            // Quasi-star: deep UV-infrared furnace; high emissive for bloom corona
-            LinearRgba::from(Color::srgb(1.0, 0.10, 0.02)) * 160.0,
-        ),
-        BodyType::WhiteDwarf => (0u32, true, LinearRgba::from(base_color) * 220.0),
-        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => {
-            (0u32, true, LinearRgba::from(base_color) * 280.0)
-        }
-        BodyType::Protostar => (0u32, true, LinearRgba::from(base_color) * 55.0),
-        BodyType::RedDwarf => (0u32, true, LinearRgba::from(base_color) * 80.0),
-        BodyType::BrownDwarf => (0u32, true, LinearRgba::from(base_color) * 28.0),
-        BodyType::RedGiant | BodyType::RedSupergiant => {
-            (0u32, true, LinearRgba::from(base_color) * 95.0)
-        }
-        BodyType::BlueGiant | BodyType::BlueSupergiant | BodyType::Hypergiant => {
-            (0u32, true, LinearRgba::from(base_color) * 350.0)
-        }
-        BodyType::WolfRayet => (0u32, true, LinearRgba::from(base_color) * 310.0),
-        // Sun-like main sequence — 120× produces a visible bloom corona at typical orbital distances
-        _ => (0u32, true, LinearRgba::from(base_color) * 120.0),
-    };
+    let (p_type, unlit_flag, emissive_val, alpha_mode, star_col) =
+        resolve_star_material_mode(body.body_type, base_color);
 
     let star_subtype = star_subtype_from_body_type(body.body_type);
     let material = materials.add(PlanetMaterial {
         base: StandardMaterial {
-            base_color,
+            base_color: star_col,
             emissive: emissive_val,
             unlit: unlit_flag,
+            alpha_mode,
             ..default()
         },
         extension: PlanetMaterialExtension {
@@ -69,6 +188,8 @@ fn spawn_star_visual(
         },
     });
 
+    let initial_intensity = resolve_initial_star_light_intensity(body.body_type);
+
     entity_cmd
         .try_insert((
             VisualBody,
@@ -81,23 +202,7 @@ fn spawn_star_visual(
             parent.spawn((
                 PointLight {
                     color: base_color,
-                    // HDR-scaled initial intensity — update_star_lights_and_strobes will
-                    // refine this every frame, but we seed it at the HDR level so the
-                    // first frame doesn't show a dark star surrounded by an unlit void.
-                    intensity: if body.body_type == BodyType::BlackHole {
-                        0.0
-                    } else if body.body_type == BodyType::QuasiStar {
-                        60_000_000.0
-                    } else if matches!(
-                        body.body_type,
-                        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
-                    ) {
-                        30_000_000.0
-                    } else if body.body_type == BodyType::WhiteDwarf {
-                        25_000_000.0
-                    } else {
-                        18_000_000.0
-                    },
+                    intensity: initial_intensity,
                     range: 500.0,
                     shadow_maps_enabled: false,
                     ..default()
@@ -147,18 +252,30 @@ fn spawn_planet_visual(
         },
         extension: PlanetMaterialExtension {
             uniforms: PlanetUniforms {
-                planet_type: match body.body_type {
-                    BodyType::GasGiant => 1,
-                    BodyType::IceGiant => 2,
-                    BodyType::SuperEarth => 6,
-                    BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
-                        if norm_comp.ice_frac > 0.40 {
-                            2
-                        } else {
-                            3
-                        }
+                planet_type: if norm_comp.gas_frac > 0.20 {
+                    if norm_comp.ice_frac > 0.20
+                        || body.body_type == BodyType::IceGiant
+                        || body.name.to_lowercase().contains("uranus")
+                        || body.name.to_lowercase().contains("neptune")
+                    {
+                        2
+                    } else {
+                        1
                     }
-                    _ => 4,
+                } else {
+                    match body.body_type {
+                        BodyType::GasGiant => 1,
+                        BodyType::IceGiant => 2,
+                        BodyType::SuperEarth => 6,
+                        BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
+                            if norm_comp.ice_frac > 0.40 {
+                                2
+                            } else {
+                                3
+                            }
+                        }
+                        _ => 4,
+                    }
                 },
                 temperature: temp.0 as f32,
                 time: 0.0,

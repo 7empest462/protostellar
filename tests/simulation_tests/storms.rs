@@ -237,10 +237,10 @@ struct PbrInput {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    world_position: vec4<f32>,
-    world_normal: vec3<f32>,
-    uv: vec2<f32>,
-    color: vec4<f32>,
+    @location(0) world_position: vec4<f32>,
+    @location(1) world_normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) color: vec4<f32>,
 };
 
 struct FragmentOutput {
@@ -325,5 +325,264 @@ fn mesh_position_local_to_clip(world_from_local: mat4x4<f32>, local_position: ve
         res.is_ok(),
         "planet.wgsl must parse cleanly with naga without reserved keyword or syntax errors: {:?}",
         res.err()
+    );
+
+    let module = res.unwrap();
+    let mut validator = wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    );
+    let valid_res = validator.validate(&module);
+    if let Err(ref err) = valid_res {
+        eprintln!("WGSL Validation Error: {:?}", err);
+    }
+    assert!(
+        valid_res.is_ok(),
+        "planet.wgsl must validate cleanly with naga validator: {:?}",
+        valid_res.err()
+    );
+}
+
+#[test]
+fn test_tidal_deformation_and_camera_adaptive_visual_radius() {
+    use protostellar::rendering::bodies::transforms::{
+        compute_realistic_visual_radius, compute_tidal_deformation_uniform,
+    };
+    use protostellar::simulation::accretion::RocheLobeOverflow;
+    use protostellar::simulation::resources::SimulationConfig;
+    use protostellar::simulation::tides::TidalState;
+
+    // 1. S4714 overflowing Roche lobe near Sagittarius A* (4.154e6 M_sun)
+    let roche = RocheLobeOverflow {
+        companion: Entity::PLACEHOLDER,
+        mass_transfer_rate: 1.0e-4,
+        l1_distance_au: 0.45,
+    };
+    let u_roche = compute_tidal_deformation_uniform(
+        Vec3::new(0.51, 0.0, 0.0),
+        Vec3::ZERO,
+        4.154e6,
+        2.0,
+        0.009,
+        None,
+        Some(&roche),
+        false,
+    );
+    assert!(
+        (u_roche.x - (-1.0)).abs() < 1e-4,
+        "Tidal direction must point toward Sgr A* at origin"
+    );
+    assert!(
+        u_roche.w >= 0.35 && u_roche.w <= 0.78,
+        "Active Roche overflow must produce significant teardrop stretch: {}",
+        u_roche.w
+    );
+
+    // 2. Tidally locked exoplanet (TRAPPIST-1e) packs +2.0 in tidal_deformation.w
+    let tidal_locked = TidalState {
+        is_tidally_locked: true,
+        ..Default::default()
+    };
+    let u_locked = compute_tidal_deformation_uniform(
+        Vec3::new(0.029, 0.0, 0.0),
+        Vec3::ZERO,
+        0.0898,
+        3.0e-6,
+        0.00004,
+        Some(&tidal_locked),
+        None,
+        false,
+    );
+    assert!(
+        u_locked.w >= 2.0,
+        "Tidally locked world must pack +2.0 flag in tidal_deformation.w, got {}",
+        u_locked.w
+    );
+
+    // Moons are tidally locked to their parent planet, NOT to the central star (never +2.0 flag)
+    let u_moon = compute_tidal_deformation_uniform(
+        Vec3::new(0.98, 0.0, 0.0),
+        Vec3::ZERO,
+        1.0,
+        3.0e-8,
+        0.00001,
+        Some(&tidal_locked),
+        None,
+        true,
+    );
+    assert!(
+        u_moon.w < 1.5,
+        "Moons locked to parent planet must never receive the +2.0 star-locked eyeball flag: {}",
+        u_moon.w
+    );
+
+    // 3. Camera-adaptive visual radius shrinks smoothly on close-up and obeys 4.5% orbital cap
+    let config = SimulationConfig::default();
+    let r_far = compute_realistic_visual_radius(
+        0.0000426,
+        BodyType::TerrestrialPlanet,
+        0.029,
+        0.011,
+        25.0,
+        &config,
+    );
+    let r_close = compute_realistic_visual_radius(
+        0.0000426,
+        BodyType::TerrestrialPlanet,
+        0.029,
+        0.011,
+        0.001,
+        &config,
+    );
+    assert!(
+        r_far <= 0.029 * 0.045 + 1e-6,
+        "Distant visual radius ({r_far}) must never exceed 4.5% of orbital distance (0.029 AU)"
+    );
+    assert!(
+        r_close < r_far,
+        "Close-up visual radius ({r_close}) must shrink toward physical scale compared to distant ({r_far})"
+    );
+
+    // 4. Earth-to-Moon relative size hierarchy must stay constant (~3.8x) whether viewing Earth,
+    // viewing the Moon, or zoomed out to system scale.
+    let r_earth_phys = 0.0000426;
+    let r_moon_phys = r_earth_phys * 0.272;
+    let earth_close = compute_realistic_visual_radius(
+        r_earth_phys,
+        BodyType::TerrestrialPlanet,
+        1.0,
+        0.38,
+        0.004,
+        &config,
+    );
+    let moon_from_earth =
+        compute_realistic_visual_radius(r_moon_phys, BodyType::Moon, 1.0, 0.38, 0.012, &config);
+    let ratio_close = earth_close / moon_from_earth;
+    assert!(
+        ratio_close > 3.2 && ratio_close < 4.5,
+        "When viewing Earth up close, Earth ({earth_close}) must be ~3.8x larger than the Moon at 0.012 AU ({moon_from_earth}), got ratio {ratio_close:.2}"
+    );
+
+    let earth_far = compute_realistic_visual_radius(
+        r_earth_phys,
+        BodyType::TerrestrialPlanet,
+        1.0,
+        0.38,
+        15.0,
+        &config,
+    );
+    let moon_far =
+        compute_realistic_visual_radius(r_moon_phys, BodyType::Moon, 1.0, 0.38, 15.0, &config);
+    let ratio_far = earth_far / moon_far;
+    assert!(
+        (ratio_close - ratio_far).abs() < 0.05,
+        "Earth-to-Moon visual size ratio must not distort between close-up ({ratio_close:.2}) and far zoom ({ratio_far:.2})"
+    );
+}
+
+#[test]
+fn test_saturn_hd_stratigraphy_and_storm_state() {
+    use protostellar::rendering::bodies::palettes::compute_gas_giant_palette;
+
+    // 1. Verify Saturn and Proto-Saturn retain golden-butterscotch palette
+    let proto_saturn_color = compute_gas_giant_palette(0.000285, 263.8, "Proto-Saturn");
+    let mature_saturn_color = compute_gas_giant_palette(0.000285, 95.0, "Saturn");
+
+    let p_rgb = proto_saturn_color.to_srgba();
+    let m_rgb = mature_saturn_color.to_srgba();
+
+    assert!(
+        p_rgb.red > 0.85 && p_rgb.green > 0.75 && p_rgb.blue < 0.65,
+        "Proto-Saturn must have golden-sand butterscotch hue (R > 0.85, G > 0.75, B < 0.65), got: {:?}",
+        p_rgb
+    );
+    assert_eq!(
+        p_rgb, m_rgb,
+        "Proto-Saturn and Saturn must both receive canonical butterscotch palette"
+    );
+
+    // 2. Verify WGSL shader contains HD gas giant features and aurora pole fade
+    let shader_source = std::fs::read_to_string("assets/shaders/planet.wgsl")
+        .expect("assets/shaders/planet.wgsl must exist");
+
+    assert!(
+        shader_source.contains("let is_saturn = (hex_amp > 0.001)"),
+        "Shader must identify Saturn and apply authentic Cassini strata"
+    );
+    assert!(
+        shader_source.contains("let oblateness_amount = select(0.065, 0.098, has_saturn_rings);"),
+        "Shader must model Saturn's authentic 9.8% polar oblateness"
+    );
+    assert!(
+        shader_source.contains("let flow_ultra = noise(p_zonal_4 + warp_fine * 2.0) * nano_lod;"),
+        "Shader must include high-frequency micro-convective eddies with screen-space LOD"
+    );
+    assert!(
+        shader_source.contains("let pole_fade = smoothstep(0.04, 0.14, polar_co);"),
+        "Shader must fade aurora towards polar center to prevent flower starburst singularity"
+    );
+    assert!(
+        shader_source.contains("let circumpolar_cyclones = fbm("),
+        "Shader must blend out zonal banding into circumpolar cyclonic swirls at high latitudes"
+    );
+
+    // 3. Verify planetary_rings.wgsl parses cleanly and guards against planet clipping
+    let ring_shader_src = std::fs::read_to_string("assets/shaders/planetary_rings.wgsl")
+        .expect("assets/shaders/planetary_rings.wgsl must exist");
+    assert!(
+        ring_shader_src.contains("let inner_dist = clamp(max(ring.inner_radius, planet_surface_dist)"),
+        "Ring shader must clamp inner radius to planet surface to prevent rings clipping through the planet"
+    );
+    assert!(
+        ring_shader_src.contains("let u = (dist - inner_dist) / max(outer_dist - inner_dist"),
+        "Ring shader must normalize radial coordinates from inner to outer edge"
+    );
+
+    // Naga parse validation for planetary_rings.wgsl
+    let mock_ring_header = r#"
+struct View { world_position: vec3<f32> };
+struct VertexOutput {
+    @location(0) world_position: vec4<f32>,
+    @location(1) world_normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+};
+@group(0) @binding(0) var<uniform> view: View;
+"#;
+    let mut cleaned_ring_lines = Vec::new();
+    let mut in_import = false;
+    for line in ring_shader_src.lines() {
+        if line.starts_with("#import") {
+            if line.contains('{') && !line.contains('}') {
+                in_import = true;
+            }
+            continue;
+        }
+        if in_import {
+            if line.contains('}') {
+                in_import = false;
+            }
+            continue;
+        }
+        cleaned_ring_lines.push(line);
+    }
+    let full_ring_source = format!("{mock_ring_header}\n{}", cleaned_ring_lines.join("\n"))
+        .replace("#{MATERIAL_BIND_GROUP}", "1u");
+    let ring_naga_res = wgpu::naga::front::wgsl::parse_str(&full_ring_source);
+    assert!(
+        ring_naga_res.is_ok(),
+        "planetary_rings.wgsl must parse cleanly with naga: {:?}",
+        ring_naga_res.err()
+    );
+
+    let ring_module = ring_naga_res.unwrap();
+    let mut ring_validator = wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    );
+    let ring_valid_res = ring_validator.validate(&ring_module);
+    assert!(
+        ring_valid_res.is_ok(),
+        "planetary_rings.wgsl must validate cleanly with naga validator: {:?}",
+        ring_valid_res.err()
     );
 }
