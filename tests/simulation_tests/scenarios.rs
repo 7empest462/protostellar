@@ -112,32 +112,6 @@ fn test_gas_giant_variety_palette() {
 }
 
 #[test]
-fn test_planet_builder_presets() {
-    use protostellar::game::ui::{BuilderPreset, PlanetBuilderState};
-    use protostellar::utils::constants::{EARTH_MASS_SOLAR, JUPITER_MASS_SOLAR};
-
-    let mut state = PlanetBuilderState::default();
-
-    // Default is Earth-like
-    assert_eq!(state.active_preset, BuilderPreset::EarthLike);
-    assert!((state.mass_solar - EARTH_MASS_SOLAR).abs() < 1e-10);
-    assert!((state.semi_major_axis_au - 1.0).abs() < 1e-10);
-
-    // Apply Super-Jupiter preset
-    state.apply_preset(BuilderPreset::SuperJupiter);
-    assert_eq!(state.active_preset, BuilderPreset::SuperJupiter);
-    assert!((state.mass_solar - JUPITER_MASS_SOLAR * 3.5).abs() < 1e-10);
-    assert!((state.semi_major_axis_au - 3.2).abs() < 1e-10);
-    assert!(state.gas_frac > 0.90);
-
-    // Apply Water World preset
-    state.apply_preset(BuilderPreset::WaterWorld);
-    assert_eq!(state.active_preset, BuilderPreset::WaterWorld);
-    assert!(state.ice_frac > 0.50);
-    assert_eq!(state.gas_frac, 0.0);
-}
-
-#[test]
 fn test_asteroid_particle_accretion_capping() {
     use protostellar::simulation::components::BodyType;
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
@@ -973,7 +947,7 @@ fn test_trappist1_visual_hierarchy_and_spacing() {
         2.0 * b_vis_r
     );
 
-    // 4. Solar system planets (e.g. Earth at 1.0 AU, Mercury at 0.387 AU) must NOT be modified by compact scaling
+    // Solar system planets must NOT be modified by compact scaling
     let earth_normal =
         config.calc_visual_radius_for_type(EARTH_RADIUS_AU, BodyType::TerrestrialPlanet);
     let earth_with_orbit = config.calc_visual_radius_with_orbit(

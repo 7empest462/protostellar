@@ -14,6 +14,7 @@ pub fn update_megastructure_construction(
     query_planets: Query<&BiosphereState>,
     mut query_stars: Query<(Entity, Option<&mut DysonSwarm>), With<CentralStar>>,
     sim_time: Res<SimTime>,
+    opt_techs: Option<Res<crate::simulation::economy::UnlockedTechs>>,
 ) {
     let dt = sim_time.current_dt_yr as f32;
     let mut highest_techno = 0.0;
@@ -24,10 +25,20 @@ pub fn update_megastructure_construction(
         }
     }
 
+    let speed_mult = if opt_techs
+        .as_deref()
+        .is_some_and(|t| t.has(crate::simulation::economy::TechnologyId::DysonCollectors))
+    {
+        5.0
+    } else {
+        1.0
+    };
+
     if highest_techno > 1.5 {
         for (star_entity, opt_swarm) in query_stars.iter_mut() {
             if let Some(mut swarm) = opt_swarm {
-                swarm.completion_fraction = (swarm.completion_fraction + 0.01 * dt).min(1.0);
+                swarm.completion_fraction =
+                    (swarm.completion_fraction + 0.01 * dt * speed_mult).min(1.0);
                 swarm.mirror_count = (swarm.completion_fraction * 100_000.0) as usize;
                 // Light interception is handled dynamically in thermodynamics.rs
             } else if let Ok(mut ecmd) = commands.get_entity(star_entity) {

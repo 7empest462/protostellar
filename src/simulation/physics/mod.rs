@@ -22,11 +22,13 @@ pub use integrator::*;
 fn update_physics_energy_monitor(
     energy_monitor: &mut EnergyMonitor,
     body_data: &[PhysicsBodyEntry],
+    massive_indices: &[usize],
     star_index: Option<usize>,
     star_pos: DVec3,
     star_mass: f64,
     softening_au: f64,
 ) {
+    let softening_sq = softening_au * softening_au;
     let mut kinetic_e = 0.0;
     let mut potential_e = 0.0;
 
@@ -35,8 +37,32 @@ fn update_physics_energy_monitor(
 
         if let Some(s_idx) = star_index {
             if i != s_idx {
-                let dist = (b.pos - star_pos).length() + softening_au;
+                let dist_sq = (b.pos - star_pos).length_squared() + softening_sq;
+                let dist = dist_sq.sqrt();
                 potential_e -= (G_ASTRO * star_mass * b.mass) / dist;
+            }
+        }
+    }
+
+    // Include mutual potential energy between massive non-central bodies (binaries, giant planets, SMBHs)
+    if massive_indices.len() > 1 {
+        for (idx_a, &i) in massive_indices.iter().enumerate() {
+            if Some(i) == star_index {
+                continue;
+            }
+            let Some(b_i) = body_data.get(i) else {
+                continue;
+            };
+            for &j in massive_indices.iter().skip(idx_a + 1) {
+                if Some(j) == star_index {
+                    continue;
+                }
+                let Some(b_j) = body_data.get(j) else {
+                    continue;
+                };
+                let dist_sq = (b_i.pos - b_j.pos).length_squared() + softening_sq;
+                let dist = dist_sq.sqrt();
+                potential_e -= (G_ASTRO * b_i.mass * b_j.mass) / dist;
             }
         }
     }
@@ -96,13 +122,13 @@ fn write_back_physics_results(
             let r_mag = b.pos.length();
             let debris_escape_radius = if is_little_red_dot { 15_000.0 } else { 2000.0 };
             if r_mag > debris_escape_radius
-                && matches!(
+                && (matches!(
                     body.body_type,
                     BodyType::Planetesimal
                         | BodyType::Asteroid
                         | BodyType::Comet
                         | BodyType::DustGrain
-                )
+                ) || b.vel.dot(b.pos) > 0.0)
             {
                 escaped_minor_debris.push(e);
                 continue;
@@ -250,15 +276,18 @@ fn run_physics_substeps(
     let mut snapshot_buffer = Vec::with_capacity(body_data.len());
     let mut new_accelerations = vec![DVec3::ZERO; body_data.len()];
 
-    for _ in 0..n_substeps {
+    for step_idx in 0..n_substeps {
+        let substep_elapsed_years = elapsed_years + (step_idx as f64) * sub_dt;
+
         for body in body_data.iter_mut() {
             if body.is_central_star && !is_galaxy_collision {
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
             } else {
-                let is_bound = is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass);
-                apply_pert_kick(body, sub_dt * 0.5, star_mass, is_bound);
+                let is_bound =
+                    is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass, body.mass);
+                apply_pert_kick(body, sub_dt * 0.5, star_pos, star_mass, is_bound);
             }
         }
 
@@ -319,7 +348,7 @@ fn run_physics_substeps(
                     is_little_red_dot,
                     is_gmc_cluster,
                     cluster_com_mass,
-                    elapsed_years,
+                    substep_elapsed_years,
                     near_field_ref,
                 );
             });
@@ -341,6 +370,7 @@ fn run_physics_substeps(
             saturn_entity,
             ice_giant_entities,
             sub_dt,
+            step_idx,
             is_compact_system,
         );
 
@@ -441,17 +471,6 @@ fn analyze_physics_system(
         dt
     };
 
-    // Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding in chaotic GMC clusters
-    let safe_target_dt = if is_galaxy_collision {
-        target_dt.min(10.0)
-    } else if is_gmc_cluster {
-        target_dt.min(max_substeps as f64 * eff_dt)
-    } else {
-        target_dt
-    };
-    let n_substeps = ((safe_target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
-    let sub_dt = safe_target_dt / (n_substeps as f64);
-
     let massive_indices: Vec<usize> = body_data
         .iter()
         .enumerate()
@@ -471,12 +490,28 @@ fn analyze_physics_system(
         .map(|(i, _)| i)
         .collect();
 
+    let dyn_limit =
+        compute_dynamical_dt_limit(body_data, &massive_indices, star_index, star_pos, star_mass);
+
+    // Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding in chaotic GMC clusters or non-Keplerian interactions
+    let safe_target_dt = if is_galaxy_collision {
+        target_dt.min(10.0)
+    } else if is_gmc_cluster {
+        target_dt.min(max_substeps as f64 * eff_dt)
+    } else if let Some(cap) = dyn_limit {
+        target_dt.min(max_substeps as f64 * cap)
+    } else {
+        target_dt
+    };
+    let n_substeps = ((safe_target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
+    let sub_dt = safe_target_dt / (n_substeps as f64);
+
     for body in body_data {
         if body.acc.length_squared() < 1e-12 && !body.is_central_star {
             let r_vec = body.pos - star_pos;
             let dist_sq = r_vec.length_squared() + softening_sq;
             let dist = dist_sq.sqrt();
-            if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass) {
+            if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass, body.mass) {
                 body.acc = DVec3::ZERO;
             } else {
                 body.acc = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
@@ -496,6 +531,64 @@ fn analyze_physics_system(
         sub_dt,
         massive_indices,
     }
+}
+
+fn compute_dynamical_dt_limit(
+    body_data: &[PhysicsBodyEntry],
+    massive_indices: &[usize],
+    star_index: Option<usize>,
+    star_pos: DVec3,
+    star_mass: f64,
+) -> Option<f64> {
+    let mut min_dt_limit: Option<f64> = None;
+
+    // 1. Multi-star / Compact Binary:
+    // Only applies if there is a third massive body (massive_indices.len() > 2)
+    // and a companion star/remnant with mass >= 1e-3 * star_mass.
+    if massive_indices.len() > 2 && star_mass > 1e-6 {
+        for &idx in massive_indices {
+            if Some(idx) == star_index {
+                continue;
+            }
+            if let Some(b) = body_data.get(idx) {
+                if b.body_type.is_star_or_remnant() && b.mass >= 1e-3 * star_mass {
+                    let r = (b.pos - star_pos).length().max(1e-4);
+                    let mu_bin = G_ASTRO * (star_mass + b.mass);
+                    let t_bin = 2.0 * std::f64::consts::PI * (r * r * r / mu_bin).sqrt();
+                    let step_cap = (0.02 * t_bin).max(1e-7);
+                    min_dt_limit = Some(min_dt_limit.map_or(step_cap, |c| c.min(step_cap)));
+                }
+            }
+        }
+    }
+
+    // 2. Unbound massive interloper (Rogue Planet):
+    // Only applies to incoming rogue planets/interlopers approaching the system from deep space
+    // to ensure high-speed close encounters are numerically resolved without tunneling.
+    for &idx in massive_indices {
+        if Some(idx) == star_index {
+            continue;
+        }
+        if let Some(b) = body_data.get(idx) {
+            let is_interloper = b.name.contains("Rogue") || b.name.contains("Interloper");
+            if is_interloper && b.mass >= EARTH_MASS_SOLAR * 0.1 {
+                let is_bound = is_body_bound_to_star(b.pos, b.vel, star_pos, star_mass, b.mass);
+                let rel_pos = b.pos - star_pos;
+                let is_inbound = rel_pos.dot(b.vel) < 0.0;
+                if !is_bound && is_inbound {
+                    let speed = b.vel.length();
+                    if speed > 1e-5 {
+                        let r = rel_pos.length().max(0.1);
+                        let crossing_time = r / speed;
+                        let step_cap = (0.05 * crossing_time).max(1e-4);
+                        min_dt_limit = Some(min_dt_limit.map_or(step_cap, |c| c.min(step_cap)));
+                    }
+                }
+            }
+        }
+    }
+
+    min_dt_limit
 }
 
 /// Advances accumulated visual simulation time in seconds for shaders and rendering animations.
@@ -707,6 +800,7 @@ pub fn step_physics_simulation(
     update_physics_energy_monitor(
         &mut energy_monitor,
         &body_data,
+        &ctx.massive_indices,
         ctx.star_index,
         ctx.star_pos,
         ctx.star_mass,

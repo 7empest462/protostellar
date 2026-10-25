@@ -65,6 +65,7 @@ bevy = { version = "0.19.1", default-features = false, features = [
     "bevy_render",
     "bevy_scene",
     "bevy_sprite",
+    "bevy_sprite_render",
     "bevy_text",
     "bevy_ui",
     "bevy_ui_render",

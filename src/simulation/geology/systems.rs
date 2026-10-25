@@ -82,7 +82,8 @@ pub fn calculate_oxygen_level_pal(age_gyr: f32) -> f32 {
 )]
 pub fn sync_geological_evolution_system(
     mut commands: Commands,
-    sim_time: Res<SimTime>,
+    sim_time: Option<Res<SimTime>>,
+    time_warp: Option<Res<TimeWarp>>,
     opt_player_state: Option<Res<PlayerInteractionState>>,
     mut scrubber: ResMut<TimelineScrubber>,
     mut query: Query<(
@@ -94,6 +95,13 @@ pub fn sync_geological_evolution_system(
         Option<&mut Temperature>,
     )>,
 ) {
+    if time_warp
+        .as_ref()
+        .is_some_and(|tw| tw.is_paused && !tw.step_once)
+    {
+        return;
+    }
+    let dt_yr = sim_time.as_ref().map_or(1.0, |st| st.current_dt_yr);
     let current_epoch = scrubber.active_epoch;
 
     // Check if player selected a terrestrial world or protoplanet
@@ -187,7 +195,7 @@ pub fn sync_geological_evolution_system(
             advance_organic_epoch_step(
                 geo,
                 archetype,
-                sim_time.elapsed_years,
+                dt_yr,
                 is_target,
                 &mut scrubber,
                 opt_vol.as_deref_mut(),
@@ -203,18 +211,6 @@ pub fn sync_geological_evolution_system(
                 opt_climate.as_deref_mut(),
                 opt_temp.as_deref_mut(),
             );
-        } else {
-            // Unselected planets also sustain their chosen epoch state firmly
-            let canonical_temp = geo.epoch.canonical_temperature_k();
-            if let Some(ref mut temp) = opt_temp {
-                temp.0 = canonical_temp;
-            }
-            if let Some(ref mut vol) = opt_vol {
-                apply_epoch_volatiles(geo.epoch, vol);
-            }
-            if let Some(ref mut climate) = opt_climate {
-                apply_epoch_climate(geo.epoch, climate);
-            }
         }
     }
 }
@@ -226,15 +222,15 @@ pub fn sync_geological_evolution_system(
 fn advance_organic_epoch_step(
     geo: &mut GeologicalState,
     archetype: EpochTargetPlanet,
-    elapsed_years: f64,
+    dt_yr: f64,
     is_target: bool,
     scrubber: &mut TimelineScrubber,
     opt_vol: Option<&mut VolatileInventory>,
     opt_climate: Option<&mut PlanetaryClimate>,
     opt_temp: Option<&mut Temperature>,
 ) {
-    let sim_gyr = (elapsed_years / 1e9) as f32;
-    let current_age = (geo.geological_age_gyr + sim_gyr * 0.1).clamp(0.0, 6.0);
+    let dt_gyr = (dt_yr / 1e9) as f32;
+    let current_age = (geo.geological_age_gyr + dt_gyr).clamp(0.0, 6.0);
     let prev_epoch = geo.epoch;
     geo.geological_age_gyr = current_age;
     geo.epoch = GeologicalEpoch::from_age_and_planet(current_age, archetype);

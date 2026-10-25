@@ -18,9 +18,10 @@ fn focus_camera_on_target(
     config: &SimulationConfig,
     entity: Entity,
 ) {
+    cam.surface_horizon_mode = false;
     cam.target_entity = Some(entity);
     let visual_r = config.calc_visual_radius_for_type(radius, body_type);
-    let frame_r = if radius <= 1e-6 || visual_r < 0.001 {
+    let frame_r = if radius <= 1e-6 {
         0.015f32.max(config.calc_camera_framing_radius(visual_r))
     } else {
         config.calc_camera_framing_radius(visual_r)

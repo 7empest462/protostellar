@@ -27,7 +27,12 @@ impl Plugin for GamePlugin {
             .init_resource::<PlanetBuilderState>()
             .init_resource::<TelemetryPanelState>()
             .init_resource::<crate::game::ui::types::TrophiesPanelState>()
+            .init_resource::<crate::game::ui::types::TechTreePanelState>()
+            .init_resource::<crate::game::ui::types::CampaignPanelState>()
+            .init_resource::<crate::game::ui::hazards_panel::HazardsPanelState>()
+            .init_resource::<crate::game::ui::types::HrDiagramPanelState>()
             .init_resource::<HudVisibilityState>()
+            .add_plugins(SciFiUiThemePlugin)
             .add_systems(Startup, setup_hud)
             .add_systems(
                 Update,
@@ -41,10 +46,19 @@ impl Plugin for GamePlugin {
                         .before(crate::rendering::camera::update_pan_orbit_camera),
                     update_quick_body_selector_bar.after(handle_ui_button_interactions),
                     update_quick_bar_highlights.after(update_quick_body_selector_bar),
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     update_planet_builder_ui,
                     update_telemetry_graph_ui,
                     ui::trophies_panel::update_trophies_panel,
+                    ui::tech_tree_panel::update_tech_tree_panel,
+                    update_campaign_ui,
+                    update_hazards_ui,
                     update_epoch_scrubber_ui,
+                    update_hr_diagram_ui,
                     handle_roche_disruption_toasts,
                 ),
             )

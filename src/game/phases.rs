@@ -80,6 +80,7 @@ pub struct LateHeavyBombardmentState {
     pub migration_progress: f64, // 0.0 to 1.0
     pub water_delivered_earth_masses: f64,
     pub comets_scattered: usize,
+    pub scattered_bodies: hashbrown::HashSet<Entity>,
     pub time_active_years: f64,
     pub manual_trigger_requested: bool,
 }
@@ -93,6 +94,7 @@ impl Default for LateHeavyBombardmentState {
             migration_progress: 0.0,
             water_delivered_earth_masses: 0.0,
             comets_scattered: 0,
+            scattered_bodies: hashbrown::HashSet::new(),
             time_active_years: 0.0,
             manual_trigger_requested: false,
         }
@@ -439,7 +441,8 @@ fn evaluate_scientific_milestones(
                 current_sim_yr >= 2200.0 && (stats.planets + stats.protoplanets >= 2)
             }
             MilestoneId::GmcJeansCollapse => {
-                stats.planets + stats.protoplanets + stats.stars_count >= 1 || current_sim_yr >= 30.0
+                stats.planets + stats.protoplanets + stats.stars_count >= 1
+                    || current_sim_yr >= 30.0
             }
             MilestoneId::GmcProtostar => {
                 stats.stars_count >= 2 || stats.planets >= 1 || is_star_ignited

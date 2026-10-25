@@ -4,6 +4,32 @@ use crate::simulation::accretion::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
+/// Evaluates blackbody-cooling RGB color for an expanding impact fireball and ejecta plume.
+pub fn compute_impact_blackbody_color(base: Srgba, progress: f32, alpha_scale: f32) -> Color {
+    let p = progress.clamp(0.0, 1.0);
+    let alpha = ((1.0 - p * p) * alpha_scale).clamp(0.0, 1.0);
+    // 0.0..0.20: 6000K white-gold plasma flash -> 0.20..0.60: 3000K orange fireball -> 0.60..1.0: 1300K crimson ember
+    let (r, g, b) = if p < 0.20 {
+        let t = p / 0.20;
+        (1.0, 0.98 - t * 0.16, (0.92 - t * 0.52).max(base.blue * 0.6))
+    } else if p < 0.65 {
+        let t = (p - 0.20) / 0.45;
+        (
+            1.0,
+            (0.82 - t * 0.44).max(base.green * 0.5),
+            (0.40 - t * 0.30).max(base.blue * 0.3),
+        )
+    } else {
+        let t = (p - 0.65) / 0.35;
+        (
+            (1.0 - t * 0.35).max(0.45),
+            (0.38 - t * 0.26).max(0.08),
+            (0.10 - t * 0.08).max(0.02),
+        )
+    };
+    Color::srgba(r, g, b, alpha)
+}
+
 /// Collects collision merger and engulfment events and spawns expanding physical shockwaves.
 pub fn update_impact_shockwaves(
     time: Res<Time>,
@@ -82,7 +108,7 @@ pub fn update_roche_debris_streams(
     let dt = time.delta_secs();
 
     for ev in roche_reader.read() {
-        let n_fragments = 48;
+        let n_fragments = 56;
         let mut fragments = Vec::with_capacity(n_fragments);
         let base_angle =
             (ev.disruption_pos.z - ev.primary_pos.z).atan2(ev.disruption_pos.x - ev.primary_pos.x);
@@ -133,34 +159,64 @@ pub fn update_roche_debris_streams(
     });
 }
 
+/// Renders 3D expanding incandescent vapor domes, Mach shock rings, and ballistic ejecta plume arcs.
 pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockwavePool) {
+    let eq_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for sw in &shockwave_pool.shockwaves {
-        let alpha = (1.0 - (sw.timer / sw.max_timer)).clamp(0.0, 1.0);
-        let sw_color = Color::srgba(
-            sw.color.to_srgba().red,
-            sw.color.to_srgba().green,
-            sw.color.to_srgba().blue,
-            alpha * 0.8,
+        let progress = (sw.timer / sw.max_timer).clamp(0.0, 1.0);
+        let base_srgba = sw.color.to_srgba();
+
+        let shock_col = compute_impact_blackbody_color(base_srgba, progress, 0.88);
+        let core_col = compute_impact_blackbody_color(base_srgba, (progress * 0.6).min(1.0), 0.72);
+        let plume_col =
+            compute_impact_blackbody_color(base_srgba, (progress + 0.15).min(1.0), 0.65);
+
+        // 1. Primary & Secondary Expanding Mach Shockwave Rings
+        gizmos.circle(Isometry3d::new(sw.position, eq_rot), sw.radius, shock_col);
+        gizmos.circle(
+            Isometry3d::new(sw.position, eq_rot),
+            sw.radius * 0.74,
+            plume_col,
         );
 
-        gizmos.circle(
-            Isometry3d::new(
-                sw.position,
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
-            sw.radius,
-            sw_color,
-        );
+        // 2. 3D Incandescent Fireball Core & Expanding Vapor Dome
         gizmos.sphere(
             Isometry3d::from_translation(sw.position),
-            sw.radius * 0.4,
-            Color::srgba(
-                sw.color.to_srgba().red,
-                sw.color.to_srgba().green,
-                sw.color.to_srgba().blue,
-                alpha * 0.3,
-            ),
+            sw.radius * 0.42,
+            plume_col,
         );
+        if progress < 0.75 {
+            gizmos.sphere(
+                Isometry3d::from_translation(sw.position),
+                sw.radius * 0.20 * (1.0 - progress * 0.5),
+                core_col,
+            );
+        }
+
+        // 3. 3D Parabolic Ballistic Ejecta Plume Trajectories & Molten Droplet Tips
+        let ray_count = 10;
+        let plume_reach = sw.radius * 0.88;
+        let plume_apex = sw.max_radius * 0.34 * (progress * (1.2 - progress * 0.5)).max(0.05);
+        for i in 0..ray_count {
+            let az = (i as f32) * (std::f32::consts::TAU / ray_count as f32) + sw.max_radius * 3.1;
+            let dir_xz = Vec3::new(az.cos(), 0.0, az.sin());
+            let speed_var = 0.75 + ((i as f32 * 1.9).sin() * 0.5 + 0.5) * 0.45;
+            let r_tip = plume_reach * speed_var;
+            let h_mid = plume_apex * speed_var;
+            let h_tip = h_mid * (1.0 - progress * 0.85).max(-0.15);
+
+            let p0 = sw.position + dir_xz * (r_tip * 0.18);
+            let p_mid = sw.position + dir_xz * (r_tip * 0.58) + Vec3::Y * h_mid;
+            let p_tip = sw.position + dir_xz * r_tip + Vec3::Y * h_tip;
+
+            gizmos.line(p0, p_mid, plume_col);
+            gizmos.line(p_mid, p_tip, core_col);
+            gizmos.sphere(
+                Isometry3d::from_translation(p_tip),
+                (0.008 + sw.max_radius * 0.008) * (1.0 - progress * 0.65),
+                core_col,
+            );
+        }
     }
 }
 
@@ -175,27 +231,27 @@ pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebri
             1.0
         };
 
-        let base_col = if stream.ice_fraction >= 0.70 {
-            Color::srgba(0.85, 0.95, 1.0, 0.90 * alpha)
-        } else if stream.ice_fraction >= 0.35 {
-            Color::srgba(0.95, 0.80, 0.50, 0.85 * alpha)
-        } else {
-            Color::srgba(1.0, 0.50, 0.20, 0.85 * alpha)
-        };
-        let spark_col = Color::srgba(1.0, 1.0, 1.0, 0.95 * alpha);
-
         for (i, &(r1, phi1, _, z1)) in stream.fragments.iter().enumerate() {
+            let frac = (i as f32) / (stream.fragments.len().max(1) as f32);
             let pos1 = stream.primary_pos + Vec3::new(r1 * phi1.cos(), z1, r1 * phi1.sin());
+
+            let node_col = if stream.ice_fraction >= 0.70 {
+                Color::srgba(0.82, 0.94, 1.0, (0.92 - frac * 0.25) * alpha)
+            } else {
+                // Tidal shear friction heats rocky inner fragments to incandescent amber-orange
+                let heat = (1.0 - p * 0.75) * (1.0 - frac * 0.6);
+                Color::srgba(1.0, 0.48 + heat * 0.42, 0.18 + heat * 0.35, 0.90 * alpha)
+            };
 
             gizmos.sphere(
                 Isometry3d::from_translation(pos1),
-                0.015 + 0.012 * (1.0 - p),
-                spark_col,
+                (0.012 + 0.012 * (1.0 - p)) * (1.0 - frac * 0.35),
+                node_col,
             );
 
             if let Some(&(r2, phi2, _, z2)) = stream.fragments.get(i + 1) {
                 let pos2 = stream.primary_pos + Vec3::new(r2 * phi2.cos(), z2, r2 * phi2.sin());
-                gizmos.line(pos1, pos2, base_col);
+                gizmos.line(pos1, pos2, node_col);
             }
         }
     }

@@ -243,6 +243,7 @@ fn reset_scenario_simulation_state(
     lhb_state.resonance_crossed = false;
     lhb_state.manual_trigger_requested = false;
     lhb_state.comets_scattered = 0;
+    lhb_state.scattered_bodies.clear();
     lhb_state.time_active_years = 0.0;
 }
 
@@ -353,6 +354,7 @@ fn align_camera_to_scenario(
     camera_query: &mut Query<&mut crate::rendering::camera::PanOrbitCamera>,
 ) {
     if let Some(mut cam) = camera_query.iter_mut().next() {
+        cam.surface_horizon_mode = false;
         cam.focus = Vec3::ZERO;
         cam.target_focus = Vec3::ZERO;
         cam.target_entity = if preset == ScenarioPreset::GalacticCollision {
@@ -459,6 +461,7 @@ pub fn handle_load_scenario_events(
 pub fn update_active_scenarios(
     time_warp: Res<TimeWarp>,
     sim_time: Res<SimTime>,
+    config: Option<Res<SimulationConfig>>,
     mut scenario_state: ResMut<ActiveScenarioState>,
     mut bodies_query: Query<(&mut SimVelocity, &SimPosition, &mut CelestialBody, &Mass)>,
 ) {
@@ -472,13 +475,17 @@ pub fn update_active_scenarios(
     if scenario_state.migration_active
         && scenario_state.current_preset == ScenarioPreset::HotJupiterMigration
     {
+        let disk_migration_active = config.as_ref().is_some_and(|c| c.gas_density_scale > 0.001);
+
         for (mut vel, pos, mut body, _mass) in bodies_query.iter_mut() {
             if body.name.contains("Hot Jupiter") {
                 let r = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt();
                 if r > scenario_state.migration_target_au {
-                    let v_dir = vel.0.normalize_or_zero();
-                    let inward_thrust = 0.0025 * (r / 5.2).clamp(0.2, 1.0);
-                    vel.0 -= v_dir * (inward_thrust * dt);
+                    if !disk_migration_active {
+                        let v_dir = vel.0.normalize_or_zero();
+                        let inward_thrust = 0.0025 * (r / 5.2).clamp(0.2, 1.0);
+                        vel.0 -= v_dir * (inward_thrust * dt);
+                    }
                 } else if !body.name.contains("Parked") {
                     body.name = "Ultra-Short Period Hot Jupiter (Parked)".to_string();
                 }

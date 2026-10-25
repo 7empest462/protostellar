@@ -105,6 +105,147 @@ fn spawn_builder_header(panel: &mut ChildSpawnerCommands) {
         });
 }
 
+fn spawn_builder_preset_buttons(presets: &mut ChildSpawnerCommands) {
+    let preset_buttons = [
+        (
+            BuilderPreset::EarthLike,
+            "🌍 Earth",
+            Color::srgba(0.05, 0.20, 0.15, 0.9),
+            Color::srgb(0.3, 0.9, 0.6),
+        ),
+        (
+            BuilderPreset::SuperEarth,
+            "💎 Super-E",
+            Color::srgba(0.04, 0.22, 0.24, 0.9),
+            Color::srgb(0.3, 0.88, 0.85),
+        ),
+        (
+            BuilderPreset::JupiterLike,
+            "🪐 Jupiter",
+            Color::srgba(0.22, 0.14, 0.06, 0.9),
+            Color::srgb(0.95, 0.65, 0.3),
+        ),
+        (
+            BuilderPreset::SuperJupiter,
+            "👑 Super-J",
+            Color::srgba(0.08, 0.22, 0.25, 0.9),
+            Color::srgb(0.2, 0.85, 0.8),
+        ),
+        (
+            BuilderPreset::HeavySuperJupiter,
+            "🔮 Mega-J",
+            Color::srgba(0.18, 0.08, 0.24, 0.9),
+            Color::srgb(0.8, 0.4, 0.95),
+        ),
+        (
+            BuilderPreset::BrownDwarf,
+            "🟤 Brown Dwarf",
+            Color::srgba(0.24, 0.10, 0.16, 0.9),
+            Color::srgb(0.85, 0.45, 0.65),
+        ),
+        (
+            BuilderPreset::WaterWorld,
+            "🌊 Ocean",
+            Color::srgba(0.06, 0.18, 0.28, 0.9),
+            Color::srgb(0.3, 0.75, 1.0),
+        ),
+        (
+            BuilderPreset::MoltenProtoplanet,
+            "🌋 Magma",
+            Color::srgba(0.25, 0.08, 0.04, 0.9),
+            Color::srgb(1.0, 0.45, 0.2),
+        ),
+        (
+            BuilderPreset::IceGiant,
+            "❄️ Ice Giant",
+            Color::srgba(0.08, 0.16, 0.26, 0.9),
+            Color::srgb(0.5, 0.8, 1.0),
+        ),
+        (
+            BuilderPreset::RogueInvader,
+            "☄️ Rogue",
+            Color::srgba(0.26, 0.06, 0.14, 0.9),
+            Color::srgb(1.0, 0.35, 0.5),
+        ),
+        (
+            BuilderPreset::RedDwarfStar,
+            "☀️ M-Star",
+            Color::srgba(0.28, 0.10, 0.04, 0.9),
+            Color::srgb(1.0, 0.5, 0.2),
+        ),
+        (
+            BuilderPreset::OrangeDwarf,
+            "🟠 K-Dwarf",
+            Color::srgba(0.26, 0.14, 0.04, 0.9),
+            Color::srgb(1.0, 0.68, 0.25),
+        ),
+        (
+            BuilderPreset::WolfRayet,
+            "⚡ Wolf-Rayet",
+            Color::srgba(0.24, 0.08, 0.22, 0.9),
+            Color::srgb(0.95, 0.45, 0.85),
+        ),
+        (
+            BuilderPreset::PopIIIStar,
+            "✨ Pop-III",
+            Color::srgba(0.08, 0.16, 0.32, 0.9),
+            Color::srgb(0.65, 0.85, 1.0),
+        ),
+        (
+            BuilderPreset::QuarkStar,
+            "⚛️ Quark Star",
+            Color::srgba(0.18, 0.10, 0.28, 0.9),
+            Color::srgb(0.85, 0.72, 1.0),
+        ),
+        (
+            BuilderPreset::DarkStar,
+            "🌑 Dark Star",
+            Color::srgba(0.24, 0.14, 0.04, 0.9),
+            Color::srgb(1.0, 0.65, 0.2),
+        ),
+        (
+            BuilderPreset::BosonStar,
+            "🔮 Boson Star",
+            Color::srgba(0.05, 0.22, 0.24, 0.9),
+            Color::srgb(0.35, 0.85, 0.95),
+        ),
+        (
+            BuilderPreset::IronStar,
+            "⚙️ Iron Star",
+            Color::srgba(0.12, 0.14, 0.16, 0.9),
+            Color::srgb(0.65, 0.70, 0.75),
+        ),
+        (
+            BuilderPreset::ThorneZytkow,
+            "🩸 Thorne-Żytkow",
+            Color::srgba(0.28, 0.06, 0.04, 0.9),
+            Color::srgb(1.0, 0.25, 0.2),
+        ),
+        (
+            BuilderPreset::IoLike,
+            "🌋 Io (Sulfur)",
+            Color::srgba(0.24, 0.18, 0.04, 0.9),
+            Color::srgb(1.0, 0.85, 0.25),
+        ),
+        (
+            BuilderPreset::EnceladusLike,
+            "❄️ Enceladus (Cryo)",
+            Color::srgba(0.04, 0.18, 0.24, 0.9),
+            Color::srgb(0.5, 0.95, 1.0),
+        ),
+    ];
+
+    for (preset, label, bg, border) in preset_buttons {
+        create_compact_button(
+            presets,
+            UiButtonAction::BuilderSelectPreset(preset),
+            label,
+            bg,
+            border,
+        );
+    }
+}
+
 fn spawn_builder_presets_section(panel: &mut ChildSpawnerCommands) {
     panel.spawn((
         Text::new("── 1. SELECT ARCHETYPE PRESET ──"),
@@ -122,93 +263,14 @@ fn spawn_builder_presets_section(panel: &mut ChildSpawnerCommands) {
             margin: UiRect::axes(Val::Px(0.0), Val::Px(3.0)),
             ..default()
         })
-        .with_children(|presets| {
-            let preset_buttons = [
-                (
-                    BuilderPreset::EarthLike,
-                    "🌍 Earth",
-                    Color::srgba(0.05, 0.20, 0.15, 0.9),
-                    Color::srgb(0.3, 0.9, 0.6),
-                ),
-                (
-                    BuilderPreset::SuperEarth,
-                    "💎 Super-E",
-                    Color::srgba(0.04, 0.22, 0.24, 0.9),
-                    Color::srgb(0.3, 0.88, 0.85),
-                ),
-                (
-                    BuilderPreset::JupiterLike,
-                    "🪐 Jupiter",
-                    Color::srgba(0.22, 0.14, 0.06, 0.9),
-                    Color::srgb(0.95, 0.65, 0.3),
-                ),
-                (
-                    BuilderPreset::SuperJupiter,
-                    "👑 Super-J",
-                    Color::srgba(0.08, 0.22, 0.25, 0.9),
-                    Color::srgb(0.2, 0.85, 0.8),
-                ),
-                (
-                    BuilderPreset::HeavySuperJupiter,
-                    "🔮 Mega-J",
-                    Color::srgba(0.18, 0.08, 0.24, 0.9),
-                    Color::srgb(0.8, 0.4, 0.95),
-                ),
-                (
-                    BuilderPreset::BrownDwarf,
-                    "🟤 Brown Dwarf",
-                    Color::srgba(0.24, 0.10, 0.16, 0.9),
-                    Color::srgb(0.85, 0.45, 0.65),
-                ),
-                (
-                    BuilderPreset::WaterWorld,
-                    "🌊 Ocean",
-                    Color::srgba(0.06, 0.18, 0.28, 0.9),
-                    Color::srgb(0.3, 0.75, 1.0),
-                ),
-                (
-                    BuilderPreset::MoltenProtoplanet,
-                    "🌋 Magma",
-                    Color::srgba(0.25, 0.08, 0.04, 0.9),
-                    Color::srgb(1.0, 0.45, 0.2),
-                ),
-                (
-                    BuilderPreset::IceGiant,
-                    "❄️ Ice Giant",
-                    Color::srgba(0.08, 0.16, 0.26, 0.9),
-                    Color::srgb(0.5, 0.8, 1.0),
-                ),
-                (
-                    BuilderPreset::RogueInvader,
-                    "☄️ Rogue",
-                    Color::srgba(0.26, 0.06, 0.14, 0.9),
-                    Color::srgb(1.0, 0.35, 0.5),
-                ),
-                (
-                    BuilderPreset::RedDwarfStar,
-                    "☀️ M-Star",
-                    Color::srgba(0.28, 0.10, 0.04, 0.9),
-                    Color::srgb(1.0, 0.5, 0.2),
-                ),
-            ];
-
-            for (preset, label, bg, border) in preset_buttons {
-                create_compact_button(
-                    presets,
-                    UiButtonAction::BuilderSelectPreset(preset),
-                    label,
-                    bg,
-                    border,
-                );
-            }
-        });
+        .with_children(spawn_builder_preset_buttons);
 
     panel
         .spawn((
             Node {
                 padding: UiRect::all(Val::Px(6.0)),
                 margin: UiRect::axes(Val::Px(0.0), Val::Px(3.0)),
-                border: UiRect::all(Val::Px(1.0)),
+                border: UiRect::left(Val::Px(3.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.008, 0.016, 0.035, 0.95)),

@@ -1,29 +1,74 @@
 //! Interactive button click and hover dispatch systems.
 
 pub mod builder;
+pub mod campaign;
 pub mod editor;
+pub mod hazards;
 pub mod scenarios;
 pub mod selection;
+pub mod system_tools;
 pub mod time_and_panels;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
-use super::telemetry_panel::handle_telemetry_action;
 use super::types::*;
 use builder::handle_builder_action;
+use campaign::handle_campaign_action;
 use editor::handle_body_editor_action;
+use hazards::handle_hazard_action;
 use scenarios::handle_scenario_action;
 use selection::handle_selection_action;
-use time_and_panels::{handle_instrument_action, handle_panel_toggle_action, handle_time_action};
+use system_tools::dispatch_system_and_tool_actions;
+
+/// Primary UI resource state bundle for the HUD button interaction system.
+#[derive(SystemParam)]
+pub struct UiCoreState<'w> {
+    pub time_warp: ResMut<'w, TimeWarp>,
+    pub player_state: ResMut<'w, PlayerInteractionState>,
+    pub toast: ResMut<'w, NotificationToast>,
+    pub quick_bar_state: ResMut<'w, QuickBarState>,
+    pub builder_state: ResMut<'w, PlanetBuilderState>,
+    pub hud_visibility: ResMut<'w, HudVisibilityState>,
+    pub telemetry_panel_state: ResMut<'w, TelemetryPanelState>,
+    pub trophies_panel_state: ResMut<'w, crate::game::ui::types::TrophiesPanelState>,
+    pub telemetry_history: ResMut<'w, crate::simulation::telemetry::SimulationTelemetryHistory>,
+}
+
+/// Optional tool and research resources bundled for clean system signatures.
+#[derive(SystemParam)]
+pub struct UiOptionalState<'w> {
+    pub slingshot: Option<ResMut<'w, SlingshotState>>,
+    pub predictor: Option<ResMut<'w, crate::simulation::predictor::TrajectoryPredictorState>>,
+    pub scrubber: Option<ResMut<'w, crate::simulation::geology::types::TimelineScrubber>>,
+    pub tech_tree: Option<ResMut<'w, crate::game::ui::types::TechTreePanelState>>,
+    pub science: Option<ResMut<'w, crate::simulation::economy::ScienceData>>,
+    pub techs: Option<ResMut<'w, crate::simulation::economy::UnlockedTechs>>,
+    pub hazards_panel: Option<ResMut<'w, crate::game::ui::hazards_panel::HazardsPanelState>>,
+    pub hazard_mgr: Option<ResMut<'w, crate::simulation::events::CosmicEventManager>>,
+    pub hr_diagram: Option<ResMut<'w, HrDiagramPanelState>>,
+    pub lagrange_config: Option<ResMut<'w, LagrangeOverlayConfig>>,
+    pub hz_config: Option<ResMut<'w, HabitableZoneConfig>>,
+}
+
+/// Campaign state and mission event writer bundle.
+#[derive(SystemParam)]
+pub struct UiCampaignParams<'w> {
+    pub panel: Option<ResMut<'w, crate::game::ui::types::CampaignPanelState>>,
+    pub state: Option<ResMut<'w, crate::simulation::campaign::CampaignState>>,
+    pub start_events:
+        Option<MessageWriter<'w, crate::simulation::campaign::StartCampaignMissionEvent>>,
+}
 
 fn handle_hover_interaction(
     interaction: &Interaction,
     action: &UiButtonAction,
     border_color: &mut BorderColor,
+    opt_base: Option<&QuickBarButtonBaseColor>,
     tooltip_query: &mut Query<&mut Text, With<HudActionTooltipText>>,
 ) {
     match *interaction {
@@ -34,99 +79,134 @@ fn handle_hover_interaction(
             }
         }
         Interaction::None => {
-            *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
+            if let Some(base) = opt_base {
+                *border_color = BorderColor::all(base.border.with_alpha(0.88));
+            } else {
+                *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
+            }
         }
         Interaction::Pressed => {}
     }
 }
 
-fn handle_save_load_action(
-    action: &UiButtonAction,
-    save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-    load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
-    toast: &mut NotificationToast,
-) -> bool {
-    match action {
-        UiButtonAction::QuickSave => {
-            if let Some(writer) = save_events {
-                writer.write(crate::simulation::serialization::SaveSystemEvent {
-                    filename: "saves/quicksave.json".to_string(),
-                });
-            }
-            toast.message = "💾 Quick Saved solar system state [saves/quicksave.json]".to_string();
-            toast.timer = 4.0;
-            true
-        }
-        UiButtonAction::QuickLoad => {
-            if let Some(writer) = load_events {
-                writer.write(crate::simulation::serialization::LoadSystemEvent {
-                    filename: "saves/quicksave.json".to_string(),
-                });
-            }
-            toast.message =
-                "📂 Quick Loading solar system state [saves/quicksave.json]...".to_string();
-            toast.timer = 4.0;
-            true
-        }
-        _ => false,
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
-    reason = "UI button interaction system dispatches across all active simulation controls, cameras, and states"
+    reason = "Dispatches pressed button action across subsystem handlers"
 )]
-fn dispatch_system_and_tool_actions(
+fn dispatch_pressed_button_action(
     action: &UiButtonAction,
+    core: &mut UiCoreState,
     save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
     load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
-    time_warp: &mut TimeWarp,
-    hud_visibility: &mut HudVisibilityState,
-    telemetry_panel_state: &mut TelemetryPanelState,
-    trophies_panel_state: &mut crate::game::ui::types::TrophiesPanelState,
-    telemetry_history: &mut crate::simulation::telemetry::SimulationTelemetryHistory,
-    opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
-    player_state: &mut PlayerInteractionState,
-    opt_slingshot: Option<&mut SlingshotState>,
-    opt_predictor: Option<&mut crate::simulation::predictor::TrajectoryPredictorState>,
-    toast: &mut NotificationToast,
-) -> bool {
-    if handle_save_load_action(action, save_events, load_events, toast) {
-        return true;
+    optional: &mut UiOptionalState,
+    campaign: &mut UiCampaignParams,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+    selected_query: &mut SelectedWorldQuery,
+    config: &SimulationConfig,
+    star_mass: f64,
+    commands: &mut Commands,
+    scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+    quasi_star_query: &mut Query<&mut BlackHoleStarState>,
+    lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
+    sim_time_years: f64,
+    rng: &mut rand::rngs::ThreadRng,
+) {
+    if dispatch_system_and_tool_actions(
+        action,
+        save_events,
+        load_events,
+        &mut core.time_warp,
+        &mut core.hud_visibility,
+        &mut core.telemetry_panel_state,
+        &mut core.trophies_panel_state,
+        optional.tech_tree.as_deref_mut(),
+        optional.science.as_deref_mut(),
+        optional.techs.as_deref_mut(),
+        &mut core.telemetry_history,
+        optional.scrubber.as_deref_mut(),
+        &mut core.player_state,
+        optional.slingshot.as_deref_mut(),
+        optional.predictor.as_deref_mut(),
+        optional.hr_diagram.as_deref_mut(),
+        optional.lagrange_config.as_deref_mut(),
+        optional.hz_config.as_deref_mut(),
+        &mut core.toast,
+    ) {
+        return;
     }
-    if handle_time_action(action, time_warp, toast) {
-        return true;
+    if handle_campaign_action(
+        action,
+        campaign.panel.as_deref_mut(),
+        campaign.state.as_deref_mut(),
+        campaign.start_events.as_mut(),
+        optional.science.as_deref_mut(),
+        &mut core.toast,
+    ) {
+        return;
     }
-    if handle_panel_toggle_action(action, hud_visibility, toast) {
-        return true;
+    if handle_hazard_action(
+        action,
+        optional.hazards_panel.as_deref_mut(),
+        optional.hazard_mgr.as_deref_mut(),
+        &mut core.toast,
+    ) {
+        return;
     }
-    if handle_telemetry_action(action, telemetry_panel_state, telemetry_history, toast) {
-        return true;
+    if handle_selection_action(
+        action,
+        &mut core.player_state,
+        camera_query,
+        selected_query,
+        config,
+        &mut core.toast,
+        &mut core.quick_bar_state,
+    ) {
+        return;
     }
-    if matches!(action, UiButtonAction::ToggleTrophiesPanel) {
-        trophies_panel_state.is_open = !trophies_panel_state.is_open;
-        toast.message = if trophies_panel_state.is_open {
-            "🏆 Trophies & Milestones Tracker Opened".to_string()
-        } else {
-            "🏆 Trophies Tracker Closed".to_string()
-        };
-        toast.timer = 2.5;
-        return true;
+    if handle_builder_action(
+        action,
+        &mut core.builder_state,
+        &mut core.toast,
+        star_mass,
+        &mut core.player_state,
+        camera_query,
+        selected_query,
+        commands,
+    ) {
+        return;
     }
-    if super::epoch_scrubber::handle_epoch_scrubber_action(action, opt_scrubber, toast) {
-        return true;
+    if handle_scenario_action(
+        action,
+        scenario_events,
+        &mut core.toast,
+        quasi_star_query,
+        commands,
+        &mut core.player_state,
+        camera_query,
+    ) {
+        return;
     }
-    if handle_instrument_action(action, player_state, toast, opt_slingshot, opt_predictor) {
-        return true;
-    }
-    false
+    handle_body_editor_action(
+        action,
+        &mut core.player_state,
+        selected_query,
+        camera_query,
+        star_mass,
+        commands,
+        &mut core.toast,
+        lhb_state,
+        theia_state,
+        sim_time_years,
+        rng,
+    );
 }
 
 /// Handles interactive mouse clicks and hover highlights on all on-screen HUD buttons.
 #[allow(
     clippy::too_many_arguments,
     clippy::type_complexity,
-    reason = "HUD button interaction system dispatches across all active simulation controls, cameras, and states"
+    reason = "HUD button interaction system dispatches across simulation controls and views"
 )]
 pub fn handle_ui_button_interactions(
     mut interaction_query: Query<
@@ -135,31 +215,12 @@ pub fn handle_ui_button_interactions(
             &UiButtonAction,
             &mut BackgroundColor,
             &mut BorderColor,
+            Option<&QuickBarButtonBaseColor>,
         ),
         (Changed<Interaction>, With<Button>),
     >,
     mut tooltip_query: Query<&mut Text, With<HudActionTooltipText>>,
-    (
-        mut time_warp,
-        mut player_state,
-        mut toast,
-        mut quick_bar_state,
-        mut builder_state,
-        mut hud_visibility,
-        mut telemetry_panel_state,
-        mut trophies_panel_state,
-        mut telemetry_history,
-    ): (
-        ResMut<TimeWarp>,
-        ResMut<PlayerInteractionState>,
-        ResMut<NotificationToast>,
-        ResMut<QuickBarState>,
-        ResMut<PlanetBuilderState>,
-        ResMut<HudVisibilityState>,
-        ResMut<TelemetryPanelState>,
-        ResMut<crate::game::ui::types::TrophiesPanelState>,
-        ResMut<crate::simulation::telemetry::SimulationTelemetryHistory>,
-    ),
+    mut core: UiCoreState,
     disk_params: Res<DiskParameters>,
     config: Res<SimulationConfig>,
     mut selected_query: SelectedWorldQuery,
@@ -174,81 +235,47 @@ pub fn handle_ui_button_interactions(
     sim_time: Res<SimTime>,
     mut commands: Commands,
     mut quasi_star_query: Query<&mut BlackHoleStarState>,
-    (mut opt_slingshot, mut opt_predictor, mut opt_scrubber): (
-        Option<ResMut<SlingshotState>>,
-        Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
-        Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
-    ),
+    mut optional: UiOptionalState,
+    mut campaign: UiCampaignParams,
 ) {
     let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
 
-    for (interaction, action, mut bg_color, mut border_color) in interaction_query.iter_mut() {
-        handle_hover_interaction(interaction, action, &mut border_color, &mut tooltip_query);
+    for (interaction, action, mut bg_color, mut border_color, opt_base) in
+        interaction_query.iter_mut()
+    {
+        handle_hover_interaction(
+            interaction,
+            action,
+            &mut border_color,
+            opt_base,
+            &mut tooltip_query,
+        );
+
+        if *interaction == Interaction::None {
+            if let Some(base) = opt_base {
+                *bg_color = BackgroundColor(base.bg);
+            }
+        }
 
         if *interaction == Interaction::Pressed {
             *bg_color = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
             *border_color = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
 
-            if dispatch_system_and_tool_actions(
+            dispatch_pressed_button_action(
                 action,
+                &mut core,
                 save_events.as_mut(),
                 load_events.as_mut(),
-                &mut time_warp,
-                &mut hud_visibility,
-                &mut telemetry_panel_state,
-                &mut trophies_panel_state,
-                &mut telemetry_history,
-                opt_scrubber.as_deref_mut(),
-                &mut player_state,
-                opt_slingshot.as_deref_mut(),
-                opt_predictor.as_deref_mut(),
-                &mut toast,
-            ) {
-                continue;
-            }
-            if handle_selection_action(
-                action,
-                &mut player_state,
+                &mut optional,
+                &mut campaign,
                 &mut camera_query,
-                &selected_query,
-                &config,
-                &mut toast,
-                &mut quick_bar_state,
-            ) {
-                continue;
-            }
-            if handle_builder_action(
-                action,
-                &mut builder_state,
-                &mut toast,
-                star_mass,
-                &mut player_state,
-                &mut camera_query,
-                &selected_query,
-                &mut commands,
-            ) {
-                continue;
-            }
-            if handle_scenario_action(
-                action,
-                &mut scenario_events,
-                &mut toast,
-                &mut quasi_star_query,
-                &mut commands,
-                &mut player_state,
-                &mut camera_query,
-            ) {
-                continue;
-            }
-            handle_body_editor_action(
-                action,
-                &mut player_state,
                 &mut selected_query,
-                &mut camera_query,
+                &config,
                 star_mass,
                 &mut commands,
-                &mut toast,
+                &mut scenario_events,
+                &mut quasi_star_query,
                 &mut lhb_state,
                 theia_state.as_deref_mut(),
                 sim_time.elapsed_years,

@@ -23,8 +23,10 @@ pub struct TidalState {
     /// Spin-orbit resonance ratio $\omega_{\text{spin}} / n_{\text{orbit}}$ (1.0 = 1:1 synchronous, 1.5 = 3:2 resonance).
     pub resonance_ratio: f32,
     /// Internal viscoelastic tidal dissipation power in Watts.
+    #[serde(default, deserialize_with = "deserialize_nullable_f64_zero")]
     pub tidal_heating_power_watts: f64,
     /// Tidal surface heat flux in $\text{W/m}^2$ (Earth geothermal ~0.09 $\text{W/m}^2$, Io ~2.5 $\text{W/m}^2$).
+    #[serde(default, deserialize_with = "deserialize_nullable_f64_zero")]
     pub tidal_heating_flux_w_m2: f64,
     /// Orbital eccentricity circularization rate $de/dt$ in units of $\text{Myr}^{-1}$.
     pub circularization_rate_per_myr: f64,
@@ -131,4 +133,12 @@ impl Default for TidalConfig {
             enable_heating: true,
         }
     }
+}
+
+fn deserialize_nullable_f64_zero<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<f64>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or(0.0))
 }

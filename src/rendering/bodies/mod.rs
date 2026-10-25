@@ -1,9 +1,11 @@
 //! Visual mesh generation, PBR materials, and real-time transform synchronization.
 
 pub mod atmospheres;
+pub mod circumstellar;
 pub mod comets;
 pub mod jets;
 pub mod magnetospheres;
+pub mod materials_sync;
 pub mod meshes;
 pub mod palettes;
 pub mod shadows;
@@ -14,6 +16,10 @@ pub mod transforms;
 use bevy::prelude::*;
 
 pub use atmospheres::{sync_planetary_atmospheres, VisualAtmosphereChild};
+pub use circumstellar::{
+    compute_circumstellar_uniforms, resolve_circumstellar_profile, sync_circumstellar_environments,
+    VisualCircumstellarChild,
+};
 pub use comets::{sync_cometary_tails, CometComaPart, CometTailPart, CometTailRoot};
 pub use jets::{sync_relativistic_jets, RelativisticJetPart, RelativisticJetRoot};
 pub use magnetospheres::{
@@ -29,7 +35,8 @@ pub use palettes::{
     star_subtype_from_body_type,
 };
 pub use shadows::{
-    compute_moon_eclipse_shadow, compute_planetary_ring_shadow, compute_ring_shadow_on_planet,
+    compute_eclipse_moons_data, compute_moon_eclipse_shadow, compute_planetary_ring_shadow,
+    compute_ring_shadow_on_planet,
 };
 pub use spawner::spawn_missing_visuals;
 pub use structures::{

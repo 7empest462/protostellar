@@ -295,7 +295,7 @@ pub fn compute_single_body_acc(
         DVec3::ZERO
     };
 
-    let is_bound = is_body_bound_to_star(pos, vel, star_pos, star_mass);
+    let is_bound = is_body_bound_to_star(pos, vel, star_pos, star_mass, body.mass);
     let mut acc = if is_bound {
         pert_acc
     } else {
@@ -330,6 +330,7 @@ pub fn apply_planetary_migration_and_lhb(
     saturn_entity: Option<Entity>,
     ice_giant_entities: &hashbrown::HashSet<Entity>,
     sub_dt: f64,
+    step_idx: usize,
     is_compact_system: bool,
 ) {
     if is_compact_system || !lhb_state.is_active {
@@ -408,7 +409,9 @@ pub fn apply_planetary_migration_and_lhb(
                 let kick_dir =
                     (inward * 0.65 + retrograde * 0.35 + inclination_perturb).normalize_or_zero();
                 b.acc += kick_dir * 0.006;
-                lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
+                if step_idx == 0 && lhb_state.scattered_bodies.insert(b.entity) {
+                    lhb_state.comets_scattered = lhb_state.scattered_bodies.len().min(100_000);
+                }
             }
         } else if matches!(
             b.body_type,
@@ -423,7 +426,9 @@ pub fn apply_planetary_migration_and_lhb(
             let kick_dir =
                 (inward * 0.80 + retrograde * 0.20 + inclination_perturb).normalize_or_zero();
             b.acc += kick_dir * 0.0055;
-            lhb_state.comets_scattered = (lhb_state.comets_scattered + 1).min(100_000);
+            if step_idx == 0 && lhb_state.scattered_bodies.insert(b.entity) {
+                lhb_state.comets_scattered = lhb_state.scattered_bodies.len().min(100_000);
+            }
         }
     }
 }

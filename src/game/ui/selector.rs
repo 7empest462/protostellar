@@ -1,15 +1,10 @@
 //! Dynamic body selector bar, celestial world palette classification, and custom planet builder spawning.
 
-use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
-use std::f64::consts::PI;
 
-use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
-use crate::simulation::probes::{ProbeType, SpaceProbe};
+use crate::simulation::probes::{ProbeStatus, ProbeType, SpaceProbe};
 use crate::simulation::resources::*;
-use crate::utils::constants::*;
 
 use super::types::*;
 
@@ -317,7 +312,7 @@ fn populate_expanded_quick_bar(
     major_worlds: &[SystemWorld],
     embryo_bodies: &[(Entity, String, BodyType, bool, f64, f64)],
     minor_bodies: &[(Entity, String, BodyType, bool, f64, f64)],
-    probes: &[(Entity, ProbeType, String)],
+    probes: &[(Entity, ProbeType, ProbeStatus, String)],
     selected_entity: Option<Entity>,
     quick_bar_state: &QuickBarState,
 ) {
@@ -397,10 +392,10 @@ fn populate_major_worlds(
 
 fn populate_probes(
     btn_row: &mut ChildSpawnerCommands,
-    probes: &[(Entity, ProbeType, String)],
+    probes: &[(Entity, ProbeType, ProbeStatus, String)],
     selected_entity: Option<Entity>,
 ) {
-    for (probe_ent, probe_type, probe_name) in probes {
+    for (probe_ent, probe_type, probe_status, probe_name) in probes {
         let (base_bg, base_border) = match probe_type {
             ProbeType::Orbiter => (
                 Color::srgba(0.06, 0.22, 0.38, 0.92),
@@ -410,6 +405,11 @@ fn populate_probes(
                 Color::srgba(0.35, 0.20, 0.05, 0.92),
                 Color::srgb(1.0, 0.75, 0.25),
             ),
+        };
+        let label = if *probe_status == ProbeStatus::Landed {
+            probe_name.replacen("🚀", "🛬", 1)
+        } else {
+            probe_name.clone()
         };
         let is_selected = selected_entity == Some(*probe_ent);
         let bg_color = if is_selected {
@@ -425,11 +425,20 @@ fn populate_probes(
         create_compact_selectable_button(
             btn_row,
             UiButtonAction::SelectEntity(*probe_ent),
-            probe_name,
+            &label,
             bg_color,
             border_color,
             base_bg,
             base_border,
+        );
+    }
+    if probes.iter().any(|(_, pt, _, _)| *pt == ProbeType::Rover) {
+        create_compact_button(
+            btn_row,
+            UiButtonAction::ToggleSurfaceHorizonCamera,
+            "🎥 Rover Cam [Shift-V]",
+            Color::srgba(0.06, 0.24, 0.18, 0.92),
+            Color::srgb(0.35, 1.0, 0.78),
         );
     }
 }
@@ -610,7 +619,7 @@ type QuickBarCacheState = (
     Vec<Entity>,
     usize,
     usize,
-    usize,
+    Vec<(Entity, ProbeStatus)>,
     bool,
     bool,
     bool,
@@ -693,17 +702,19 @@ pub fn update_quick_body_selector_bar(
 
     let major_worlds =
         collect_sorted_system_worlds(bodies_query.iter(), quick_bar_state.sort_by_mass);
-    let probes: Vec<(Entity, ProbeType, String)> = probes_query
+    let probes: Vec<(Entity, ProbeType, ProbeStatus, String)> = probes_query
         .iter()
-        .map(|(e, p, b)| (e, p.probe_type, b.name.clone()))
+        .map(|(e, p, b)| (e, p.probe_type, p.status, b.name.clone()))
         .collect();
+    let probe_states: Vec<(Entity, ProbeStatus)> =
+        probes.iter().map(|(e, _, s, _)| (*e, *s)).collect();
 
     let current_entities: Vec<Entity> = major_worlds.iter().map(|b| b.entity).collect();
     let current_state = (
         current_entities,
         embryo_bodies.len(),
         minor_bodies.len(),
-        probes.len(),
+        probe_states,
         quick_bar_state.is_minimized,
         quick_bar_state.show_embryos,
         quick_bar_state.show_minor_bodies,
@@ -745,230 +756,7 @@ pub fn update_quick_body_selector_bar(
     }
 }
 
-fn compute_builder_spawn_coords(
-    builder_state: &PlanetBuilderState,
-    star_mass: f64,
-    spawn_coords: Option<DVec3>,
-) -> (DVec3, DVec3) {
-    if let Some(custom_pos) = spawn_coords {
-        let r = custom_pos.length().max(0.1);
-        let v_circ = (G_ASTRO * star_mass / r).sqrt();
-        let phi = custom_pos.z.atan2(custom_pos.x);
-        let vel = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
-        (custom_pos, vel)
-    } else {
-        let mut rng = rand::rng();
-        let a = builder_state.semi_major_axis_au.max(0.1);
-        let angle = rng.random_range(0.0..(2.0 * PI));
-        let pos = DVec3::new(a * angle.cos(), 0.0, a * angle.sin());
-        let v_circ = (G_ASTRO * star_mass / a).sqrt();
-        let vel = DVec3::new(-v_circ * angle.sin(), 0.0, v_circ * angle.cos());
-        (pos, vel)
-    }
-}
-
-pub fn spawn_custom_builder_world(
-    commands: &mut Commands,
-    builder_state: &PlanetBuilderState,
-    star_mass: f64,
-    spawn_coords: Option<DVec3>,
-    player_state: &mut PlayerInteractionState,
-    camera_query: &mut Query<&mut PanOrbitCamera>,
-    toast: &mut NotificationToast,
-) -> Entity {
-    let (pos, vel) = compute_builder_spawn_coords(builder_state, star_mass, spawn_coords);
-
-    let comp = Composition {
-        silicate_frac: f64::from(builder_state.rock_frac),
-        ice_frac: f64::from(builder_state.ice_frac),
-        metal_frac: f64::from(builder_state.metal_frac),
-        organics_frac: 0.0,
-        gas_frac: f64::from(builder_state.gas_frac),
-    };
-    let avg_density = comp.average_density();
-    let radius_au = ((3.0 * builder_state.mass_solar / avg_density) / (4.0 * PI))
-        .cbrt()
-        .max(EARTH_RADIUS_AU * 0.2);
-
-    let body_type = crate::simulation::components::classify_body_by_mass_and_comp(
-        builder_state.mass_solar,
-        &comp,
-        false,
-    );
-    let temp_k = match body_type {
-        BodyType::RedDwarf => 3000.0,
-        BodyType::BrownDwarf => 1400.0,
-        BodyType::GasGiant => 160.0,
-        BodyType::IceGiant => 80.0,
-        BodyType::SuperEarth => 295.0,
-        _ => 288.0,
-    };
-
-    let new_ent = commands
-        .spawn((
-            SimPosition(pos),
-            SimVelocity(vel),
-            SimAcceleration(DVec3::ZERO),
-            Mass(builder_state.mass_solar),
-            Radius(radius_au),
-            Temperature(temp_k),
-            comp,
-            CelestialBody {
-                name: builder_state.custom_name.clone(),
-                body_type,
-            },
-            InternalDifferentiation {
-                is_differentiated: true,
-                differentiation_fraction: 0.9,
-                core_radius_au: radius_au * 0.45,
-                mantle_radius_au: radius_au * 0.90,
-                crust_thickness_au: radius_au * 0.08,
-                ocean_ice_thickness_au: if builder_state.ice_frac > 0.1 {
-                    radius_au * 0.05
-                } else {
-                    0.0
-                },
-                core_temp_k: temp_k * 4.0,
-                magnetic_field_gauss: if builder_state.metal_frac > 0.15 {
-                    0.5
-                } else {
-                    0.05
-                },
-                has_theia_llsvp: false,
-                llsvp_density_contrast: 0.0,
-            },
-            SpinState {
-                spin_vector: DVec3::new(0.0, 1e-12, 0.0),
-                rotation_period_hours: 24.0,
-                axial_tilt_degrees: 15.0,
-            },
-            VolatileInventory {
-                delivered_water_m_earth: if builder_state.ice_frac > 0.1 {
-                    1.0
-                } else {
-                    0.0
-                },
-                ocean_coverage_frac: if builder_state.ice_frac > 0.1 {
-                    0.70
-                } else {
-                    0.0
-                },
-                atmospheric_pressure_bar: if builder_state.gas_frac > 0.1 {
-                    50.0
-                } else {
-                    1.0
-                },
-                cometary_impact_count: if builder_state.ice_frac > 0.1 { 10 } else { 0 },
-            },
-            PlanetaryClimate {
-                surface_temperature_k: (temp_k + 33.0) as f32,
-                equilibrium_temperature_k: temp_k as f32,
-                greenhouse_delta_k: 33.0,
-                albedo: 0.30,
-                ice_coverage_frac: 0.1,
-                cloud_coverage_frac: 0.5,
-                climate_regime: if builder_state.gas_frac > 0.4 {
-                    ClimateRegime::GasGiantEnvelope
-                } else if temp_k < 260.0 {
-                    ClimateRegime::SnowballIceAge
-                } else {
-                    ClimateRegime::TemperateHabitable
-                },
-                polar_ice_cap_latitude_deg: if temp_k < 260.0 { 35.0 } else { 75.0 },
-            },
-            BiosphereState::default(),
-            ElectromagneticFieldState {
-                magnetic_field_gauss: if builder_state.metal_frac > 0.15 {
-                    0.5
-                } else {
-                    0.05
-                },
-                rotation_period_sec: 24.0 * 3600.0,
-                magnetic_inclination_rad: 0.15,
-                jet_length_au: 0.0,
-                synchrotron_intensity: 0.0,
-            },
-        ))
-        .id();
-
-    player_state.selected_entity = Some(new_ent);
-    if let Ok(mut cam) = camera_query.single_mut() {
-        cam.target_entity = Some(new_ent);
-    }
-    toast.message = format!(
-        "🚀 Spawned & Focused: \"{}\" ({:.2} AU)!",
-        builder_state.custom_name,
-        pos.length()
-    );
-    toast.timer = 4.5;
-
-    new_ent
-}
-
-pub fn update_planet_builder_ui(
-    builder_state: Res<PlanetBuilderState>,
-    disk_params: Res<DiskParameters>,
-    mut panel_query: Query<&mut Node, With<PlanetBuilderPanel>>,
-    mut text_query: Query<&mut Text, With<PlanetBuilderInfoText>>,
-) {
-    if let Ok(mut node) = panel_query.single_mut() {
-        node.display = if builder_state.is_open {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
-    if let Ok(mut text) = text_query.single_mut() {
-        let star_mass = disk_params.central_star_mass;
-        let v_circ_kms = (G_ASTRO * star_mass / builder_state.semi_major_axis_au.max(0.05)).sqrt()
-            * (AU_TO_METERS / 1000.0)
-            / (365.25 * 86400.0);
-        let mass_earth = builder_state.mass_solar / EARTH_MASS_SOLAR;
-        let mass_jup = builder_state.mass_solar / JUPITER_MASS_SOLAR;
-
-        let mass_str = if builder_state.mass_solar >= 0.05 {
-            format!("{:.3} M_sun", builder_state.mass_solar)
-        } else if mass_jup >= 0.5 {
-            format!("{mass_jup:.2} M_Jup ({mass_earth:.0} M_earth)")
-        } else {
-            format!("{mass_earth:.2} M_earth")
-        };
-
-        let ecc_str = if builder_state.eccentricity < 0.05 {
-            "Circular (0.00)".to_string()
-        } else if builder_state.eccentricity < 0.35 {
-            format!("Moderate ({:.2})", builder_state.eccentricity)
-        } else if builder_state.eccentricity < 1.0 {
-            format!("High ({:.2})", builder_state.eccentricity)
-        } else {
-            format!("Hyperbolic ({:.2})", builder_state.eccentricity)
-        };
-
-        text.0 = format!(
-            "🛠️ PLANET BUILDER & SPAWNER\n\
-            ───────────────────────────────\n\
-            Target: {} [{}]\n\
-            Mass:   {}\n\
-            Orbit:  {:.2} AU | v_circ: {:.1} km/s\n\
-            Ecc:    {}\n\
-            Mix:    Rock {:.0}% | Ice {:.0}% | Fe {:.0}% | Gas {:.0}%\n\
-            Mode:   {}",
-            builder_state.custom_name,
-            builder_state.active_preset.display_name(),
-            mass_str,
-            builder_state.semi_major_axis_au,
-            v_circ_kms,
-            ecc_str,
-            builder_state.rock_frac * 100.0,
-            builder_state.ice_frac * 100.0,
-            builder_state.metal_frac * 100.0,
-            builder_state.gas_frac * 100.0,
-            if builder_state.click_to_spawn_mode {
-                "🎯 Click 3D Plane to Place"
-            } else {
-                "🚀 Instant Orbit Insertion"
-            }
-        );
-    }
-}
+pub use super::builder_spawner::{
+    compute_builder_spawn_coords, resolve_builder_body_type_and_temperature,
+    spawn_custom_builder_world, update_planet_builder_ui,
+};

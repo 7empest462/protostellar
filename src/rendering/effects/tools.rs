@@ -402,7 +402,7 @@ pub fn draw_slingshot_preview(
 pub fn draw_trajectory_prediction_gizmos(
     gizmos: &mut Gizmos,
     predictor: &crate::simulation::predictor::TrajectoryPredictorState,
-    star_vec: Vec3,
+    _star_vec: Vec3,
     elapsed: f32,
 ) {
     if !predictor.is_enabled || predictor.trajectory_points.len() < 2 {
@@ -434,7 +434,7 @@ pub fn draw_trajectory_prediction_gizmos(
     // 2. Draw forward trajectory spline
     for window in predictor.trajectory_points.windows(2) {
         if let [p0, p1] = window {
-            gizmos.line(*p0 + star_vec, *p1 + star_vec, spline_color);
+            gizmos.line(*p0, *p1, spline_color);
         }
     }
 
@@ -444,13 +444,13 @@ pub fn draw_trajectory_prediction_gizmos(
             enc.encounter_pos_au.x as f32,
             enc.encounter_pos_au.y as f32,
             enc.encounter_pos_au.z as f32,
-        ) + star_vec;
+        );
 
         let tgt_world = Vec3::new(
             enc.target_pos_at_encounter_au.x as f32,
             enc.target_pos_at_encounter_au.y as f32,
             enc.target_pos_at_encounter_au.z as f32,
-        ) + star_vec;
+        );
 
         let badge_color = enc.encounter_type.badge_color();
         let badge_rgba = badge_color.to_srgba();

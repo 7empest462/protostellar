@@ -1,6 +1,8 @@
 pub mod dark_matter;
+pub mod habitable_zone;
 pub mod impact_debris;
 pub mod kilonova;
+pub mod lagrange;
 pub mod megastructures;
 pub mod orbits;
 pub mod planetary;
@@ -11,10 +13,20 @@ pub mod shockwaves;
 pub mod supernova;
 pub mod tde;
 pub mod tools;
+pub mod volcanism;
 
 pub use dark_matter::draw_dark_matter_halos;
+pub use habitable_zone::{
+    compute_effective_luminosity, draw_circumstellar_habitable_zone_and_frost_lines,
+    draw_habitable_zone_gizmos,
+};
 pub use impact_debris::*;
+pub use lagrange::{
+    compute_cr3bp_lagrange_points, draw_lagrange_points_gizmos,
+    render_lagrange_points_and_hill_sphere, LagrangeSystemCoordinates,
+};
 pub use roche_stream::*;
+pub use volcanism::*;
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
@@ -34,10 +46,10 @@ pub use orbits::{
 };
 pub use planetary::{
     draw_body_selection_and_beacons, draw_cometary_escape_tails, draw_diagnostic_overlays,
-    draw_planetary_magnetospheres,
+    draw_distant_optical_glint, draw_planetary_magnetospheres, draw_volcanic_and_cryo_plumes,
 };
 pub use relativistic::{
-    draw_black_hole_spacetime_curvature, draw_ignition_shockwave,
+    draw_black_hole_spacetime_curvature, draw_ignition_shockwave, draw_kerr_ergosphere,
     draw_magnetar_reconnection_gizmos, draw_neutron_star_gizmos, draw_pulsar_lighthouse_gizmos,
     draw_quasar_relativistic_jets, draw_quasi_star_photosphere_and_magnetosphere,
     draw_standard_black_hole_jets, draw_stellar_evolution_nebula, draw_white_dwarf_gizmos,
@@ -70,6 +82,7 @@ fn draw_star_effects(
     opt_ignition: Option<&IgnitionState>,
     opt_evo: Option<&StellarEvolutionState>,
     opt_quasi: Option<&BlackHoleStarState>,
+    opt_kerr: Option<&crate::simulation::relativity::kerr::KerrBlackHole>,
     config: &SimulationConfig,
     overlay_mode: DiagnosticOverlayMode,
     elapsed: f32,
@@ -91,7 +104,10 @@ fn draw_star_effects(
         draw_pulsar_lighthouse_gizmos(gizmos, star_vec, elapsed);
     } else if star_body.body_type == BodyType::Magnetar {
         draw_magnetar_reconnection_gizmos(gizmos, star_vec, elapsed);
-    } else if star_body.body_type == BodyType::NeutronStar {
+    } else if matches!(
+        star_body.body_type,
+        BodyType::NeutronStar | BodyType::QuarkStar
+    ) {
         draw_neutron_star_gizmos(gizmos, star_vec, elapsed);
     } else if opt_quasi.is_some()
         || star_body.body_type == BodyType::QuasiStar
@@ -123,11 +139,16 @@ fn draw_star_effects(
 
         let current_visual_r =
             config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
-        let base_lens_r = if opt_quasi.is_some() || star_body.body_type == BodyType::QuasiStar {
+        let base_lens_r = if (opt_quasi.is_some() || star_body.body_type == BodyType::QuasiStar)
+            && !is_blown_out
+        {
             (current_visual_r * 1.50).max(3.6)
         } else {
             (current_visual_r * 1.50).max(0.12)
         };
+        if let Some(kerr) = opt_kerr {
+            draw_kerr_ergosphere(gizmos, star_vec, kerr, base_lens_r, elapsed);
+        }
         draw_black_hole_spacetime_curvature(gizmos, star_vec, base_lens_r, is_blown_out, elapsed);
     } else if star_body.body_type == BodyType::BlackHole {
         draw_standard_black_hole_jets(gizmos, star_vec);
@@ -224,45 +245,28 @@ struct BodyEffectParams {
     star_pos_dvec: DVec3,
     star_mass_val: f64,
     elapsed: f32,
-    cam_pos: Option<Vec3>,
+    cam_tf: Option<Transform>,
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "Per-body rendering gizmo requires multiple body components and contextual parameters"
+    reason = "Physical features require tail, volcano, and magnetic field components"
 )]
-fn draw_single_body_gizmos(
+fn draw_body_physical_features(
     gizmos: &mut Gizmos,
-    entity: Entity,
-    pos: &SimPosition,
+    body_vec: Vec3,
     vel: &SimVelocity,
-    mass: &Mass,
-    comp: &Composition,
-    body: &CelestialBody,
+    opt_tail: Option<&AtmosphericEscapeTail>,
+    opt_volc: Option<&VolcanicState>,
     opt_diff: Option<&InternalDifferentiation>,
     opt_spin: Option<&SpinState>,
     opt_rad: Option<&Radius>,
-    opt_tail: Option<&AtmosphericEscapeTail>,
-    opt_satellite: Option<&SatelliteOf>,
     params: &BodyEffectParams,
     player_state: &PlayerInteractionState,
     config: &SimulationConfig,
-    parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
+    is_selected: bool,
 ) {
-    let is_selected = player_state.selected_entity == Some(entity);
-    let is_planet = matches!(
-        body.body_type,
-        BodyType::Protoplanet
-            | BodyType::TerrestrialPlanet
-            | BodyType::SuperEarth
-            | BodyType::GasGiant
-            | BodyType::IceGiant
-    );
-    let body_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let r_orbit = pos.0.length() as f32;
-
     let is_active_escape = opt_tail.is_some_and(|t| t.is_active && t.tail_length_au > 0.05);
-
     let should_draw_tail = if is_active_escape {
         match player_state.orbit_mode {
             OrbitVisualizationMode::Off => false,
@@ -286,6 +290,22 @@ fn draw_single_body_gizmos(
         );
     }
 
+    if let Some(volc) = opt_volc {
+        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+            let visual_rad = opt_rad.map_or(0.05, |r| config.calc_visual_radius(r.0));
+            draw_volcanic_and_cryo_plumes(
+                gizmos,
+                body_vec,
+                visual_rad,
+                volc,
+                opt_spin,
+                params.star_vec,
+                params.cam_tf.map_or(Vec3::ZERO, |t| t.translation),
+                params.elapsed,
+            );
+        }
+    }
+
     if let Some(diff) = opt_diff {
         if player_state.overlay_mode != DiagnosticOverlayMode::Hidden
             && player_state.overlay_mode != DiagnosticOverlayMode::MagneticFields
@@ -293,7 +313,30 @@ fn draw_single_body_gizmos(
             draw_planetary_magnetospheres(gizmos, body_vec, params.star_vec, diff, opt_spin);
         }
     }
+}
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Body orbit and overlays require astrometric and render contextual parameters"
+)]
+fn draw_body_orbit_and_overlays(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    pos: &SimPosition,
+    vel: &SimVelocity,
+    mass: &Mass,
+    comp: &Composition,
+    body: &CelestialBody,
+    opt_rad: Option<&Radius>,
+    opt_satellite: Option<&SatelliteOf>,
+    params: &BodyEffectParams,
+    player_state: &PlayerInteractionState,
+    config: &SimulationConfig,
+    parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
+    is_selected: bool,
+    is_planet: bool,
+) {
+    let r_orbit = pos.0.length() as f32;
     let should_draw_orbit = match player_state.orbit_mode {
         OrbitVisualizationMode::Off => false,
         OrbitVisualizationMode::SelectedOnly => is_selected,
@@ -335,10 +378,218 @@ fn draw_single_body_gizmos(
         player_state.overlay_mode,
     );
 
+    if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+        if let Some(ctf) = params.cam_tf {
+            let cam_dist = ctf.translation.distance(body_vec);
+            let vis_r = opt_rad.map_or(0.002, |r| {
+                crate::rendering::bodies::transforms::compute_realistic_visual_radius(
+                    r.0,
+                    body.body_type,
+                    r_orbit,
+                    0.4,
+                    cam_dist,
+                    config,
+                )
+            });
+            let glint_col =
+                determine_orbit_color(body.body_type, is_selected, opt_satellite.is_some(), 0.0);
+            draw_distant_optical_glint(
+                gizmos,
+                body_vec,
+                ctf.translation,
+                *ctf.up(),
+                *ctf.right(),
+                vis_r,
+                glint_col,
+                body.body_type,
+            );
+        }
+    }
+
     if is_selected && player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
-        draw_body_selection_and_beacons(gizmos, body_vec, body, opt_rad, config, params.cam_pos);
+        draw_body_selection_and_beacons(
+            gizmos,
+            body_vec,
+            body,
+            opt_rad,
+            config,
+            params.cam_tf.map(|t| t.translation),
+        );
     }
 }
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Per-body rendering gizmo requires multiple body components and contextual parameters"
+)]
+fn draw_single_body_gizmos(
+    gizmos: &mut Gizmos,
+    entity: Entity,
+    pos: &SimPosition,
+    vel: &SimVelocity,
+    mass: &Mass,
+    comp: &Composition,
+    body: &CelestialBody,
+    opt_diff: Option<&InternalDifferentiation>,
+    opt_spin: Option<&SpinState>,
+    opt_rad: Option<&Radius>,
+    opt_tail: Option<&AtmosphericEscapeTail>,
+    opt_satellite: Option<&SatelliteOf>,
+    opt_volc: Option<&VolcanicState>,
+    params: &BodyEffectParams,
+    player_state: &PlayerInteractionState,
+    config: &SimulationConfig,
+    parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
+) {
+    let is_selected = player_state.selected_entity == Some(entity);
+    let is_planet = matches!(
+        body.body_type,
+        BodyType::Protoplanet
+            | BodyType::TerrestrialPlanet
+            | BodyType::SuperEarth
+            | BodyType::GasGiant
+            | BodyType::IceGiant
+    );
+    let body_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+
+    draw_body_physical_features(
+        gizmos,
+        body_vec,
+        vel,
+        opt_tail,
+        opt_volc,
+        opt_diff,
+        opt_spin,
+        opt_rad,
+        params,
+        player_state,
+        config,
+        is_selected,
+    );
+
+    draw_body_orbit_and_overlays(
+        gizmos,
+        body_vec,
+        pos,
+        vel,
+        mass,
+        comp,
+        body,
+        opt_rad,
+        opt_satellite,
+        params,
+        player_state,
+        config,
+        parent_query,
+        is_selected,
+        is_planet,
+    );
+}
+
+fn draw_cataclysm_and_environment_effects(
+    gizmos: &mut Gizmos,
+    player_state: &PlayerInteractionState,
+    shockwave_pool: &ImpactShockwavePool,
+    debris_pool: &RocheDebrisPool,
+    supernova_pool: Option<&SupernovaDebrisPool>,
+    star_vec: Vec3,
+) {
+    if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+        draw_impact_shockwaves(gizmos, shockwave_pool);
+        draw_roche_debris_streamers(gizmos, debris_pool);
+    }
+    if let Some(pool) = supernova_pool {
+        draw_supernova_explosions(gizmos, pool);
+    }
+    // AU distance guides look like planetary orbits — hide them with orbit trails.
+    if player_state.orbit_mode != OrbitVisualizationMode::Off
+        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
+    {
+        draw_au_guide_rings(gizmos, star_vec);
+    }
+}
+
+type CelestialBodiesQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static SimPosition,
+        &'static SimVelocity,
+        &'static Mass,
+        &'static Composition,
+        &'static CelestialBody,
+        Option<&'static InternalDifferentiation>,
+        Option<&'static SpinState>,
+        Option<&'static Radius>,
+        Option<&'static AtmosphericEscapeTail>,
+        Option<&'static SatelliteOf>,
+        Option<&'static VolcanicState>,
+    ),
+    Without<crate::simulation::probes::SpaceProbe>,
+>;
+
+fn draw_celestial_bodies_batch(
+    gizmos: &mut Gizmos,
+    bodies_query: &CelestialBodiesQuery<'_, '_>,
+    params: &BodyEffectParams,
+    player_state: &PlayerInteractionState,
+    config: &SimulationConfig,
+    parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
+) {
+    for (
+        entity,
+        pos,
+        vel,
+        mass,
+        comp,
+        body,
+        opt_diff,
+        opt_spin,
+        opt_rad,
+        opt_tail,
+        opt_sat,
+        opt_volc,
+    ) in bodies_query.iter()
+    {
+        draw_single_body_gizmos(
+            gizmos,
+            entity,
+            pos,
+            vel,
+            mass,
+            comp,
+            body,
+            opt_diff,
+            opt_spin,
+            opt_rad,
+            opt_tail,
+            opt_sat,
+            opt_volc,
+            params,
+            player_state,
+            config,
+            parent_query,
+        );
+    }
+}
+
+type CentralStarQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static SimPosition,
+        &'static Mass,
+        &'static Radius,
+        Option<&'static IgnitionState>,
+        &'static CelestialBody,
+        Option<&'static StellarEvolutionState>,
+        Option<&'static ElectromagneticFieldState>,
+        Option<&'static BlackHoleStarState>,
+        Option<&'static crate::simulation::relativity::kerr::KerrBlackHole>,
+    ),
+    With<CentralStar>,
+>;
 
 #[allow(clippy::type_complexity, reason = "Orbital Effects Gizmos")]
 pub fn draw_orbital_effects_and_gizmos(
@@ -350,35 +601,8 @@ pub fn draw_orbital_effects_and_gizmos(
     supernova_pool: Option<Res<SupernovaDebrisPool>>,
     sim_time: Option<Res<SimTime>>,
     camera_query: Query<&Transform, With<Camera3d>>,
-    star_query: Query<
-        (
-            &SimPosition,
-            &Mass,
-            &Radius,
-            Option<&IgnitionState>,
-            &CelestialBody,
-            Option<&StellarEvolutionState>,
-            Option<&ElectromagneticFieldState>,
-            Option<&BlackHoleStarState>,
-        ),
-        With<CentralStar>,
-    >,
-    bodies_query: Query<
-        (
-            Entity,
-            &SimPosition,
-            &SimVelocity,
-            &Mass,
-            &Composition,
-            &CelestialBody,
-            Option<&InternalDifferentiation>,
-            Option<&SpinState>,
-            Option<&Radius>,
-            Option<&AtmosphericEscapeTail>,
-            Option<&SatelliteOf>,
-        ),
-        Without<crate::simulation::probes::SpaceProbe>,
-    >,
+    star_query: CentralStarQuery<'_, '_>,
+    bodies_query: CelestialBodiesQuery<'_, '_>,
     parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
     opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
     opt_slingshot: Option<Res<crate::simulation::resources::SlingshotState>>,
@@ -410,9 +634,9 @@ pub fn draw_orbital_effects_and_gizmos(
     };
 
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
-    let cam_pos = camera_query.iter().next().map(|tf| tf.translation);
+    let cam_tf = camera_query.iter().next().copied();
 
-    if let Some((_, s_mass, s_rad, opt_ign, s_body, opt_evo, _, opt_quasi)) = opt_star {
+    if let Some((_, s_mass, s_rad, opt_ign, s_body, opt_evo, _, opt_quasi, opt_kerr)) = opt_star {
         draw_star_effects(
             &mut gizmos,
             star_vec,
@@ -422,56 +646,38 @@ pub fn draw_orbital_effects_and_gizmos(
             opt_ign,
             opt_evo,
             opt_quasi,
+            opt_kerr,
             &config,
             player_state.overlay_mode,
             elapsed,
         );
     }
 
-    if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
-        draw_impact_shockwaves(&mut gizmos, &shockwave_pool);
-        draw_roche_debris_streamers(&mut gizmos, &debris_pool);
-    }
-    if let Some(ref pool) = supernova_pool {
-        draw_supernova_explosions(&mut gizmos, pool);
-    }
-    // AU distance guides look like planetary orbits — hide them with orbit trails.
-    if player_state.orbit_mode != OrbitVisualizationMode::Off
-        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
-    {
-        draw_au_guide_rings(&mut gizmos, star_vec);
-    }
+    draw_cataclysm_and_environment_effects(
+        &mut gizmos,
+        &player_state,
+        &shockwave_pool,
+        &debris_pool,
+        supernova_pool.as_deref(),
+        star_vec,
+    );
 
     let params = BodyEffectParams {
         star_vec,
         star_pos_dvec,
         star_mass_val,
         elapsed,
-        cam_pos,
+        cam_tf,
     };
 
-    for (entity, pos, vel, mass, comp, body, opt_diff, opt_spin, opt_rad, opt_tail, opt_sat) in
-        bodies_query.iter()
-    {
-        draw_single_body_gizmos(
-            &mut gizmos,
-            entity,
-            pos,
-            vel,
-            mass,
-            comp,
-            body,
-            opt_diff,
-            opt_spin,
-            opt_rad,
-            opt_tail,
-            opt_sat,
-            &params,
-            &player_state,
-            &config,
-            &parent_query,
-        );
-    }
+    draw_celestial_bodies_batch(
+        &mut gizmos,
+        &bodies_query,
+        &params,
+        &player_state,
+        &config,
+        &parent_query,
+    );
 
     draw_interactive_tool_gizmos(
         &mut gizmos,

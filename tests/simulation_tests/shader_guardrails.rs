@@ -18,12 +18,13 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
         if path.extension().and_then(|ext| ext.to_str()) == Some("wgsl") {
             let filename = path.file_name().unwrap().to_str().unwrap();
 
-            // Compute shaders for particle orbit, particle render, and GMC fluid legitimately use @group(0)
+            // Compute shaders use @group(0), and UiMaterial shaders legitimately use @group(1)
             if filename == "particle_orbit.wgsl"
                 || filename == "particle_render.wgsl"
                 || filename == "gmc_fluid.wgsl"
                 || filename == "nbody_galaxy.wgsl"
                 || filename == "gmc_far_field.wgsl"
+                || filename == "sci_fi_panel.wgsl"
             {
                 continue;
             }
@@ -112,6 +113,50 @@ fn test_black_hole_disk_wgsl_naga_validation() {
     );
 }
 
+#[test]
+fn test_roche_stream_wgsl_naga_validation() {
+    use bevy::camera::primitives::MeshAabb;
+    use bevy::mesh::VertexAttributeValues;
+
+    validate_wgsl_shader_with_naga(
+        "assets/shaders/roche_stream.wgsl",
+        "struct RocheStreamUniforms",
+    );
+    let mesh = protostellar::rendering::effects::roche_stream::generate_curved_roche_tube_mesh();
+    let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else {
+        panic!("Roche stream mesh must have Float32x3 ATTRIBUTE_POSITION");
+    };
+    for (idx, pos) in positions.iter().enumerate() {
+        assert!(
+            pos[0].is_finite() && pos[1].is_finite() && pos[2].is_finite(),
+            "Vertex position at index {idx} must be finite (no NaN/Inf), got {pos:?}"
+        );
+    }
+
+    let Some(VertexAttributeValues::Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+    else {
+        panic!("Roche stream mesh must have Float32x3 ATTRIBUTE_NORMAL");
+    };
+    for (idx, norm) in normals.iter().enumerate() {
+        assert!(
+            norm[0].is_finite() && norm[1].is_finite() && norm[2].is_finite(),
+            "Vertex normal at index {idx} must be finite (no NaN/Inf), got {norm:?}"
+        );
+    }
+
+    let aabb = mesh
+        .compute_aabb()
+        .expect("Roche stream mesh must compute a valid Aabb");
+    assert!(
+        aabb.center.is_finite() && aabb.half_extents.is_finite(),
+        "Roche stream Aabb must be finite so frustum culling never discards the stream: {aabb:?}"
+    );
+    assert!(mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_some());
+    assert!(mesh.indices().is_some());
+}
+
 fn validate_wgsl_compute_shader_with_naga(shader_path: &str) {
     let source = std::fs::read_to_string(shader_path)
         .unwrap_or_else(|_| panic!("{} must exist", shader_path));
@@ -147,6 +192,42 @@ fn test_volumetric_nebula_wgsl_naga_validation() {
     validate_wgsl_shader_with_naga(
         "assets/shaders/volumetric_nebula.wgsl",
         "struct VolumetricNebulaUniforms",
+    );
+}
+
+#[test]
+fn test_post_processing_wgsl_naga_validation() {
+    validate_wgsl_shader_with_naga(
+        "assets/shaders/post_processing.wgsl",
+        "struct PostProcessingSettings",
+    );
+}
+
+#[test]
+fn test_post_processing_settings_uniform_alignment_and_material() {
+    use protostellar::rendering::post_processing::{
+        PostProcessingMaterial, PostProcessingSettings,
+    };
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(AssetPlugin::default());
+    app.init_asset::<Mesh>();
+    app.init_asset::<Image>();
+    app.init_asset::<PostProcessingMaterial>();
+
+    let mut materials = app
+        .world_mut()
+        .resource_mut::<Assets<PostProcessingMaterial>>();
+    let handle = materials.add(PostProcessingMaterial {
+        source_texture: Handle::default(),
+        settings: PostProcessingSettings::default(),
+    });
+
+    let retrieved = materials.get(&handle);
+    assert!(
+        retrieved.is_some(),
+        "PostProcessingMaterial must be safely retrievable from Assets"
     );
 }
 
@@ -222,4 +303,51 @@ fn test_entity_try_despawn_idempotence_and_safety() {
     app.update();
 
     assert!(app.world().get_entity(e2).is_err(), "e2 must be despawned");
+}
+
+#[test]
+fn test_planet_wgsl_ocean_hypsometry_guardrails() {
+    let content = std::fs::read_to_string("assets/shaders/planet.wgsl")
+        .expect("assets/shaders/planet.wgsl must exist");
+
+    // Guardrail 1: Exposed seabed must ONLY render when oceans are absent (!has_oceans)
+    assert!(
+        content.contains("let is_exposed_seabed = !has_oceans && (elev < primordial_shelf_elev);"),
+        "planet.wgsl must guard exposed seabed by !has_oceans on terrestrial planets"
+    );
+    assert!(
+        content.contains(
+            "let is_exposed_seabed = !has_oceans && (combined_elev < primordial_shelf_elev);"
+        ),
+        "planet.wgsl must guard exposed seabed by !has_oceans on super-earths"
+    );
+
+    // Guardrail 2: Oceanic base elevation must stay submerged below sea level
+    assert!(
+        content.contains("let ocean_base = sea_level - 0.22;"),
+        "planet.wgsl must depress oceanic basin base level safely below sea_level"
+    );
+
+    // Guardrail 3: Animated gentle capillary swell must exist on open water
+    assert!(
+        content.contains("let ocean_normal = normalize(surface_dir + wave_pert_world);"),
+        "planet.wgsl must compute smooth liquid capillary swell for open water"
+    );
+
+    // Guardrail 4: Ice caps and eyeball glaciers must strictly require volatile water/ice
+    assert!(
+        content.contains(
+            "let has_volatile_ice = has_volatiles && (ice_frac > 0.005 || ocean_frac > 0.005);"
+        ),
+        "planet.wgsl must define has_volatile_ice before evaluating ice caps"
+    );
+    assert!(
+        content
+            .contains("let eyeball_ice = is_tidally_locked && has_volatile_ice && (temp < 345.0)"),
+        "planet.wgsl must require has_volatile_ice for eyeball glaciers"
+    );
+    assert!(
+        content.contains("if (in_ice_cap) {"),
+        "planet.wgsl must guard ice cap rendering by in_ice_cap"
+    );
 }

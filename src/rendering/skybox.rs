@@ -75,9 +75,74 @@ pub fn sync_skybox_to_camera(
     }
 }
 
+/// Computes relativistic gravitational lensing uniforms for compact/exotic stars and black holes.
+pub fn compute_skybox_lensing_uniforms(
+    camera_pos: Vec3,
+    config: &SimulationConfig,
+    star_pos: &SimPosition,
+    star_radius: &Radius,
+    star_body: &CelestialBody,
+    opt_bhs: Option<&BlackHoleStarState>,
+) -> Option<(Vec4, Vec4)> {
+    let is_quasi = star_body.body_type == BodyType::QuasiStar;
+    let is_bh = star_body.body_type == BodyType::BlackHole;
+    let is_boson = star_body.body_type == BodyType::BosonStar;
+    let is_compact = matches!(
+        star_body.body_type,
+        BodyType::QuarkStar | BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+    );
+
+    if !(is_quasi || is_bh || is_boson || is_compact) {
+        return None;
+    }
+
+    let bh_pos = Vec3::new(star_pos.x as f32, star_pos.y as f32, star_pos.z as f32);
+    let bh_rel = bh_pos - camera_pos;
+    let dist_to_bh = bh_rel.length().max(0.01);
+    let visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
+
+    let (effective_lens_r, shadow_r) = if is_boson {
+        // Boson Star: Horizonless scalar soliton with strong Einstein ring deflection
+        ((visual_r * 1.45).max(0.005), 0.0)
+    } else if is_compact {
+        // Quark Star / Neutron Star: Relativistic photon-sphere light bending
+        ((visual_r * 1.15).max(0.004), (visual_r * 0.85).max(0.002))
+    } else {
+        let is_blown_out = opt_bhs.map_or(is_bh, |s| s.is_blown_out);
+        let blowout_p =
+            opt_bhs.map_or(if is_blown_out { 1.0 } else { 0.0 }, |s| s.blowout_progress);
+        let lens_r = if is_blown_out {
+            (visual_r * 1.50).max(0.005)
+        } else {
+            let r_cocoon_lens = (visual_r * 0.20).clamp(2.0, 12.0);
+            let r_bh_lens = (visual_r * 1.85).clamp(2.0, 6.0);
+            r_cocoon_lens + (r_bh_lens - r_cocoon_lens) * blowout_p
+        };
+        let sh_r = if is_blown_out {
+            (visual_r * 0.98).max(0.003)
+        } else {
+            (visual_r * 0.05).clamp(0.5, 3.0)
+        };
+        (lens_r, sh_r)
+    };
+
+    let theta_e = (effective_lens_r / dist_to_bh).atan();
+    let theta_shadow = (shadow_r / dist_to_bh).atan();
+    let photon_ring_width = (theta_e * 0.045).clamp(0.0005, 0.06);
+
+    Some((
+        Vec4::new(bh_rel.x, bh_rel.y, bh_rel.z, theta_e),
+        Vec4::new(theta_shadow, photon_ring_width, 1.0, 1.0),
+    ))
+}
+
 /// Updates procedural skybox uniforms, advancing time, smoothly morphing between
 /// the Modern Milky Way (0.0) and the Early Universe Cosmic Web (1.0), and computing
-/// General Relativistic gravitational lensing parameters for massive black holes.
+/// General Relativistic gravitational lensing parameters for massive black holes and exotic solitons.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Skybox uniform and lensing synchronization"
+)]
 pub fn update_skybox_uniforms(
     time: Res<Time>,
     config: Res<SimulationConfig>,
@@ -85,16 +150,14 @@ pub fn update_skybox_uniforms(
     mut materials: ResMut<Assets<SkyboxMaterial>>,
     skybox_query: Query<&MeshMaterial3d<SkyboxMaterial>, With<CelestialSkybox>>,
     camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialSkybox>)>,
-    star_query: Query<
-        (
-            &SimPosition,
-            &Mass,
-            &Radius,
-            &CelestialBody,
-            Option<&BlackHoleStarState>,
-        ),
-        With<CentralStar>,
-    >,
+    star_query: Query<(
+        &SimPosition,
+        &Mass,
+        &Radius,
+        &CelestialBody,
+        Option<&BlackHoleStarState>,
+        Option<&CentralStar>,
+    )>,
     mut ambient_light: Option<ResMut<GlobalAmbientLight>>,
 ) {
     let dt = time.delta_secs();
@@ -129,42 +192,22 @@ pub fn update_skybox_uniforms(
     let mut lens_pos_and_mass = Vec4::ZERO;
     let mut lens_params = Vec4::ZERO;
 
-    if let Ok((star_pos, _star_mass, star_radius, star_body, opt_bhs)) = star_query.single() {
-        let is_quasi = star_body.body_type == BodyType::QuasiStar;
-        let is_bh = star_body.body_type == BodyType::BlackHole;
-
-        if is_quasi || is_bh {
-            let bh_pos = Vec3::new(star_pos.x as f32, star_pos.y as f32, star_pos.z as f32);
-            let bh_rel = bh_pos - camera_pos;
-            let dist_to_bh = bh_rel.length().max(0.01);
-
-            let visual_r = config.calc_visual_radius_for_type(star_radius.0, star_body.body_type);
-            let is_blown_out = opt_bhs.map_or(is_bh, |s| s.is_blown_out);
-            let blowout_p =
-                opt_bhs.map_or(if is_blown_out { 1.0 } else { 0.0 }, |s| s.blowout_progress);
-
-            // Effective gravitational Einstein radius (physical + visual aesthetic scaling)
-            // Pre-blowout: subtle relativistic shimmer around the 60 AU envelope (R ~ 12 AU).
-            // Post-blowout / Stellar-Mass BH: focuses onto the event horizon with a 2.1x photon sphere.
-            let effective_lens_r = if is_blown_out {
-                (visual_r * 1.50).max(0.005)
-            } else {
-                let r_cocoon_lens = (visual_r * 0.20).clamp(2.0, 12.0);
-                let r_bh_lens = (visual_r * 1.85).clamp(2.0, 6.0);
-                r_cocoon_lens + (r_bh_lens - r_cocoon_lens) * blowout_p
-            };
-
-            let shadow_r = if is_blown_out {
-                (visual_r * 0.98).max(0.003)
-            } else {
-                (visual_r * 0.05).clamp(0.5, 3.0)
-            };
-            let theta_e = (effective_lens_r / dist_to_bh).atan();
-            let theta_shadow = (shadow_r / dist_to_bh).atan();
-            let photon_ring_width = (theta_shadow * 0.045).clamp(0.0005, 0.06);
-
-            lens_pos_and_mass = Vec4::new(bh_rel.x, bh_rel.y, bh_rel.z, theta_e);
-            lens_params = Vec4::new(theta_shadow, photon_ring_width, 1.0, 1.0);
+    // Select the relativistic lens with the largest angular Einstein radius from the camera's viewpoint
+    let mut best_theta_e = 0.0_f32;
+    for (star_pos, _star_mass, star_radius, star_body, opt_bhs, _opt_central) in star_query.iter() {
+        if let Some((pos_mass, params)) = compute_skybox_lensing_uniforms(
+            camera_pos,
+            &config,
+            star_pos,
+            star_radius,
+            star_body,
+            opt_bhs,
+        ) {
+            if pos_mass.w > best_theta_e {
+                best_theta_e = pos_mass.w;
+                lens_pos_and_mass = pos_mass;
+                lens_params = params;
+            }
         }
     }
 

@@ -16,6 +16,7 @@ pub struct VisualRingChild;
 #[allow(clippy::type_complexity, reason = "Planetary ring query")]
 pub fn sync_planetary_rings(
     mut commands: Commands,
+    time: Res<Time>,
     _config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut ring_materials: ResMut<Assets<RingMaterial>>,
@@ -37,6 +38,7 @@ pub fn sync_planetary_rings(
         (With<VisualRingChild>, Without<CelestialBody>),
     >,
 ) {
+    let elapsed_secs = time.elapsed_secs();
     let star_world_pos = stars_query
         .iter()
         .find(|(_, b)| b.body_type.is_star_or_remnant())
@@ -85,6 +87,12 @@ pub fn sync_planetary_rings(
         let star_dir_local = (ring_world_rot.inverse() * star_dir_world).normalize_or_zero();
         let planet_radius_ratio = 1.0 / ring_ratio;
 
+        let inner_ratio_mesh = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
+            (ring_sys.inner_radius_au / ring_sys.outer_radius_au).clamp(planet_radius_ratio, 0.95)
+        } else {
+            (1.25f32 / 2.35f32).clamp(planet_radius_ratio, 0.95)
+        };
+
         let mut found_child = false;
         if let Some(children) = opt_children {
             for child in children.iter() {
@@ -94,8 +102,8 @@ pub fn sync_planetary_rings(
                     transform.rotation = ring_rotation;
 
                     if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
-                        mat.uniforms.inner_radius = ring_sys.inner_radius_au;
-                        mat.uniforms.outer_radius = ring_sys.outer_radius_au;
+                        mat.uniforms.inner_radius = inner_ratio_mesh;
+                        mat.uniforms.outer_radius = 1.0;
                         mat.uniforms.optical_depth = ring_sys.optical_depth;
                         mat.uniforms.ice_fraction = ring_sys.ice_fraction;
                         mat.uniforms.ring_color = calc_ring_color(ring_sys.ice_fraction);
@@ -105,7 +113,7 @@ pub fn sync_planetary_rings(
                             star_dir_local.z,
                             planet_radius_ratio,
                         );
-                        mat.uniforms.shadow_params = Vec4::new(0.03, 0.022, 0.97, 0.0);
+                        mat.uniforms.shadow_params = Vec4::new(0.03, 0.022, 0.97, elapsed_secs);
                     }
                 }
             }
@@ -115,8 +123,8 @@ pub fn sync_planetary_rings(
             let ring_color = calc_ring_color(ring_sys.ice_fraction);
             let material = ring_materials.add(RingMaterial {
                 uniforms: RingUniforms {
-                    inner_radius: ring_sys.inner_radius_au,
-                    outer_radius: ring_sys.outer_radius_au,
+                    inner_radius: inner_ratio_mesh,
+                    outer_radius: 1.0,
                     optical_depth: ring_sys.optical_depth,
                     ice_fraction: ring_sys.ice_fraction,
                     ring_color,
@@ -126,7 +134,7 @@ pub fn sync_planetary_rings(
                         star_dir_local.z,
                         planet_radius_ratio,
                     ),
-                    shadow_params: Vec4::new(0.03, 0.022, 0.97, 0.0),
+                    shadow_params: Vec4::new(0.03, 0.022, 0.97, elapsed_secs),
                 },
             });
 
@@ -349,13 +357,13 @@ pub fn sync_quasar_beams(
 
     let jet_len = light_dist;
     let current_visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
-    let pole_start = (current_visual_radius * 0.90).max(0.05);
+    let pole_start = (current_visual_radius * 0.90).max(0.002);
     let beam_len = (jet_len - pole_start).max(0.1);
     let beam_center = pole_start + beam_len * 0.5;
 
-    let core_r = 0.06f32;
-    let sheath_r = 0.18f32;
-    let lobe_r = 0.55f32;
+    let core_r = (current_visual_radius * 0.12).clamp(0.002, 0.04);
+    let sheath_r = (current_visual_radius * 0.28).clamp(0.005, 0.09);
+    let lobe_r = (current_visual_radius * 0.85).clamp(0.02, 0.35);
 
     if let Some((_, mut root_trans)) = root_query.iter_mut().next() {
         update_quasar_beam_transforms(
@@ -624,6 +632,8 @@ pub fn sync_black_hole_accretion_disks(
             &Transform,
             Option<&SpinState>,
             Option<&RelativisticJetState>,
+            Option<&crate::simulation::relativity::kerr::KerrBlackHole>,
+            Option<&BlackHoleStarState>,
             Option<&Children>,
         ),
         (With<VisualBody>, Without<VisualBlackHoleDiskChild>),
@@ -646,15 +656,33 @@ pub fn sync_black_hole_accretion_disks(
         .next()
         .map_or(Vec3::new(0.0, 5.0, 10.0), |t| t.translation);
 
-    for (bh_entity, mass, _radius, body, bh_trans, _opt_spin, opt_jet, opt_children) in
-        black_holes_query.iter()
+    for (
+        bh_entity,
+        mass,
+        _radius,
+        body,
+        bh_trans,
+        _opt_spin,
+        opt_jet,
+        opt_kerr,
+        opt_bhs,
+        opt_children,
+    ) in black_holes_query.iter()
     {
-        if body.body_type != BodyType::BlackHole {
+        let is_black_hole = body.body_type == BodyType::BlackHole
+            || (body.body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out));
+        if !is_black_hole {
             continue;
         }
 
-        let (target_transform, uniforms) =
-            calculate_disk_geometry_and_uniforms(cam_pos, bh_trans, mass, opt_jet, visual_time);
+        let (target_transform, uniforms) = calculate_disk_geometry_and_uniforms(
+            cam_pos,
+            bh_trans,
+            mass,
+            opt_jet,
+            opt_kerr,
+            visual_time,
+        );
 
         let mut found_child = false;
         if let Some(children) = opt_children {
@@ -692,6 +720,7 @@ fn calculate_disk_geometry_and_uniforms(
     bh_trans: &Transform,
     mass: &Mass,
     opt_jet: Option<&RelativisticJetState>,
+    opt_kerr: Option<&crate::simulation::relativity::kerr::KerrBlackHole>,
     visual_time: f32,
 ) -> (Transform, BlackHoleDiskUniforms) {
     let disk_scale = 12.0f32;
@@ -703,10 +732,18 @@ fn calculate_disk_geometry_and_uniforms(
         }
     });
 
+    let spin_axis = opt_kerr.map_or(Vec3::Y, |k| {
+        let v = k.spin_axis.as_vec3();
+        if v.length_squared() > 0.5 {
+            v.normalize()
+        } else {
+            Vec3::Y
+        }
+    });
+
     let cam_dir_world = (cam_pos - bh_trans.translation).normalize_or_zero();
     let cam_dir_local = bh_trans.rotation.inverse() * cam_dir_world;
 
-    let spin_axis = Vec3::Y;
     let mut u_right = spin_axis.cross(cam_dir_local);
     if u_right.length_squared() < 1e-6 {
         u_right = Vec3::X;
@@ -718,17 +755,32 @@ fn calculate_disk_geometry_and_uniforms(
     let disk_rotation = Quat::from_mat3(&Mat3::from_cols(u_right, cam_dir_local, z_screen_col));
     let cos_theta = cam_dir_local.dot(spin_axis).clamp(-1.0, 1.0);
 
-    let target_transform = Transform::from_translation(cam_dir_local * 0.02)
+    let target_transform = Transform::from_translation(cam_dir_local * 0.001)
         .with_scale(Vec3::new(disk_scale, 1.0, disk_scale))
         .with_rotation(disk_rotation);
 
+    let (inner_radius, schwa_radius, spin_axis_w) = if let Some(kerr) = opt_kerr {
+        let a_star = kerr.spin_param as f32;
+        let a2 = (a_star * a_star).min(0.9998);
+        let r_plus_ratio = f32::midpoint(1.0, (1.0 - a2).max(0.0).sqrt());
+        let m = mass.0.max(1.0);
+        let r_isco_kerr =
+            crate::simulation::relativity::kerr::calculate_kerr_isco_radius(m, kerr.spin_param);
+        let r_isco_schwa = crate::simulation::relativity::post_newtonian::calculate_isco_radius(m);
+        let isco_ratio = (r_isco_kerr / r_isco_schwa.max(1e-6)) as f32;
+        let r_inner = (0.16 * isco_ratio).clamp(0.055 * r_plus_ratio * 1.05, 0.45);
+        (r_inner, 0.055 * r_plus_ratio, a_star)
+    } else {
+        (0.16, 0.055, mass.0 as f32)
+    };
+
     let uniforms = BlackHoleDiskUniforms {
-        inner_radius: 0.16,
+        inner_radius,
         outer_radius: 1.0,
-        schwa_radius: 0.055,
+        schwa_radius,
         time: visual_time,
         disk_color: Vec4::new(1.0, 0.90, 0.70, 1.0),
-        spin_axis: Vec4::new(0.0, 1.0, 0.0, mass.0 as f32),
+        spin_axis: Vec4::new(spin_axis.x, spin_axis.y, spin_axis.z, spin_axis_w),
         cam_dir_local: Vec4::new(cam_dir_local.x, cam_dir_local.y, cam_dir_local.z, cos_theta),
         cam_up_local: Vec4::new(
             z_screen_col.x,

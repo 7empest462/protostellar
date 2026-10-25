@@ -123,6 +123,7 @@ fn test_direct_impact_detection_encounter_classification() {
         &impactor_elements,
         earth_radius_au * 0.5,
         star_mass,
+        DVec3::ZERO,
         &targets,
         1.0, // 1 year horizon
     );
@@ -171,8 +172,14 @@ fn test_hill_sphere_and_roche_lobe_detection() {
         mass_solar: jupiter_mass,
     }];
 
-    let (_, opt_encounter) =
-        find_closest_encounter(&impactor_elements, 0.001, star_mass, &targets, 2.0);
+    let (_, opt_encounter) = find_closest_encounter(
+        &impactor_elements,
+        0.001,
+        star_mass,
+        DVec3::ZERO,
+        &targets,
+        2.0,
+    );
 
     assert!(
         opt_encounter.is_some(),
@@ -290,4 +297,92 @@ fn test_hyperbolic_kepler_near_asymptote_stability() {
             vel
         );
     }
+}
+
+#[test]
+fn test_predictor_star_offset_and_inbound_hyperbolic_asinh() {
+    let mut app = App::new();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<SlingshotState>();
+    app.init_resource::<TrajectoryPredictorState>();
+
+    // Central star positioned offset from origin and moving
+    let star_pos = DVec3::new(50.0, 10.0, -20.0);
+    let star_vel = DVec3::new(2.0, 0.0, -1.0);
+    let _star_ent = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            SimPosition(star_pos),
+            SimVelocity(star_vel),
+            Mass(1.0),
+            Radius(0.00465),
+            CelestialBody {
+                name: "Moving Star".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+        ))
+        .id();
+
+    // Planet orbiting star at 1 AU relative
+    let planet_rel_pos = DVec3::new(1.0, 0.0, 0.0);
+    let planet_rel_vel = DVec3::new(0.0, 0.0, TAU);
+    let planet_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(star_pos + planet_rel_pos),
+            SimVelocity(star_vel + planet_rel_vel),
+            Mass(EARTH_MASS_SOLAR),
+            Radius(6371.0 / AU_TO_KM),
+            CelestialBody {
+                name: "Planet One".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+        ))
+        .id();
+
+    // Select planet
+    app.world_mut()
+        .resource_mut::<PlayerInteractionState>()
+        .selected_entity = Some(planet_ent);
+
+    app.add_systems(Update, update_trajectory_predictor);
+    app.update();
+
+    let predictor = app.world().resource::<TrajectoryPredictorState>();
+    assert!(predictor.is_enabled);
+    assert!(!predictor.trajectory_points.is_empty());
+
+    // First point must be offset by star_pos (i.e. world position near 51.0, 10.0, -20.0)
+    let p0 = predictor.trajectory_points[0];
+    let (px, py, pz) = (p0.x, p0.y, p0.z);
+    assert!(
+        (p0.x - 51.0).abs() < 0.15,
+        "Expected world x near 51.0, got {px}"
+    );
+    assert!(
+        (p0.y - 10.0).abs() < 0.15,
+        "Expected world y near 10.0, got {py}"
+    );
+    assert!(
+        (p0.z - (-20.0)).abs() < 0.15,
+        "Expected world z near -20.0, got {pz}"
+    );
+
+    // Verify inbound hyperbolic trajectory (negative true anomaly) solves smoothly via asinh
+    let hyp_elements = OrbitalElements {
+        semi_major_axis: -3.0,
+        eccentricity: 1.8,
+        true_anomaly: -1.2, // Inbound before periapsis
+        periapsis_dir: DVec3::X,
+        semilatus_dir: DVec3::Z,
+        ..Default::default()
+    };
+    let hyp_res = propagate_kepler_position_velocity(&hyp_elements, 0.20, 1.0);
+    assert!(
+        hyp_res.is_some(),
+        "Inbound hyperbolic propagation must succeed"
+    );
+    let (h_pos, h_vel) = hyp_res.unwrap();
+    assert!(h_pos.is_finite() && h_vel.is_finite());
 }

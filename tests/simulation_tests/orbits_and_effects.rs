@@ -233,8 +233,8 @@ fn test_gizmo_config() {
     assert!(store.is_some());
     let (config, _) = store.unwrap().config::<DefaultGizmoConfigGroup>();
     assert!((config.depth_bias - (-1.0)).abs() < 1e-5);
-    assert!((config.line.width - 2.5).abs() < 1e-5);
-    println!("GizmoConfig depth_bias successfully configured to -1.0, width to 2.5!");
+    assert!((config.line.width - 1.35).abs() < 1e-5);
+    println!("GizmoConfig depth_bias successfully configured to -1.0, width to 1.35!");
 
     // Verify perspective projection clip values and lines.wgsl depth calculation
     let proj = PerspectiveProjection {

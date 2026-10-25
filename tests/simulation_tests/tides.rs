@@ -488,3 +488,98 @@ fn test_planet_rotation_periods_not_wiped_by_tidal_step() {
 
     assert!(checked_earth && checked_jupiter && checked_saturn);
 }
+
+#[test]
+fn test_tidal_geothermal_coupling_does_not_runaway_temperature() {
+    let mut app = App::new();
+    app.init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<SimulationConfig>()
+        .init_resource::<TidalConfig>();
+
+    app.add_systems(Update, update_tidal_evolution);
+
+    // Spawn central star
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            body_type: BodyType::YellowDwarf,
+            name: "The Sun".to_string(),
+        },
+        Mass(1.0),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Radius(SOLAR_RADIUS_AU),
+    ));
+
+    // Spawn planet with climate at 0.05 AU
+    let a = 0.05;
+    let v_circ = (G_ASTRO * 1.0 / a).sqrt();
+    let pos = DVec3::new(a, 0.0, 0.0);
+    let vel = DVec3::new(0.0, 0.0, v_circ * 1.10);
+
+    let planet_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::TerrestrialPlanet,
+                name: "Tidal Earth".to_string(),
+            },
+            Mass(EARTH_MASS_SOLAR),
+            SimPosition(pos),
+            SimVelocity(vel),
+            Radius(EARTH_RADIUS_AU),
+            Composition::rocky(),
+            SpinState {
+                rotation_period_hours: 10.0,
+                axial_tilt_degrees: 10.0,
+                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+            },
+            PlanetaryClimate {
+                surface_temperature_k: 260.0,
+                equilibrium_temperature_k: 250.0,
+                greenhouse_delta_k: 33.0,
+                albedo: 0.30,
+                ice_coverage_frac: 0.1,
+                cloud_coverage_frac: 0.5,
+                climate_regime: ClimateRegime::TemperateHabitable,
+                polar_ice_cap_latitude_deg: 65.0,
+            },
+            TidalState::new_rocky(),
+        ))
+        .id();
+
+    // Advance simulation 10 times to establish equilibrium
+    for _ in 0..10 {
+        app.update();
+    }
+    let temp_10 = app
+        .world()
+        .get::<PlanetaryClimate>(planet_ent)
+        .unwrap()
+        .surface_temperature_k;
+
+    // Advance simulation another 20 times
+    for _ in 0..20 {
+        app.update();
+    }
+    let temp_30 = app
+        .world()
+        .get::<PlanetaryClimate>(planet_ent)
+        .unwrap()
+        .surface_temperature_k;
+
+    // Surface temperature should be a stable equilibrium (never accumulating to 3000 K clamp)
+    assert!(
+        (temp_30 - temp_10).abs() < 1.0,
+        "Surface temperature must remain at stable equilibrium between step 10 ({temp_10:.1} K) and step 30 ({temp_30:.1} K)"
+    );
+    assert!(
+        temp_30 > 283.0,
+        "Surface temperature should be warmed above base equilibrium (283 K) by tidal dissipation, got {temp_30:.1} K"
+    );
+    assert!(
+        temp_30 < 1000.0,
+        "Surface temperature must not runaway to extreme clamped values (3000 K), got {temp_30:.1} K"
+    );
+}

@@ -117,7 +117,9 @@ fn update_single_planet_aurora(
         if flare.cme_active {
             let dist_f = dist_au as f32;
             let shock_thickness = 0.35;
-            if dist_f >= flare.cme_front_radius_au - shock_thickness
+            let prev_front_au =
+                (flare.cme_front_radius_au - flare.cme_speed_au_day * dt_yr * 365.25).max(0.0);
+            if dist_f >= prev_front_au - shock_thickness
                 && dist_f <= flare.cme_front_radius_au + shock_thickness * 0.5
             {
                 ram_multiplier = flare.cme_density_multiplier;

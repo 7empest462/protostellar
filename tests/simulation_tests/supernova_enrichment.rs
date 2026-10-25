@@ -242,6 +242,13 @@ fn test_gen2_jeans_collapse_spawns_rocky_planetary_system() {
         volatile.is_some(),
         "Gen-II system must contain a Volatile Ocean world"
     );
+
+    let mut sat_query = app.world_mut().query::<&SatelliteOf>();
+    assert_eq!(
+        sat_query.iter(app.world()).count(),
+        0,
+        "Gen-II collapse planets must not have SatelliteOf component"
+    );
 }
 
 #[test]
@@ -304,6 +311,13 @@ fn test_gen1_jeans_collapse_spawns_pristine_system() {
             "Gen-I companion world must be a gas giant (got gas_frac={:.2})",
             comp.gas_frac
         );
-        assert!(p.name.contains("Gas Giant") || p.name.contains("b"));
+        assert!(p.name.contains("Gas Giant") || p.name.contains('b'));
     }
+
+    let mut sat_query = app.world_mut().query::<&SatelliteOf>();
+    assert_eq!(
+        sat_query.iter(app.world()).count(),
+        0,
+        "Gen-I collapse planets must not have SatelliteOf component"
+    );
 }

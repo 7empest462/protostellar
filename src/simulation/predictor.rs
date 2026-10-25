@@ -195,9 +195,8 @@ pub fn propagate_kepler_position_velocity(
         let n_h = (mu / a.powi(3)).sqrt();
 
         let denom = (1.0 + e * nu_0.cos()).abs().max(1e-6);
-        let cosh_h0 = ((e + nu_0.cos()) / denom).max(1.0);
         let sinh_h0 = (e * e - 1.0).max(0.0).sqrt() * nu_0.sin() / denom;
-        let h_0 = (cosh_h0 + sinh_h0).max(1e-12).ln();
+        let h_0 = sinh_h0.asinh();
         let m_h0 = e * h_0.sinh() - h_0;
 
         let m_ht = m_h0 + n_h * delta_t_yr;
@@ -222,6 +221,7 @@ pub fn find_closest_encounter(
     source_elements: &OrbitalElements,
     source_radius_au: f64,
     star_mass: f64,
+    star_pos: DVec3,
     targets: &[TargetCandidate],
     horizon_yr: f64,
 ) -> (Vec<Vec3>, Option<PredictedEncounter>) {
@@ -232,7 +232,12 @@ pub fn find_closest_encounter(
     for i in 0..=steps {
         let t = (i as f64) * dt_step;
         if let Some((pos, _)) = propagate_kepler_position_velocity(source_elements, t, star_mass) {
-            trajectory_points.push(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32));
+            let world_pos = pos + star_pos;
+            trajectory_points.push(Vec3::new(
+                world_pos.x as f32,
+                world_pos.y as f32,
+                world_pos.z as f32,
+            ));
         }
     }
 
@@ -243,6 +248,7 @@ pub fn find_closest_encounter(
             source_elements,
             source_radius_au,
             star_mass,
+            star_pos,
             target,
             horizon_yr,
             steps,
@@ -266,6 +272,7 @@ fn check_single_target_encounter(
     source_elements: &OrbitalElements,
     source_radius_au: f64,
     star_mass: f64,
+    star_pos: DVec3,
     target: &TargetCandidate,
     horizon_yr: f64,
     steps: usize,
@@ -334,8 +341,8 @@ fn check_single_target_encounter(
         target_entity: target.entity,
         target_name: target.name.clone(),
         time_to_encounter_yr: refined_t,
-        encounter_pos_au: src_pos,
-        target_pos_at_encounter_au: tgt_pos,
+        encounter_pos_au: src_pos + star_pos,
+        target_pos_at_encounter_au: tgt_pos + star_pos,
         min_distance_au: exact_dist_au,
         min_distance_km: exact_dist_au * AU_TO_KM,
         relative_velocity_kms: rel_vel_kms,
@@ -398,7 +405,7 @@ pub fn update_trajectory_predictor(
     mut predictor_state: ResMut<TrajectoryPredictorState>,
     player_state: Res<PlayerInteractionState>,
     slingshot_state: Res<SlingshotState>,
-    star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
+    star_query: Query<(&SimPosition, &SimVelocity, &Mass), With<CentralStar>>,
     bodies_query: Query<
         (
             Entity,
@@ -420,7 +427,7 @@ pub fn update_trajectory_predictor(
         return;
     }
 
-    let Ok((star_pos, star_mass)) = star_query.single() else {
+    let Ok((star_pos, star_vel, star_mass)) = star_query.single() else {
         predictor_state.trajectory_points.clear();
         predictor_state.active_encounter = None;
         return;
@@ -437,9 +444,9 @@ pub fn update_trajectory_predictor(
             let delta = curr_dvec - origin_dvec;
             let launch_vel = delta * slingshot_state.velocity_scale;
             let rel_pos = origin_dvec - star_pos.0;
+            let rel_vel = launch_vel - star_vel.0;
 
-            if let Some(el) =
-                state_vectors_to_orbital_elements(rel_pos, launch_vel, star_mass.0, 1e-6)
+            if let Some(el) = state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, 1e-6)
             {
                 selected_source = Some((
                     el,
@@ -451,7 +458,9 @@ pub fn update_trajectory_predictor(
     } else if let Some(selected_ent) = player_state.selected_entity {
         if let Ok((_, body, pos, vel, mass, rad)) = bodies_query.get(selected_ent) {
             let rel_pos = pos.0 - star_pos.0;
-            if let Some(el) = state_vectors_to_orbital_elements(rel_pos, vel.0, star_mass.0, mass.0)
+            let rel_vel = vel.0 - star_vel.0;
+            if let Some(el) =
+                state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, mass.0)
             {
                 selected_source = Some((el, rad.0, body.name.clone()));
             }
@@ -473,7 +482,8 @@ pub fn update_trajectory_predictor(
         }
 
         let rel_pos = pos.0 - star_pos.0;
-        if let Some(el) = state_vectors_to_orbital_elements(rel_pos, vel.0, star_mass.0, mass.0) {
+        let rel_vel = vel.0 - star_vel.0;
+        if let Some(el) = state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, mass.0) {
             target_candidates.push(TargetCandidate {
                 entity,
                 name: body.name.clone(),
@@ -489,6 +499,7 @@ pub fn update_trajectory_predictor(
         &src_elements,
         src_radius,
         star_mass.0,
+        star_pos.0,
         &target_candidates,
         horizon,
     );

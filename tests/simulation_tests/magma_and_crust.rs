@@ -1,5 +1,6 @@
 //! Integration tests for Feature 3.3: Dynamic Viscous Magma Ocean Cooling & Crustal Solidification.
 
+use bevy::prelude::Vec3;
 use protostellar::rendering::bodies::{
     compute_magma_incandescence, compute_magma_ocean_crust_fraction,
 };
@@ -215,5 +216,99 @@ fn test_magma_ocean_cooling_monotonicity() {
     assert_eq!(
         prev_crust, 1.0,
         "Planet after cooling must be 100% solidified"
+    );
+}
+
+#[test]
+fn test_dynamic_impact_basin_thermal_conduction_and_cooling() {
+    let mut basin = ImpactBasin {
+        surface_normal: Vec3::Y,
+        angular_radius: 0.25,
+        formation_time_yr: 100.0,
+        melt_glow_fraction: 1.0,
+        elongation: 1.0,
+        scar_intensity: 1.0,
+    };
+
+    // Fresh impact: 100% melt glow
+    assert_eq!(basin.melt_glow_fraction, 1.0);
+    assert_eq!(basin.scar_intensity, 1.0);
+
+    // Thermal conduction halo extends beyond rim (u in 0.85..2.2)
+    let u_rim = 0.85_f32;
+    let u_halo = 1.5_f32;
+    let halo_heat_rim = basin.melt_glow_fraction * (-2.2 * (u_rim - 0.82)).exp();
+    let halo_heat_outer = basin.melt_glow_fraction * (-2.2 * (u_halo - 0.82)).exp();
+    assert!(halo_heat_rim > halo_heat_outer);
+    assert!(
+        halo_heat_outer > 0.15,
+        "Thermal conduction halo should remain hot at 1.5x crater radius"
+    );
+
+    // After cooling decay
+    basin.melt_glow_fraction = 0.25;
+    let cooled_heat = basin.melt_glow_fraction * (-2.2 * (u_halo - 0.82)).exp();
+    assert!(cooled_heat < halo_heat_outer);
+}
+
+#[test]
+fn test_tidally_locked_eyeball_temperature_contrast() {
+    let base_temp = 320.0_f32; // Mean temperature in K
+    let sun_cos_subsolar = 1.0_f32; // Subsolar zenith
+    let _sun_cos_nightside = -1.0_f32; // Antistellar nightside
+    let pressure_bar = 0.02_f32; // Thin atmosphere (airless or Mars-like)
+
+    let atm_insulation = (pressure_bar / 1.0).clamp(0.05, 0.92);
+    let day_heat = 0.35 + 1.25 * sun_cos_subsolar.max(0.0).powf(0.25);
+    let night_cool = 0.25 + 0.65 * atm_insulation;
+
+    let t_day = base_temp * day_heat;
+    let t_night = base_temp * night_cool;
+
+    assert!(
+        t_day > 450.0,
+        "Subsolar point should be baked to high temperature: {t_day} K"
+    );
+    assert!(
+        t_night < 120.0,
+        "Airless nightside should experience cryogenic freeze: {t_night} K"
+    );
+    assert!(
+        t_day - t_night > 300.0,
+        "Tidally locked airless world must have extreme day-night thermal contrast"
+    );
+}
+
+#[test]
+fn test_stefan_boltzmann_blackbody_thermal_radiance() {
+    let t_cold = 300.0_f32;
+    let t_warm = 650.0_f32;
+    let t_molten = 1400.0_f32;
+
+    let radiance = |t: f32| -> f32 {
+        if t <= 520.0 {
+            0.0
+        } else {
+            let t_norm = ((t - 520.0) / 950.0).clamp(0.0, 3.5);
+            t_norm.powf(2.8) * 0.35
+        }
+    };
+
+    assert_eq!(
+        radiance(t_cold),
+        0.0,
+        "Cold temperate worlds should not emit visible thermal glow"
+    );
+    assert!(
+        radiance(t_warm) > 0.001,
+        "650 K crust should emit subtle cherry-red thermal glow"
+    );
+    assert!(
+        radiance(t_molten) > 0.25,
+        "1400 K magma should radiate intense blackbody thermal emission"
+    );
+    assert!(
+        radiance(t_molten) > radiance(t_warm) * 10.0,
+        "Thermal radiance must scale steeply with temperature (Stefan-Boltzmann law)"
     );
 }

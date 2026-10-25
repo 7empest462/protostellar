@@ -68,6 +68,13 @@ fn spawn_inspector_header(panel: &mut ChildSpawnerCommands) {
                 ..default()
             })
             .with_children(|right_hdr| {
+                create_compact_button(
+                    right_hdr,
+                    UiButtonAction::ToggleSurfaceHorizonCamera,
+                    "🎥 Surface [Shift-V]",
+                    Color::srgba(0.06, 0.24, 0.18, 0.92),
+                    Color::srgb(0.35, 1.0, 0.78),
+                );
                 right_hdr.spawn((
                     Text::new("↕ Scroll"),
                     TextFont {
@@ -121,7 +128,7 @@ fn spawn_inspector_scrollable_body(panel: &mut ChildSpawnerCommands) {
                             Node {
                                 padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
                                 margin: UiRect::top(Val::Px(2.0)),
-                                border: UiRect::all(Val::Px(1.0)),
+                                border: UiRect::left(Val::Px(3.0)),
                                 width: Val::Percent(100.0),
                                 ..default()
                             },
@@ -176,9 +183,69 @@ fn spawn_inspector_chip(col: &mut ChildSpawnerCommands) {
 fn spawn_inspector_toolbar_rows(actions: &mut ChildSpawnerCommands) {
     spawn_orbit_tracking_row(actions);
     spawn_mass_composition_row(actions);
+    spawn_hydrosphere_bathymetry_row(actions);
     spawn_terraforming_bombardment_row(actions);
     spawn_astrophysics_actions_row(actions);
     spawn_exotic_experiments_row(actions);
+}
+
+fn spawn_hydrosphere_bathymetry_row(actions: &mut ChildSpawnerCommands) {
+    actions
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            InspectorSection::HydrosphereBathymetry,
+        ))
+        .with_children(|section| {
+            section.spawn((
+                Text::new("HYDROSPHERE & BATHYMETRY:"),
+                TextFont {
+                    font_size: FontSize::Px(9.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.25, 0.75, 1.0)),
+            ));
+            section
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    margin: UiRect::bottom(Val::Px(2.0)),
+                    flex_wrap: FlexWrap::Wrap,
+                    ..default()
+                })
+                .with_children(|row| {
+                    const BUTTONS: [(UiButtonAction, &str, Color, Color); 4] = [
+                        (
+                            UiButtonAction::AddOceanWater,
+                            "+10% Water []]",
+                            Color::srgba(0.04, 0.16, 0.28, 0.9),
+                            Color::srgb(0.25, 0.75, 1.0),
+                        ),
+                        (
+                            UiButtonAction::DrainOceanWater,
+                            "-10% Drain [[",
+                            Color::srgba(0.18, 0.12, 0.06, 0.9),
+                            Color::srgb(1.0, 0.65, 0.25),
+                        ),
+                        (
+                            UiButtonAction::DryBasin,
+                            "Dry Basin [S-[]",
+                            Color::srgba(0.22, 0.08, 0.06, 0.9),
+                            Color::srgb(1.0, 0.35, 0.25),
+                        ),
+                        (
+                            UiButtonAction::EarthSeaLevel,
+                            "Earth (71%)",
+                            Color::srgba(0.06, 0.20, 0.16, 0.9),
+                            Color::srgb(0.35, 0.95, 0.65),
+                        ),
+                    ];
+                    for (act, label, bg, border) in BUTTONS {
+                        create_compact_button(row, act, label, bg, border);
+                    }
+                });
+        });
 }
 
 fn spawn_terraforming_bombardment_row(actions: &mut ChildSpawnerCommands) {
@@ -257,12 +324,18 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 10] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 12] = [
                 (
                     UiButtonAction::FocusLock,
                     "Track [F]",
                     Color::srgba(0.08, 0.16, 0.24, 0.9),
                     Color::srgb(0.4, 0.8, 1.0),
+                ),
+                (
+                    UiButtonAction::ToggleSurfaceHorizonCamera,
+                    "🎥 Surface [Shift-V]",
+                    Color::srgba(0.06, 0.24, 0.18, 0.9),
+                    Color::srgb(0.35, 1.0, 0.78),
                 ),
                 (
                     UiButtonAction::FixOrbit,
@@ -313,6 +386,12 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
                     Color::srgb(0.4, 0.9, 1.0),
                 ),
                 (
+                    UiButtonAction::ToggleLagrangePoints,
+                    "Lagrange [Shift-L]",
+                    Color::srgba(0.10, 0.20, 0.30, 0.9),
+                    Color::srgb(0.4, 0.85, 1.0),
+                ),
+                (
                     UiButtonAction::DeselectBody,
                     "Deselect [Esc]",
                     Color::srgba(0.15, 0.15, 0.18, 0.9),
@@ -341,7 +420,7 @@ fn spawn_inspector_text_and_forecast(scroll_box: &mut ChildSpawnerCommands) {
             Node {
                 padding: UiRect::axes(Val::Px(4.0), Val::Px(2.5)),
                 margin: UiRect::top(Val::Px(3.0)),
-                border: UiRect::all(Val::Px(1.0)),
+                border: UiRect::left(Val::Px(3.0)),
                 width: Val::Percent(100.0),
                 ..default()
             },
@@ -427,7 +506,7 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 11] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 12] = [
                 (
                     UiButtonAction::IgniteStar,
                     "Ignite [I]",
@@ -469,6 +548,12 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
                     "Launch Probe",
                     Color::srgba(0.1, 0.2, 0.4, 0.9),
                     Color::srgb(0.5, 0.7, 1.0),
+                ),
+                (
+                    UiButtonAction::ToggleSurfaceHorizonCamera,
+                    "🎥 Surface [Shift-V]",
+                    Color::srgba(0.06, 0.24, 0.18, 0.9),
+                    Color::srgb(0.35, 1.0, 0.78),
                 ),
                 (
                     UiButtonAction::AgeStar,
@@ -644,7 +729,7 @@ pub fn append_relativistic_jet_telemetry(out: &mut String, jet: &RelativisticJet
     let cone_deg = jet.opening_angle_rad.to_degrees();
     let _ = write!(
         out,
-        "\n--------------------------------------------------\n  >> RELATIVISTIC JET & SYNCHROTRON CONE <<\n--------------------------------------------------\n  • Lorentz Factor (Γ): {:>8.1} (v = {:.4}c)\n  • Beaming Half-Angle: {:>8.1}°\n  • Collimation Cone:   {:>8.1}°\n  • Jet Extent:         {:>8.1} AU\n  • Shock Knots:        {:>8.1}x ({:.2}c)\n  • Synchrotron Lum:    {:>8.1} L☉ (p={:.2})\n--------------------------------------------------",
+        "\n━━━ ⟪ RELATIVISTIC JET & SYNCHROTRON CONE ⟫ ━━━━━━━━\n  • Lorentz Factor (Γ): {:>8.1} (v = {:.4}c)\n  • Beaming Half-Angle: {:>8.1}°\n  • Collimation Cone:   {:>8.1}°\n  • Jet Extent:         {:>8.1} AU\n  • Shock Knots:        {:>8.1}x ({:.2}c)\n  • Synchrotron Lum:    {:>8.1} L☉ (p={:.2})\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         jet.lorentz_factor,
         beta,
         beam_deg,
@@ -662,6 +747,7 @@ pub fn append_space_weather_telemetry(
     out: &mut String,
     opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
     opt_flare: Option<&crate::simulation::space_weather::StellarFlareState>,
+    is_gas_giant: bool,
 ) {
     use std::fmt::Write;
     if let Some(flare) = opt_flare {
@@ -697,7 +783,7 @@ pub fn append_space_weather_telemetry(
 
         let _ = write!(
             out,
-            "\n--------------------------------------------------\n  >> STELLAR CORONA & SPACE WEATHER <<\n--------------------------------------------------\n  • Coronal Activity: {}\n  • CME Shockwave:    {}\n  • Flare Frequency:  {:.1} / year\n--------------------------------------------------",
+            "\n━━━ ⟪ STELLAR CORONA & SPACE WEATHER ⟫ ━━━━━━━━━━━━\n  • Coronal Activity: {}\n  • CME Shockwave:    {}\n  • Flare Frequency:  {:.1} / year\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             flare_status,
             cme_str,
             flare.flare_frequency
@@ -707,9 +793,14 @@ pub fn append_space_weather_telemetry(
     if let Some(aurora) = opt_aurora {
         let lat_deg = 90.0 - aurora.oval_colatitude_rad.to_degrees();
         let width_deg = aurora.oval_width_rad.to_degrees();
+        let emission_str = if is_gas_giant {
+            "H-α 656.3nm / H₃⁺ IR (FUV)"
+        } else {
+            "O 557.7nm / N₂⁺ 391.4nm"
+        };
         let _ = write!(
             out,
-            "\n--------------------------------------------------\n  >> MAGNETOSPHERE & AURORAL OVAL <<\n--------------------------------------------------\n  • Space Weather:     {} (Kp {:1.1})\n  • Magnetopause:      {:.1} Rp (Subsolar Standoff)\n  • Auroral Footprint: ±{:.1}° Lat (θ_A = {:.1}°) | Width: {:.1}°\n  • Auroral Emission:  {:.0}% [O 557.7nm / N₂⁺ 391.4nm]\n--------------------------------------------------",
+            "\n━━━ ⟪ MAGNETOSPHERE & AURORAL OVAL ⟫ ━━━━━━━━━━━━━━\n  • Space Weather:     {} (Kp {:1.1})\n  • Magnetopause:      {:.1} Rp (Subsolar Standoff)\n  • Auroral Footprint: ±{:.1}° Lat (θ_A = {:.1}°) | Width: {:.1}°\n  • Auroral Emission:  {:.0}% [{emission_str}]\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             aurora.storm_level.label(),
             aurora.geomagnetic_kp_index,
             aurora.magnetopause_standoff_rp,

@@ -176,7 +176,7 @@ fn spawn_telemetry_readout_and_graph(panel: &mut ChildSpawnerCommands) {
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(Val::Px(6.0)),
             margin: UiRect::bottom(Val::Px(5.0)),
-            border: UiRect::all(Val::Px(1.0)),
+            border: UiRect::left(Val::Px(3.0)),
             ..default()
         })
         .insert((
@@ -202,7 +202,7 @@ fn spawn_telemetry_readout_and_graph(panel: &mut ChildSpawnerCommands) {
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(Val::Px(6.0)),
             margin: UiRect::bottom(Val::Px(6.0)),
-            border: UiRect::all(Val::Px(1.0)),
+            border: UiRect::left(Val::Px(3.0)),
             ..default()
         })
         .insert((

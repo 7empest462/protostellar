@@ -10,6 +10,7 @@ pub fn update_body_terraforming_climate(
     terra: &mut TerraformingAtmosphere,
     climate: &mut PlanetaryClimate,
     comp: &mut Composition,
+    planet_mass_solar: f64,
     dt_yr: f64,
 ) {
     // 1. Impact Dust Relaxation (decay half-life ~ 20 simulation years)
@@ -77,12 +78,16 @@ pub fn update_body_terraforming_climate(
     // Update climate regime classification
     if p_total < 0.02 {
         climate.climate_regime = ClimateRegime::AirlessVacuum;
+        climate.cloud_coverage_frac = 0.0;
     } else if climate.surface_temperature_k > 360.0 && p_steam > 0.10 {
         climate.climate_regime = ClimateRegime::RunawayVenusian;
+        climate.cloud_coverage_frac = (0.75 + (p_steam / 2.0).clamp(0.0, 0.23)).min(0.98);
+        climate.albedo = 0.72;
     } else if climate.surface_temperature_k < 260.0 {
         climate.climate_regime = ClimateRegime::SnowballIceAge;
         climate.albedo = 0.65;
         climate.ice_coverage_frac = 1.0;
+        climate.cloud_coverage_frac = 0.25;
     } else {
         climate.climate_regime = ClimateRegime::TemperateHabitable;
         climate.albedo = 0.30;
@@ -91,13 +96,15 @@ pub fn update_body_terraforming_climate(
         } else {
             0.0
         };
+        climate.cloud_coverage_frac = (0.35 + ocean_cov * 0.30).clamp(0.15, 0.75);
     }
 
     // Keep composition ice fraction in sync with delivered volatiles
     let water_mass_frac = (total_water * crate::utils::constants::EARTH_MASS_SOLAR
-        / (comp.ice_frac * 0.001 + 1e-9))
-        .clamp(0.0, 0.45);
+        / planet_mass_solar.max(1e-9))
+    .clamp(0.0, 0.45);
     if water_mass_frac > comp.ice_frac {
         comp.ice_frac = (comp.ice_frac * 0.95 + water_mass_frac * 0.05).clamp(0.0, 0.50);
+        *comp = comp.normalized();
     }
 }

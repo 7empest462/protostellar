@@ -54,7 +54,14 @@ fn test_icy_comet_delivery_and_ocean_condensation() {
     terra.nitrogen_pressure_bar += delivery.delta_nitrogen_bar;
 
     // Step climate: temperature is 288 K (well below boiling point ~373 K), so steam condenses
-    update_body_terraforming_climate(&mut vol, &mut terra, &mut climate, &mut comp, 1.0);
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        1.0 * EARTH_MASS_SOLAR,
+        1.0,
+    );
 
     assert!(
         vol.ocean_coverage_frac > 0.10,
@@ -121,7 +128,14 @@ fn test_chondrite_atmospheric_pressure_and_greenhouse() {
     terra.co2_pressure_bar += delivery.delta_co2_bar;
     terra.nitrogen_pressure_bar += delivery.delta_nitrogen_bar;
 
-    update_body_terraforming_climate(&mut vol, &mut terra, &mut climate, &mut comp, 1.0);
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        1.0 * EARTH_MASS_SOLAR,
+        1.0,
+    );
 
     assert!(
         vol.atmospheric_pressure_bar > 0.1,
@@ -131,6 +145,26 @@ fn test_chondrite_atmospheric_pressure_and_greenhouse() {
         climate.greenhouse_delta_k > 5.0,
         "Atmospheric greenhouse warming must increase"
     );
+}
+
+fn simulate_rocky_atmosphere_step(
+    terra: TerraformingAtmosphere,
+    climate: PlanetaryClimate,
+    dt_yr: f64,
+) -> (TerraformingAtmosphere, PlanetaryClimate) {
+    let mut vol = VolatileInventory::default();
+    let mut terra = terra;
+    let mut climate = climate;
+    let mut comp = Composition::rocky();
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        1.0 * EARTH_MASS_SOLAR,
+        dt_yr,
+    );
+    (terra, climate)
 }
 
 fn assert_climate_transition(
@@ -145,7 +179,14 @@ fn assert_climate_transition(
     let mut terra = terra;
     let mut climate = climate;
     let mut comp = comp;
-    update_body_terraforming_climate(&mut vol, &mut terra, &mut climate, &mut comp, dt_yr);
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        1.0 * EARTH_MASS_SOLAR,
+        dt_yr,
+    );
     assert_eq!(climate.climate_regime, expected_regime);
     assert!(climate.surface_temperature_k >= min_temp_k);
     (terra, climate)
@@ -190,8 +231,6 @@ fn test_runaway_greenhouse_ocean_evaporation() {
 
 #[test]
 fn test_glaciation_breakout_via_co2_bombardment() {
-    let mut comp = Composition::rocky();
-    let mut vol = VolatileInventory::default();
     let mut terra = TerraformingAtmosphere {
         co2_pressure_bar: 0.0001,
         nitrogen_pressure_bar: 0.80,
@@ -201,7 +240,7 @@ fn test_glaciation_breakout_via_co2_bombardment() {
         total_bombarded_mass_earth: 0.0,
     };
     // Deep frozen Snowball Earth
-    let mut climate = PlanetaryClimate {
+    let climate = PlanetaryClimate {
         surface_temperature_k: 235.0,
         equilibrium_temperature_k: 230.0,
         greenhouse_delta_k: 5.0,
@@ -215,7 +254,7 @@ fn test_glaciation_breakout_via_co2_bombardment() {
     // Heavy targeted CO2 bombardment (injecting 1.8 bars of CO2)
     terra.co2_pressure_bar += 1.8;
 
-    update_body_terraforming_climate(&mut vol, &mut terra, &mut climate, &mut comp, 5.0);
+    let (_terra, climate) = simulate_rocky_atmosphere_step(terra, climate, 5.0);
 
     assert!(
         climate.surface_temperature_k > 265.0,
@@ -541,5 +580,113 @@ fn test_guided_bombardment_orbiting_target_zero_miss() {
     assert_eq!(
         vol.cometary_impact_count, 1,
         "Cometary impact count must increment by 1"
+    );
+}
+
+#[test]
+fn test_hydrosphere_sea_level_adjustments() {
+    let mut comp = Composition::rocky();
+    let mut vol = VolatileInventory {
+        delivered_water_m_earth: 0.000426,
+        ocean_coverage_frac: 0.71,
+        atmospheric_pressure_bar: 1.0,
+        cometary_impact_count: 5,
+    };
+    let mut terra = TerraformingAtmosphere {
+        surface_liquid_water_m_earth: 0.000426,
+        atmospheric_water_m_earth: 0.0,
+        co2_pressure_bar: 0.0004,
+        nitrogen_pressure_bar: 0.78,
+        impact_dust_optical_depth: 0.0,
+        total_bombarded_mass_earth: 0.0,
+    };
+    let mut climate = PlanetaryClimate {
+        surface_temperature_k: 288.0,
+        equilibrium_temperature_k: 255.0,
+        greenhouse_delta_k: 33.0,
+        albedo: 0.30,
+        ice_coverage_frac: 0.10,
+        cloud_coverage_frac: 0.55,
+        climate_regime: ClimateRegime::TemperateHabitable,
+        polar_ice_cap_latitude_deg: 75.0,
+    };
+
+    // 1. Initial Earth baseline: 71% ocean coverage
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        EARTH_MASS_SOLAR,
+        0.1,
+    );
+    assert!((vol.ocean_coverage_frac - 0.71).abs() < 0.02);
+    assert_eq!(climate.climate_regime, ClimateRegime::TemperateHabitable);
+
+    // 2. Add water (+10% sea level -> ~81%)
+    terra.surface_liquid_water_m_earth = (0.81 * 0.0006) as f64;
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        EARTH_MASS_SOLAR,
+        0.1,
+    );
+    assert!((vol.ocean_coverage_frac - 0.81).abs() < 0.02);
+    assert!(climate.cloud_coverage_frac > 0.55);
+
+    // 3. Drain oceans completely to 0% (Dry Basin)
+    terra.surface_liquid_water_m_earth = 0.0;
+    terra.atmospheric_water_m_earth = 0.0;
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        EARTH_MASS_SOLAR,
+        0.1,
+    );
+    assert_eq!(vol.ocean_coverage_frac, 0.0);
+    assert_eq!(vol.delivered_water_m_earth, 0.0);
+}
+
+#[test]
+fn test_climate_boiling_steam_cloud_transition() {
+    let terra = TerraformingAtmosphere {
+        surface_liquid_water_m_earth: 0.0008,
+        atmospheric_water_m_earth: 0.0,
+        co2_pressure_bar: 0.05,
+        nitrogen_pressure_bar: 0.80,
+        impact_dust_optical_depth: 0.0,
+        total_bombarded_mass_earth: 0.0,
+    };
+    let climate = PlanetaryClimate {
+        surface_temperature_k: 385.0,
+        equilibrium_temperature_k: 320.0,
+        greenhouse_delta_k: 65.0,
+        albedo: 0.30,
+        ice_coverage_frac: 0.0,
+        cloud_coverage_frac: 0.50,
+        climate_regime: ClimateRegime::TemperateHabitable,
+        polar_ice_cap_latitude_deg: 90.0,
+    };
+
+    // Step climate at hot temperature T = 385 K (above boiling point): liquid water evaporates into steam
+    let (terra, climate) = simulate_rocky_atmosphere_step(terra, climate, 1.0);
+
+    // Boiling should transfer water to atmosphere and trigger RunawayVenusian regime
+    assert!(
+        terra.atmospheric_water_m_earth > 0.0001,
+        "Boiling must convert liquid water to steam"
+    );
+    assert_eq!(climate.climate_regime, ClimateRegime::RunawayVenusian);
+    assert!(
+        climate.cloud_coverage_frac >= 0.75,
+        "Runaway steam atmosphere must produce dense cloud deck"
+    );
+    assert_eq!(
+        climate.albedo, 0.72,
+        "Venusian steam runaway must have high reflectivity albedo"
     );
 }

@@ -5,7 +5,6 @@ use crate::simulation::components::*;
 pub use crate::simulation::disk::belts::BeltZone;
 use crate::simulation::relativity::RelativisticState;
 use crate::simulation::tides::TidalState;
-use crate::utils::constants::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::BTreeSet;
@@ -26,6 +25,8 @@ pub type SelectedWorldQuery<'w, 's> = Query<
         Option<&'static mut StellarEvolutionState>,
         Option<&'static mut Temperature>,
         Option<&'static mut Luminosity>,
+        Option<&'static mut VolatileInventory>,
+        Option<&'static mut PlanetaryClimate>,
     ),
     Without<PanOrbitCamera>,
 >;
@@ -234,9 +235,13 @@ pub enum HudPanelElement {
     BottomCenterPill,
     PlanetBuilderPill,
     TelemetryPanelPill,
+    HrDiagramPanelPill,
     OrbitModeBadge,
     OverlayModeBadge,
     TrajectoryPredictorBadge,
+    LagrangePointsBadge,
+    HabitableZoneBadge,
+    QuickBarContainer,
 }
 
 /// Marker for the scrollable container inside the Target Inspector panel.
@@ -251,6 +256,8 @@ pub enum HudDynamicText {
     OrbitModeBadge,
     OverlayModeBadge,
     TrajectoryPredictorBadge,
+    LagrangePointsBadge,
+    HabitableZoneBadge,
 }
 
 /// Discriminant component for action categories within the Target Inspector toolbar.
@@ -258,6 +265,7 @@ pub enum HudDynamicText {
 pub enum InspectorSection {
     OrbitTracking,
     MassComposition,
+    HydrosphereBathymetry,
     TerraformingBombardment,
     Astrophysics,
     ExoticExperiments,
@@ -271,193 +279,7 @@ pub struct InspectorExoticHeader;
 #[derive(Component)]
 pub struct HudToastContainer;
 
-/// Planetary archetype templates for the Interactive Planet Builder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuilderPreset {
-    EarthLike,
-    SuperEarth,
-    JupiterLike,
-    SuperJupiter,
-    HeavySuperJupiter,
-    BrownDwarf,
-    WaterWorld,
-    MoltenProtoplanet,
-    IceGiant,
-    RogueInvader,
-    RedDwarfStar,
-}
-
-impl BuilderPreset {
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            BuilderPreset::EarthLike => "🌍 Earth-like",
-            BuilderPreset::SuperEarth => "💎 Super-Earth (3.5 M_E)",
-            BuilderPreset::JupiterLike => "🪐 Jupiter-like",
-            BuilderPreset::SuperJupiter => "👑 Super-Jup (3.5 M_J)",
-            BuilderPreset::HeavySuperJupiter => "🔮 Heavy Super-J (8.0 M_J)",
-            BuilderPreset::BrownDwarf => "🟤 Brown Dwarf (30 M_J)",
-            BuilderPreset::WaterWorld => "🌊 Water World",
-            BuilderPreset::MoltenProtoplanet => "🌋 Molten Protoplanet",
-            BuilderPreset::IceGiant => "❄️ Ice Giant",
-            BuilderPreset::RogueInvader => "☄️ Rogue Invader",
-            BuilderPreset::RedDwarfStar => "☀️ Red Dwarf Star",
-        }
-    }
-}
-
-/// Interactive custom planet builder and spawner state.
-#[derive(Resource, Debug, Clone)]
-pub struct PlanetBuilderState {
-    pub is_open: bool,
-    pub active_preset: BuilderPreset,
-    pub custom_name: String,
-    pub mass_solar: f64,
-    pub semi_major_axis_au: f64,
-    pub eccentricity: f64,
-    pub rock_frac: f32,
-    pub ice_frac: f32,
-    pub metal_frac: f32,
-    pub gas_frac: f32,
-    pub click_to_spawn_mode: bool,
-    pub is_minimized: bool,
-}
-
-impl Default for PlanetBuilderState {
-    fn default() -> Self {
-        Self {
-            is_open: false,
-            active_preset: BuilderPreset::EarthLike,
-            custom_name: "Proto-Earth".to_string(),
-            mass_solar: EARTH_MASS_SOLAR * 1.0,
-            semi_major_axis_au: 1.0,
-            eccentricity: 0.016,
-            rock_frac: 0.68,
-            ice_frac: 0.02,
-            metal_frac: 0.30,
-            gas_frac: 0.0,
-            click_to_spawn_mode: false,
-            is_minimized: false,
-        }
-    }
-}
-
-impl PlanetBuilderState {
-    pub fn apply_preset(&mut self, preset: BuilderPreset) {
-        self.active_preset = preset;
-        match preset {
-            BuilderPreset::EarthLike => {
-                self.custom_name = "New Earth".to_string();
-                self.mass_solar = EARTH_MASS_SOLAR * 1.0;
-                self.semi_major_axis_au = 1.0;
-                self.eccentricity = 0.016;
-                self.rock_frac = 0.68;
-                self.ice_frac = 0.02;
-                self.metal_frac = 0.30;
-                self.gas_frac = 0.0;
-            }
-            BuilderPreset::SuperEarth => {
-                self.custom_name = "Kepler-SuperEarth".to_string();
-                self.mass_solar = EARTH_MASS_SOLAR * 3.5;
-                self.semi_major_axis_au = 1.35;
-                self.eccentricity = 0.025;
-                self.rock_frac = 0.65;
-                self.ice_frac = 0.03;
-                self.metal_frac = 0.30;
-                self.gas_frac = 0.02;
-            }
-            BuilderPreset::JupiterLike => {
-                self.custom_name = "Jovian-Prime".to_string();
-                self.mass_solar = JUPITER_MASS_SOLAR * 1.0;
-                self.semi_major_axis_au = 5.2;
-                self.eccentricity = 0.048;
-                self.rock_frac = 0.03;
-                self.ice_frac = 0.02;
-                self.metal_frac = 0.01;
-                self.gas_frac = 0.94;
-            }
-            BuilderPreset::SuperJupiter => {
-                self.custom_name = "Super-Jupiter".to_string();
-                self.mass_solar = JUPITER_MASS_SOLAR * 3.5;
-                self.semi_major_axis_au = 3.2;
-                self.eccentricity = 0.08;
-                self.rock_frac = 0.02;
-                self.ice_frac = 0.02;
-                self.metal_frac = 0.01;
-                self.gas_frac = 0.95;
-            }
-            BuilderPreset::HeavySuperJupiter => {
-                self.custom_name = "Mega-Jovian".to_string();
-                self.mass_solar = JUPITER_MASS_SOLAR * 8.0;
-                self.semi_major_axis_au = 9.5;
-                self.eccentricity = 0.06;
-                self.rock_frac = 0.01;
-                self.ice_frac = 0.01;
-                self.metal_frac = 0.01;
-                self.gas_frac = 0.97;
-            }
-            BuilderPreset::BrownDwarf => {
-                self.custom_name = "Sub-Stellar Dwarf".to_string();
-                self.mass_solar = JUPITER_MASS_SOLAR * 30.0;
-                self.semi_major_axis_au = 22.0;
-                self.eccentricity = 0.05;
-                self.rock_frac = 0.01;
-                self.ice_frac = 0.01;
-                self.metal_frac = 0.01;
-                self.gas_frac = 0.97;
-            }
-            BuilderPreset::WaterWorld => {
-                self.custom_name = "Oceania".to_string();
-                self.mass_solar = EARTH_MASS_SOLAR * 2.5;
-                self.semi_major_axis_au = 1.35;
-                self.eccentricity = 0.02;
-                self.rock_frac = 0.30;
-                self.ice_frac = 0.60;
-                self.metal_frac = 0.10;
-                self.gas_frac = 0.0;
-            }
-            BuilderPreset::MoltenProtoplanet => {
-                self.custom_name = "Vulcan".to_string();
-                self.mass_solar = EARTH_MASS_SOLAR * 0.15;
-                self.semi_major_axis_au = 0.45;
-                self.eccentricity = 0.15;
-                self.rock_frac = 0.75;
-                self.ice_frac = 0.0;
-                self.metal_frac = 0.25;
-                self.gas_frac = 0.0;
-            }
-            BuilderPreset::IceGiant => {
-                self.custom_name = "Sub-Neptune".to_string();
-                self.mass_solar = EARTH_MASS_SOLAR * 15.0;
-                self.semi_major_axis_au = 19.2;
-                self.eccentricity = 0.04;
-                self.rock_frac = 0.20;
-                self.ice_frac = 0.65;
-                self.metal_frac = 0.05;
-                self.gas_frac = 0.10;
-            }
-            BuilderPreset::RogueInvader => {
-                self.custom_name = "Nemesis-Invader".to_string();
-                self.mass_solar = JUPITER_MASS_SOLAR * 3.5;
-                self.semi_major_axis_au = 35.0;
-                self.eccentricity = 1.25;
-                self.rock_frac = 0.02;
-                self.ice_frac = 0.02;
-                self.metal_frac = 0.01;
-                self.gas_frac = 0.95;
-            }
-            BuilderPreset::RedDwarfStar => {
-                self.custom_name = "Companion Star".to_string();
-                self.mass_solar = 0.15;
-                self.semi_major_axis_au = 12.0;
-                self.eccentricity = 0.05;
-                self.rock_frac = 0.0;
-                self.ice_frac = 0.0;
-                self.metal_frac = 0.0;
-                self.gas_frac = 1.0;
-            }
-        }
-    }
-}
+pub use super::builder_state::{BuilderPreset, PlanetBuilderState};
 
 #[derive(Component)]
 pub struct PlanetBuilderPanel;
@@ -506,6 +328,25 @@ pub struct TelemetryExportStatusText;
 /// Marker for the metric switcher button pill in the Telemetry HUD.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TelemetryMetricButton(pub crate::simulation::telemetry::TelemetryMetric);
+
+/// State configuration for the Hertzsprung–Russell Stellar Evolution Panel (`[Shift-R]`).
+#[derive(Resource, Debug, Clone, Default)]
+pub struct HrDiagramPanelState {
+    pub is_open: bool,
+    pub is_minimized: bool,
+}
+
+/// Marker component for the floating Hertzsprung–Russell Stellar Evolution Panel.
+#[derive(Component)]
+pub struct HrDiagramPanel;
+
+/// Marker for the live 2D H-R diagram plot text display.
+#[derive(Component)]
+pub struct HrDiagramPlotText;
+
+/// Marker for the detailed stellar astrophysics text display.
+#[derive(Component)]
+pub struct HrDiagramDetailsText;
 
 /// Marker component for the deep-time geological epoch scrubber panel.
 #[derive(Component)]
@@ -604,7 +445,23 @@ pub enum UiButtonAction {
     CycleOverlayMode,
     ToggleTractor,
     ToggleTrajectoryPredictor,
+    ToggleLagrangePoints,
+    ToggleHabitableZone,
+    ToggleHrDiagram,
+    ToggleMinimizeHrDiagram,
     ToggleTrophiesPanel,
+    ToggleTechTreePanel,
+    ToggleCampaignPanel,
+    ToggleCampaignTracker,
+    StartCampaignMission(crate::simulation::campaign::CampaignMissionId),
+    ClaimCampaignReward,
+    AbandonCampaignMission,
+    ResearchTech(crate::simulation::economy::TechnologyId),
+    // Dynamic Cosmic Hazards & Sensory Polish
+    ToggleHazardsPanel,
+    TriggerCosmicHazard(crate::simulation::events::CosmicEventType),
+    ToggleAutoHazards,
+    CycleTonemappingMode,
     // Live Celestial Body Editor
     IncreaseMass,
     DecreaseMass,
@@ -616,6 +473,7 @@ pub enum UiButtonAction {
     InjectEmbryo,
     VaporizeBody,
     FocusLock,
+    ToggleSurfaceHorizonCamera,
     ResetView,
     DeselectBody,
     FixOrbit,
@@ -632,6 +490,11 @@ pub enum UiButtonAction {
     BombardCore,
     AdvanceCivilization,
     LaunchProbe,
+    // Hydrosphere & Bathymetric Sea Level Controls
+    AddOceanWater,
+    DrainOceanWater,
+    DryBasin,
+    EarthSeaLevel,
     // Gravitational Tidal Actions
     TidalLock,
     // Relativistic Gravitational Waves & Inspiral
@@ -712,6 +575,17 @@ impl UiButtonAction {
             UiButtonAction::SpawnSubRocheMoon => "Spawn a volatile-rich moon directly inside the selected planet's fluid Roche limit to trigger tidal shredding and ring creation!",
             UiButtonAction::ToggleTelemetryPanel => "[F10]: Open or close the planetary climate & habitability telemetry graphing panel.",
             UiButtonAction::ToggleTrophiesPanel => "🏆 Trophies: View unlocked scientific milestones and scenario achievements.",
+            UiButtonAction::ToggleTechTreePanel => "🔬 Tech Tree [Shift-T]: Research advanced propulsion, terraforming tools, and megastructures.",
+            UiButtonAction::ToggleCampaignPanel => "🎯 Campaign [Shift-M]: Goal-oriented astrophysics missions and scenario challenges.",
+            UiButtonAction::ToggleCampaignTracker => "Minimize or expand the on-screen campaign mission objectives tracker.",
+            UiButtonAction::StartCampaignMission(_) => "Launch this goal-oriented scenario challenge.",
+            UiButtonAction::ClaimCampaignReward => "Claim Science Data bounty for completing the campaign mission.",
+            UiButtonAction::AbandonCampaignMission => "Abort active campaign mission and return to sandbox.",
+            UiButtonAction::ResearchTech(_) => "Research and unlock this advanced scientific capability using accumulated Science Data.",
+            UiButtonAction::ToggleHazardsPanel => "⚡ Hazards [Shift-H]: Trigger deep-space cosmic hazards and test planetary defenses.",
+            UiButtonAction::TriggerCosmicHazard(h) => h.title(),
+            UiButtonAction::ToggleAutoHazards => "Toggle stochastic background generation of deep-space cosmic hazards.",
+            UiButtonAction::CycleTonemappingMode => "🎨 Tonemapping [Shift-C]: Cycle screen post-processing display curves (AgX -> ACES -> Reinhard).",
             UiButtonAction::SelectTelemetryMetric(_) => "Switch active telemetry graph metric (Habitability, Temperature, Ocean, Pressure, Orbit).",
             UiButtonAction::ExportTelemetryCsv => "Export current planetary telemetry history to a standard CSV file in ./exports/.",
             UiButtonAction::ToggleEpochScrubberPanel => "[F11]: Open or close the deep geological epoch scrubber and continental drift timeline.",
@@ -726,7 +600,11 @@ impl UiButtonAction {
             UiButtonAction::ToggleOrbitMode => "[Y]: Cycle orbit trails (All -> Selected Target Only -> Hidden).",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
-    UiButtonAction::ToggleTrajectoryPredictor => "[N]: Toggle real-time trajectory prediction and close-encounter / impact warning reticles.",
+            UiButtonAction::ToggleTrajectoryPredictor => "[N]: Toggle real-time trajectory prediction and close-encounter / impact warning reticles.",
+            UiButtonAction::ToggleLagrangePoints => "[Shift-L]: Toggle gravitational Lagrange libration points (L1-L5) and Hill sphere wireframe.",
+            UiButtonAction::ToggleHabitableZone => "[Shift-Z]: Toggle circumstellar Habitable Zone (Conservative & Optimistic) and Water Ice Frost Line.",
+            UiButtonAction::ToggleHrDiagram => "[Shift-R]: Open or close the interactive Hertzsprung–Russell Stellar Evolution Diagram window.",
+            UiButtonAction::ToggleMinimizeHrDiagram => "Minimize or restore the Hertzsprung–Russell Stellar Evolution panel.",
             UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
             UiButtonAction::DecreaseMass => "[J]: Strip -20% outer envelope mass from selected planet.",
             UiButtonAction::ExpandOrbit => "[O]: Boost orbital energy to expand orbital radius +10%.",
@@ -739,6 +617,9 @@ impl UiButtonAction {
             }
             UiButtonAction::VaporizeBody => "[Del]: Shatter selected celestial body into dust & fragments.",
             UiButtonAction::FocusLock => "[F]: Focus & track camera onto selected celestial body.",
+            UiButtonAction::ToggleSurfaceHorizonCamera => {
+                "[Shift+V]: Toggle First-Person Rover / Planetary Surface Horizon Camera (WASD to drive, R-Drag to look 360°)."
+            }
             UiButtonAction::ResetView => "[R]: Reset camera to overview orientation.",
             UiButtonAction::DeselectBody => "[Esc]: Close inspector and clear selection.",
             UiButtonAction::FixOrbit => "[Z]: Circularize orbital eccentricity to 0.00.",
@@ -754,6 +635,10 @@ impl UiButtonAction {
             UiButtonAction::BombardChondrite => "Launch carbonaceous chondrite to deliver N2 and CO2, boosting atmospheric pressure.",
             UiButtonAction::BombardSalvo => "Launch aerobraking volatile salvo for gentle atmospheric influx without cratering.",
             UiButtonAction::BombardCore => "Launch dense iron-nickel impactor to stimulate core temperature and magnetic dynamo.",
+            UiButtonAction::AddOceanWater => "[]]: Add surface water (+10% sea level) to expand oceans and submerge continental lowlands.",
+            UiButtonAction::DrainOceanWater => "[[]: Drain surface water (-10% sea level) to expose continental shelves, ridges, and trenches.",
+            UiButtonAction::DryBasin => "[Shift+[]: Drain all surface liquid water to expose desiccated oceanic lithosphere and bathymetry.",
+            UiButtonAction::EarthSeaLevel => "Restore terrestrial sea level to Earth baseline (71% ocean coverage, 1.0 atm).",
             UiButtonAction::TidalLock => "Synchronize planetary rotation with orbital period (1:1 lock) and align spin axis.",
             UiButtonAction::AccelerateInspiral => "Accelerate gravitational wave inspiral decay for selected compact binary pair.",
             UiButtonAction::StripAtmosphere => "Trigger extreme photoevaporative XUV burst to strip volatile envelope down to bare rocky core.",
@@ -796,126 +681,7 @@ impl UiButtonAction {
     }
 }
 
-/// Helper function to create standard glassmorphic button style
-pub fn create_button(
-    parent: &mut ChildSpawnerCommands,
-    action: UiButtonAction,
-    label: &str,
-    bg_color: Color,
-    border_color: Color,
-) {
-    parent
-        .spawn((
-            Button,
-            action,
-            Node {
-                padding: UiRect::axes(Val::Px(7.0), Val::Px(4.0)),
-                margin: UiRect::all(Val::Px(2.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BorderColor::all(border_color),
-            BackgroundColor(bg_color),
-        ))
-        .with_children(|btn| {
-            btn.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(12.5),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.92, 0.96, 1.0)),
-                Pickable::IGNORE,
-            ));
-        });
-}
-
-/// Stores the resting colors of a Quick Bar button so it can be dynamically highlighted without recreating the UI.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct QuickBarButtonBaseColor {
-    pub bg: Color,
-    pub border: Color,
-}
-
-/// Helper function to create compact glassmorphic button style with base color memory for dense toolbars
-pub fn create_compact_selectable_button(
-    parent: &mut ChildSpawnerCommands,
-    action: UiButtonAction,
-    label: &str,
-    bg_color: Color,
-    border_color: Color,
-    base_bg: Color,
-    base_border: Color,
-) {
-    parent
-        .spawn((
-            Button,
-            action,
-            QuickBarButtonBaseColor {
-                bg: base_bg,
-                border: base_border,
-            },
-            Node {
-                padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
-                margin: UiRect::all(Val::Px(1.5)),
-                border: UiRect::all(Val::Px(1.0)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BorderColor::all(border_color),
-            BackgroundColor(bg_color),
-        ))
-        .with_children(|btn| {
-            btn.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(10.5),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.92, 0.96, 1.0)),
-                Pickable::IGNORE,
-            ));
-        });
-}
-
-/// Helper function to create compact glassmorphic button style for dense toolbars
-pub fn create_compact_button(
-    parent: &mut ChildSpawnerCommands,
-    action: UiButtonAction,
-    label: &str,
-    bg_color: Color,
-    border_color: Color,
-) {
-    parent
-        .spawn((
-            Button,
-            action,
-            Node {
-                padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
-                margin: UiRect::all(Val::Px(1.5)),
-                border: UiRect::all(Val::Px(1.0)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BorderColor::all(border_color),
-            BackgroundColor(bg_color),
-        ))
-        .with_children(|btn| {
-            btn.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(10.5),
-                    ..default()
-                },
-                TextColor(Color::srgb(0.92, 0.96, 1.0)),
-                Pickable::IGNORE,
-            ));
-        });
-}
+pub use super::buttons::*;
 
 /// Represents an identified major celestial world in the active simulation,
 /// deterministically numbered outward from the central star:
@@ -948,3 +714,16 @@ pub enum TrophiesPanelElement {
     Container,
     Content,
 }
+
+#[derive(Resource, Default)]
+pub struct TechTreePanelState {
+    pub is_open: bool,
+}
+
+#[derive(Component)]
+pub enum TechTreePanelElement {
+    Container,
+    Content,
+    Summary,
+}
+pub use super::campaign_panel::{CampaignPanelElement, CampaignPanelState};

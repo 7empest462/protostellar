@@ -143,6 +143,81 @@ type TargetBodyQuery<'w, 's> = Query<'w, 's, TargetBodyItem, TargetQueryFilter>;
 type ImpactorBodyQuery<'w, 's> = Query<'w, 's, ImpactorBodyItem, ImpactorQueryFilter>;
 type StarBodyQuery<'w, 's> = Query<'w, 's, (&'static SimPosition, &'static Mass), StarQueryFilter>;
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Steps single LHB impactor guidance and capture"
+)]
+fn step_lhb_impactor_guidance(
+    commands: &mut Commands,
+    i_ent: Entity,
+    i_pos: &mut DVec3,
+    i_vel: &mut DVec3,
+    impactor: &LhbImpactor,
+    i_rad: f64,
+    t_pos: DVec3,
+    t_vel: DVec3,
+    t_mass: f64,
+    t_rad: f64,
+    star_pos: DVec3,
+    dt: f64,
+    current_sim_yr: f64,
+) {
+    let r_rel = t_pos - *i_pos;
+    let dist = r_rel.length();
+    let contact_dist = t_rad + i_rad;
+    let r_dir = r_rel / dist.max(1e-6);
+
+    // Swept closest approach over dt so high time-warp never tunnels past Earth
+    let v_rel = *i_vel - t_vel;
+    let step_disp = v_rel * dt;
+    let seg_len_sq = step_disp.length_squared();
+    let swept_dist = if seg_len_sq > 1e-12 {
+        let p_prev = (*i_pos - t_pos) - step_disp;
+        let u = (-p_prev.dot(step_disp) / seg_len_sq).clamp(0.0, 1.0);
+        (p_prev + step_disp * u).length()
+    } else {
+        dist
+    };
+
+    // Mid-course & terminal proportional navigation compensating for nebular gas drag and N-body perturbations
+    let total_flight = (impactor.expected_arrival_yr - impactor.spawn_time_yr).max(0.1);
+    let flight_progress =
+        ((current_sim_yr - impactor.spawn_time_yr) / total_flight).clamp(0.0, 1.5);
+    if (dist <= 0.85 || flight_progress >= 0.35) && dist > contact_dist * 0.90 {
+        let g_acc = (G_ASTRO * t_mass / (dist * dist + 1e-5)) * r_dir * 2.5;
+        *i_vel += g_acc * dt;
+
+        let time_left = (impactor.expected_arrival_yr - current_sim_yr).max(dt.max(0.02));
+        let desired_closing = (dist / time_left).clamp(3.0, 14.0);
+        let v_desired = t_vel + r_dir * desired_closing;
+        let steer_tau = if dist <= 0.08 {
+            0.03
+        } else {
+            (0.25 * time_left).max(0.05)
+        };
+        let blend = (dt / steer_tau).clamp(0.08, 0.65);
+        *i_vel = i_vel.lerp(v_desired, blend);
+    }
+
+    // Proximity capture: pull into contact and match closing velocity so accretion merges cleanly
+    let is_imminent_impact = dist <= contact_dist * 1.8
+        || swept_dist <= contact_dist * 2.2
+        || (current_sim_yr >= impactor.expected_arrival_yr && dist <= 0.045);
+
+    if is_imminent_impact {
+        *i_pos = t_pos - r_dir * (contact_dist * 0.50);
+        *i_vel = t_vel + r_dir * 0.5;
+    } else if current_sim_yr > impactor.expected_arrival_yr + 0.8 {
+        let r_sun = (*i_pos - star_pos).length();
+        let v_radial = (*i_pos - star_pos).dot(*i_vel);
+        if r_sun > 2.2 && v_radial > 0.0 {
+            if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
+                entity_cmd.try_despawn();
+            }
+        }
+    }
+}
+
 /// Maintains a steady cascade of planet-crossing impactors (asteroids & comets) during the Late Heavy Bombardment epoch,
 /// guiding them inward to strike Earth and deliver volatile surface oceans.
 pub fn update_late_heavy_bombardment_cascade(
@@ -163,7 +238,11 @@ pub fn update_late_heavy_bombardment_cascade(
     }
 
     if scenario_state.as_deref().is_some_and(|s| {
-        s.current_preset != crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+        matches!(
+            s.current_preset,
+            crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+                | crate::simulation::scenarios::ScenarioPreset::GalacticCollision
+        )
     }) {
         return;
     }
@@ -185,44 +264,21 @@ pub fn update_late_heavy_bombardment_cascade(
         active_impactor_count += 1;
         if let Ok((_, t_pos, t_vel, _, t_mass, t_rad, _)) = target_query.get(impactor.target_entity)
         {
-            let r_rel = t_pos.0 - i_pos.0;
-            let dist = r_rel.length();
-            let contact_dist = t_rad.0 + i_rad.0;
-
-            // Gravitational focusing towards target planet within encounter corridor
-            if dist <= 0.08 && dist > contact_dist * 0.90 {
-                let r_dir = r_rel / dist.max(1e-6);
-                let g_acc = (G_ASTRO * t_mass.0 / (dist * dist + 1e-7)) * r_dir * 2.5;
-                i_vel.0 += g_acc * dt;
-
-                // Inside Hill sphere (~0.018 AU): align closing velocity smoothly into target
-                if dist <= 0.018 {
-                    let v_rel = i_vel.0 - t_vel.0;
-                    let v_closing = r_dir * v_rel.length().max(4.0);
-                    let blend = (dt / 0.04).clamp(0.08, 0.45);
-                    i_vel.0 = i_vel.0.lerp(t_vel.0 + v_closing, blend);
-                }
-            }
-
-            // Proximity capture: if entering contact zone or within Hill sphere at expected arrival,
-            // pull into contact so accretion merges it cleanly
-            let is_imminent_impact = dist <= contact_dist * 1.8
-                || (current_sim_yr >= impactor.expected_arrival_yr && dist <= 0.005);
-
-            if is_imminent_impact {
-                if dist > contact_dist * 0.90 {
-                    i_pos.0 = t_pos.0 - r_rel.normalize_or_zero() * (contact_dist * 0.85);
-                }
-            } else if current_sim_yr > impactor.expected_arrival_yr + 0.6 {
-                // Impactor passed perihelion and missed; despawn once traveling outbound
-                let r_sun = (i_pos.0 - star_pos.0).length();
-                let v_radial = (i_pos.0 - star_pos.0).dot(i_vel.0);
-                if r_sun > 2.2 && v_radial > 0.0 {
-                    if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
-                        entity_cmd.try_despawn();
-                    }
-                }
-            }
+            step_lhb_impactor_guidance(
+                &mut commands,
+                i_ent,
+                &mut i_pos.0,
+                &mut i_vel.0,
+                impactor,
+                i_rad.0,
+                t_pos.0,
+                t_vel.0,
+                t_mass.0,
+                t_rad.0,
+                star_pos.0,
+                dt,
+                current_sim_yr,
+            );
         } else {
             // Target was destroyed or missing; despawn stray impactor if far out
             let r_sun = (i_pos.0 - star_pos.0).length();

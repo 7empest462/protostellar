@@ -344,6 +344,7 @@ pub fn update_terraforming_atmospheres(
         &mut TerraformingAtmosphere,
         &mut PlanetaryClimate,
         &mut Composition,
+        &Mass,
     )>,
 ) {
     if !config.enable_thermodynamics || (time_warp.is_paused && !time_warp.step_once) {
@@ -352,7 +353,14 @@ pub fn update_terraforming_atmospheres(
 
     let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
 
-    for (mut vol, mut terra, mut climate, mut comp) in worlds_query.iter_mut() {
-        update_body_terraforming_climate(&mut vol, &mut terra, &mut climate, &mut comp, dt_yr);
+    for (mut vol, mut terra, mut climate, mut comp, mass) in worlds_query.iter_mut() {
+        update_body_terraforming_climate(
+            &mut vol,
+            &mut terra,
+            &mut climate,
+            &mut comp,
+            mass.0,
+            dt_yr,
+        );
     }
 }

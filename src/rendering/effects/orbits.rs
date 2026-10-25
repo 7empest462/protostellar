@@ -9,7 +9,7 @@ pub fn draw_ambient_and_trailing_orbit_ribbon(
     base_rgba: Srgba,
     is_selected: bool,
 ) {
-    let ambient_alpha = if is_selected { 0.60 } else { 0.28 };
+    let ambient_alpha = if is_selected { 0.60 } else { 0.15 };
     let ambient_color = Color::srgba(
         base_rgba.red,
         base_rgba.green,

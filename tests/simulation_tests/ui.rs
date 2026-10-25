@@ -889,3 +889,40 @@ fn test_inspector_composition_water_ice_formatting() {
     let s7 = format_composition_water_ice(&Composition::pure_hydrogen(), None, None, 5778.0, true);
     assert_eq!(s7, "0% Ice");
 }
+
+#[test]
+fn test_planet_builder_presets() {
+    use protostellar::game::ui::{BuilderPreset, PlanetBuilderState};
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, JUPITER_MASS_SOLAR};
+
+    let mut state = PlanetBuilderState::default();
+
+    // Default is Earth-like
+    assert_eq!(state.active_preset, BuilderPreset::EarthLike);
+    assert!((state.mass_solar - EARTH_MASS_SOLAR).abs() < 1e-10);
+    assert!((state.semi_major_axis_au - 1.0).abs() < 1e-10);
+
+    // Apply Super-Jupiter preset
+    state.apply_preset(BuilderPreset::SuperJupiter);
+    assert_eq!(state.active_preset, BuilderPreset::SuperJupiter);
+    assert!((state.mass_solar - JUPITER_MASS_SOLAR * 3.5).abs() < 1e-10);
+    assert!((state.semi_major_axis_au - 3.2).abs() < 1e-10);
+    assert!(state.gas_frac > 0.90);
+
+    // Apply Water World preset
+    state.apply_preset(BuilderPreset::WaterWorld);
+    assert_eq!(state.active_preset, BuilderPreset::WaterWorld);
+    assert!(state.ice_frac > 0.50);
+    assert_eq!(state.gas_frac, 0.0);
+
+    // Apply Io Volcanic preset
+    state.apply_preset(BuilderPreset::IoLike);
+    assert_eq!(state.active_preset, BuilderPreset::IoLike);
+    assert!(state.rock_frac > 0.80);
+    assert_eq!(state.ice_frac, 0.0);
+
+    // Apply Enceladus Cryovolcanic preset
+    state.apply_preset(BuilderPreset::EnceladusLike);
+    assert_eq!(state.active_preset, BuilderPreset::EnceladusLike);
+    assert!(state.ice_frac > 0.85);
+}

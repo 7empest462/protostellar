@@ -446,6 +446,11 @@ fn spawn_seed_body(
             ice_fraction: 0.96,
             silicate_fraction: 0.04,
         });
+        entity_cmds.insert(AtmosphericStormState::saturn());
+    } else if name.contains("Jupiter") {
+        entity_cmds.insert(AtmosphericStormState::jupiter());
+    } else if name.contains("Neptune") {
+        entity_cmds.insert(AtmosphericStormState::neptune());
     }
 }
 

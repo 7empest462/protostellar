@@ -39,9 +39,9 @@ pub fn update_atmospheric_escape_evolution(
             Entity,
             &mut Mass,
             &SimPosition,
-            &Radius,
+            &mut Radius,
             &mut Composition,
-            &CelestialBody,
+            &mut CelestialBody,
             Option<&mut AtmosphericEscapeTail>,
             Option<&mut VolatileInventory>,
             Option<&InternalDifferentiation>,
@@ -60,16 +60,16 @@ pub fn update_atmospheric_escape_evolution(
         return;
     };
 
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr) * escape_config.time_scale;
+    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
     let l_xuv_watts = calculate_stellar_xuv_luminosity(star_lum.0, sim_time.elapsed_years);
 
     for (
         planet_ent,
         mut p_mass,
         p_pos,
-        p_rad,
+        mut p_rad,
         mut comp,
-        b_body,
+        mut b_body,
         mut opt_tail,
         mut opt_vol,
         opt_diff,
@@ -102,7 +102,8 @@ pub fn update_atmospheric_escape_evolution(
         let was_gas_rich = comp.gas_frac > 0.005;
         apply_escape_mass_loss(
             planet_ent,
-            &b_body.name,
+            &mut b_body,
+            &mut p_rad,
             &mut p_mass,
             &mut comp,
             &mut opt_vol,
@@ -298,7 +299,8 @@ fn classify_escape_regime(
 
 fn apply_escape_mass_loss(
     planet_ent: Entity,
-    planet_name: &str,
+    body: &mut CelestialBody,
+    p_rad: &mut Radius,
     p_mass: &mut Mass,
     comp: &mut Composition,
     opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
@@ -331,9 +333,17 @@ fn apply_escape_mass_loss(
         comp.gas_frac = norm.gas_frac;
 
         if was_gas_rich && comp.gas_frac < 0.001 {
+            body.body_type = crate::simulation::components::classify_body_by_mass_and_comp(
+                p_mass.0, comp, false,
+            );
+            let p_density = comp.average_density();
+            p_rad.0 = crate::simulation::accretion::impact_regimes::radius_from_mass_density(
+                p_mass.0, p_density,
+            );
+
             stripped_events.write(AtmosphericStrippedEvent {
                 planet: planet_ent,
-                name: planet_name.to_string(),
+                name: body.name.clone(),
                 remaining_mass_earth: p_mass.0 / EARTH_MASS_SOLAR,
                 time_yr: sim_time_yr,
             });

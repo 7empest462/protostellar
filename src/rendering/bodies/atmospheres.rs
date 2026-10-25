@@ -1,4 +1,4 @@
-//! Volumetric atmospheric limb glow shells, spectral profiles, and transform synchronization.
+//! Volumetric atmospheric limb glow shells, stellar coronae, spectral profiles, and transform synchronization.
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
@@ -8,7 +8,7 @@ use crate::simulation::components::*;
 
 use super::{VisualAssets, VisualBody};
 
-/// Marker component for an instantiated visual planetary atmosphere glow shell entity.
+/// Marker component for an instantiated visual planetary atmosphere or stellar corona glow shell entity.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct VisualAtmosphereChild;
 
@@ -130,6 +130,177 @@ pub fn compute_atmosphere_spectral_profile(
     }
 }
 
+fn stellar_corona_palette(body_type: BodyType, temp_k: f64) -> (Vec3, Vec3, f32, f32) {
+    match body_type {
+        BodyType::Protostar | BodyType::TTauriStar => (
+            Vec3::new(1.15, 0.62, 0.22),
+            Vec3::new(1.35, 0.38, 0.12),
+            2.45,
+            1.45,
+        ),
+        BodyType::HerbigAeBeStar => (
+            Vec3::new(0.82, 1.02, 1.42),
+            Vec3::new(1.15, 0.58, 0.32),
+            2.55,
+            1.60,
+        ),
+        BodyType::RedGiant | BodyType::RedSupergiant => (
+            Vec3::new(1.20, 0.45, 0.16),
+            Vec3::new(1.40, 0.30, 0.10),
+            2.55,
+            1.65,
+        ),
+        BodyType::CarbonStar => (
+            Vec3::new(1.15, 0.18, 0.06),
+            Vec3::new(1.35, 0.10, 0.03),
+            2.60,
+            1.50,
+        ),
+        BodyType::ThorneZytkow => (
+            Vec3::new(1.22, 0.38, 0.48),
+            Vec3::new(0.65, 1.15, 1.65),
+            2.60,
+            1.75,
+        ),
+        BodyType::YellowHypergiant => (
+            Vec3::new(1.30, 0.96, 0.42),
+            Vec3::new(1.45, 0.68, 0.20),
+            2.65,
+            1.80,
+        ),
+        BodyType::WolfRayet => (
+            Vec3::new(1.25, 0.55, 1.35),
+            Vec3::new(0.55, 1.10, 1.55),
+            2.65,
+            1.85,
+        ),
+        BodyType::LuminousBlueVariable => (
+            Vec3::new(0.68, 1.05, 1.55),
+            Vec3::new(0.85, 1.25, 1.75),
+            2.70,
+            1.90,
+        ),
+        BodyType::PopulationIIIStar => (
+            Vec3::new(0.75, 0.92, 1.68),
+            Vec3::new(0.95, 0.80, 1.85),
+            2.75,
+            2.00,
+        ),
+        BodyType::BlueStraggler => (
+            Vec3::new(0.70, 0.95, 1.48),
+            Vec3::new(0.55, 0.88, 1.55),
+            2.55,
+            1.70,
+        ),
+        BodyType::WhiteDwarf | BodyType::NeutronStar | BodyType::Pulsar => (
+            Vec3::new(0.70, 0.88, 1.35),
+            Vec3::new(0.45, 0.95, 1.45),
+            2.35,
+            1.55,
+        ),
+        BodyType::QuarkStar => (
+            Vec3::new(1.05, 0.82, 1.60),
+            Vec3::new(0.65, 1.35, 1.80),
+            2.40,
+            1.75,
+        ),
+        BodyType::Magnetar => (
+            Vec3::new(0.95, 0.55, 1.45),
+            Vec3::new(0.35, 1.25, 1.50),
+            2.50,
+            1.80,
+        ),
+        BodyType::DarkStar => (
+            Vec3::new(1.25, 0.72, 0.24),
+            Vec3::new(1.10, 0.52, 0.95),
+            2.65,
+            1.55,
+        ),
+        BodyType::BosonStar => (
+            Vec3::new(0.38, 1.15, 1.42),
+            Vec3::new(0.55, 0.85, 1.55),
+            2.25,
+            0.95,
+        ),
+        BodyType::BrownDwarf => (
+            Vec3::new(0.72, 0.22, 0.44),
+            Vec3::new(0.95, 0.35, 0.18),
+            2.10,
+            0.85,
+        ),
+        BodyType::OrangeDwarf => (
+            Vec3::new(1.12, 0.68, 0.28),
+            Vec3::new(1.32, 0.42, 0.14),
+            2.38,
+            1.32,
+        ),
+        BodyType::QuasiStar => (
+            Vec3::new(1.35, 0.50, 0.18),
+            Vec3::new(1.50, 0.35, 0.12),
+            2.70,
+            1.90,
+        ),
+        _ if temp_k > 10_000.0 => (
+            Vec3::new(0.65, 0.82, 1.35),
+            Vec3::new(0.50, 0.75, 1.45),
+            2.65,
+            1.75,
+        ),
+        _ if temp_k > 6_800.0 => (
+            Vec3::new(0.88, 0.94, 1.18),
+            Vec3::new(0.75, 0.88, 1.25),
+            2.50,
+            1.50,
+        ),
+        _ if temp_k >= 5_000.0 => (
+            Vec3::new(1.08, 0.95, 0.76),
+            Vec3::new(1.25, 0.55, 0.25),
+            2.45,
+            1.40,
+        ),
+        _ => (
+            Vec3::new(1.15, 0.55, 0.22),
+            Vec3::new(1.35, 0.32, 0.12),
+            2.30,
+            1.25,
+        ),
+    }
+}
+
+/// Computes 3D volumetric K/F-corona and optical diffraction spike uniforms for luminous stars.
+pub fn compute_stellar_corona_uniforms(
+    body_type: BodyType,
+    temp_k: f64,
+    visual_r: f32,
+    world_pos: Vec3,
+    spin_axis: Vec4,
+    tidal_deformation: Vec4,
+    flare_intensity: f32,
+    elapsed_secs: f32,
+) -> (AtmosphereUniforms, f32) {
+    let (corona_rgb, chromo_rgb, shell_scale, intensity) =
+        stellar_corona_palette(body_type, temp_k);
+
+    let outer_r = visual_r * shell_scale;
+    let uniforms = AtmosphereUniforms {
+        rayleigh_params: Vec4::new(corona_rgb.x, corona_rgb.y, corona_rgb.z, 0.32),
+        mie_params: Vec4::new(chromo_rgb.x, chromo_rgb.y, chromo_rgb.z, 6.0),
+        // optical_params.y = -1.0 activates Stellar Corona & Optical Diffraction Spike Mode in atmosphere.wgsl
+        optical_params: Vec4::new(0.85, -1.0, visual_r, outer_r),
+        star_dir_and_intensity: Vec4::new(0.0, 1.0, 0.0, intensity),
+        planet_center: Vec4::new(world_pos.x, world_pos.y, world_pos.z, shell_scale),
+        aurora_params: Vec4::new(flare_intensity, 0.0, 1.0, elapsed_secs),
+        spin_axis,
+        ring_and_ozone_params: Vec4::ZERO,
+        tidal_deformation,
+    };
+    (uniforms, shell_scale)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Atmosphere uniform constructor maps spectral and geometric fields to GPU struct"
+)]
 fn create_atmosphere_uniforms(
     profile: &AtmosphereSpectralProfile,
     pressure_bar: f32,
@@ -140,6 +311,8 @@ fn create_atmosphere_uniforms(
     planet_world_pos: Vec3,
     aurora_params: Vec4,
     spin_axis: Vec4,
+    ring_and_ozone_params: Vec4,
+    tidal_deformation: Vec4,
 ) -> AtmosphereUniforms {
     AtmosphereUniforms {
         rayleigh_params: Vec4::new(
@@ -164,6 +337,8 @@ fn create_atmosphere_uniforms(
         ),
         aurora_params,
         spin_axis,
+        ring_and_ozone_params,
+        tidal_deformation,
     }
 }
 
@@ -219,7 +394,7 @@ fn update_atmosphere_child_mesh(
     uniforms: &AtmosphereUniforms,
     atmo_children_query: &mut Query<
         (&mut Transform, &MeshMaterial3d<AtmosphereMaterial>),
-        With<VisualAtmosphereChild>,
+        (With<VisualAtmosphereChild>, Without<VisualBody>),
     >,
     atmo_materials: &mut Assets<AtmosphereMaterial>,
 ) -> bool {
@@ -259,7 +434,7 @@ fn despawn_atmosphere_children(
     children: &Children,
     atmo_children_query: &Query<
         (&mut Transform, &MeshMaterial3d<AtmosphereMaterial>),
-        With<VisualAtmosphereChild>,
+        (With<VisualAtmosphereChild>, Without<VisualBody>),
     >,
 ) {
     for child in children.iter() {
@@ -295,7 +470,7 @@ fn extract_primary_star_lighting(
 )]
 fn build_planet_atmosphere_uniforms(
     p_pos: &SimPosition,
-    p_rad: &Radius,
+    visual_r: f32,
     body: &CelestialBody,
     comp: &Composition,
     temp: &Temperature,
@@ -304,6 +479,7 @@ fn build_planet_atmosphere_uniforms(
     opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
     opt_diff: Option<&InternalDifferentiation>,
     opt_spin: Option<&SpinState>,
+    opt_planet_mat: Option<&PlanetMaterial>,
     star_pos: Vec3,
     star_lum: f32,
 ) -> (AtmosphereUniforms, bool, f32) {
@@ -329,10 +505,58 @@ fn build_planet_atmosphere_uniforms(
         cloud_coverage,
     );
 
-    let visual_r = p_rad.0 as f32;
     let atmo_r = visual_r * profile.shell_outer_scale;
-    let aurora_params = derive_auroral_params(opt_aurora, opt_diff);
-    let spin_axis = compute_spin_axis(opt_spin);
+    let aurora_params = if is_gas_giant || is_ice_giant {
+        Vec4::ZERO
+    } else {
+        derive_auroral_params(opt_aurora, opt_diff)
+    };
+    let mut spin_axis = compute_spin_axis(opt_spin);
+    let mut tidal_deformation = Vec4::ZERO;
+    let mut ring_and_ozone = Vec4::ZERO;
+
+    let is_habitable_ozone = matches!(
+        body.body_type,
+        BodyType::TerrestrialPlanet | BodyType::SuperEarth
+    ) && (0.05..=8.0).contains(&pressure_bar)
+        && temp.0 < 365.0;
+    let mut flags = if is_habitable_ozone { 1.0f32 } else { 0.0f32 };
+
+    if let Some(p_mat) = opt_planet_mat {
+        let u = &p_mat.extension.uniforms;
+        spin_axis = u.spin_axis;
+        let raw_w = u.tidal_deformation.w;
+        let roche_stretch = if raw_w >= 1.5 { raw_w - 2.0 } else { raw_w };
+        tidal_deformation = Vec4::new(
+            u.tidal_deformation.x,
+            u.tidal_deformation.y,
+            u.tidal_deformation.z,
+            roche_stretch.clamp(0.0, 0.85),
+        );
+        if u.ring_shadow_params.w > 0.5 {
+            flags += 2.0;
+            ring_and_ozone = Vec4::new(
+                u.ring_shadow_params.x,
+                u.ring_shadow_params.y,
+                u.ring_shadow_params.z,
+                flags,
+            );
+        } else {
+            ring_and_ozone.w = flags;
+        }
+    } else {
+        ring_and_ozone.w = flags;
+    }
+
+    let oblateness = if is_gas_giant || is_ice_giant {
+        0.065
+    } else {
+        0.0
+    };
+    spin_axis.w = oblateness;
+
+    let max_stretch = 1.0 + tidal_deformation.w * 1.15 + spin_axis.w.clamp(0.0, 0.25) * 0.35;
+    let effective_shell_scale = profile.shell_outer_scale * max_stretch;
 
     let uniforms = create_atmosphere_uniforms(
         &profile,
@@ -344,16 +568,58 @@ fn build_planet_atmosphere_uniforms(
         planet_world_pos,
         aurora_params,
         spin_axis,
+        ring_and_ozone,
+        tidal_deformation,
     );
 
-    (uniforms, has_atmosphere, profile.shell_outer_scale)
+    (uniforms, has_atmosphere, effective_shell_scale)
 }
 
-/// Synchronizes 3D planetary atmospheric limb glow shells, materials, and starlight vectors.
-#[allow(clippy::type_complexity, reason = "Atmosphere Mesh Query Complexity")]
+fn build_stellar_corona_state(
+    p_pos: &SimPosition,
+    visual_r: f32,
+    body_type: BodyType,
+    temp_k: f64,
+    opt_spin: Option<&SpinState>,
+    opt_planet_mat: Option<&PlanetMaterial>,
+    opt_flare: Option<&crate::simulation::space_weather::StellarFlareState>,
+    elapsed_secs: f32,
+) -> (AtmosphereUniforms, bool, f32) {
+    let world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let spin_axis = opt_planet_mat.map_or_else(
+        || compute_spin_axis(opt_spin),
+        |m| m.extension.uniforms.spin_axis,
+    );
+    let tidal_def = opt_planet_mat.map_or(Vec4::ZERO, |m| {
+        let u_td = m.extension.uniforms.tidal_deformation;
+        let rw = if u_td.w >= 1.5 { u_td.w - 2.0 } else { u_td.w };
+        Vec4::new(u_td.x, u_td.y, u_td.z, rw.clamp(0.0, 0.85))
+    });
+    let flare_int = opt_flare.map_or(0.25, |f| f.current_flare_intensity);
+    let (corona_u, corona_scale) = compute_stellar_corona_uniforms(
+        body_type,
+        temp_k,
+        visual_r,
+        world_pos,
+        spin_axis,
+        tidal_def,
+        flare_int,
+        elapsed_secs,
+    );
+    (corona_u, true, corona_scale)
+}
+
+/// Synchronizes 3D planetary atmospheric limb glow shells, stellar coronae, materials, and starlight vectors.
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "Atmosphere and stellar corona mesh query synchronization"
+)]
 pub fn sync_planetary_atmospheres(
     mut commands: Commands,
+    time: Res<Time>,
     visual_assets: Option<Res<VisualAssets>>,
+    planet_materials: Option<Res<Assets<PlanetMaterial>>>,
     mut atmo_materials: ResMut<Assets<AtmosphereMaterial>>,
     primary_star_query: Query<
         (&SimPosition, &Temperature, &Mass),
@@ -364,21 +630,27 @@ pub fn sync_planetary_atmospheres(
             Entity,
             &SimPosition,
             &Radius,
+            &Transform,
             &CelestialBody,
             &Composition,
             &Temperature,
+            Option<&MeshMaterial3d<PlanetMaterial>>,
             Option<&PlanetaryClimate>,
             Option<&VolatileInventory>,
             Option<&Children>,
-            Option<&crate::simulation::space_weather::AuroralOvalState>,
-            Option<&InternalDifferentiation>,
-            Option<&SpinState>,
+            (
+                Option<&crate::simulation::space_weather::AuroralOvalState>,
+                Option<&InternalDifferentiation>,
+                Option<&SpinState>,
+                Option<&crate::simulation::space_weather::StellarFlareState>,
+                Option<&BlackHoleStarState>,
+            ),
         ),
         With<VisualBody>,
     >,
     mut atmo_children_query: Query<
         (&mut Transform, &MeshMaterial3d<AtmosphereMaterial>),
-        With<VisualAtmosphereChild>,
+        (With<VisualAtmosphereChild>, Without<VisualBody>),
     >,
 ) {
     let Some(visual_assets) = visual_assets else {
@@ -386,26 +658,35 @@ pub fn sync_planetary_atmospheres(
     };
 
     let (star_pos, star_lum) = extract_primary_star_lighting(&primary_star_query);
+    let elapsed_secs = time.elapsed_secs();
 
     for (
         planet_ent,
         p_pos,
         p_rad,
+        p_trans,
         body,
         comp,
         temp,
+        opt_p_mat_handle,
         opt_climate,
         opt_vol,
         opt_children,
-        opt_aurora,
-        opt_diff,
-        opt_spin,
+        (opt_aurora, opt_diff, opt_spin, opt_flare, opt_bhs),
     ) in planets_query.iter()
     {
-        if body.body_type.is_star_or_remnant()
+        let is_blown_out_quasi =
+            body.body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
+        if body.body_type == BodyType::BlackHole
+            || is_blown_out_quasi
             || matches!(
                 body.body_type,
-                BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain | BodyType::Planetesimal
+                BodyType::BlackDwarf
+                    | BodyType::IronStar
+                    | BodyType::Asteroid
+                    | BodyType::Comet
+                    | BodyType::DustGrain
+                    | BodyType::Planetesimal
             )
         {
             if let Some(children) = opt_children {
@@ -414,32 +695,53 @@ pub fn sync_planetary_atmospheres(
             continue;
         }
 
-        let (uniforms, has_atmosphere, shell_outer_scale) = build_planet_atmosphere_uniforms(
-            p_pos,
-            p_rad,
-            body,
-            comp,
-            temp,
-            opt_climate,
-            opt_vol,
-            opt_aurora,
-            opt_diff,
-            opt_spin,
-            star_pos,
-            star_lum,
-        );
+        let visual_r = p_trans.scale.x.max(p_rad.0 as f32 * 0.1);
+        let opt_planet_mat = opt_p_mat_handle.and_then(|h| {
+            planet_materials
+                .as_ref()
+                .and_then(|assets| assets.get(&h.0))
+        });
 
-        let mut found_child = false;
-        if let Some(children) = opt_children {
-            found_child = update_atmosphere_child_mesh(
+        let (uniforms, has_atmosphere, shell_outer_scale) =
+            if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
+                build_stellar_corona_state(
+                    p_pos,
+                    visual_r,
+                    body.body_type,
+                    temp.0,
+                    opt_spin,
+                    opt_planet_mat,
+                    opt_flare,
+                    elapsed_secs,
+                )
+            } else {
+                build_planet_atmosphere_uniforms(
+                    p_pos,
+                    visual_r,
+                    body,
+                    comp,
+                    temp,
+                    opt_climate,
+                    opt_vol,
+                    opt_aurora,
+                    opt_diff,
+                    opt_spin,
+                    opt_planet_mat,
+                    star_pos,
+                    star_lum,
+                )
+            };
+
+        let found_child = opt_children.is_some_and(|children| {
+            update_atmosphere_child_mesh(
                 children,
                 has_atmosphere,
                 shell_outer_scale,
                 &uniforms,
                 &mut atmo_children_query,
                 &mut atmo_materials,
-            );
-        }
+            )
+        });
 
         if !found_child && has_atmosphere {
             let material = atmo_materials.add(AtmosphereMaterial { uniforms });

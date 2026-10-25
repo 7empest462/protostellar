@@ -73,7 +73,7 @@ fn resolve_host_context(
     None
 }
 
-/// Applies gentle radial velocity damping to simulate orbital circularization ($e \to 0$).
+/// Applies gentle radial velocity damping and relaxes tangential speed toward circular orbit ($e \to 0$).
 fn apply_orbital_circularization(
     rel_pos: DVec3,
     rel_vel: DVec3,
@@ -81,25 +81,36 @@ fn apply_orbital_circularization(
     tau_circ_yr: f64,
     effective_dt_yr: f64,
     eccentricity: f64,
+    host_mass: f64,
 ) {
     if eccentricity <= 1e-4 || tau_circ_yr <= 1e-3 {
         return;
     }
 
     let r = rel_pos.length();
-    if r < 1e-5 {
+    if r < 1e-5 || host_mass <= 0.0 {
         return;
     }
 
     let r_hat = rel_pos / r;
     let v_rad = rel_vel.dot(r_hat);
+    let v_tan_vec = rel_vel - v_rad * r_hat;
+    let v_tan = v_tan_vec.length();
 
-    // Exponential relaxation of radial motion towards circular velocity
+    // Exponential relaxation of radial motion and tangential motion towards circular orbit
     let damping_factor = (-effective_dt_yr / tau_circ_yr).exp();
     let new_v_rad = v_rad * damping_factor;
-    let delta_v = (new_v_rad - v_rad) * r_hat;
+    let delta_v_rad = (new_v_rad - v_rad) * r_hat;
 
-    vel.0 += delta_v;
+    let delta_v_tan = if v_tan > 1e-6 {
+        let v_circ = (crate::utils::constants::G_ASTRO * host_mass / r).sqrt();
+        let new_v_tan = v_circ + (v_tan - v_circ) * damping_factor;
+        (new_v_tan - v_tan) * (v_tan_vec / v_tan)
+    } else {
+        DVec3::ZERO
+    };
+
+    vel.0 += delta_v_rad + delta_v_tan;
 }
 
 /// Couples viscoelastic tidal dissipation into internal core temperature and surface climate.
@@ -138,8 +149,9 @@ fn apply_geothermal_tidal_coupling(
     if let Some(ref mut climate) = opt_climate {
         // Effective surface temperature boost from tidal dissipation flux
         if flux_w_m2 > 0.1 {
-            let t_curr = f64::from(climate.surface_temperature_k);
-            let t4 = t_curr.powi(4) + (flux_w_m2 / STEFAN_BOLTZMANN_SI);
+            let t_base =
+                f64::from(climate.equilibrium_temperature_k + climate.greenhouse_delta_k).max(2.7);
+            let t4 = t_base.powi(4) + (flux_w_m2 / STEFAN_BOLTZMANN_SI);
             climate.surface_temperature_k = t4.powf(0.25).clamp(20.0, 3000.0) as f32;
         }
     }
@@ -172,6 +184,7 @@ pub fn update_tidal_evolution(
             Option<&mut InternalDifferentiation>,
             Option<&mut PlanetaryClimate>,
             Option<&mut TidalState>,
+            Option<&mut VolcanicState>,
         ),
         Without<CentralStar>,
     >,
@@ -180,8 +193,17 @@ pub fn update_tidal_evolution(
         return;
     }
 
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
-    let effective_dt_yr = dt_yr * tidal_config.time_scale.max(1.0);
+    let dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr
+    };
+    let accel = if sim_time.current_dt_yr > 0.0 && time_warp.multiplier < 1.0 {
+        1.0
+    } else {
+        tidal_config.time_scale.max(1.0)
+    };
+    let effective_dt_yr = dt_yr * accel;
     let star_opt = star_query
         .iter()
         .next()
@@ -200,6 +222,7 @@ pub fn update_tidal_evolution(
         mut opt_diff,
         mut opt_climate,
         mut opt_tide,
+        mut opt_volc,
     ) in bodies_query.iter_mut()
     {
         step_body_tidal_evolution(
@@ -216,6 +239,7 @@ pub fn update_tidal_evolution(
             &mut opt_diff,
             &mut opt_climate,
             &mut opt_tide,
+            &mut opt_volc,
             star_opt,
             &tidal_config,
             dt_yr,
@@ -242,6 +266,7 @@ fn step_body_tidal_evolution(
     opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
     opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
     opt_tide: &mut Option<Mut<'_, TidalState>>,
+    opt_volc: &mut Option<Mut<'_, VolcanicState>>,
     star_opt: Option<(Entity, DVec3, DVec3, f64)>,
     tidal_config: &TidalConfig,
     dt_yr: f64,
@@ -282,8 +307,8 @@ fn step_body_tidal_evolution(
         calculate_tidal_heating_power(k2_q, ctx.host_mass, rad_au, a, e, current_omega, n);
     let flux_w_m2 = calculate_tidal_heat_flux(power_watts, rad_au);
 
-    // Apply Spin Dynamics
-    if tidal_config.enable_spin_synchronization {
+    // Apply Spin Dynamics (only for satellites or close-in planets where stellar tides are significant)
+    if tidal_config.enable_spin_synchronization && (opt_sat.is_some() || tau_sync <= 5e7) {
         let (new_omega, new_tilt, progress) = apply_spin_synchronization_step(
             current_omega,
             omega_eq,
@@ -292,15 +317,13 @@ fn step_body_tidal_evolution(
             effective_dt_yr,
         );
 
-        let new_period_hours = ((2.0 * PI) / new_omega.max(1e-6)) * (YEAR_SECONDS / 3600.0);
-        spin.rotation_period_hours = new_period_hours.clamp(0.5, 50000.0);
-        spin.axial_tilt_degrees = new_tilt.clamp(0.0, 180.0);
-
-        // Keep spin angular momentum vector direction and magnitude synchronized
-        let tilt_rad = new_tilt.to_radians();
-        let spin_dir = DVec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0);
-        let i_moment = 0.33 * mass_solar * rad_au * rad_au;
-        spin.spin_vector = (i_moment * new_omega) * spin_dir;
+        let synced_omega = if (new_omega - omega_eq).abs() <= omega_eq * 1e-4 {
+            omega_eq
+        } else {
+            new_omega
+        };
+        let new_period_hours = ((2.0 * PI) / synced_omega.max(1e-6)) * (YEAR_SECONDS / 3600.0);
+        spin.set_period_and_tilt(new_period_hours, new_tilt, mass_solar, rad_au);
 
         tide.locking_progress = progress;
         tide.is_tidally_locked = progress >= 0.99;
@@ -309,7 +332,15 @@ fn step_body_tidal_evolution(
 
     // Apply Orbital Circularization Damping
     if tidal_config.enable_circularization {
-        apply_orbital_circularization(ctx.rel_pos, ctx.rel_vel, vel, tau_circ, effective_dt_yr, e);
+        apply_orbital_circularization(
+            ctx.rel_pos,
+            ctx.rel_vel,
+            vel,
+            tau_circ,
+            effective_dt_yr,
+            e,
+            ctx.host_mass,
+        );
     }
 
     // Apply Geothermal Internal Heating
@@ -324,6 +355,9 @@ fn step_body_tidal_evolution(
         );
     }
 
+    // Apply Volcanic & Cryovolcanic state transitions
+    update_body_volcanism(commands, entity, body, comp, flux_w_m2, opt_volc);
+
     // Update component telemetry
     tide.host_entity = Some(ctx.host_entity);
     tide.tidal_heating_power_watts = power_watts;
@@ -336,5 +370,118 @@ fn step_body_tidal_evolution(
         **t = tide;
     } else if let Ok(mut entity_cmd) = commands.get_entity(entity) {
         entity_cmd.try_insert(tide);
+    }
+}
+
+/// Computes volcanic and cryovolcanic activity state based on body composition and tidal heating.
+pub fn compute_volcanic_state(
+    name: &str,
+    comp: &Composition,
+    flux_w_m2: f64,
+    existing: Option<VolcanicState>,
+) -> Option<VolcanicState> {
+    let lower = name.to_lowercase();
+    let norm = comp.normalized();
+
+    let is_io = lower.contains("io");
+    let is_enceladus = lower.contains("enceladus");
+    let is_europa = lower.contains("europa");
+
+    let is_hyperactive_sulfur =
+        is_io || (norm.silicate_frac > 0.45 && norm.ice_frac < 0.10 && flux_w_m2 > 0.4);
+    let is_cryo_water = is_enceladus || is_europa || (norm.ice_frac > 0.35 && flux_w_m2 > 0.01);
+
+    if !is_hyperactive_sulfur && !is_cryo_water {
+        return None;
+    }
+
+    let mut state = if let Some(v) = existing {
+        v
+    } else if is_io {
+        VolcanicState::io()
+    } else if is_enceladus {
+        VolcanicState::enceladus()
+    } else if is_europa {
+        VolcanicState::europa()
+    } else {
+        VolcanicState::default()
+    };
+
+    if is_hyperactive_sulfur {
+        state.activity_type = VolcanicActivityType::IoSulfurVolcanism;
+        state.active_plumes = ((flux_w_m2 / 0.45).round() as u32).clamp(2, 8);
+        state.max_plume_height_km = (220.0 + (flux_w_m2 as f32 * 80.0)).clamp(200.0, 520.0);
+        state.caldera_temperature_k = (1200.0 + (flux_w_m2 as f32 * 180.0)).clamp(1150.0, 1850.0);
+        state.sulfur_fallout_fraction = ((flux_w_m2 as f32 - 0.3) / 2.2).clamp(0.3, 0.95);
+        state.eruption_flux_kg_s = flux_w_m2 * 4.8e4;
+        state.cryo_ring_feed_rate_kg_s = 0.0;
+    } else if is_cryo_water {
+        state.activity_type = VolcanicActivityType::CryoWaterIce;
+        state.active_plumes = ((flux_w_m2 * 25.0).round() as u32).clamp(1, 6);
+        state.max_plume_height_km = (160.0 + (flux_w_m2 as f32 * 1400.0)).clamp(120.0, 550.0);
+        state.caldera_temperature_k = (100.0 + (flux_w_m2 as f32 * 450.0)).clamp(95.0, 210.0);
+        state.sulfur_fallout_fraction = 0.0;
+        state.eruption_flux_kg_s = flux_w_m2 * 3200.0;
+        state.cryo_ring_feed_rate_kg_s = state.eruption_flux_kg_s * 0.80;
+    }
+
+    Some(state)
+}
+
+fn update_body_volcanism(
+    commands: &mut Commands,
+    entity: Entity,
+    body: &CelestialBody,
+    comp: &Composition,
+    flux_w_m2: f64,
+    opt_volc: &mut Option<Mut<'_, VolcanicState>>,
+) {
+    if let Some(state) =
+        compute_volcanic_state(&body.name, comp, flux_w_m2, opt_volc.as_ref().map(|v| **v))
+    {
+        if let Some(ref mut v) = opt_volc {
+            **v = state;
+        } else if let Ok(mut entity_cmd) = commands.get_entity(entity) {
+            entity_cmd.try_insert(state);
+        }
+    }
+}
+
+/// Feeds mass from active cryovolcanic plumes into the host planet's ring system.
+pub fn cryovolcanic_ring_feeding_system(
+    time_warp: Res<TimeWarp>,
+    sim_time: Res<SimTime>,
+    config: Res<SimulationConfig>,
+    volc_query: Query<(&VolcanicState, &SatelliteOf)>,
+    mut ring_query: Query<&mut PlanetaryRingSystem>,
+) {
+    if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+
+    let dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr
+    };
+    let dt_s = dt_yr * YEAR_SECONDS;
+
+    for (volc, sat) in volc_query.iter() {
+        if volc.cryo_ring_feed_rate_kg_s <= 0.0 {
+            continue;
+        }
+
+        // Earth mass in kg ≈ 5.972e24
+        let mass_ejected_kg = volc.cryo_ring_feed_rate_kg_s * dt_s;
+        let mass_earth = mass_ejected_kg / 5.972e24;
+
+        if let Ok(mut rings) = ring_query.get_mut(sat.parent) {
+            rings.ring_mass_earth += mass_earth;
+            // Ejected micron-sized ice grains replenish optical depth
+            rings.optical_depth =
+                (rings.optical_depth + (mass_earth * 5.0e5) as f32).clamp(0.01, 2.5);
+            // Cryovolcanism delivers fresh water ice (>99%)
+            rings.ice_fraction = (rings.ice_fraction * 0.9995 + 0.0005 * 0.995).clamp(0.0, 1.0);
+        }
     }
 }

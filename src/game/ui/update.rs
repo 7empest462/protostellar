@@ -363,10 +363,13 @@ fn update_inspector_body_telemetry(
 
     if let Ok((opt_aurora, opt_flare)) = space_weather_hud_query.get(selected_entity) {
         if opt_aurora.is_some() || opt_flare.is_some() {
+            let is_giant =
+                body.body_type == BodyType::GasGiant || body.body_type == BodyType::IceGiant;
             super::inspector_panel::append_space_weather_telemetry(
                 &mut text.0,
                 opt_aurora,
                 opt_flare,
+                is_giant,
             );
         }
     }
@@ -468,8 +471,20 @@ fn format_primary_telemetry(
     } else {
         format!("{radius_km:.2} km")
     };
-    let density_g_cm3 = (comp.average_density() * SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0))
-        .clamp(0.01, 20.0);
+    let volume_au3 = (4.0 / 3.0) * std::f64::consts::PI * rad.powi(3);
+    let density_g_cm3 = if volume_au3 > 1e-35 && mass > 0.0 {
+        let conversion_factor = SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0);
+        (mass / volume_au3) * conversion_factor
+    } else {
+        (comp.average_density() * SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0)).clamp(0.01, 20.0)
+    };
+    let density_str = if !density_g_cm3.is_finite() || density_g_cm3 <= 0.0 {
+        "0.00 g/cm3".to_string()
+    } else if density_g_cm3 < 0.01 || density_g_cm3 >= 10_000.0 {
+        format!("{density_g_cm3:.2e} g/cm3")
+    } else {
+        format!("{density_g_cm3:.2} g/cm3")
+    };
     let period_str = format_orbital_period_string(dist_au, body.body_type, phase_mgr.star_mass);
 
     let spin_str = if let Some(spin) = opt_spin {
@@ -492,13 +507,13 @@ fn format_primary_telemetry(
     };
 
     format!(
-        ">> {} [{}]\nMass: {}\nRadius: {} ({:.4} AU)\nDensity: {:.2} g/cm3 | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {}{}",
+        ">> {} [{}]\nMass: {}\nRadius: {} ({:.4} AU)\nDensity: {} | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {}{}",
         body.name.to_uppercase(),
         format_body_inspector_type(body.body_type, mass).to_uppercase(),
         mass_str,
         rad_disp,
         rad,
-        density_g_cm3,
+        density_str,
         temp,
         spin_str,
         period_str,

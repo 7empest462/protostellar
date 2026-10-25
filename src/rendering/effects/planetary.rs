@@ -286,3 +286,81 @@ pub fn draw_body_selection_and_beacons(
         reticle_color,
     );
 }
+
+/// Renders a SpaceEngine / Universe Sandbox style optical starlight glint (Airy disk)
+/// when a planet or star is viewed from far away, allowing 3D planet meshes to stay
+/// realistically small without disappearing against the background skybox.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Optical point-spread glint rendering requires camera basis and body parameters"
+)]
+pub fn draw_distant_optical_glint(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    cam_pos: Vec3,
+    cam_up: Vec3,
+    cam_right: Vec3,
+    visual_radius: f32,
+    body_color: Color,
+    body_type: BodyType,
+) {
+    if matches!(
+        body_type,
+        BodyType::Asteroid
+            | BodyType::Comet
+            | BodyType::Planetesimal
+            | BodyType::DustGrain
+            | BodyType::DebrisRing
+    ) {
+        return;
+    }
+
+    let cam_dist = cam_pos.distance(body_vec).max(0.001);
+    let angular_size = visual_radius / cam_dist;
+
+    let glint_visibility = ((0.012 - angular_size) / 0.009).clamp(0.0, 1.0);
+    if glint_visibility <= 0.01 {
+        return;
+    }
+
+    let rgba = body_color.to_srgba();
+    let glint_r = cam_dist * 0.0028;
+    let alpha = glint_visibility * 0.75;
+
+    let core_col = Color::srgba(
+        (rgba.red * 0.6 + 0.4).min(1.0),
+        (rgba.green * 0.6 + 0.4).min(1.0),
+        (rgba.blue * 0.6 + 0.4).min(1.0),
+        alpha,
+    );
+    let halo_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.35);
+
+    gizmos.sphere(
+        Isometry3d::from_translation(body_vec),
+        glint_r * 0.45,
+        core_col,
+    );
+    gizmos.circle(
+        Isometry3d::new(
+            body_vec,
+            Quat::from_rotation_arc(Vec3::Z, (cam_pos - body_vec).normalize_or_zero()),
+        ),
+        glint_r * 1.4,
+        halo_col,
+    );
+
+    let spike_len = glint_r * 2.4;
+    let spike_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.45);
+    gizmos.line(
+        body_vec - cam_right * spike_len,
+        body_vec + cam_right * spike_len,
+        spike_col,
+    );
+    gizmos.line(
+        body_vec - cam_up * spike_len,
+        body_vec + cam_up * spike_len,
+        spike_col,
+    );
+}
+
+pub use super::volcanism::draw_volcanic_and_cryo_plumes;

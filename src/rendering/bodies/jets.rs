@@ -59,11 +59,12 @@ fn compute_jet_pointing_vectors(
     (dir_north, dir_south)
 }
 
-fn compute_jet_mesh_scales(jet_state: &RelativisticJetState) -> (f32, f32) {
+fn compute_jet_mesh_scales(jet_state: &RelativisticJetState, visual_radius: f32) -> (f32, f32) {
     let total_len = jet_state.jet_length_au.max(0.1);
     let y_scale = total_len / 50.0;
-    let max_r = (total_len * jet_state.opening_angle_rad.tan() * 1.5).max(0.05);
-    let xz_scale = (max_r / 6.5).max(0.001);
+    let r_base = (visual_radius * 0.35).clamp(0.002, 1.5);
+    let max_r = (r_base + total_len * jet_state.opening_angle_rad.tan() * 1.25).max(r_base * 1.5);
+    let xz_scale = (max_r / 6.5).max(0.0005);
     (xz_scale, y_scale)
 }
 
@@ -182,7 +183,7 @@ fn auto_provision_relativistic_jet_states(
 ) {
     for (entity, body, mass, opt_spin) in compact_candidates.iter() {
         let auto_state = match body.body_type {
-            BodyType::Pulsar => {
+            BodyType::Pulsar | BodyType::QuarkStar => {
                 let period_s = opt_spin.map_or(0.00622, |s| {
                     (s.rotation_period_hours as f32 * 3600.0).max(0.001)
                 });
@@ -253,12 +254,13 @@ fn spawn_missing_jet_hierarchies(
             &CelestialBody,
             &RelativisticJetState,
             Option<&SpinState>,
+            f32,
         ),
     >,
     updated_targets: &HashSet<Entity>,
     elapsed: f32,
 ) {
-    for (&target, &(pos, body, jet_state, opt_spin)) in active_map {
+    for (&target, &(pos, body, jet_state, opt_spin, visual_radius)) in active_map {
         let is_jet_visible = if body.body_type == BodyType::BlackHole {
             jet_state.is_accreting || jet_state.accretion_timer_years > 0.0
         } else {
@@ -271,7 +273,7 @@ fn spawn_missing_jet_hierarchies(
 
         let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let (dir_north, dir_south) = compute_jet_pointing_vectors(opt_spin, jet_state, elapsed);
-        let (xz_scale, y_scale) = compute_jet_mesh_scales(jet_state);
+        let (xz_scale, y_scale) = compute_jet_mesh_scales(jet_state, visual_radius);
         let total_len = jet_state.jet_length_au.max(0.1);
 
         spawn_jet_hierarchy(
@@ -315,8 +317,13 @@ pub fn sync_relativistic_jets(
             &CelestialBody,
             &RelativisticJetState,
             Option<&SpinState>,
+            Option<&Transform>,
         ),
-        Or<(With<CentralStar>, With<CelestialBody>)>,
+        (
+            Or<(With<CentralStar>, With<CelestialBody>)>,
+            Without<RelativisticJetRoot>,
+            Without<RelativisticJetPart>,
+        ),
     >,
     mut root_query: Query<(
         Entity,
@@ -348,10 +355,14 @@ pub fn sync_relativistic_jets(
             &CelestialBody,
             &RelativisticJetState,
             Option<&SpinState>,
+            f32,
         ),
     > = active_jets
         .iter()
-        .map(|(e, pos, b, jet, spin)| (e, (pos, b, jet, spin)))
+        .map(|(e, pos, b, jet, spin, opt_t)| {
+            let vis_r = opt_t.map_or(0.06, |t| t.scale.x.max(0.001));
+            (e, (pos, b, jet, spin, vis_r))
+        })
         .collect();
 
     let mut updated_targets = HashSet::new();
@@ -359,7 +370,8 @@ pub fn sync_relativistic_jets(
 
     // 3. Update existing roots or despawn orphans
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
-        if let Some((pos, body, jet_state, opt_spin)) = active_map.get(&root.target) {
+        if let Some((pos, body, jet_state, opt_spin, visual_radius)) = active_map.get(&root.target)
+        {
             let is_jet_visible = if body.body_type == BodyType::BlackHole {
                 jet_state.is_accreting || jet_state.accretion_timer_years > 0.0
             } else {
@@ -378,7 +390,7 @@ pub fn sync_relativistic_jets(
 
             let (dir_north, dir_south) =
                 compute_jet_pointing_vectors(*opt_spin, jet_state, elapsed);
-            let (xz_scale, y_scale) = compute_jet_mesh_scales(jet_state);
+            let (xz_scale, y_scale) = compute_jet_mesh_scales(jet_state, *visual_radius);
             let total_len = jet_state.jet_length_au.max(0.1);
 
             if let Some(children) = opt_children {

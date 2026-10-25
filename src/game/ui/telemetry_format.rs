@@ -13,20 +13,37 @@ use crate::utils::constants::*;
 pub fn format_body_inspector_type(body_type: BodyType, mass_solar: f64) -> &'static str {
     match body_type {
         BodyType::Protostar => "Protostar (Young Stellar Object)",
+        BodyType::TTauriStar => "T Tauri Star (Pre-Main Sequence)",
+        BodyType::HerbigAeBeStar => "Herbig Ae/Be Star (Pre-Main Sequence)",
         BodyType::MainSequenceStar => "Main Sequence Star",
-        BodyType::BrownDwarf => "Brown Dwarf (Sub-Stellar)",
+        BodyType::BrownDwarf => "Brown Dwarf (Sub-Stellar L/T/Y)",
         BodyType::RedDwarf => "Red Dwarf Star (M-Type)",
-        BodyType::YellowDwarf => "Yellow Dwarf Star (G2V)",
-        BodyType::BlueGiant => "Blue Giant Star (B-Type)",
-        BodyType::BlueSupergiant => "Blue Supergiant Star (O-Type)",
-        BodyType::RedGiant => "Red Giant Star",
-        BodyType::RedSupergiant => "Red Supergiant Star",
-        BodyType::Hypergiant => "Luminous Hypergiant",
-        BodyType::WolfRayet => "Wolf-Rayet Star",
-        BodyType::WhiteDwarf => "White Dwarf Remnant",
+        BodyType::OrangeDwarf => "Orange Dwarf Star (K-Type Habitable)",
+        BodyType::YellowDwarf => "Yellow Dwarf Star (G2V Solar)",
+        BodyType::YellowWhiteDwarf => "Yellow-White Dwarf Star (F-Type)",
+        BodyType::WhiteMainSequence => "White Main-Sequence Star (A-Type Sirius)",
+        BodyType::BlueMainSequence => "Blue Main-Sequence Star (B-Type)",
+        BodyType::BlueGiant => "Blue Giant Star (B-Type Evolved)",
+        BodyType::BlueSupergiant => "Blue Supergiant Star (O-Type Rigel)",
+        BodyType::RedGiant => "Red Giant Star (RGB Branch)",
+        BodyType::RedSupergiant => "Red Supergiant Star (Betelgeuse)",
+        BodyType::YellowHypergiant => "Yellow Hypergiant (Pulsating Rho Cas)",
+        BodyType::Hypergiant => "Luminous Hypergiant (0-Luminosity)",
+        BodyType::CarbonStar => "Carbon Star (AGB Dredged Soot)",
+        BodyType::LuminousBlueVariable => "Luminous Blue Variable (LBV Eta Car)",
+        BodyType::WolfRayet => "Wolf-Rayet Star (Stripped Core)",
+        BodyType::PopulationIIIStar => "Population III Primordial Hypergiant",
+        BodyType::BlueStraggler => "Blue Straggler (Rejuvenated Merger)",
+        BodyType::WhiteDwarf => "White Dwarf Remnant (Degenerate C-O)",
+        BodyType::BlackDwarf => "Black Dwarf (Cooled Degenerate Diamond)",
         BodyType::NeutronStar => "Neutron Star Remnant",
         BodyType::Pulsar => "Relativistic Pulsar Remnant",
-        BodyType::Magnetar => "Magnetar Remnant",
+        BodyType::Magnetar => "Magnetar Remnant (10¹⁵ Gauss)",
+        BodyType::QuarkStar => "Quark Star (Strange Quark Matter)",
+        BodyType::DarkStar => "Dark Star (WIMP Dark Matter Powered)",
+        BodyType::BosonStar => "Boson Star (Gravitational Soliton)",
+        BodyType::IronStar => "Iron Star (Cold-Fusion Fe-56 Degenerate)",
+        BodyType::ThorneZytkow => "Thorne-Żytkow Object (NS Core Supergiant)",
         BodyType::BlackHole => {
             if mass_solar >= 100_000.0 {
                 "Supermassive Black Hole"
@@ -176,11 +193,23 @@ pub fn format_geology_and_volatiles_telemetry(
     }
 
     if let Some(vol) = opt_vol {
+        let bathymetry_state = if vol.ocean_coverage_frac >= 0.85 {
+            "Waterworld / Abyssal Submersion"
+        } else if vol.ocean_coverage_frac >= 0.60 {
+            "Earth Baseline (Continents & Shelves)"
+        } else if vol.ocean_coverage_frac >= 0.20 {
+            "Receded (Shelves & Ridges Exposed)"
+        } else if vol.ocean_coverage_frac > 0.01 {
+            "Endorheic Basins & Trench Remnants"
+        } else {
+            "Desiccated (Dried Basins & Salt Pans)"
+        };
         let _ = write!(
             out,
-            "\nVolatiles: {:.4} M_earth Water Delivered | Ocean Coverage: {:.0}%\nAtmospheric Pressure: {:.2} bar | Icy Bombardment Impacts: {}",
+            "\nHydrosphere: {:.4} M_earth H₂O | Sea Level: {:.0}% ({})\nAtmospheric Pressure: {:.2} bar | Icy Bombardment Impacts: {}",
             vol.delivered_water_m_earth,
             vol.ocean_coverage_frac * 100.0,
+            bathymetry_state,
             vol.atmospheric_pressure_bar,
             vol.cometary_impact_count
         );
@@ -488,7 +517,7 @@ pub fn append_quasi_star_telemetry(out: &mut String, qs: &BlackHoleStarState) {
     };
     let _ = write!(
         out,
-        "\n--------------------------------------------------\n  >> JWST LITTLE RED DOT / QUASI-STAR <<\n--------------------------------------------------\n  • BH Seed Mass:     {:>10.0} M☉\n  • Cocoon Mass:      {:>10.0} M☉\n  • Inflow Rate:      {:>10.1}x ({})\n  • Cocoon Status:    {}\n  • Redshift Epoch:   z ≈ 8.5 (Cosmic Dawn, 660 Myr)\n  • Controls:         [X] Accrete | [B] Blowout | [T] Pop-III TDE\n--------------------------------------------------",
+        "\n━━━ ⟪ JWST LITTLE RED DOT / QUASI-STAR ⟫ ━━━━━━━━━━\n  • BH Seed Mass:     {:>10.0} M☉\n  • Cocoon Mass:      {:>10.0} M☉\n  • Inflow Rate:      {:>10.1}x ({})\n  • Cocoon Status:    {}\n  • Redshift Epoch:   z ≈ 8.5 (Cosmic Dawn, 660 Myr)\n  • Controls:         [X] Accrete | [B] Blowout | [T] Pop-III TDE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         qs.black_hole_mass_solar,
         qs.cocoon_mass_solar,
         qs.eddington_ratio,

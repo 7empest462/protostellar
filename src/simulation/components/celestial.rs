@@ -62,11 +62,19 @@ pub enum BodyType {
     IceGiant,
     /// Sub-stellar brown dwarf (deuterium burning only, M < 0.08 M_sun)
     BrownDwarf,
-    /// Low-mass, fully convective red dwarf (M < 0.5 M_sun)
+    /// Low-mass, fully convective red dwarf (M < 0.45 M_sun, M-type)
     RedDwarf,
-    /// Sun-like yellow dwarf star (G-type, ~1.0 M_sun)
+    /// Stable orange dwarf star (K-type, 0.45 - 0.80 M_sun, ideal habitability host)
+    OrangeDwarf,
+    /// Sun-like yellow dwarf star (G-type, 0.80 - 1.04 M_sun)
     YellowDwarf,
-    /// Hot, massive blue giant star (B-type, 8-15 M_sun)
+    /// Bright yellow-white dwarf star (F-type, 1.04 - 1.40 M_sun)
+    YellowWhiteDwarf,
+    /// Dazzling white main-sequence star (A-type, 1.40 - 2.10 M_sun, Sirius/Vega type)
+    WhiteMainSequence,
+    /// Luminous blue-white main-sequence star (B-type, 2.10 - 16.0 M_sun)
+    BlueMainSequence,
+    /// Hot, massive blue giant star (B-type evolved, 8-15 M_sun)
     BlueGiant,
     /// Luminous blue supergiant star (O-type, 15-25 M_sun)
     BlueSupergiant,
@@ -74,22 +82,48 @@ pub enum BodyType {
     RedGiant,
     /// Highly evolved massive red supergiant (Betelgeuse type)
     RedSupergiant,
+    /// Rare, violently pulsating yellow hypergiant (Rho Cassiopeiae type)
+    YellowHypergiant,
     /// Extremely luminous hypergiant star (M > 25 M_sun)
     Hypergiant,
-    /// Evolved massive star shedding envelope with intense winds
+    /// Asymptotic Giant Branch star enriched with dredged carbon soot
+    CarbonStar,
+    /// Eruptive massive hypergiant near Eddington limit (Eta Carinae type)
+    LuminousBlueVariable,
+    /// Evolved massive star shedding envelope with supersonic winds
     WolfRayet,
+    /// Pristine zero-metallicity hypermassive star (Pop-III, 30 - 300 M_sun)
+    PopulationIIIStar,
     /// Pre-main-sequence contracting protostellar core
     Protostar,
+    /// Young pre-main-sequence star with accretion disk and flares (M < 2 M_sun)
+    TTauriStar,
+    /// Intermediate-mass pre-main-sequence star with circumstellar dust (2 - 8 M_sun)
+    HerbigAeBeStar,
+    /// Rejuvenated high-mass main-sequence star formed by stellar merger
+    BlueStraggler,
     /// Hydrogen-burning ignited star
     MainSequenceStar,
     /// Degenerate carbon-oxygen Earth-sized stellar remnant (M <= 1.44 M_sun)
     WhiteDwarf,
+    /// Far-future cooled degenerate diamond sphere (T < 100 K)
+    BlackDwarf,
     /// Ultra-dense degenerate neutron star core (M <= 2.17 M_sun)
     NeutronStar,
     /// Rapidly spinning magnetized neutron star with relativistic beams
     Pulsar,
     /// Neutron star with extreme magnetic field (10^14 - 10^15 Gauss)
     Magnetar,
+    /// Deconfined strange-quark matter star with ultra-high electric crust
+    QuarkStar,
+    /// Theoretical early universe star powered by dark matter (WIMP) annihilation
+    DarkStar,
+    /// Gravitational soliton composed of fundamental bosons (axions/scalar dark matter)
+    BosonStar,
+    /// Far-future degenerate sphere composed of pure Iron-56
+    IronStar,
+    /// Hybrid red supergiant harboring a neutron star at its core
+    ThorneZytkow,
     /// Gravitational singularity with event horizon and accretion disk
     BlackHole,
     /// JWST Little Red Dot / Black Hole Star: Supermassive black hole seed encased in a dense 60 AU hydrogen cocoon
@@ -110,20 +144,37 @@ impl BodyType {
         matches!(
             self,
             BodyType::Protostar
+                | BodyType::TTauriStar
+                | BodyType::HerbigAeBeStar
                 | BodyType::MainSequenceStar
                 | BodyType::BrownDwarf
                 | BodyType::RedDwarf
+                | BodyType::OrangeDwarf
                 | BodyType::YellowDwarf
+                | BodyType::YellowWhiteDwarf
+                | BodyType::WhiteMainSequence
+                | BodyType::BlueMainSequence
                 | BodyType::BlueGiant
                 | BodyType::BlueSupergiant
                 | BodyType::RedGiant
                 | BodyType::RedSupergiant
+                | BodyType::YellowHypergiant
                 | BodyType::Hypergiant
+                | BodyType::CarbonStar
+                | BodyType::LuminousBlueVariable
                 | BodyType::WolfRayet
+                | BodyType::PopulationIIIStar
+                | BodyType::BlueStraggler
                 | BodyType::WhiteDwarf
+                | BodyType::BlackDwarf
                 | BodyType::NeutronStar
                 | BodyType::Pulsar
                 | BodyType::Magnetar
+                | BodyType::QuarkStar
+                | BodyType::DarkStar
+                | BodyType::BosonStar
+                | BodyType::IronStar
+                | BodyType::ThorneZytkow
                 | BodyType::BlackHole
                 | BodyType::QuasiStar
         )
@@ -134,11 +185,28 @@ impl BodyType {
         matches!(
             self,
             BodyType::WhiteDwarf
+                | BodyType::BlackDwarf
                 | BodyType::NeutronStar
                 | BodyType::Pulsar
                 | BodyType::Magnetar
+                | BodyType::QuarkStar
+                | BodyType::BosonStar
+                | BodyType::IronStar
                 | BodyType::BlackHole
                 | BodyType::QuasiStar
+        )
+    }
+
+    /// Returns true if this body is a theoretical or hypothetical star.
+    pub fn is_hypothetical(&self) -> bool {
+        matches!(
+            self,
+            BodyType::QuarkStar
+                | BodyType::DarkStar
+                | BodyType::BosonStar
+                | BodyType::IronStar
+                | BodyType::ThorneZytkow
+                | BodyType::BlackDwarf
         )
     }
 
@@ -165,12 +233,24 @@ pub fn classify_body_by_mass_and_comp(
     let mass_jupiter = mass_solar / crate::utils::constants::JUPITER_MASS_SOLAR;
 
     if is_central_star || mass_solar >= 0.08 {
-        if mass_solar < 0.08 {
+        if mass_solar >= 500.0 {
+            // Direct collapse beyond 500 M_sun into Intermediate-Mass Black Hole
+            BodyType::BlackHole
+        } else if comp.gas_frac >= 0.999 && comp.metal_frac < 0.0001 && mass_solar >= 30.0 {
+            // Pristine zero-metallicity primordial gas forms Population III hypergiants
+            BodyType::PopulationIIIStar
+        } else if mass_solar < 0.08 {
             BodyType::BrownDwarf
-        } else if mass_solar < 0.50 {
+        } else if mass_solar < 0.45 {
             BodyType::RedDwarf
-        } else if mass_solar < 1.4 {
+        } else if mass_solar < 0.80 {
+            BodyType::OrangeDwarf
+        } else if mass_solar < 1.04 {
             BodyType::YellowDwarf
+        } else if mass_solar < 1.40 {
+            BodyType::YellowWhiteDwarf
+        } else if mass_solar < 2.10 {
+            BodyType::WhiteMainSequence
         } else if mass_solar < 8.0 {
             BodyType::BlueGiant
         } else if mass_solar < 25.0 {
@@ -358,6 +438,26 @@ impl SpinState {
             self.rotation_period_hours = 24.0;
             self.axial_tilt_degrees = 0.0;
         }
+    }
+
+    /// Sets rotation period (hours) and axial tilt (degrees) while synchronizing `spin_vector`
+    /// with the body's moment of inertia so subsequent updates preserve the period.
+    pub fn set_period_and_tilt(
+        &mut self,
+        period_hours: f64,
+        tilt_degrees: f64,
+        mass_solar: f64,
+        radius_au: f64,
+    ) {
+        self.rotation_period_hours = period_hours.clamp(0.5, 50000.0);
+        self.axial_tilt_degrees = tilt_degrees.clamp(0.0, 180.0);
+
+        let period_yr = (self.rotation_period_hours * (3600.0 / YEAR_SECONDS)).max(1e-8);
+        let omega_rad_yr = (2.0 * PI) / period_yr;
+        let i_moment = 0.33 * mass_solar.max(1e-12) * radius_au.max(1e-10).powi(2);
+        let tilt_rad = self.axial_tilt_degrees.to_radians();
+        let spin_dir = DVec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0);
+        self.spin_vector = (i_moment * omega_rad_yr) * spin_dir;
     }
 }
 

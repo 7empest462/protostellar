@@ -45,9 +45,7 @@ fn spawn_sub_roche_moon(
     let mut target_candidate = None;
 
     if let Some(sel_ent) = player_state.selected_entity {
-        if let Ok((ent, m, rad, pos, vel, comp, body, opt_star, _, _, _, _)) =
-            selected_query.get(sel_ent)
-        {
+        if let Ok((ent, m, rad, pos, vel, comp, body, opt_star, ..)) = selected_query.get(sel_ent) {
             if opt_star.is_none()
                 && !body.body_type.is_star_or_remnant()
                 && m.0 >= EARTH_MASS_SOLAR * 0.01
@@ -59,7 +57,7 @@ fn spawn_sub_roche_moon(
 
     if target_candidate.is_none() {
         let mut best_m = 0.0;
-        for (ent, m, rad, pos, vel, comp, body, opt_star, _, _, _, _) in selected_query.iter() {
+        for (ent, m, rad, pos, vel, comp, body, opt_star, ..) in selected_query.iter() {
             if opt_star.is_none() && !body.body_type.is_star_or_remnant() && m.0 > best_m {
                 best_m = m.0;
                 target_candidate = Some((ent, m.0, rad.0, pos.0, vel.0, *comp, body.name.clone()));

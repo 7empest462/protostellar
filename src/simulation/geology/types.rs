@@ -24,7 +24,9 @@ impl EpochTargetPlanet {
             Some(Self::Mars)
         } else if lower.contains("venus") {
             Some(Self::Venus)
-        } else if lower.contains("earth") || lower.contains("terra") {
+        } else if (lower.contains("earth") && !lower.contains("super-earth"))
+            || lower.contains("terra")
+        {
             Some(Self::Earth)
         } else {
             None

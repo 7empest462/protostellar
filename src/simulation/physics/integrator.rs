@@ -19,7 +19,13 @@ pub struct PhysicsBodyEntry {
     pub name: String,
 }
 
-pub fn is_body_bound_to_star(pos: DVec3, vel: DVec3, star_pos: DVec3, star_mass: f64) -> bool {
+pub fn is_body_bound_to_star(
+    pos: DVec3,
+    vel: DVec3,
+    star_pos: DVec3,
+    star_mass: f64,
+    _body_mass: f64,
+) -> bool {
     if star_mass <= 1e-6 {
         return false;
     }
@@ -47,7 +53,14 @@ pub fn is_body_bound_to_star(pos: DVec3, vel: DVec3, star_pos: DVec3, star_mass:
     e.is_finite() && e < 0.999
 }
 
-fn kepler_drift_body(pos: &mut DVec3, vel: &mut DVec3, star_pos: DVec3, star_mass: f64, dt: f64) {
+fn kepler_drift_body(
+    pos: &mut DVec3,
+    vel: &mut DVec3,
+    star_pos: DVec3,
+    star_mass: f64,
+    _body_mass: f64,
+    dt: f64,
+) {
     if star_mass <= 1e-6 || dt.abs() < 1e-12 {
         *pos += *vel * dt;
         return;
@@ -164,8 +177,15 @@ pub fn advance_symplectic_leapfrog_drift(
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
-            } else if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass) {
-                kepler_drift_body(&mut body.pos, &mut body.vel, star_pos, star_mass, sub_dt);
+            } else if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass, body.mass) {
+                kepler_drift_body(
+                    &mut body.pos,
+                    &mut body.vel,
+                    star_pos,
+                    star_mass,
+                    body.mass,
+                    sub_dt,
+                );
             } else {
                 body.pos += body.vel * sub_dt;
             }
@@ -199,7 +219,7 @@ pub fn advance_symplectic_leapfrog_drift(
                         .rem_euclid(2.0 * std::f64::consts::PI);
                     let cos_a = sat.true_anomaly.cos();
                     let sin_a = sat.true_anomaly.sin();
-                    let v_orb_mag = (G_ASTRO * parent_mass / r_orbit).sqrt();
+                    let v_orb_mag = omega_moon * r_orbit;
 
                     body.pos = parent_pos + DVec3::new(r_orbit * cos_a, 0.0, r_orbit * sin_a);
                     body.vel = parent_vel + DVec3::new(-v_orb_mag * sin_a, 0.0, v_orb_mag * cos_a);
@@ -212,18 +232,27 @@ pub fn advance_symplectic_leapfrog_drift(
     }
 }
 
-pub fn apply_pert_kick(body: &mut PhysicsBodyEntry, half_dt: f64, star_mass: f64, is_bound: bool) {
+pub fn apply_pert_kick(
+    body: &mut PhysicsBodyEntry,
+    half_dt: f64,
+    star_pos: DVec3,
+    star_mass: f64,
+    is_bound: bool,
+) {
     if !is_bound {
         body.vel += body.acc * half_dt;
         return;
     }
 
-    let r = body.pos.length().max(0.01);
-    let v_k = (G_ASTRO * star_mass / r).sqrt();
+    let r_rel = body.pos - star_pos;
+    let r = r_rel.length().max(0.0005);
+    let mu = G_ASTRO * star_mass;
+    let v_k = (mu / r).sqrt();
     let t_orbit = 2.0 * std::f64::consts::PI * r / v_k.max(1e-6);
     let eff_dt = half_dt.min(t_orbit * 0.05);
     let kick = body.acc * eff_dt;
     let kick_mag = kick.length();
+    let pre_kick_speed = body.vel.length();
 
     let is_major_planet = matches!(
         body.body_type,
@@ -233,10 +262,12 @@ pub fn apply_pert_kick(body: &mut PhysicsBodyEntry, half_dt: f64, star_mass: f64
             | BodyType::SuperEarth
             | BodyType::Protoplanet
     );
+
+    let orbit_step_frac = (eff_dt / t_orbit.max(1e-9)).clamp(0.002, 0.05);
     let max_kick = if is_major_planet {
-        0.0002 * v_k
+        0.08 * orbit_step_frac * v_k
     } else {
-        0.001 * v_k
+        0.06 * orbit_step_frac * v_k
     };
     if kick_mag > max_kick && max_kick > 0.0 {
         body.vel += kick * (max_kick / kick_mag);
@@ -245,20 +276,24 @@ pub fn apply_pert_kick(body: &mut PhysicsBodyEntry, half_dt: f64, star_mass: f64
     }
 
     let max_bound_factor = if is_major_planet && star_mass < 15.0 {
-        Some(0.995)
-    } else if star_mass > 100_000.0 {
-        Some(0.9999)
-    } else if is_bound && star_mass >= 15.0 {
         Some(0.9995)
+    } else if star_mass > 100_000.0 {
+        Some(0.99995)
+    } else if is_bound && star_mass >= 15.0 {
+        Some(0.9998)
     } else {
         None
     };
     if let Some(factor) = max_bound_factor {
-        let v_esc = (2.0 * G_ASTRO * star_mass / r).sqrt();
+        let v_esc = (2.0 * mu / r).sqrt();
         let max_bound_speed = factor * v_esc;
-        let speed = body.vel.length();
-        if speed > max_bound_speed && max_bound_speed > 0.0 {
-            body.vel *= max_bound_speed / speed;
+        let post_kick_speed = body.vel.length();
+        if post_kick_speed > max_bound_speed
+            && post_kick_speed > pre_kick_speed
+            && max_bound_speed > 0.0
+        {
+            let clamped_speed = max_bound_speed.max(pre_kick_speed);
+            body.vel *= clamped_speed / post_kick_speed;
         }
     }
 }
@@ -278,8 +313,9 @@ pub fn apply_velocity_kick_and_limits(
             body.vel = DVec3::ZERO;
             body.acc = DVec3::ZERO;
         } else {
-            let is_bound = is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass);
-            apply_pert_kick(body, sub_dt * 0.5, star_mass, is_bound);
+            let is_bound =
+                is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass, body.mass);
+            apply_pert_kick(body, sub_dt * 0.5, star_pos, star_mass, is_bound);
 
             if !body.pos.is_finite() || !body.vel.is_finite() {
                 let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };

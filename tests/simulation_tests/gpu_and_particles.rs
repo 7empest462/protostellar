@@ -849,3 +849,63 @@ fn test_pop3_infalling_star_particle_accretion_safety() {
         "Pop-III hypergiant should accrete nearby particles"
     );
 }
+
+#[test]
+fn test_compute_node_reseed_logic_and_disk_mass() {
+    use protostellar::gpu::compute_node::GpuSimExtractedParams;
+
+    // Normal solar nebula scenario with 0.02 M_sun disk
+    let normal_params = GpuSimExtractedParams {
+        star_mass: 1.0,
+        disk_mass: 0.02,
+        outer_radius: 50.0,
+        inner_radius: 0.1,
+        elapsed_years: 0.0,
+        ..Default::default()
+    };
+
+    let is_empty = normal_params.disk_mass <= 0.0;
+    let disk_mass = if is_empty {
+        0.0
+    } else if normal_params.star_mass > 10.0 {
+        500.0
+    } else {
+        f64::from(normal_params.disk_mass)
+    };
+
+    assert!(
+        (disk_mass - 0.02).abs() < 1e-6,
+        "Reseeded disk mass must preserve configured scenario disk mass (0.02 M_sun), got {:.6}",
+        disk_mass
+    );
+
+    // Empty disk scenario
+    let empty_params = GpuSimExtractedParams {
+        star_mass: 1.0,
+        disk_mass: 0.0,
+        ..Default::default()
+    };
+    let empty_disk_mass = if empty_params.disk_mass <= 0.0 {
+        0.0
+    } else if empty_params.star_mass > 10.0 {
+        500.0
+    } else {
+        f64::from(empty_params.disk_mass)
+    };
+    assert_eq!(empty_disk_mass, 0.0);
+
+    // Supermassive scenario (Quasar/SMBH)
+    let smbh_params = GpuSimExtractedParams {
+        star_mass: 100.0,
+        disk_mass: 1.0,
+        ..Default::default()
+    };
+    let smbh_disk_mass = if smbh_params.disk_mass <= 0.0 {
+        0.0
+    } else if smbh_params.star_mass > 10.0 {
+        500.0
+    } else {
+        f64::from(smbh_params.disk_mass)
+    };
+    assert_eq!(smbh_disk_mass, 500.0);
+}

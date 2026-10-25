@@ -115,7 +115,7 @@ impl SimulationConfig {
         ) {
             (base_rad * 0.35).max(0.0003)
         } else if body_type == crate::simulation::components::BodyType::Moon {
-            (base_rad * 0.55).max(0.0004)
+            (base_rad * 0.46).max(0.00025)
         } else if body_type == crate::simulation::components::BodyType::BlackHole {
             // Event horizon shadow: scales monotonically with mass from stellar-mass to supermassive.
             // A 5-10 M_sun BH is compact (~0.0022-0.0028 AU), distinctly smaller than a 0.025 AU main-sequence star.
@@ -219,21 +219,38 @@ impl SimulationConfig {
 
         match body_type {
             BodyType::Protostar
+            | BodyType::TTauriStar
+            | BodyType::HerbigAeBeStar
             | BodyType::MainSequenceStar
-            | BodyType::YellowDwarf
-            | BodyType::RedDwarf
             | BodyType::BrownDwarf
+            | BodyType::RedDwarf
+            | BodyType::OrangeDwarf
+            | BodyType::YellowDwarf
+            | BodyType::YellowWhiteDwarf
+            | BodyType::WhiteMainSequence
+            | BodyType::BlueMainSequence
             | BodyType::BlueGiant
             | BodyType::BlueSupergiant
             | BodyType::RedGiant
             | BodyType::RedSupergiant
+            | BodyType::YellowHypergiant
             | BodyType::Hypergiant
-            | BodyType::WolfRayet => {
+            | BodyType::CarbonStar
+            | BodyType::LuminousBlueVariable
+            | BodyType::WolfRayet
+            | BodyType::PopulationIIIStar
+            | BodyType::BlueStraggler
+            | BodyType::ThorneZytkow
+            | BodyType::DarkStar => {
                 let m_ratio = (mass_solar.max(0.01)).powf(0.25) as f32;
                 (0.055 * m_ratio).clamp(0.025, 0.150)
             }
-            BodyType::WhiteDwarf => 0.012,
-            BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar => 0.006,
+            BodyType::WhiteDwarf | BodyType::BlackDwarf | BodyType::IronStar => 0.012,
+            BodyType::NeutronStar
+            | BodyType::Pulsar
+            | BodyType::Magnetar
+            | BodyType::QuarkStar
+            | BodyType::BosonStar => 0.006,
             BodyType::BlackHole => 0.010,
             BodyType::QuasiStar => 2.50,
             BodyType::GasGiant => {
@@ -475,6 +492,37 @@ impl DiagnosticOverlayMode {
     }
 }
 
+/// Configuration for circumstellar Habitable Zone and volatile frost lines.
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
+pub struct HabitableZoneConfig {
+    /// Whether circumstellar habitable zone and frost line bands are rendered.
+    pub is_enabled: bool,
+}
+
+impl Default for HabitableZoneConfig {
+    fn default() -> Self {
+        Self { is_enabled: true }
+    }
+}
+
+/// Configuration for rendering gravitational Lagrange libration points (L1-L5) and Hill spheres.
+#[derive(Resource, Debug, Clone, Serialize, Deserialize)]
+pub struct LagrangeOverlayConfig {
+    /// When true, renders L1-L5 libration points, equilateral triangle lines, and Hill sphere.
+    pub show_lagrange_points: bool,
+    /// When true, also renders the Hill sphere wireframe around the selected body.
+    pub show_hill_sphere: bool,
+}
+
+impl Default for LagrangeOverlayConfig {
+    fn default() -> Self {
+        Self {
+            show_lagrange_points: false,
+            show_hill_sphere: true,
+        }
+    }
+}
+
 /// Active impact shockwave event from physical collision mergers.
 #[derive(Debug, Clone)]
 pub struct ImpactShockwave {
@@ -688,7 +736,77 @@ pub struct ImpactEjectaRing {
     pub fragments: Vec<(f32, f32, f32, f32)>, // r, phi, omega, z
 }
 
+/// Individual 3D molten collision ejecta fragment exhibiting Keplerian orbital motion,
+/// radiative blackbody cooling, trailing plasma ribbons, and re-impact mechanics.
+#[derive(Debug, Clone)]
+pub struct MoltenDebrisFragment {
+    /// World position in AU.
+    pub position: Vec3,
+    /// World velocity in AU/yr.
+    pub velocity: Vec3,
+    /// Initial peak temperature in Kelvin (e.g. 2200 - 3800 K).
+    pub initial_temperature: f32,
+    /// Current cooling temperature in Kelvin.
+    pub temperature: f32,
+    /// Radiative cooling rate in s^-1.
+    pub cooling_rate: f32,
+    /// Visual fragment radius in AU.
+    pub radius: f32,
+    /// Estimated mass in Solar Masses.
+    pub mass: f64,
+    /// Primary parent body being orbited.
+    pub primary_entity: Entity,
+    /// Time elapsed since ejection in visual seconds.
+    pub age: f32,
+    /// Maximum duration before complete cooling/condensation in visual seconds.
+    pub max_age: f32,
+    /// Recent past positions for trailing ribbon streamer.
+    pub trail: [Vec3; 4],
+}
+
+impl MoltenDebrisFragment {
+    /// Evaluates blackbody thermal emission color based on current cooling temperature and age.
+    pub fn blackbody_color(&self) -> Color {
+        let t = self.temperature;
+        let p = (self.age / self.max_age.max(0.01)).clamp(0.0, 1.0);
+        let alpha = ((1.0 - p * p) * 0.95).clamp(0.0, 1.0);
+
+        if t > 2800.0 {
+            // White-hot plasma core with high emissivity
+            let blend = ((t - 2800.0) / 1000.0).clamp(0.0, 1.0);
+            Color::srgba(1.0, 0.95 + blend * 0.05, 0.80 + blend * 0.20, alpha)
+        } else if t > 2000.0 {
+            // Molten gold-yellow silicate magma
+            let blend = ((t - 2000.0) / 800.0).clamp(0.0, 1.0);
+            Color::srgba(1.0, 0.65 + blend * 0.30, 0.15 + blend * 0.65, alpha)
+        } else if t > 1200.0 {
+            // Blazing incandescent orange-red lava
+            let blend = ((t - 1200.0) / 800.0).clamp(0.0, 1.0);
+            Color::srgba(1.0, 0.25 + blend * 0.40, 0.06 + blend * 0.09, alpha)
+        } else if t > 600.0 {
+            // Deep crimson cherry lava
+            let blend = ((t - 600.0) / 600.0).clamp(0.0, 1.0);
+            Color::srgba(
+                0.55 + blend * 0.45,
+                0.08 + blend * 0.17,
+                0.02 + blend * 0.04,
+                alpha * 0.9,
+            )
+        } else {
+            // Dark cooling basalt silicate rock
+            let blend = (t / 600.0).clamp(0.0, 1.0);
+            Color::srgba(
+                0.20 + blend * 0.35,
+                0.18 + blend * 0.05,
+                0.16 + blend * 0.02,
+                alpha * 0.75,
+            )
+        }
+    }
+}
+
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ImpactEjectaPool {
     pub rings: Vec<ImpactEjectaRing>,
+    pub fragments: Vec<MoltenDebrisFragment>,
 }

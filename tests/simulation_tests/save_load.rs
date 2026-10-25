@@ -470,3 +470,166 @@ fn test_load_real_quicksave_if_present() {
         );
     }
 }
+
+#[test]
+fn test_infer_scenario_preset_differentiation() {
+    use protostellar::simulation::scenarios::ScenarioPreset;
+
+    let default_body = |name: &str, body_type: BodyType| CelestialBodySave {
+        name: name.to_string(),
+        body_type,
+        position: DVec3::ZERO,
+        velocity: DVec3::ZERO,
+        mass: 1.0,
+        radius: 0.005,
+        temperature: 5000.0,
+        luminosity: 1.0,
+        composition: Composition::solar_gas(),
+        spin: SpinState::default(),
+        differentiation: None,
+        volatile_inventory: None,
+        ring_system: None,
+        basins: None,
+        climate: None,
+        biosphere: None,
+        electromagnetic: None,
+        is_central_star: false,
+        ignition_state: None,
+        stellar_evolution: None,
+        black_hole_state: None,
+        satellite: None,
+        tidal_state: None,
+        relativistic_state: None,
+        atmospheric_escape: None,
+        kozai_lidov: None,
+    };
+
+    // 1. Solar MMSN with 500 planetesimals: MUST infer SolarNebulaMmsn (not GMC Cluster!)
+    let mut solar_bodies = Vec::new();
+    solar_bodies.push(default_body("The Sun", BodyType::YellowDwarf));
+    for i in 0..500 {
+        solar_bodies.push(default_body(&format!("Asteroid {i}"), BodyType::Asteroid));
+    }
+    assert_eq!(
+        infer_scenario_preset(&solar_bodies),
+        ScenarioPreset::SolarNebulaMmsn,
+        "Solar MMSN with many asteroids must NOT be misclassified as GMC Cluster"
+    );
+
+    // 2. Genesis with Protostar
+    let genesis_bodies = vec![
+        default_body("Genesis Protostar", BodyType::Protostar),
+        default_body("Planetesimal 1", BodyType::Asteroid),
+    ];
+    assert_eq!(
+        infer_scenario_preset(&genesis_bodies),
+        ScenarioPreset::AccretionDiskGenesis,
+        "Genesis with 'Genesis' in name must infer AccretionDiskGenesis"
+    );
+
+    // 3. Sagittarius A*
+    let sgr_bodies = vec![
+        default_body("Sagittarius A* (SMBH)", BodyType::BlackHole),
+        default_body("S2 (B0V Early-Type Star)", BodyType::BlueSupergiant),
+    ];
+    assert_eq!(
+        infer_scenario_preset(&sgr_bodies),
+        ScenarioPreset::SagittariusAStar,
+        "Sagittarius A* must infer SagittariusAStar rather than GMC Cluster"
+    );
+
+    // 4. Molecular Cloud Cluster with 4 stars
+    let gmc_bodies = vec![
+        default_body("Cluster Star Alpha", BodyType::BlueSupergiant),
+        default_body("Cluster Star Beta", BodyType::RedGiant),
+        default_body("Cluster Star Gamma", BodyType::YellowDwarf),
+        default_body("Cluster Star Delta", BodyType::NeutronStar),
+    ];
+    assert_eq!(
+        infer_scenario_preset(&gmc_bodies),
+        ScenarioPreset::MolecularCloudCluster,
+        "Systems with >3 stars must infer MolecularCloudCluster"
+    );
+}
+
+#[test]
+fn test_space_probe_excluded_from_serialization_and_despawn() {
+    use protostellar::simulation::probes::{FlightComputer, ProbeType, SpaceProbe};
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<TheiaImpactState>()
+        .add_message::<SaveSystemEvent>()
+        .add_systems(Update, handle_save_system_events);
+
+    // Spawn a normal planet
+    let planet_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::TerrestrialPlanet,
+                name: "Mars".to_string(),
+            },
+            Mass(3.2e-7),
+            SimPosition(DVec3::new(1.52, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 5.0)),
+            Radius(2.2e-5),
+            Temperature(210.0),
+            Luminosity(0.0),
+            Composition::rocky(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // Spawn a space probe with CelestialBody
+    let _probe_ent = app
+        .world_mut()
+        .spawn((
+            SpaceProbe::new(ProbeType::Rover, 1),
+            FlightComputer {
+                target_entity: planet_ent,
+                target_name: "Mars".to_string(),
+                launch_pos: DVec3::new(1.52, 0.0, 0.0),
+                distance_to_target: 0.0,
+                relative_speed: 0.0,
+            },
+            CelestialBody {
+                body_type: BodyType::Asteroid,
+                name: "🚀 Rover #1 (to Mars)".to_string(),
+            },
+            Mass(0.0),
+            SimPosition(DVec3::new(1.52, 0.0, 0.0)),
+            SimVelocity(DVec3::ZERO),
+            Radius(1e-7),
+            Temperature(290.0),
+            Composition::metal_rich(),
+            Luminosity(0.0),
+            SpinState::default(),
+        ))
+        .id();
+
+    let save_path = "target/test_saves_bevy/probe_exclusion_test.json";
+    let mut writer = app.world_mut().resource_mut::<Messages<SaveSystemEvent>>();
+    writer.write(SaveSystemEvent {
+        filename: save_path.to_string(),
+    });
+
+    app.update();
+
+    let saved = load_system_from_file(save_path).expect("Failed to read test save file");
+    assert!(
+        saved.bodies.iter().all(|b| !b.name.contains("Rover")),
+        "SpaceProbes must NOT be serialized as celestial bodies"
+    );
+    assert_eq!(
+        saved.bodies.len(),
+        1,
+        "Only the planet should be serialized"
+    );
+
+    let _ = std::fs::remove_file(save_path);
+}

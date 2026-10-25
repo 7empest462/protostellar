@@ -2,13 +2,16 @@
 
 use bevy::prelude::*;
 
-use crate::simulation::components::{BodyType, CelestialBody, CentralStar};
+use crate::simulation::components::{CelestialBody, CentralStar};
 use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
-    HudDynamicText, HudPanelElement, HudVisibilityState, InspectorExoticHeader, InspectorSection,
-    PlanetBuilderPanel, PlanetBuilderState, TelemetryGraphPanel, TelemetryPanelState,
-    UiButtonAction,
+    HrDiagramPanel, HrDiagramPanelState, HudDynamicText, HudPanelElement, HudVisibilityState,
+    InspectorExoticHeader, InspectorSection, PlanetBuilderPanel, PlanetBuilderState,
+    TelemetryGraphPanel, TelemetryPanelState, UiButtonAction,
+};
+use crate::simulation::resources::{
+    DiagnosticOverlayMode, HabitableZoneConfig, LagrangeOverlayConfig,
 };
 
 /// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
@@ -21,10 +24,14 @@ pub fn update_hud_visibility(
     player_state: Res<PlayerInteractionState>,
     builder_state: Res<PlanetBuilderState>,
     telemetry_state: Res<TelemetryPanelState>,
+    opt_hr_state: Option<Res<HrDiagramPanelState>>,
+    opt_lagrange: Option<Res<LagrangeOverlayConfig>>,
+    opt_hz: Option<Res<HabitableZoneConfig>>,
     mut panel_nodes: ParamSet<(
         Query<(&mut Node, &HudPanelElement)>,
         Query<&mut Node, With<PlanetBuilderPanel>>,
         Query<&mut Node, With<TelemetryGraphPanel>>,
+        Query<&mut Node, With<HrDiagramPanel>>,
     )>,
     mut text_query: Query<(&mut Text, &HudDynamicText)>,
     names_query: Query<&CelestialBody>,
@@ -35,15 +42,23 @@ pub fn update_hud_visibility(
         &hud_visibility,
         &builder_state,
         &telemetry_state,
+        opt_hr_state.as_deref(),
     );
     update_builder_drawer(&mut panel_nodes.p1(), &builder_state);
     update_telemetry_drawer(&mut panel_nodes.p2(), &telemetry_state, &hud_visibility);
+    update_hr_diagram_drawer(
+        &mut panel_nodes.p3(),
+        opt_hr_state.as_deref(),
+        &hud_visibility,
+    );
     update_dynamic_badges(
         &mut text_query,
         &hud_visibility,
         &player_state,
         &names_query,
         opt_predictor.as_deref(),
+        opt_lagrange.as_deref(),
+        opt_hz.as_deref(),
     );
 }
 
@@ -52,13 +67,17 @@ fn update_panel_nodes(
     hud_visibility: &HudVisibilityState,
     builder_state: &PlanetBuilderState,
     telemetry_state: &TelemetryPanelState,
+    hr_state: Option<&HrDiagramPanelState>,
 ) {
     for (mut node, element) in panels_query.iter_mut() {
         node.display = match element {
             HudPanelElement::RootContainer
+            | HudPanelElement::QuickBarContainer
             | HudPanelElement::OrbitModeBadge
             | HudPanelElement::OverlayModeBadge
-            | HudPanelElement::TrajectoryPredictorBadge => {
+            | HudPanelElement::TrajectoryPredictorBadge
+            | HudPanelElement::LagrangePointsBadge
+            | HudPanelElement::HabitableZoneBadge => {
                 flex_or_none(!hud_visibility.is_full_screen_clean)
             }
             HudPanelElement::TopLeftPanel => flex_or_none(!hud_visibility.top_left_minimized),
@@ -91,6 +110,9 @@ fn update_panel_nodes(
             HudPanelElement::TelemetryPanelPill => {
                 flex_or_none(telemetry_state.is_open && hud_visibility.telemetry_minimized)
             }
+            HudPanelElement::HrDiagramPanelPill => {
+                flex_or_none(hr_state.is_some_and(|h| h.is_open && h.is_minimized))
+            }
         };
     }
 }
@@ -114,12 +136,26 @@ fn update_telemetry_drawer(
     }
 }
 
+fn update_hr_diagram_drawer(
+    hr_query: &mut Query<&mut Node, With<HrDiagramPanel>>,
+    hr_state: Option<&HrDiagramPanelState>,
+    hud_visibility: &HudVisibilityState,
+) {
+    if let (Some(state), Ok(mut node)) = (hr_state, hr_query.single_mut()) {
+        node.display = flex_or_none(
+            state.is_open && !state.is_minimized && !hud_visibility.is_full_screen_clean,
+        );
+    }
+}
+
 fn update_dynamic_badges(
     text_query: &mut Query<(&mut Text, &HudDynamicText)>,
     hud_visibility: &HudVisibilityState,
     player_state: &PlayerInteractionState,
     names_query: &Query<&CelestialBody>,
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
+    opt_lagrange: Option<&LagrangeOverlayConfig>,
+    opt_hz: Option<&HabitableZoneConfig>,
 ) {
     for (mut text, dynamic_text) in text_query.iter_mut() {
         match dynamic_text {
@@ -142,6 +178,23 @@ fn update_dynamic_badges(
                     "🎯 Forecast: ON [N]".to_string()
                 } else {
                     "🎯 Forecast: OFF [N]".to_string()
+                };
+            }
+            HudDynamicText::LagrangePointsBadge => {
+                let is_on = opt_lagrange.is_some_and(|l| l.show_lagrange_points)
+                    || player_state.overlay_mode == DiagnosticOverlayMode::HillSpheresAndGaps;
+                text.0 = if is_on {
+                    "🪐 Lagrange: ON [Shift-L]".to_string()
+                } else {
+                    "🪐 Lagrange: OFF [Shift-L]".to_string()
+                };
+            }
+            HudDynamicText::HabitableZoneBadge => {
+                let is_on = opt_hz.is_none_or(|h| h.is_enabled);
+                text.0 = if is_on {
+                    "🌱 Hab Zone: ON".to_string()
+                } else {
+                    "🌱 Hab Zone: OFF".to_string()
                 };
             }
             HudDynamicText::InspectorChip => {
@@ -194,20 +247,7 @@ pub fn update_scenario_contextual_ui(
         .and_then(|e| target_query.get(e).ok());
     let is_probe = selected_info.is_some_and(|(_, _, opt_probe)| opt_probe.is_some());
     let is_star_like = selected_info.is_some_and(|(body, opt_star, _)| {
-        opt_star.is_some()
-            || matches!(
-                body.body_type,
-                BodyType::Protostar
-                    | BodyType::YellowDwarf
-                    | BodyType::RedDwarf
-                    | BodyType::BlueSupergiant
-                    | BodyType::BrownDwarf
-                    | BodyType::WhiteDwarf
-                    | BodyType::NeutronStar
-                    | BodyType::Pulsar
-                    | BodyType::BlackHole
-                    | BodyType::QuasiStar
-            )
+        opt_star.is_some() || body.body_type.is_star_or_remnant()
     });
 
     let is_planetary_scenario = matches!(
@@ -224,8 +264,8 @@ pub fn update_scenario_contextual_ui(
     // 1. Synchronize inspector section containers
     for (section, mut node) in section_nodes.iter_mut() {
         node.display = match section {
-            InspectorSection::TerraformingBombardment => {
-                // Terraforming only appears in planetary scenarios and for solid/planetary bodies (never probes)
+            InspectorSection::TerraformingBombardment | InspectorSection::HydrosphereBathymetry => {
+                // Terraforming and hydrosphere only appear in planetary scenarios and for solid/planetary bodies (never probes)
                 flex_or_none(is_planetary_scenario && !is_star_like && !is_probe)
             }
             InspectorSection::ExoticExperiments
@@ -256,8 +296,8 @@ pub fn update_scenario_contextual_ui(
                     preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
                 );
             }
-            // Pop-III Hypergiant is UNIVERSAL (available in all scenarios)
-            UiButtonAction::SpawnInfallPop3Star => {
+            // Pop-III Hypergiant and Surface Horizon Camera are UNIVERSAL (always visible)
+            UiButtonAction::SpawnInfallPop3Star | UiButtonAction::ToggleSurfaceHorizonCamera => {
                 node.display = Display::Flex;
             }
             // Molecular Cloud Supernova shockwave trigger

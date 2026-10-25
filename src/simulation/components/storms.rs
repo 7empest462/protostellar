@@ -68,15 +68,15 @@ impl AtmosphericStormState {
     /// tranquil central polar hurricane eye, and golden-butterscotch zonal bands with fine shear.
     pub fn saturn() -> Self {
         Self {
-            polar_hexagon_amplitude: 0.10,
+            polar_hexagon_amplitude: 0.12,
             polar_hexagon_wavenumber: 6.0,
             polar_hexagon_colatitude: 0.218, // ~12.5 degrees colatitude (~77.5°N)
-            great_spot_size: 0.22,           // Great White Spot capability
-            great_spot_latitude_rad: 0.15,
+            great_spot_size: 0.14,           // Subtle Great White Spot capability
+            great_spot_latitude_rad: 0.18,
             great_spot_longitude_rad: -0.45,
-            vortex_spin_rate: 1.4,
+            vortex_spin_rate: 1.2,
             secondary_oval_count: 1,
-            zonal_shear_turbulence: 0.60,
+            zonal_shear_turbulence: 0.50,
         }
     }
 

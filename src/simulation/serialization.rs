@@ -194,14 +194,13 @@ pub fn infer_scenario_preset(
 ) -> crate::simulation::scenarios::ScenarioPreset {
     use crate::simulation::scenarios::ScenarioPreset;
 
-    if bodies.iter().any(|b| {
-        b.name.contains("Protostar")
-            || b.name.contains("Supermassive Black Hole")
-            || b.name.contains("SMBH")
-            || b.name.contains("NovaCore")
-    }) || bodies.len() > 100
-    {
-        ScenarioPreset::MolecularCloudCluster
+    let star_count = bodies
+        .iter()
+        .filter(|b| b.body_type.is_star_or_remnant())
+        .count();
+
+    if bodies.iter().any(|b| b.name.contains("Genesis")) {
+        ScenarioPreset::AccretionDiskGenesis
     } else if bodies.iter().any(|b| b.name.contains("TRAPPIST-1")) {
         ScenarioPreset::Trappist1System
     } else if bodies.iter().any(|b| b.name.contains("Kepler-16")) {
@@ -224,6 +223,17 @@ pub fn infer_scenario_preset(
         .any(|b| b.name.contains("Sagittarius A*") || b.name.contains("S2"))
     {
         ScenarioPreset::SagittariusAStar
+    } else if bodies
+        .iter()
+        .any(|b| b.name.contains("Andromeda") || b.name.contains("Milky Way"))
+    {
+        ScenarioPreset::GalacticCollision
+    } else if star_count > 3
+        || bodies
+            .iter()
+            .any(|b| b.name.contains("SMBH") || b.name.contains("NovaCore"))
+    {
+        ScenarioPreset::MolecularCloudCluster
     } else if bodies.iter().any(|b| b.name.contains("Rogue")) {
         ScenarioPreset::RoguePlanetFlyby
     } else if bodies.iter().any(|b| b.name.contains("Hot Jupiter")) {
@@ -269,6 +279,7 @@ type BodySerializeQuery<'w, 's> = Query<
             Has<CentralStar>,
         ),
     ),
+    Without<crate::simulation::probes::SpaceProbe>,
 >;
 
 /// Extracts celestial bodies into serializable records.
@@ -482,7 +493,13 @@ fn spawn_saved_body(commands: &mut Commands, save: &CelestialBodySave) -> Entity
 
 fn despawn_active_bodies(
     commands: &mut Commands,
-    bodies_query: &Query<Entity, With<CelestialBody>>,
+    bodies_query: &Query<
+        Entity,
+        (
+            With<CelestialBody>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
+    >,
 ) {
     for ent in bodies_query.iter() {
         if let Ok(mut cmd) = commands.get_entity(ent) {
@@ -632,6 +649,7 @@ fn apply_loaded_scenario_and_camera(
     }
 
     if let Some(mut cam) = camera_query.iter_mut().next() {
+        cam.surface_horizon_mode = false;
         if let Some(target) = primary_ent {
             cam.target_entity = Some(target);
         }
@@ -666,7 +684,13 @@ pub fn handle_load_system_events(
         Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
         Option<ResMut<crate::game::phases::LateHeavyBombardmentState>>,
     ),
-    bodies_query: Query<Entity, With<CelestialBody>>,
+    bodies_query: Query<
+        Entity,
+        (
+            With<CelestialBody>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
+    >,
     mut camera_query: Query<&mut crate::rendering::camera::PanOrbitCamera>,
     (mut swarm, mut swarm_mesh_query): (
         Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
