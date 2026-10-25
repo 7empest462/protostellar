@@ -490,3 +490,97 @@ fn test_classical_nova_ignition_threshold() {
     assert_eq!(nova_events.len(), 1);
     assert_eq!(nova_events[0].initial_mass_solar, 1e-4);
 }
+
+#[test]
+fn test_s4714_sgr_a_roche_stream_multi_star_cluster() {
+    use bevy::prelude::*;
+    use protostellar::rendering::effects::roche_stream::{
+        update_roche_streams, RocheStreamMaterial, RocheStreamVisual,
+    };
+    use protostellar::simulation::accretion::{process_roche_lobe_overflow, RocheLobeOverflow};
+    use protostellar::simulation::components::{
+        BodyType, CelestialBody, Mass, Radius, SimPosition, SimVelocity, Temperature,
+    };
+    use protostellar::simulation::resources::SimulationConfig;
+
+    let mut app = App::new();
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    app.insert_resource(time);
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<RocheStreamMaterial>>();
+    let mut config = SimulationConfig::default();
+    config.base_dt_yr = 0.01;
+    app.insert_resource(config);
+    app.add_systems(
+        Update,
+        (process_roche_lobe_overflow, update_roche_streams).chain(),
+    );
+
+    // 1. Sagittarius A* supermassive black hole (4.297e6 M_sun)
+    let sgr_a = app
+        .world_mut()
+        .spawn((
+            SimPosition(bevy::math::DVec3::ZERO),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            Mass(4.297e6),
+            Radius(0.0848),
+            Temperature(1.0e-7),
+            CelestialBody {
+                body_type: BodyType::BlackHole,
+                name: "Sagittarius A*".to_string(),
+            },
+        ))
+        .id();
+
+    // 2. S4714 at 0.51 AU (matching user screenshot)
+    let s4714 = app
+        .world_mut()
+        .spawn((
+            SimPosition(bevy::math::DVec3::new(0.51, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, 18000.0)),
+            Mass(2.0),
+            Radius(0.0088),
+            Temperature(9500.0),
+            CelestialBody {
+                body_type: BodyType::MainSequenceStar,
+                name: "S4714 (Fastest Star)".to_string(),
+            },
+        ))
+        .id();
+
+    // 3. Another nearby S-star within pair-check range (must not strip S4714's RocheLobeOverflow!)
+    app.world_mut().spawn((
+        SimPosition(bevy::math::DVec3::new(3.2, 1.0, 0.0)),
+        SimVelocity(bevy::math::DVec3::new(0.0, 5000.0, 0.0)),
+        Mass(2.2),
+        Radius(0.0095),
+        Temperature(10500.0),
+        CelestialBody {
+            body_type: BodyType::MainSequenceStar,
+            name: "S4711".to_string(),
+        },
+    ));
+
+    // First update inserts RocheLobeOverflow via Commands; second update spawns RocheStreamVisual
+    app.update();
+    app.update();
+
+    let overflow = app
+        .world()
+        .get::<RocheLobeOverflow>(s4714)
+        .expect("S4714 at 0.51 AU from Sgr A* must have RocheLobeOverflow");
+    assert_eq!(overflow.companion, sgr_a);
+
+    let mut visual_query = app.world_mut().query::<(&RocheStreamVisual, &Transform)>();
+    let visuals: Vec<_> = visual_query.iter(app.world()).collect();
+    assert_eq!(
+        visuals.len(),
+        1,
+        "Exactly one RocheStreamVisual should be spawned for S4714 -> Sgr A*"
+    );
+    assert_eq!(visuals[0].0.donor, s4714);
+    assert_eq!(visuals[0].0.accretor, sgr_a);
+    assert!(visuals[0].1.translation.is_finite());
+    assert!(visuals[0].1.scale.is_finite());
+}

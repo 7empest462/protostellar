@@ -204,6 +204,8 @@ fn apply_gas_accretion_to_body(
         (1.97e-8 * new_mass).max(1e-6)
     } else if new_mass >= 0.08 {
         (0.00465 * (new_mass / 1.0).powf(0.8)).clamp(0.003, 10.0)
+    } else if updated_type == BodyType::GasGiant || updated_type == BodyType::BrownDwarf {
+        (0.000_477 * (new_mass / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085)
     } else {
         let density = comp.average_density();
         let volume = new_mass / density;
@@ -222,8 +224,12 @@ fn apply_gas_accretion_to_body(
         diff.recalculate(new_mass, new_radius, comp);
     }
     if let Some(spin) = opt_spin {
-        let spin_vec = spin.spin_vector;
-        spin.update_from_spin(spin_vec, new_mass, new_radius);
+        spin.set_period_and_tilt(
+            spin.rotation_period_hours,
+            spin.axial_tilt_degrees,
+            new_mass,
+            new_radius,
+        );
     }
     if let Some(vol) = opt_vol {
         let gas_growth = d_mass_gas / EARTH_MASS_SOLAR;
@@ -325,6 +331,7 @@ pub fn direct_nebular_gas_accretion(
     time_warp: Res<TimeWarp>,
     sim_time: Res<SimTime>,
     disk_params: Res<DiskParameters>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     star_query: Query<&IgnitionState, With<CentralStar>>,
     mut bodies_query: Query<
         (
@@ -347,6 +354,12 @@ pub fn direct_nebular_gas_accretion(
     >,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
+        return;
+    }
+
+    if scenario_state.as_ref().is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+    }) {
         return;
     }
 
@@ -378,6 +391,9 @@ pub fn direct_nebular_gas_accretion(
         opt_ign,
     ) in bodies_query.iter_mut()
     {
+        if body.body_type == BodyType::Moon {
+            continue;
+        }
         let actual_r = pos.0.length();
         if actual_r > disk_params.outer_radius_au || actual_r < disk_params.inner_radius_au {
             continue;
@@ -466,6 +482,7 @@ pub fn update_black_hole_star_dynamics(
         &mut Luminosity,
         &mut CelestialBody,
         &SimPosition,
+        Option<&mut RelativisticJetState>,
     )>,
     mut satellites_query: Query<
         (
@@ -488,8 +505,17 @@ pub fn update_black_hole_star_dynamics(
         return;
     }
 
-    for (_qs_ent, mut state, mut mass, mut radius, mut temp, mut lum, mut body, qs_pos) in
-        quasi_star_query.iter_mut()
+    for (
+        qs_ent,
+        mut state,
+        mut mass,
+        mut radius,
+        mut temp,
+        mut lum,
+        mut body,
+        qs_pos,
+        mut opt_jet,
+    ) in quasi_star_query.iter_mut()
     {
         if state.super_eddington_active && state.cocoon_mass_solar > 10.0 {
             let m_bh = state.black_hole_mass_solar;
@@ -508,26 +534,49 @@ pub fn update_black_hole_star_dynamics(
             state.jet_travel_distance_au += crate::utils::constants::SPEED_OF_LIGHT_AU_YR * dt;
             let p = f64::from(state.blowout_progress);
 
-            if p < 0.5 {
-                radius.0 = 60.0 * (1.0 + p * 2.0);
-                temp.0 = (3800.0 * (1.0 - p * 0.4)).max(1500.0);
-            } else {
-                let quasar_factor = (p - 0.5) * 2.0;
-                radius.0 = 60.0 * (1.0 - quasar_factor) + 8.0 * quasar_factor;
-                temp.0 = 3800.0 * (1.0 - quasar_factor) + 95000.0 * quasar_factor;
-                lum.0 = 1.2e7 * (1.0 - quasar_factor) + 1.5e10 * quasar_factor;
+            // Once blowout is triggered, the hydrogen shell is blown off, immediately
+            // transforming the central body into the revealed supermassive black hole seed / quasar!
+            body.body_type = BodyType::BlackHole;
+            body.name = format!(
+                "Supermassive Quasar ({:.0} M☉)",
+                state.black_hole_mass_solar
+            );
+            state.super_eddington_active = true;
 
-                body.body_type = BodyType::BlackHole;
-                body.name = format!(
-                    "Supermassive Quasar ({:.0} M☉)",
-                    state.black_hole_mass_solar
-                );
-                state.super_eddington_active = true;
+            // Physical Schwarzschild radius of the revealed central supermassive black hole seed
+            let r_schwa = (1.974e-8 * state.black_hole_mass_solar).max(1e-4);
+            radius.0 = r_schwa;
+            temp.0 = 95_000.0;
+            lum.0 = 1.5e10;
+
+            // The expanding blown-out cocoon is tracked in state
+            state.cocoon_radius_au = 60.0 * (1.0 + p * 4.0);
+            state.cocoon_mass_solar = (50_000.0 * (1.0 - p)).max(0.0);
+
+            if let Some(ref mut jet) = opt_jet {
+                if jet.opening_angle_rad > 0.02 {
+                    **jet = RelativisticJetState::black_hole(state.black_hole_mass_solar);
+                    jet.opening_angle_rad = 0.016; // ~0.9 degrees blazar/quasar collimation
+                    jet.lorentz_factor = 20.0;
+                    jet.jet_length_au = 40.0;
+                }
+                jet.is_accreting = true;
+                jet.accretion_timer_years = 1000.0;
+            } else {
+                let mut jet = RelativisticJetState::black_hole(state.black_hole_mass_solar);
+                jet.opening_angle_rad = 0.016;
+                jet.lorentz_factor = 20.0;
+                jet.jet_length_au = 40.0;
+                jet.is_accreting = true;
+                jet.accretion_timer_years = 1000.0;
+                if let Ok(mut cmd) = commands.get_entity(qs_ent) {
+                    cmd.try_insert(jet);
+                }
             }
         }
 
         let bh_m = state.black_hole_mass_solar;
-        let cocoon_r = radius.0;
+        let cocoon_r = state.cocoon_radius_au;
 
         for (sat_ent, sat_m, mut sat_vel, sat_pos, sat_rad, sat_body) in satellites_query.iter_mut()
         {
@@ -601,15 +650,20 @@ fn compute_protostar_bondi_hoyle_accretion(
         let max_rate = (0.045 * m).clamp(0.025, 0.65);
         let bondi_rate = (base_bondi * (rho_cloud / rho_0)).clamp(0.002, max_rate);
 
-        // Radiation pressure suppression for massive ignited stars (blowout limit):
-        // Pop III stars in dense galactic disks grow up to ~100-120 M_sun before radiation cutoff
+        // Radiation pressure and stellar wind suppression for ignited stars:
+        // Main-sequence stellar winds clear the local Bondi sphere so low/intermediate-mass stars
+        // maintain their birth spectral class rather than runaway-accreting to 120 M_sun.
         let is_ignited = opt_ign.is_some_and(|ig| ig.is_ignited);
-        let rad_suppression = if is_ignited {
+        let rad_suppression = if body.body_type.is_remnant() {
+            0.0
+        } else if is_ignited {
             let lum_val = opt_lum.as_deref().map_or(1.0, |l| l.0);
-            if lum_val > 2_500_000.0 || m >= 120.0 {
+            if lum_val > 1_500_000.0 || m >= 65.0 {
                 0.0
+            } else if m < 15.0 {
+                0.006
             } else {
-                (1.0 - lum_val / 2_500_000.0).clamp(0.0, 1.0)
+                0.025 * (1.0 - lum_val / 1_500_000.0).clamp(0.0, 1.0)
             }
         } else {
             1.0
@@ -620,11 +674,14 @@ fn compute_protostar_bondi_hoyle_accretion(
             let new_m = m + d_mass;
             mass.0 = new_m;
 
-            // Physical radius update
+            // Physical radius update (only for non-remnant, non-giant main sequence / protostars)
             if body.body_type == BodyType::Protostar {
-                rad.0 = (3.5 * SOLAR_RADIUS_AU * (new_m / 1.0).powf(0.5)).clamp(0.005, 0.06);
-            } else if new_m >= 0.08 {
-                rad.0 = (SOLAR_RADIUS_AU * new_m.powf(0.8)).clamp(0.002, 0.20);
+                rad.0 = (3.5 * SOLAR_RADIUS_AU * (new_m / 1.0).powf(0.5)).clamp(0.005, 0.04);
+            } else if !body.body_type.is_remnant()
+                && !matches!(body.body_type, BodyType::RedGiant | BodyType::RedSupergiant)
+                && new_m >= 0.08
+            {
+                rad.0 = (SOLAR_RADIUS_AU * new_m.powf(0.8)).clamp(0.002, 0.12);
             }
 
             if let Some(ref mut lum) = opt_lum {

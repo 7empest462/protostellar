@@ -370,3 +370,170 @@ fn test_dragged_comet10_planetesimal_spawns_tail_at_sub_au_distance() {
         "COMET #10 [PLANETESIMAL] with 16% water and active sublimation at 0.64 AU MUST spawn a CometTailRoot!"
     );
 }
+
+fn comet_delivery_test_system(
+    mut commands: Commands,
+    mut comets: protostellar::simulation::events::HazardCometQuery,
+    mut targets: protostellar::simulation::events::CometDeliveryTargetQuery,
+    sim_time: Res<SimTime>,
+) {
+    protostellar::simulation::events::apply_comet_delivery(
+        &mut commands,
+        &mut comets,
+        &mut targets,
+        sim_time.current_dt_yr,
+        sim_time.elapsed_years,
+    );
+    for (_, mut pos, opt_vel, _) in comets.iter_mut() {
+        if let Some(vel) = opt_vel {
+            pos.0 += vel.0 * sim_time.current_dt_yr;
+        }
+    }
+}
+
+#[test]
+fn test_cometary_outburst_swarm_hazard_strikes_earth_and_delivers_oceans() {
+    use protostellar::simulation::events::spawn_comet_outburst_swarm_targeted;
+    use protostellar::simulation::resources::TimeWarp;
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<SimTime>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<PlayerInteractionState>()
+        .add_systems(Update, comet_delivery_test_system);
+
+    // 1. Central Star
+    app.world_mut().spawn((
+        CelestialBody {
+            body_type: BodyType::MainSequenceStar,
+            name: "Sol".to_string(),
+        },
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration::default(),
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        CentralStar,
+    ));
+
+    // 2. Dry Earth awaiting cometary hydration
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::TerrestrialPlanet,
+                name: "Earth".to_string(),
+            },
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration::default(),
+            Mass(1.0 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            Temperature(288.0),
+            Composition::rocky(),
+            VolatileInventory::default(),
+            SpinState::default(),
+        ))
+        .id();
+
+    // Spawn targeted cometary outburst swarm (6 comets aimed at inner rocky planets)
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.current_dt_yr = 0.005;
+        sim_time.elapsed_years = 100.0;
+        let mut commands = app.world_mut().commands();
+        let targets = vec![(earth_ent, DVec3::new(1.0, 0.0, 0.0), DVec3::ZERO)];
+        spawn_comet_outburst_swarm_targeted(&mut commands, 6, &targets);
+    }
+    app.update();
+
+    // Step simulation over 60 steps (~0.3 years) with proportional guidance
+    for _ in 0..60 {
+        app.world_mut().resource_mut::<SimTime>().elapsed_years += 0.005;
+        app.update();
+    }
+
+    let earth = app.world().entity(earth_ent);
+    let vol = earth
+        .get::<VolatileInventory>()
+        .expect("Earth must have VolatileInventory");
+
+    assert!(
+        vol.cometary_impact_count > 0,
+        "Targeted comet outburst swarm must impact Earth! (got cometary_impact_count = {})",
+        vol.cometary_impact_count
+    );
+    assert!(
+        vol.delivered_water_m_earth > 0.0,
+        "Targeted comet outburst swarm must deliver water! (got delivered_water = {})",
+        vol.delivered_water_m_earth
+    );
+    assert!(
+        vol.ocean_coverage_frac > 0.0,
+        "Comet water delivery must form oceans! (got ocean_coverage_frac = {})",
+        vol.ocean_coverage_frac
+    );
+
+    let basins = earth
+        .get::<PlanetaryBasins>()
+        .expect("Impact crater basins must be recorded upon cometary collision");
+    assert!(
+        !basins.basins.is_empty(),
+        "PlanetaryBasins must record the glowing impact craters from comets"
+    );
+}
+
+#[test]
+fn test_jupiter_galilean_moons_simultaneous_eclipses_and_sibling_stability() {
+    use protostellar::rendering::bodies::compute_eclipse_moons_data;
+
+    let jupiter_ent = Entity::from_raw_u32(10).unwrap();
+    let jupiter_pos = Vec3::new(5.2, 0.0, 0.0);
+    let visual_radius = 0.00565;
+    let star_dir = Vec3::new(-1.0, 0.0, 0.0); // Facing Sol at origin
+
+    // 4 Galilean moons transiting in front of Jupiter
+    let moons = vec![
+        (
+            Entity::from_raw_u32(11).unwrap(),
+            jupiter_pos + Vec3::new(-0.0068, 0.0005, 0.0002),
+            0.00045,
+            Some(jupiter_ent),
+        ),
+        (
+            Entity::from_raw_u32(12).unwrap(),
+            jupiter_pos + Vec3::new(-0.0095, -0.0008, -0.0004),
+            0.00040,
+            Some(jupiter_ent),
+        ),
+        (
+            Entity::from_raw_u32(13).unwrap(),
+            jupiter_pos + Vec3::new(-0.0130, 0.0012, 0.0006),
+            0.00055,
+            Some(jupiter_ent),
+        ),
+        (
+            Entity::from_raw_u32(14).unwrap(),
+            jupiter_pos + Vec3::new(-0.0175, -0.0015, -0.0009),
+            0.00050,
+            Some(jupiter_ent),
+        ),
+    ];
+
+    let (moons_pos, moons_data) =
+        compute_eclipse_moons_data(jupiter_ent, jupiter_pos, visual_radius, star_dir, &moons);
+
+    // Verify all 4 slots are populated with active moon shadows
+    for i in 0..4 {
+        assert_eq!(
+            moons_data[i].x, 1.0,
+            "Slot {i} must be active (1.0) for simultaneous 4-moon eclipses"
+        );
+        assert!(
+            moons_pos[i].w >= 0.08,
+            "Slot {i} moon radius must be properly clamped for visibility (got {})",
+            moons_pos[i].w
+        );
+    }
+}

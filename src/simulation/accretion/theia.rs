@@ -290,16 +290,18 @@ fn resolve_giant_impact_moon(
         diff.llsvp_density_contrast = 0.028;
     }
     if let Some(ref mut spin) = earth.7 {
-        spin.rotation_period_hours = 6.0;
-        spin.axial_tilt_degrees = 23.4;
+        spin.set_period_and_tilt(6.0, 23.4, total_primary_mass, earth.4 .0);
     }
 
     // 2. The Moon state update
     let moon_mass = 0.0123 * EARTH_MASS_SOLAR;
-    // Generous visual separation (~1,800,000 km) so Earth and Moon meshes never overlap or touch
+    // Generous visual separation (~1,800,000 km) so Earth and Moon meshes never overlap or touch,
+    // while retaining the physical lunar orbital period (27.32 days = 0.0748 yr = ~655.7 hours).
     let orbit_dist_au: f64 = 0.0120;
-    let p_moon_yr = 2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * total_primary_mass)).sqrt();
-    let v_moon_circ = (G_ASTRO * total_primary_mass / orbit_dist_au).sqrt();
+    let phys_lunar_a_au: f64 = 0.002_569_5;
+    let p_moon_yr =
+        2.0 * PI * (phys_lunar_a_au.powi(3) / (G_ASTRO * total_primary_mass.max(1e-8))).sqrt();
+    let v_moon_circ = (2.0 * PI / p_moon_yr.max(1e-8)) * orbit_dist_au;
 
     let tangent = rel_pos.cross(DVec3::Y).normalize_or_zero();
     let mut moon_tangent = if tangent.length_squared() > 0.1 {
@@ -326,14 +328,26 @@ fn resolve_giant_impact_moon(
     if let Some(ref mut diff) = theia.6 {
         diff.recalculate(moon_mass, theia.4 .0, &Composition::rocky());
     }
+    if let Some(ref mut spin) = theia.7 {
+        spin.set_period_and_tilt(
+            p_moon_yr * YEAR_SECONDS / 3600.0,
+            1.54,
+            moon_mass,
+            theia.4 .0,
+        );
+    }
 
     if let Ok(mut cmd) = commands.get_entity(theia_ent) {
-        cmd.try_insert(SatelliteOf {
-            parent: earth_ent,
-            semi_major_axis_au: orbit_dist_au,
-            orbital_period_years: p_moon_yr,
-            true_anomaly: 0.0,
-        });
+        cmd.try_insert((
+            Composition::rocky(),
+            VolatileInventory::default(),
+            SatelliteOf {
+                parent: earth_ent,
+                semi_major_axis_au: orbit_dist_au,
+                orbital_period_years: p_moon_yr,
+                true_anomaly: 0.0,
+            },
+        ));
     }
 
     if let Some(ref mut t) = toast {

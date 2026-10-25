@@ -252,12 +252,15 @@ fn apply_giant_impact_primary_state(
             diff.llsvp_density_contrast = 0.028;
         }
         if let Some(mut spin) = opt_spin_mut {
-            if body.name.contains("Earth") {
-                spin.rotation_period_hours = 6.0;
-                spin.axial_tilt_degrees = 23.4;
+            let (new_period, new_tilt) = if body.name.contains("Earth") {
+                (6.0, 23.4)
             } else {
-                spin.rotation_period_hours = (spin.rotation_period_hours * 0.75).clamp(4.0, 72.0);
-            }
+                (
+                    (spin.rotation_period_hours * 0.75).clamp(4.0, 72.0),
+                    spin.axial_tilt_degrees,
+                )
+            };
+            spin.set_period_and_tilt(new_period, new_tilt, total_primary_mass, p_new_radius);
         }
     }
 }
@@ -318,19 +321,27 @@ fn apply_giant_impact_moon_state(
             diff.recalculate(moon_mass, moon_radius, &moon_comp);
         }
         if let Some(mut spin) = opt_spin_mut {
-            spin.rotation_period_hours = p_moon_yr * YEAR_SECONDS / 3600.0;
+            spin.set_period_and_tilt(
+                p_moon_yr * YEAR_SECONDS / 3600.0,
+                1.54,
+                moon_mass,
+                moon_radius,
+            );
         }
+        let init_anomaly = (moon_pos.z - pair.p_pos.z)
+            .atan2(moon_pos.x - pair.p_pos.x)
+            .rem_euclid(2.0 * PI);
         if let Some(mut sat) = opt_sat_mut {
             sat.parent = pair.primary_entity;
             sat.semi_major_axis_au = orbit_dist_au;
             sat.orbital_period_years = p_moon_yr;
-            sat.true_anomaly = 0.0;
+            sat.true_anomaly = init_anomaly;
         } else if let Ok(mut s_cmd) = ctx.commands.get_entity(pair.secondary_entity) {
             s_cmd.try_insert(SatelliteOf {
                 parent: pair.primary_entity,
                 semi_major_axis_au: orbit_dist_au,
                 orbital_period_years: p_moon_yr,
-                true_anomaly: 0.0,
+                true_anomaly: init_anomaly,
             });
         }
     }
@@ -501,16 +512,16 @@ fn compute_inelastic_merger_physics(
         .p_comp
         .mass_weighted_merge(pair.p_m, &pair.s_comp, pair.s_m);
 
-    let r_impact = pair.p_pos - pair.s_pos;
-    let v_impact = pair.p_vel - pair.s_vel;
-    let impact_orbital_spin = (pair.p_m * pair.s_m / total_mass) * r_impact.cross(v_impact);
-    let merged_spin = pair.p_spin + pair.s_spin + impact_orbital_spin;
-
     let density = merged_comp.average_density();
     let volume = total_mass / density;
     let new_radius = ((3.0 * volume) / (4.0 * PI))
         .cbrt()
         .max(EARTH_RADIUS_AU * 0.3);
+
+    let r_impact = (pair.p_pos - pair.s_pos).normalize_or_zero() * new_radius;
+    let v_impact = pair.p_vel - pair.s_vel;
+    let impact_orbital_spin = (pair.p_m * pair.s_m / total_mass) * r_impact.cross(v_impact);
+    let merged_spin = pair.p_spin + pair.s_spin + impact_orbital_spin;
 
     let v_esc_sq = (2.0 * G_ASTRO * total_mass) / new_radius.max(1e-6);
     let kinetic_loss =
@@ -525,17 +536,54 @@ fn compute_inelastic_merger_physics(
 
     let updated_type = if pair.p_type == BodyType::BlackHole || pair.s_type == BodyType::BlackHole {
         BodyType::BlackHole
-    } else if pair.p_type.is_remnant() || pair.s_type.is_remnant() {
-        if total_mass >= 25.0 {
+    } else if (matches!(pair.p_type, BodyType::RedGiant | BodyType::RedSupergiant)
+        && matches!(
+            pair.s_type,
+            BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+        ))
+        || (matches!(pair.s_type, BodyType::RedGiant | BodyType::RedSupergiant)
+            && matches!(
+                pair.p_type,
+                BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+            ))
+    {
+        // Giant convective envelope swallows neutron star -> Thorne-Żytkow Object
+        BodyType::ThorneZytkow
+    } else if matches!(pair.p_type, BodyType::NeutronStar | BodyType::Pulsar)
+        && matches!(pair.s_type, BodyType::NeutronStar | BodyType::Pulsar)
+    {
+        if total_mass > 2.17 {
             BodyType::BlackHole
+        } else {
+            // Sub-critical double neutron star merger -> Strange Quark Matter Star
+            BodyType::QuarkStar
+        }
+    } else if pair.p_type.is_star_or_remnant() && pair.s_type.is_star_or_remnant() {
+        if !pair.p_type.is_remnant() && !pair.s_type.is_remnant() {
+            if pair.p_type == BodyType::Protostar && pair.s_type == BodyType::Protostar {
+                BodyType::Protostar
+            } else if total_mass <= 8.0 {
+                // Collision between two low/intermediate-mass stars produces a rejuvenated Blue Straggler
+                BodyType::BlueStraggler
+            } else {
+                classify_body_by_mass_and_comp(total_mass, &merged_comp, true)
+            }
+        } else if total_mass >= 25.0 {
+            BodyType::BlackHole // Direct collapse if merged mass is huge
         } else if pair.p_type.is_remnant() {
             pair.p_type
         } else {
             pair.s_type
         }
     } else if pair.p_type.is_star_or_remnant() || pair.s_type.is_star_or_remnant() {
-        if total_mass >= 25.0 {
-            BodyType::BlackHole // Direct collapse if merged mass is huge
+        if pair.p_type.is_remnant() || pair.s_type.is_remnant() {
+            if total_mass >= 25.0 {
+                BodyType::BlackHole
+            } else if pair.p_type.is_remnant() {
+                pair.p_type
+            } else {
+                pair.s_type
+            }
         } else if pair.p_type.is_star_or_remnant() {
             pair.p_type
         } else {
@@ -612,6 +660,18 @@ pub fn handle_inelastic_merger(
                 cmd.remove::<PlanetaryClimate>();
                 cmd.remove::<BiosphereState>();
             }
+        } else if physics.updated_type == BodyType::QuarkStar {
+            rad.0 = 0.00008;
+            t.0 = 10_000_000.0;
+        } else if physics.updated_type == BodyType::ThorneZytkow {
+            rad.0 = (SOLAR_RADIUS_AU * 180.0).min(0.85);
+            t.0 = 3200.0;
+        } else if pair.p_type.is_star_or_remnant()
+            && pair.s_type.is_star_or_remnant()
+            && !physics.updated_type.is_remnant()
+        {
+            rad.0 = (SOLAR_RADIUS_AU * physics.total_mass.powf(0.8)).clamp(0.002, 0.12);
+            t.0 = (5778.0 * physics.total_mass.powf(0.505)).clamp(3000.0, 48_000.0);
         } else if !physics.updated_type.is_star_or_remnant() {
             rad.0 = physics.new_radius;
             t.0 = physics.new_temp;
@@ -696,6 +756,18 @@ fn update_merged_body_name(name: &mut String, updated_type: BodyType, total_mass
     if is_canonical_solar_name(name) {
         return;
     }
+    if updated_type == BodyType::ThorneZytkow {
+        *name = format!("Thorne-Żytkow Object ({total_mass:.1} M☉)");
+        return;
+    }
+    if updated_type == BodyType::QuarkStar {
+        *name = format!("Strange Quark Star ({total_mass:.2} M☉)");
+        return;
+    }
+    if updated_type == BodyType::BlueStraggler {
+        *name = format!("Blue Straggler Star ({total_mass:.1} M☉)");
+        return;
+    }
     if updated_type == BodyType::BlackHole {
         if total_mass >= 1_000_000.0 {
             *name = format!(
@@ -774,13 +846,21 @@ pub fn handle_aerocapture(
                 }
 
                 // Safe exterior capture → bound moon outside the mesh and atmosphere.
-                let orbit_dist_au = min_dist.max(contact_r * 1.60);
+                let stagger = 1.0 + 0.08 * f64::from((secondary_entity.to_bits() % 5) as u32);
+                let orbit_dist_au = min_dist.max(contact_r * 1.60 * stagger);
                 let p_moon_yr = 2.0 * PI * (orbit_dist_au.powi(3) / (G_ASTRO * p_m)).sqrt();
+                let init_anomaly = (s.pos.z - p_pos.z)
+                    .atan2(s.pos.x - p_pos.x)
+                    .rem_euclid(2.0 * PI);
 
                 if let Ok((_, _, _, _, _, _, _, _, mut body, _, _, opt_sat_mut, _)) =
                     ctx.bodies_query.get_mut(secondary_entity)
                 {
-                    body.body_type = BodyType::Moon;
+                    if !matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant)
+                        && s.comp.gas_frac <= 0.20
+                    {
+                        body.body_type = BodyType::Moon;
+                    }
                     if !body.name.contains("(Moon)") && !body.name.starts_with("Captured") {
                         body.name = format!("Captured {s_name}");
                     }
@@ -789,13 +869,13 @@ pub fn handle_aerocapture(
                         sat.parent = primary_entity;
                         sat.semi_major_axis_au = orbit_dist_au.max(sat.semi_major_axis_au);
                         sat.orbital_period_years = p_moon_yr;
-                        sat.true_anomaly = 0.0;
+                        sat.true_anomaly = init_anomaly;
                     } else if let Ok(mut s_cmd) = ctx.commands.get_entity(secondary_entity) {
                         s_cmd.try_insert(SatelliteOf {
                             parent: primary_entity,
                             semi_major_axis_au: orbit_dist_au,
                             orbital_period_years: p_moon_yr,
-                            true_anomaly: 0.0,
+                            true_anomaly: init_anomaly,
                         });
                     }
                 }

@@ -28,7 +28,10 @@ pub type AccretionQuery<'w, 's> = Query<
         Option<&'static mut SatelliteOf>,
         Option<&'static CentralStar>,
     ),
-    Without<crate::simulation::probes::SpaceProbe>,
+    (
+        Without<crate::simulation::probes::SpaceProbe>,
+        Without<crate::simulation::terraforming::BombardmentProjectile>,
+    ),
 >;
 
 #[derive(Clone)]
