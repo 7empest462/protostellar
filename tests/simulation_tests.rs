@@ -6,10 +6,18 @@ mod accretion;
 mod atmosphere_escape;
 #[path = "simulation_tests/atmospheres.rs"]
 mod atmospheres;
+#[path = "simulation_tests/black_hole_relativity.rs"]
+mod black_hole_relativity;
 #[path = "simulation_tests/camera.rs"]
 mod camera;
+#[path = "simulation_tests/campaign_tests.rs"]
+mod campaign_tests;
 #[path = "simulation_tests/comets.rs"]
 mod comets;
+#[path = "simulation_tests/cosmic_hazards_tests.rs"]
+mod cosmic_hazards_tests;
+#[path = "simulation_tests/economy_tests.rs"]
+mod economy_tests;
 #[path = "simulation_tests/engulfment.rs"]
 mod engulfment;
 #[path = "simulation_tests/genesis_scenario.rs"]
@@ -22,6 +30,10 @@ mod gmc_black_hole_sinking;
 mod gmc_far_field;
 #[path = "simulation_tests/gpu_and_particles.rs"]
 mod gpu_and_particles;
+#[path = "simulation_tests/habitable_zone_and_lagrange.rs"]
+mod habitable_zone_and_lagrange;
+#[path = "simulation_tests/impact_debris.rs"]
+mod impact_debris;
 #[path = "simulation_tests/inspector_and_minimization.rs"]
 mod inspector_and_minimization;
 #[path = "simulation_tests/kozai_lidov.rs"]
@@ -88,3 +100,7 @@ mod tides;
 mod ui;
 #[path = "simulation_tests/ui_contextual.rs"]
 mod ui_contextual;
+#[path = "simulation_tests/universal_stars.rs"]
+mod universal_stars;
+#[path = "simulation_tests/volcanism.rs"]
+mod volcanism;

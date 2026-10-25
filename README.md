@@ -9,6 +9,9 @@
 2. [🎮 Flight Manual & How to Access Everything In-Game](#-flight-manual--how-to-access-everything-in-game)
    - [Camera & Viewport Controls](#camera--viewport-controls)
    - [Time Flow Engine](#time-flow-engine)
+   - [Surface Horizon Mode & Procedural 3D Terrains](#surface-horizon-mode--procedural-3d-terrains)
+   - [Galilean Moon Volcanism, Cryotectonics & Multi-Moon Eclipses](#galilean-moon-volcanism-cryotectonics--multi-moon-eclipses)
+   - [Cosmic Hazards & Targeted Cometary Delivery](#cosmic-hazards--targeted-cometary-delivery)
    - [Giant Molecular Clouds & Volumetric Fluid Dynamics](#giant-molecular-clouds--volumetric-fluid-dynamics)
    - [Interstellar Probes & Astronautics](#interstellar-probes--astronautics)
    - [Exoplanet Civilizations & Megastructures](#exoplanet-civilizations--megastructures)
@@ -39,7 +42,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (364 Tests)](#-automated-test-suite-364-tests)
+6. [🧪 Automated Test Suite (440 Tests)](#-automated-test-suite-440-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -72,12 +75,26 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 - **Geodesic Rover Surface Navigation & 3D Trails**: Upon touchdown, Rovers autonomously traverse the rotating 3D planetary crust along great-circle geodesics with terrain-avoidance steering, rendering persistent amber-gold breadcrumb trails and pulsing cyan Raman laser core-drill beams.
 - **Crustal Core Drilling & Orbital Spectrometry**: Rovers and Orbiters collect surface cores and atmospheric transmission spectra, reporting planetographic `Lat / Lon` coordinates, kilometers driven, and biosignature/mineralogical assays in the Target Inspector HUD.
 
-### 5. High-Fidelity 3D Terrain & Procedural Planets
-- **Vertex Displacement**: Planets are true 3D geometry displaced by procedural geological heightmaps (mountains, craters, tectonic ridges).
-- **Dynamic Sea Levels**: Water tables dynamically rise and fall, filling basins and creating smooth, reflective procedural oceans.
-- **Milankovitch Climate & Ice Caps**: Polar ice caps seamlessly advance and retreat based on orbital insolation, potentially triggering Snowball Earth events.
+### 5. Procedural 3D Surface Horizon Mode & Terrains
+- **Surface Horizon Skimming**: Toggle into seamless first-person planetary surface exploration (**`[Shift + V]`** or **`[Surface]`** in Target Inspector) with horizon-locking pitch/yaw camera controls.
+- **Multi-Scale Continental Terrains**: Dynamic procedural vertex-displaced continental elevations featuring canyons, mountain ranges, impact craters, and eroded ocean basins.
+- **Dynamic 3D Vegetation Instancing**: Procedurally places thousands of instanced 3D plant meshes (broadleaf canopies, alpine conifers, alien flora) tuned to surface moisture, temperature, and host-star photosynthetic pigment classification.
+- **Geodesic Rover Driving & Laser Core Drills**: Drive landed rovers with authentic terrain-hugging physics (**`W/A/S/D`** throttle/steer, **`Shift`** turbo boost, **`Space`** brake) leaving continuous wheel tracks and firing Raman spectrometry lasers.
 
-### 6. Symplectic Physics & Memory Optimizations
+### 6. Galilean Moon Volcanism, Cryotectonics & Multi-Moon Eclipses
+- **Io Hyperactive Sulfur Volcanism**: Dynamic volcanic calderas, glowing silicate lava fountains, and radioactive sulfur dioxide fallout halos driven by viscoelastic tidal dissipation ($> 0.5\text{ W/m}^2$).
+- **Europa & Enceladus Cryotectonics**: Procedural double-ridge fractures, tiger stripe lineae, and forward-scattering water-ice geysers that feed into and replenish parent planetary rings.
+- **Simultaneous 4-Moon Solar Eclipse Shadows**: Upgraded GPU shadow buffers compute up to 4 concurrent transiting moons (`[Vec4; 4]`), casting accurate overlapping umbral and penumbral twilight spot shadows across planetary day/night faces.
+
+### 7. Cosmic Hazards & Targeted Cometary Delivery
+- **Guided Cometary Delivery**: Proportional navigation guidance sweeps cometary swarms on collision courses towards target planets, delivering volatile water budgets to condense surface oceans and build atmospheres.
+- **Late Heavy Bombardment Overhaul**: Execution-ordered cometary cascades guaranteed to bombard inner protoplanets and transform dry rocky crusts into water-bearing worlds.
+
+### 8. Physically Based Specular Optics & Planetary Realism
+- **Neutral Dielectric Specular Optics**: Blinn-Phong specular glints with neutral white reflection ($F_0$) eliminating subtractive chromatic inversions that previously created artificial purple/blue glints on warm terracotta and orange planets.
+- **Super-Puff / Sub-Neptune / Gas Dwarf Realism**: Physical composition overrides orbital labels: gas-rich worlds (`gas_frac > 0.20`, density $< 0.5\text{ g/cm}^3$) correctly simulate with deep, opaque `GasGiantEnvelope` cloud decks and atmospheric hazes rather than bare rocky continental relief, even when gravitationally captured as satellite companions.
+
+### 9. Symplectic Physics & Memory Optimizations
 - Fully allocation-free hot path: Eliminates thousands of `Vec` allocations per frame during symplectic N-body timestepping.
 - High-warp multi-threading with Rayon `par_iter` and $O(N)$ index lookups for enormous performance gains during fast-forwarded cosmological timescales.
 
@@ -102,6 +119,36 @@ Protostellar features a multi-tiered symplectic time integrator allowing you to 
 - **`3`**: $10,000\times$ High-speed planetary accretion flow (~$10\text{ kyr/s}$).
 - **`4`**: $1,000,000\times$ Deep astronomical time warp (~$1\text{ Myr/s}$).
 - **`←` / `→`**: Incrementally step simulation speed down or up.
+
+---
+
+### Surface Horizon Mode & Procedural 3D Terrains
+Descend from orbital vantage points directly down to the surface of any terrestrial or rocky world to explore canyons, vegetation, and mountain peaks in real time:
+- **First-Person Horizon Skimming**: Select any planet or moon and press **`[Shift + V]`** (or click **`[Surface [Shift-v]]`** in the Target Inspector). The camera snaps tangent to the planetary surface, orienting to local gravity and horizon-level forward motion.
+- **Procedural Multi-Scale Geometry**: True 3D terrain meshes procedurally generated from continental FBM heightmaps, ridge noise, and erosion masks. Features deep canyons, impact crater basins, craggy mountain ridges, and smooth ocean floors.
+- **Instanced 3D Vegetation**: Depending on the world's biomass, moisture, surface temperature, and stellar spectral type, the terrain dynamically populates with thousands of instanced 3D trees and plants (conifers, broadleaf forests, alien NIR anthocyanin shrubs) that scale with local treeline elevation and gravity.
+- **Geodesic Rover Driving**: If a surface rover is deployed, take manual or autonomous control:
+  - **`W` / `S`**: Forward drive throttle / reverse braking.
+  - **`A` / `D`**: Steer left and right across the rotating planet crust.
+  - **`Shift`**: Turbo drive boost.
+  - **`Spacebar`**: Handbrake.
+- **Exit Horizon View**: Press **`[Escape]`** or **`[Shift + V]`** to return to orbital camera mode.
+
+---
+
+### Galilean Moon Volcanism, Cryotectonics & Multi-Moon Eclipses
+Experience the extreme geophysical diversity of the Jovian system:
+- **Io Sulfur Volcanism**: Viscoelastic tidal flexing produces dynamic volcanic calderas, incandescent basaltic lava fissures ($1,200\text{ K}$), and widespread sulfur dioxide fallout halos ($250\text{ km}$ wide) across Io's surface.
+- **Europa & Enceladus Cryotectonics**: Massive tidal heating fractures icy crusts into prominent double-ridge lineae, chaotic pack ice, and pressurized forward-scattering water-ice geysers.
+- **Cryovolcanic Ring Feeding**: Cryovolcanic plumes on Enceladus continuously vent volatile water ice into orbit, replenishing and expanding Saturn's diffuse outer E-ring in real time.
+- **Simultaneous 4-Moon Solar Eclipse Shadows**: Up to 4 transiting moons concurrently cast true geometrical umbras ($4\%$ sunlight) and penumbral falloffs across the host planet's atmosphere and cloud decks.
+
+---
+
+### Cosmic Hazards & Targeted Cometary Delivery
+Simulate catastrophic asteroid swarms, cometary water delivery, and rogue impactors:
+- **Guided Cometary Delivery**: Click **`[☄️ Launch Comet]`** in the Hazards panel (**`[Shift + H]`**) to dispatch high-velocity comets guided via proportional navigation. Swept closest-approach impact detection guarantees direct impacts on target worlds, outgassing dense steam atmospheres and condensing surface oceans.
+- **Late Heavy Bombardment (LHB)**: Press **`[G]`** (or click **`[LHB [G]]`**) to trigger a system-wide gravitational resonance event. Outer gas giants fling swarms of volatile-rich Kuiper belt planetesimals inward, creating giant melt basins on Earth, Mars, and the Moon.
 
 ---
 
@@ -471,6 +518,13 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | **`K`** | Toggle Interactive Orbital Slingshot Launcher |
 | **`C`** | Cycle slingshot projectile archetype (in Slingshot mode) |
 | **`N`** | Toggle Trajectory Predictor & Encounter Forecaster (or trigger core-collapse supernova when star is focused) |
+| **`Shift + V`** | Toggle 3D Surface Horizon & Rover exploration mode |
+| **`Shift + H`** | Toggle Cosmic Hazards Control Drawer |
+| **`Shift + M`** | Toggle Campaign Objectives Panel |
+| **`Shift + R`** | Toggle Hertzsprung-Russell (H-R) Stellar Diagram Panel |
+| **`Shift + T`** | Toggle Technology Tree Panel |
+| **`Shift + L`** | Toggle Lagrange Points Overlay |
+| **`Shift + O`** | Toggle Habitable Zone Overlay |
 | **`F1`** / **`Shift + F1`** | Load Solar MMSN / Load Disk Genesis (Organic Planet Formation) |
 | **`F2`** - **`F7`**, **`F9`**, **`F11`** | Load scenario presets (TRAPPIST, Kepler-16, Hot Jupiter, Rogue Planet, Little Red Dot, Pulsar, Magnetar, Kozai Triple) |
 | **`F10`** | Toggle Telemetry & Habitability Graph Drawer |
@@ -552,15 +606,19 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 38 specialized test suites covering 364 automated tests
+    └── simulation_tests/         # 52 specialized test suites covering 440 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (364 Tests)
+## 🧪 Automated Test Suite (440 Tests)
 
-Protostellar enforces rigorous physical validity through **364 comprehensive integration tests** across 38 specialized test suites:
+Protostellar enforces rigorous physical validity through **440 comprehensive integration tests** across 52 specialized test suites:
 
+- **Surface Horizon Navigation, 3D Terrains & Rover Drive Mechanics**: Tangent horizon camera pose stabilization, surface altitude limits, collision avoidance, and terrain-skimming driving controls.
+- **Galilean Moons, Volcanism & Cryotectonics**: Io sulfur volcanism, Europa/Enceladus cryotectonic lineae, cryovolcanic planetary ring replenishment, and multi-moon non-overlapping orbital initialization.
+- **Cosmic Hazards & Targeted Cometary Delivery**: Swept-closest-approach collision detection, proportional navigation intercept, guaranteed LHB ocean condensation, and water delivery budgets.
+- **Physical Composition & Super-Puff Planetary Realism**: Composition-driven gas giant / sub-Neptune envelope classification, neutral Blinn-Phong dielectric specular optics, and eclipse multi-shadow projection.
 - **Exoplanet Biospheres, Spectral Flora & Rover Surface Exploration**: Host-star spectral flora pigment adaptation (`SolarChlorophyll`, `RedDwarfCrimson`, `OrangeDwarfCarotenoid`, `HighUvIndigo`), bioluminescent twilight/nightside canopies, autonomous rover geodesic surface traversal, breadcrumb trail recording, and Raman core-drilling sample collection.
 - **GPU Far-Field GMC Gravity & N-Body Galaxies**: Tile-shared GPU far-field gravitational softening, CPU/GPU parity within $10^{-4}$, NFW dark matter halo rotation curves, and Jeans collapse star formation.
 - **Supernova Core-Collapse & Persistent Remnant Nebulae**: Mass-differentiated explosion regimes (Hypernova, Type II, Type Ia, Planetary Nebula), prompt breakout fireball decay, high-velocity ejecta kinematics, SPH disk blast clearing, handoff to persistent Sedov-Taylor nebulae ($R(t) \propto t^{0.38}$), multi-element filamentary cooling, and Pulsar Wind Nebula (PWN) synchrotron cores.
@@ -573,7 +631,7 @@ Protostellar enforces rigorous physical validity through **364 comprehensive int
 - **Relativity & High-Energy**: 1PN perihelion advance, Peters GW inspiral, relativistic velocity bounds ($\beta < 1.0$), Doppler boosting factors, synchrotron emissivity.
 - **Tides & Rheology**: Viscoelastic dissipation scaling, 1:1 spin synchronization, tidal heating flux.
 - **Atmospheric Physics**: Multi-layer Rayleigh/Mie scattering, photoevaporative mass loss, cometary ion tail aberration.
-- **Shadows & Eclipses**: Umbral/penumbral eclipse ratios, planetary ring day/night hemisphere shadowing.
+- **Shadows & Eclipses**: Concurrent 4-moon umbral/penumbral eclipse ratios, planetary ring day/night hemisphere shadowing.
 - **Space Weather & Auroral Ovals**: Stellar flares, CME shockwave propagation, planetary magnetosphere stand-off, auroral oval geometry.
 - **Trajectory Forecasts**: Bound elliptical vs hyperbolic conics, Hill sphere entries, Roche disruption predictions.
 - **UI & System Serialization**: JSON round-trip save/load, quick bar zoning, inspector formatting, HUD minimization, and scenario contextual filtering.
