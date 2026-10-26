@@ -117,19 +117,18 @@ fn determine_climate_coverage(
     current_ice: f32,
     comp_gas_frac: f32,
 ) -> (ClimateRegime, f32, f32, f32) {
-    let climate_regime = if comp_gas_frac > 0.20
-        || matches!(body_type, BodyType::GasGiant | BodyType::IceGiant)
-    {
-        ClimateRegime::GasGiantEnvelope
-    } else if atm_pressure < 0.02 {
-        ClimateRegime::AirlessVacuum
-    } else if surface_temp < 250.0 {
-        ClimateRegime::SnowballIceAge
-    } else if surface_temp > 360.0 {
-        ClimateRegime::RunawayVenusian
-    } else {
-        ClimateRegime::TemperateHabitable
-    };
+    let climate_regime =
+        if comp_gas_frac > 0.20 || matches!(body_type, BodyType::GasGiant | BodyType::IceGiant) {
+            ClimateRegime::GasGiantEnvelope
+        } else if atm_pressure < 0.02 {
+            ClimateRegime::AirlessVacuum
+        } else if surface_temp < 250.0 {
+            ClimateRegime::SnowballIceAge
+        } else if surface_temp > 360.0 {
+            ClimateRegime::RunawayVenusian
+        } else {
+            ClimateRegime::TemperateHabitable
+        };
 
     let has_water = has_water_volatiles && (ocean_frac > 0.01 || current_ice > 0.005);
     let ice_coverage = if has_water {

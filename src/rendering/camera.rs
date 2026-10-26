@@ -42,6 +42,11 @@ pub struct PanOrbitCamera {
     pub surface_altitude_scale: f32,
 }
 
+/// Marker component for UI elements (such as floating holographic hover cards) that should not
+/// block 3D raycasting, camera drag controls, or entity hover targeting.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct IgnoreUiPicking;
+
 impl Default for PanOrbitCamera {
     fn default() -> Self {
         Self {
@@ -222,15 +227,21 @@ fn handle_camera_target_picking(
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
     ui_interaction_query: &Query<&Interaction>,
-    ui_nodes_query: &Query<(&ComputedNode, &GlobalTransform), With<Node>>,
+    ui_nodes_query: &Query<(&ComputedNode, &GlobalTransform), (With<Node>, Without<IgnoreUiPicking>)>,
     mouse_buttons: &ButtonInput<MouseButton>,
 ) {
     if player_state.just_selected_via_ui {
         player_state.just_selected_via_ui = false;
+        player_state.hovered_entity = None;
         return;
     }
 
+    if mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Middle) {
+        player_state.hovered_entity = None;
+    }
+
     let Some(cursor_pos) = window.cursor_position() else {
+        player_state.hovered_entity = None;
         return;
     };
 
@@ -256,10 +267,8 @@ fn handle_camera_target_picking(
                 && cursor_pos.y <= max.y
         });
 
-    if cursor_over_ui
-        || !mouse_buttons.just_pressed(MouseButton::Left)
-        || player_state.active_tool != PlayerTool::Inspect
-    {
+    if cursor_over_ui {
+        player_state.hovered_entity = None;
         return;
     }
 
@@ -301,7 +310,15 @@ fn handle_camera_target_picking(
         }
     }
 
-    if let Some(hit_entity) = best_target {
+    player_state.hovered_entity = best_target;
+
+    if !mouse_buttons.just_pressed(MouseButton::Left)
+        || player_state.active_tool != PlayerTool::Inspect
+    {
+        return;
+    }
+
+    if let Some(hit_entity) = best_target.or(player_state.hovered_entity) {
         player_state.selected_entity = Some(hit_entity);
         camera.target_entity = Some(hit_entity);
         if let Ok((_, _, radius, body, _, opt_t)) = targets_query.get(hit_entity) {
@@ -548,7 +565,7 @@ pub fn update_pan_orbit_camera(
         With<PanOrbitCamera>,
     >,
     ui_interaction_query: Query<&Interaction>,
-    ui_nodes_query: Query<(&ComputedNode, &GlobalTransform), With<Node>>,
+    ui_nodes_query: Query<(&ComputedNode, &GlobalTransform), (With<Node>, Without<IgnoreUiPicking>)>,
 ) {
     let Ok((camera_comp, mut camera, mut transform, global_transform, opt_bloom)) =
         camera_query.single_mut()

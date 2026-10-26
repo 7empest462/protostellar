@@ -287,6 +287,75 @@ pub fn draw_body_selection_and_beacons(
     );
 }
 
+/// Draws a high-tech sci-fi holographic targeting reticle around a hovered celestial body,
+/// complete with 4 billboarded corner brackets facing the camera and a pulsing inner lock ring.
+pub fn draw_hover_targeting_reticle(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    body: &CelestialBody,
+    opt_rad: Option<&Radius>,
+    config: &SimulationConfig,
+    cam_tf: Option<&Transform>,
+    elapsed: f32,
+) {
+    let is_star = body.body_type.is_star_or_remnant();
+    let visual_r = opt_rad.map_or(0.005, |r| {
+        config.calc_visual_radius_for_type(r.0, body.body_type)
+    });
+
+    let cam_pos = cam_tf.map(|t| t.translation);
+    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec));
+
+    let box_half = (visual_r * 1.55).max(cam_dist * 0.042);
+    let corner_len = box_half * 0.35;
+    let pulse = (elapsed * 6.0).sin().mul_add(0.15, 0.85);
+
+    let reticle_color = if is_star {
+        Color::srgba(1.0, 0.88, 0.25, 0.90 * pulse)
+    } else {
+        Color::srgba(0.20, 0.95, 1.0, 0.85 * pulse)
+    };
+
+    let ring_color = Color::srgba(
+        reticle_color.to_srgba().red,
+        reticle_color.to_srgba().green,
+        reticle_color.to_srgba().blue,
+        0.35 * pulse,
+    );
+
+    let cam_rot = cam_tf.map_or(Quat::IDENTITY, |t| t.rotation);
+    let right = cam_rot * Vec3::X;
+    let up = cam_rot * Vec3::Y;
+
+    // Inner pulsing circular reticle
+    gizmos.circle(
+        Isometry3d::new(body_vec, cam_rot),
+        box_half * 0.88,
+        ring_color,
+    );
+
+    // Four corner brackets pointing inward toward the body
+    // Top-Right: (+box_half, +box_half)
+    let tr = body_vec + right * box_half + up * box_half;
+    gizmos.line(tr, tr - right * corner_len, reticle_color);
+    gizmos.line(tr, tr - up * corner_len, reticle_color);
+
+    // Top-Left: (-box_half, +box_half)
+    let tl = body_vec - right * box_half + up * box_half;
+    gizmos.line(tl, tl + right * corner_len, reticle_color);
+    gizmos.line(tl, tl - up * corner_len, reticle_color);
+
+    // Bottom-Right: (+box_half, -box_half)
+    let br = body_vec + right * box_half - up * box_half;
+    gizmos.line(br, br - right * corner_len, reticle_color);
+    gizmos.line(br, br + up * corner_len, reticle_color);
+
+    // Bottom-Left: (-box_half, -box_half)
+    let bl = body_vec - right * box_half - up * box_half;
+    gizmos.line(bl, bl + right * corner_len, reticle_color);
+    gizmos.line(bl, bl + up * corner_len, reticle_color);
+}
+
 /// Renders a SpaceEngine / Universe Sandbox style optical starlight glint (Airy disk)
 /// when a planet or star is viewed from far away, allowing 3D planet meshes to stay
 /// realistically small without disappearing against the background skybox.
