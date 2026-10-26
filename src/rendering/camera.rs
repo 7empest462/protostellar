@@ -227,7 +227,10 @@ fn handle_camera_target_picking(
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
     ui_interaction_query: &Query<&Interaction>,
-    ui_nodes_query: &Query<(&ComputedNode, &GlobalTransform), (With<Node>, Without<IgnoreUiPicking>)>,
+    ui_nodes_query: &Query<
+        (&ComputedNode, &GlobalTransform),
+        (With<Node>, Without<IgnoreUiPicking>),
+    >,
     mouse_buttons: &ButtonInput<MouseButton>,
 ) {
     if player_state.just_selected_via_ui {
@@ -565,7 +568,10 @@ pub fn update_pan_orbit_camera(
         With<PanOrbitCamera>,
     >,
     ui_interaction_query: Query<&Interaction>,
-    ui_nodes_query: Query<(&ComputedNode, &GlobalTransform), (With<Node>, Without<IgnoreUiPicking>)>,
+    ui_nodes_query: Query<
+        (&ComputedNode, &GlobalTransform),
+        (With<Node>, Without<IgnoreUiPicking>),
+    >,
 ) {
     let Ok((camera_comp, mut camera, mut transform, global_transform, opt_bloom)) =
         camera_query.single_mut()

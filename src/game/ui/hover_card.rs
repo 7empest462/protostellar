@@ -178,13 +178,7 @@ pub fn resolve_body_type_label(body_type: BodyType) -> &'static str {
 }
 
 /// Formats core metric lines for the hover card (Distance, Speed, Mass, Radius, Temperature).
-pub fn format_hover_metrics(
-    pos: DVec3,
-    vel: DVec3,
-    mass: f64,
-    rad: f64,
-    temp: f64,
-) -> String {
+pub fn format_hover_metrics(pos: DVec3, vel: DVec3, mass: f64, rad: f64, temp: f64) -> String {
     let dist_au = if pos.is_finite() { pos.length() } else { 0.0 };
     let speed_km_s = if vel.is_finite() {
         vel.length() * AU_PER_YR_TO_KM_PER_S
@@ -287,11 +281,7 @@ pub fn collect_hover_badges(
 
 /// Calculates clamped viewport coordinates for the floating hover card
 /// ensuring it never clips outside the window or overlaps critical toolbars.
-pub fn compute_clamped_card_position(
-    screen_pos: Vec2,
-    card_size: Vec2,
-    window_size: Vec2,
-) -> Vec2 {
+pub fn compute_clamped_card_position(screen_pos: Vec2, card_size: Vec2, window_size: Vec2) -> Vec2 {
     let mut target_x = screen_pos.x + 24.0;
     let mut target_y = screen_pos.y - 30.0;
 
@@ -396,7 +386,8 @@ pub fn update_hover_card_ui(
     let card_w = opt_computed.map_or(260.0, |c| c.size().x).max(220.0);
     let card_h = opt_computed.map_or(130.0, |c| c.size().y).max(100.0);
     let window_size = Vec2::new(window.width(), window.height());
-    let clamped_pos = compute_clamped_card_position(screen_pos, Vec2::new(card_w, card_h), window_size);
+    let clamped_pos =
+        compute_clamped_card_position(screen_pos, Vec2::new(card_w, card_h), window_size);
 
     card_node.display = Display::Flex;
     card_node.left = Val::Px(clamped_pos.x);
