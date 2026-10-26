@@ -501,3 +501,325 @@ fn test_circumstellar_environments_and_shader_validity() {
         );
     }
 }
+
+#[test]
+#[allow(clippy::type_complexity)]
+fn test_massive_hypergiant_direct_collapse_imbh_seed_and_no_reignition() {
+    let mut app = App::new();
+    app.add_message::<SupernovaEvent>();
+    app.add_message::<protostellar::simulation::thermodynamics::StarIgnitionEvent>();
+
+    let star_entity = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Protostar Gen-I Pop-III Hypergiant-1 (Red Supergiant)".to_string(),
+                body_type: BodyType::RedSupergiant,
+            },
+            Mass(350.0),
+            Radius(0.12),
+            Temperature(3300.0),
+            Luminosity(5_000_000.0),
+            IgnitionState {
+                is_ignited: true,
+                core_temperature: 8.5e7,
+                fusion_fraction: 1.0,
+                shockwave_radius: 10.0,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::RedSupergiantBranch,
+                phase_timer_years: 700.0,
+                ..default()
+            },
+        ))
+        .id();
+
+    let mut state: bevy::ecs::system::SystemState<(
+        Commands,
+        MessageWriter<SupernovaEvent>,
+        MessageWriter<protostellar::simulation::thermodynamics::StarIgnitionEvent>,
+        Query<(
+            Entity,
+            &mut Mass,
+            &mut Radius,
+            &mut Temperature,
+            &mut Luminosity,
+            &mut IgnitionState,
+            &mut CelestialBody,
+            Option<&mut StellarEvolutionState>,
+        )>,
+    )> = bevy::ecs::system::SystemState::new(app.world_mut());
+
+    let (mut commands, mut supernova_events, mut ignition_events, mut query) =
+        state.get_mut(app.world_mut()).expect("SystemState valid");
+
+    let (
+        entity,
+        mut mass,
+        mut radius,
+        mut temp,
+        mut lum,
+        mut ignition,
+        mut body,
+        mut opt_evo,
+    ) = query.get_mut(star_entity).expect("Star exists");
+
+    // 1. Step evolution to trigger supernova / direct collapse
+    let evo = opt_evo.as_deref_mut().expect("Evo exists");
+    step_stellar_evolution_cycle(
+        entity,
+        &mut mass,
+        &mut radius,
+        &mut temp,
+        &mut lum,
+        &mut body,
+        &mut ignition,
+        evo,
+        50.0,
+        &mut supernova_events,
+        true, // is_gmc
+    );
+
+    // Verify it collapsed into an Intermediate-Mass Black Hole retaining >= 90% of its mass
+    assert_eq!(body.body_type, BodyType::BlackHole);
+    assert_eq!(evo.phase, StellarEvolutionPhase::SupernovaExplosion);
+    assert!(
+        mass.0 >= 300.0,
+        "Direct collapse hypergiant must retain massive core (>300 M_sun), got {:.1}",
+        mass.0
+    );
+    assert!(
+        body.name.starts_with("Intermediate-Mass Black Hole"),
+        "Name must be clean IMBH descriptor, got: {}",
+        body.name
+    );
+    assert!(
+        !body.name.contains("(Red Supergiant) (BlackHole Remnant)"),
+        "Name must not stack historical phase strings, got: {}",
+        body.name
+    );
+
+    // 2. CRITICAL INVARIANT: Step protostar ignition system on the black hole
+    let mut config = protostellar::simulation::resources::SimulationConfig::default();
+    step_protostar_ignition_and_limits(
+        entity,
+        &mut mass,
+        &mut radius,
+        &mut temp,
+        &mut lum,
+        &mut ignition,
+        &mut body,
+        &mut opt_evo,
+        None,
+        &mut config,
+        100.0,
+        1500.0,
+        &mut commands,
+        &mut ignition_events,
+        &mut supernova_events,
+        true,
+    );
+
+    // Verify it is STILL a Black Hole and has not been re-ignited!
+    assert_eq!(
+        body.body_type,
+        BodyType::BlackHole,
+        "Black hole must never re-ignite into a main sequence star"
+    );
+    assert_eq!(temp.0, 10.0, "Black hole surface temp must remain cold (10 K)");
+    assert_eq!(lum.0, 0.0, "Black hole luminosity must remain 0");
+
+    // 3. Step remnant evolution past 1500 years to reach BlackHoleRemnant phase
+    let evo2 = opt_evo.as_deref_mut().expect("Evo exists");
+    step_stellar_evolution_cycle(
+        entity,
+        &mut mass,
+        &mut radius,
+        &mut temp,
+        &mut lum,
+        &mut body,
+        &mut ignition,
+        evo2,
+        2000.0,
+        &mut supernova_events,
+        true,
+    );
+
+    assert_eq!(evo2.phase, StellarEvolutionPhase::BlackHoleRemnant);
+    assert_eq!(body.body_type, BodyType::BlackHole);
+}
+
+#[test]
+fn test_dynamic_galactic_nucleus_handoff_to_growing_black_hole() {
+    use protostellar::simulation::physics::enforce_dynamic_galactic_nucleus;
+    use protostellar::simulation::physics::PhysicsBodyEntry;
+
+    let mut app = App::new();
+    let initial_central_ent = app.world_mut().spawn_empty().id();
+    let growing_bh_ent = app.world_mut().spawn_empty().id();
+    let companion_ent = app.world_mut().spawn_empty().id();
+
+    // Initial GMC cluster state:
+    // Body 0: Initial central protostar (3.5 M_sun) at DVec3::ZERO
+    // Body 1: Pop-III star / Black Hole that accreted to 180 M_sun at offset (12.0, 0.0, 5.0)
+    // Body 2: Companion star (1.5 M_sun) at offset (25.0, 0.0, 0.0)
+    let bh_offset = bevy::math::DVec3::new(12.0, 0.0, 5.0);
+    let bh_vel = bevy::math::DVec3::new(0.5, 0.0, -0.2);
+
+    let mut body_data = vec![
+        PhysicsBodyEntry {
+            entity: initial_central_ent,
+            mass: 3.5,
+            pos: bevy::math::DVec3::ZERO,
+            vel: bevy::math::DVec3::ZERO,
+            acc: bevy::math::DVec3::ZERO,
+            radius: 0.05,
+            body_type: BodyType::Protostar,
+            satellite: None,
+            is_central_star: true,
+            name: "Protostar Alpha".to_string(),
+        },
+        PhysicsBodyEntry {
+            entity: growing_bh_ent,
+            mass: 180.0,
+            pos: bh_offset,
+            vel: bh_vel,
+            acc: bevy::math::DVec3::ZERO,
+            radius: 0.001,
+            body_type: BodyType::BlackHole,
+            satellite: None,
+            is_central_star: false,
+            name: "Intermediate-Mass Black Hole (180.0 M☉)".to_string(),
+        },
+        PhysicsBodyEntry {
+            entity: companion_ent,
+            mass: 1.5,
+            pos: bevy::math::DVec3::new(25.0, 0.0, 0.0),
+            vel: bevy::math::DVec3::new(0.0, 0.0, 1.2),
+            acc: bevy::math::DVec3::ZERO,
+            radius: 0.02,
+            body_type: BodyType::MainSequenceStar,
+            satellite: None,
+            is_central_star: false,
+            name: "Companion Star Beta".to_string(),
+        },
+    ];
+
+    let mut state: bevy::ecs::system::SystemState<Commands> =
+        bevy::ecs::system::SystemState::new(app.world_mut());
+    let mut commands = state.get_mut(app.world_mut()).expect("Commands valid");
+
+    // Execute galactic nucleus dynamic enforcement for GMC cluster
+    enforce_dynamic_galactic_nucleus(&mut body_data, true, &mut commands);
+
+    // Verify handoff:
+    // 1. Initial 3.5 M_sun star lost is_central_star
+    assert!(
+        !body_data[0].is_central_star,
+        "Initial 3.5 M_sun star must relinquish central star role"
+    );
+
+    // 2. 180 M_sun Black Hole gained is_central_star
+    assert!(
+        body_data[1].is_central_star,
+        "180 M_sun Black Hole must become the new Central Star"
+    );
+
+    // 3. Cluster coordinate origin smoothly translated so the Black Hole is at DVec3::ZERO
+    assert!(
+        body_data[1].pos.length() < 1e-10,
+        "New central black hole position must be centered at (0, 0, 0)"
+    );
+    assert!(
+        body_data[1].vel.length() < 1e-10,
+        "New central black hole velocity must be centered at (0, 0, 0)"
+    );
+
+    // 4. Other bodies were shifted relative to the new anchor
+    let expected_old_star_pos = -bh_offset;
+    assert!(
+        (body_data[0].pos - expected_old_star_pos).length() < 1e-10,
+        "Old central star position must be shifted by -bh_offset"
+    );
+}
+
+#[test]
+#[allow(clippy::type_complexity)]
+fn test_gen1_primordial_pop_iii_hypergiant_spawning_masses() {
+    use protostellar::gpu::gmc_collapse::receive_gmc_collapse_events;
+    use protostellar::gpu::gmc_fluid::{GmcCollapseEventReceiver, GpuJeansCollapseEvent};
+    use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
+
+    let mut app = App::new();
+    let (tx, rx) = flume::unbounded();
+    app.insert_resource(GmcCollapseEventReceiver { rx });
+    app.insert_resource(ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        scenario_time_years: 1.0, // Past initial relaxation threshold
+        ..default()
+    });
+
+    // Spawn 18 dummy stars far away so star_count becomes 19 upon collapse (Pop-III hypergiant slot 19)
+    for i in 0..18 {
+        app.world_mut().spawn((
+            SimPosition(bevy::math::DVec3::new(0.0, f64::from(i) * 10.0 + 200.0, 0.0)),
+            CelestialBody {
+                name: format!("Cluster Star {i}"),
+                body_type: BodyType::Protostar,
+            },
+        ));
+    }
+
+    // Send a Gen-1 zero-metallicity collapse event in slot 19 (at r = 100 AU, avoiding the r < 45 Dark Star zone)
+    let ev = GpuJeansCollapseEvent {
+        grid_coords: [48, 48, 48],
+        metallicity: 0.0001, // Gen-1 pristine zero-metallicity
+        world_pos: [60.0, 0.0, 80.0],
+        local_mass_solar: 3.5,
+        com_velocity: [0.1, 0.0, 0.1],
+        temperature_k: 15.0,
+    };
+    tx.send(vec![ev]).unwrap();
+
+    let mut state: bevy::ecs::system::SystemState<(
+        Commands,
+        Res<GmcCollapseEventReceiver>,
+        Option<Res<ActiveScenarioState>>,
+        Query<(&SimPosition, &CelestialBody)>,
+        Option<ResMut<protostellar::game::ui::NotificationToast>>,
+    )> = bevy::ecs::system::SystemState::new(app.world_mut());
+
+    let (commands, receiver, scenario_state, existing_bodies, toast) =
+        state.get_mut(app.world_mut()).expect("State valid");
+
+    receive_gmc_collapse_events(commands, receiver, scenario_state, existing_bodies, toast);
+    state.apply(app.world_mut());
+
+    // Query spawned celestial bodies to find the Pop-III hypergiant
+    let mut star_query = app
+        .world_mut()
+        .query::<(&CelestialBody, &Mass, &Composition)>();
+    let hypergiant = star_query
+        .iter(app.world())
+        .find(|(b, _, _)| b.name.contains("Pop-III"));
+
+    assert!(
+        hypergiant.is_some(),
+        "Gen-1 collapse slot 19 must spawn a Gen-I Pop-III hypergiant"
+    );
+    let (body, mass, comp) = hypergiant.unwrap();
+    assert!(
+        mass.0 >= 75.0,
+        "Pop-III hypergiant mass must spawn with large primordial mass (>= 75 M_sun), got: {:.1}",
+        mass.0
+    );
+    assert_eq!(
+        comp.metal_frac, 0.0,
+        "Pop-III star must have 0% metal fraction"
+    );
+    assert!(
+        body.name.contains("Pop-III Hypergiant"),
+        "Body name must indicate Pop-III Hypergiant, got: {}",
+        body.name
+    );
+}

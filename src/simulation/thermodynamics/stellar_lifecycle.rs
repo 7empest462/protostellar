@@ -36,6 +36,12 @@ pub fn step_protostar_ignition_and_limits(
     supernova_events: &mut MessageWriter<SupernovaEvent>,
     is_gmc: bool,
 ) {
+    // Degenerate stellar remnants (Black Holes, Neutron Stars, Pulsars, Magnetars, White Dwarfs)
+    // have completed stellar fusion and must never undergo pre-main-sequence contraction or re-ignition!
+    if body.body_type.is_remnant() {
+        return;
+    }
+
     let is_genesis = body.name.contains("Genesis") || body.name.contains("T-Tauri");
     if ignition.is_ignited {
         let blast_speed = 0.65;
@@ -158,7 +164,7 @@ fn ignite_protostar_to_zams(
     // Full Morgan-Keenan spectral classification assignment on Zero-Age Main Sequence (ZAMS)
     let (assigned_type, name_str) = if is_genesis {
         (BodyType::YellowDwarf, "The Sun (Yellow Dwarf - G2V)")
-    } else if body.name.contains("Gen-I") || body.name.contains("Pop-III") {
+    } else if (body.name.contains("Gen-I") || body.name.contains("Pop-III")) && mass.0 >= 30.0 {
         (
             BodyType::PopulationIIIStar,
             "Population III Hypergiant (Pop-III)",
@@ -300,7 +306,12 @@ fn apply_stellar_collapse_limits(
     {
         // Tolman-Oppenheimer-Volkoff (TOV) limit exceeded -> Direct collapse into Black Hole
         body.body_type = BodyType::BlackHole;
-        body.name = "The Star (Stellar-Mass Black Hole)".to_string();
+        let bh_class = if mass.0 >= 100.0 {
+            "Intermediate-Mass Black Hole"
+        } else {
+            "Stellar-Mass Black Hole"
+        };
+        body.name = format!("{bh_class} ({:.1} M☉)", mass.0);
         radius.0 = (1.974e-8 * mass.0).max(1e-7);
         temp.0 = 10.0;
         lum.0 = 0.0;
@@ -368,6 +379,14 @@ fn classify_ignited_protostar_to_zams(
     radius.0 = (SOLAR_RADIUS_AU * mass_solar.powf(0.8)).clamp(0.001, 0.12);
 }
 
+fn clean_star_base_name(name: &str) -> &str {
+    if let Some(idx) = name.find('(') {
+        name.get(..idx).unwrap_or(name).trim()
+    } else {
+        name.trim()
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Stellar evolution phases require coordinating mass, radius, luminosity, ignition, and evolution states"
@@ -387,9 +406,17 @@ pub fn step_stellar_evolution_cycle(
 ) {
     evo.phase_timer_years += dt_yr;
 
+    // Degenerate black holes never re-enter stellar nucleosynthesis branches
+    if body.body_type == BodyType::BlackHole
+        || evo.phase == StellarEvolutionPhase::BlackHoleRemnant
+    {
+        step_stellar_remnant_evolution(mass, radius, temp, lum, body, evo, dt_yr);
+        return;
+    }
+
     match evo.phase {
         StellarEvolutionPhase::ProtostarContraction => {
-            if ignition.is_ignited {
+            if ignition.is_ignited && !body.body_type.is_remnant() {
                 if body.body_type == BodyType::Protostar {
                     classify_ignited_protostar_to_zams(mass.0, radius, temp, lum, body);
                 }
@@ -460,18 +487,16 @@ fn step_main_sequence_evolution(
         )
     {
         body.body_type = BodyType::LuminousBlueVariable;
-        if !body.name.contains("LBV") {
-            body.name = format!("{} (LBV)", body.name);
-        }
+        let base = clean_star_base_name(&body.name);
+        body.name = format!("{base} (LBV)");
     } else if mass.0 >= 25.0
         && mass.0 < 60.0
         && evo.hydrogen_core_fraction < 0.25
         && body.body_type != BodyType::WolfRayet
     {
         body.body_type = BodyType::WolfRayet;
-        if !body.name.contains("Wolf-Rayet") {
-            body.name = format!("{} (Wolf-Rayet)", body.name);
-        }
+        let base = clean_star_base_name(&body.name);
+        body.name = format!("{base} (Wolf-Rayet)");
         temp.0 = 85_000.0;
         lum.0 = 250_000.0;
     }
@@ -488,11 +513,12 @@ fn step_main_sequence_evolution(
 
     if evo.hydrogen_core_fraction <= 0.0 {
         evo.phase_timer_years = 0.0;
+        let base = clean_star_base_name(&body.name);
         if mass.0 < 0.45 {
             evo.phase = StellarEvolutionPhase::WhiteDwarf;
             body.body_type = BodyType::WhiteDwarf;
             body.name = if is_gmc {
-                format!("{} (White Dwarf)", body.name)
+                format!("{base} (White Dwarf)")
             } else {
                 "The Star (Helium White Dwarf)".to_string()
             };
@@ -502,7 +528,7 @@ fn step_main_sequence_evolution(
             evo.phase = StellarEvolutionPhase::RedGiantBranch;
             body.body_type = BodyType::RedGiant;
             body.name = if is_gmc {
-                format!("{} (Red Giant)", body.name)
+                format!("{base} (Red Giant)")
             } else {
                 "The Star (Red Giant Branch)".to_string()
             };
@@ -510,7 +536,7 @@ fn step_main_sequence_evolution(
             evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
             body.body_type = BodyType::RedSupergiant;
             body.name = if is_gmc {
-                format!("{} (Red Supergiant)", body.name)
+                format!("{base} (Red Supergiant)")
             } else {
                 "The Star (Red Supergiant)".to_string()
             };
@@ -635,7 +661,19 @@ fn step_red_supergiant_evolution(
         };
 
         let remnant_mass = if is_black_hole {
-            (mass.0 * 0.25).clamp(3.0, 15.0)
+            if mass.0 >= 250.0 {
+                // Direct collapse IMBH seed without explosive envelope ejection
+                mass.0 * 0.92
+            } else if mass.0 >= 100.0 {
+                // Massive fallback IMBH seed
+                mass.0 * 0.75
+            } else if mass.0 >= 40.0 {
+                // Heavy fallback black hole
+                mass.0 * 0.55
+            } else {
+                // Standard core-collapse black hole
+                (mass.0 * 0.35).clamp(3.5, 25.0)
+            }
         } else {
             1.44
         };
@@ -659,6 +697,12 @@ fn step_red_supergiant_evolution(
             radius.0 = (1.974e-8 * remnant_mass).max(1e-7);
             temp.0 = 10.0;
             lum.0 = 0.0;
+            let bh_class = if remnant_mass >= 100.0 {
+                "Intermediate-Mass Black Hole"
+            } else {
+                "Stellar-Mass Black Hole"
+            };
+            body.name = format!("{bh_class} ({remnant_mass:.1} M☉)");
         } else {
             radius.0 = 0.0001;
             temp.0 = if remnant_type == BodyType::Magnetar {
@@ -667,12 +711,12 @@ fn step_red_supergiant_evolution(
                 1_000_000.0
             };
             lum.0 = 120.0;
+            body.name = if remnant_type == BodyType::Magnetar {
+                format!("Magnetar Remnant ({remnant_mass:.2} M☉)")
+            } else {
+                format!("Pulsar Remnant ({remnant_mass:.2} M☉)")
+            };
         }
-        body.name = if is_gmc {
-            format!("{} ({remnant_type:?} Remnant)", body.name)
-        } else {
-            format!("The Star ({remnant_type:?} Remnant)")
-        };
     }
 }
 
@@ -704,17 +748,18 @@ fn step_stellar_remnant_evolution(
                 if is_bh {
                     evo.phase = StellarEvolutionPhase::BlackHoleRemnant;
                     body.body_type = BodyType::BlackHole;
-                    if !body.name.contains("Black Hole") {
-                        body.name = "The Star (Stellar-Mass Black Hole)".to_string();
-                    }
+                    let bh_class = if mass.0 >= 100.0 {
+                        "Intermediate-Mass Black Hole"
+                    } else {
+                        "Stellar-Mass Black Hole"
+                    };
+                    body.name = format!("{bh_class} ({:.1} M☉)", mass.0);
                     radius.0 = (1.974e-8 * mass.0).max(1e-7);
                     temp.0 = 10.0;
                     lum.0 = 0.0;
                 } else if body.body_type == BodyType::Magnetar {
                     evo.phase = StellarEvolutionPhase::MagnetarRemnant;
-                    if !body.name.contains("Magnetar") {
-                        body.name = "The Star (Magnetar Remnant)".to_string();
-                    }
+                    body.name = format!("Magnetar Remnant ({:.2} M☉)", mass.0);
                     mass.0 = 1.65;
                     radius.0 = 0.0001;
                     temp.0 = 2_000_000.0;
@@ -722,9 +767,7 @@ fn step_stellar_remnant_evolution(
                 } else {
                     evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
                     body.body_type = BodyType::Pulsar;
-                    if !body.name.contains("Pulsar") {
-                        body.name = "The Star (Pulsar Remnant)".to_string();
-                    }
+                    body.name = format!("Pulsar Remnant ({:.2} M☉)", mass.0);
                     mass.0 = 1.44;
                     radius.0 = 0.0001;
                     temp.0 = 1_000_000.0;

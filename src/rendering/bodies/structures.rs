@@ -672,6 +672,15 @@ pub fn sync_black_hole_accretion_disks(
         let is_black_hole = body.body_type == BodyType::BlackHole
             || (body.body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out));
         if !is_black_hole {
+            if let Some(children) = opt_children {
+                for child in children.iter() {
+                    if disk_children_query.get(child).is_ok() {
+                        if let Ok(mut c_cmd) = commands.get_entity(child) {
+                            c_cmd.try_despawn();
+                        }
+                    }
+                }
+            }
             continue;
         }
 
