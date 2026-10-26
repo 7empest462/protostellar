@@ -71,6 +71,7 @@ impl Plugin for GamePlugin {
                     update_scenario_contextual_ui,
                     update_hud,
                     ui::hover_card::update_hover_card_ui,
+                    ui::cutaway_hud::update_cutaway_hud_ui,
                 ),
             );
     }

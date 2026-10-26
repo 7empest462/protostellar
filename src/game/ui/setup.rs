@@ -948,5 +948,6 @@ pub fn setup_hud(mut commands: Commands) {
             super::epoch_scrubber::spawn_epoch_scrubber_panel(root);
             super::hr_diagram_panel::spawn_hr_diagram_panel(root);
             super::hover_card::spawn_hover_card(root);
+            super::cutaway_hud::spawn_cutaway_hud(root);
         });
 }

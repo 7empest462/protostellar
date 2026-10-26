@@ -720,3 +720,27 @@ fn test_cutaway_ui_button_universal_visibility() {
         Display::Flex
     );
 }
+
+#[test]
+fn test_cutaway_hud_pill_spawning_and_strata_labels() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<protostellar::simulation::resources::SimulationConfig>();
+
+    app.add_systems(Startup, |mut commands: Commands| {
+        commands.spawn(Node::default()).with_children(|root| {
+            protostellar::game::ui::cutaway_hud::spawn_cutaway_hud(root);
+        });
+    });
+
+    app.update();
+
+    // Verify 4 pills were spawned
+    let mut pill_count = 0;
+    let mut query = app.world_mut().query::<&protostellar::game::ui::cutaway_hud::CutawayCalloutPill>();
+    for _ in query.iter(app.world()) {
+        pill_count += 1;
+    }
+    assert_eq!(pill_count, 4, "Must spawn exactly 4 strata callout pills (Crust, Mantle, Outer Core, Inner Core)");
+}

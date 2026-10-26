@@ -467,7 +467,12 @@ pub fn sync_celestial_transforms(
                 } else {
                     0.95
                 };
-                Vec4::new(1.0, 0.0, core_ratio, mantle_ratio)
+                let inner_core_ratio = if visual_radius > 1e-6 {
+                    (strata.inner_core_r / visual_radius).clamp(0.02, (core_ratio - 0.02).max(0.03))
+                } else {
+                    core_ratio * 0.38
+                };
+                Vec4::new(1.0, inner_core_ratio, core_ratio, mantle_ratio)
             } else {
                 Vec4::ZERO
             };

@@ -5,6 +5,7 @@ pub mod builder_spawner;
 pub mod builder_state;
 pub mod buttons;
 pub mod campaign_panel;
+pub mod cutaway_hud;
 pub mod epoch_scrubber;
 pub mod hazards_panel;
 pub mod hover_card;
@@ -28,6 +29,7 @@ pub mod world_list;
 
 pub use builder_panel::spawn_planet_builder_panel;
 pub use campaign_panel::{spawn_campaign_panels, update_campaign_ui};
+pub use cutaway_hud::{spawn_cutaway_hud, update_cutaway_hud_ui};
 pub use epoch_scrubber::{
     handle_epoch_scrubber_action, spawn_epoch_scrubber_panel, update_epoch_scrubber_ui,
 };
