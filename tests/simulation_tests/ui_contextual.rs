@@ -390,3 +390,198 @@ fn test_quick_bar_highlights_and_ui_selection_flag() {
         earth_base.bg
     );
 }
+
+#[test]
+fn test_hover_card_classification_labels() {
+    use protostellar::game::ui::hover_card::resolve_body_type_label;
+
+    assert_eq!(
+        resolve_body_type_label(BodyType::TerrestrialPlanet),
+        "Terrestrial Planet"
+    );
+    assert_eq!(resolve_body_type_label(BodyType::GasGiant), "Gas Giant");
+    assert_eq!(
+        resolve_body_type_label(BodyType::YellowDwarf),
+        "G-Type Yellow Dwarf"
+    );
+    assert_eq!(
+        resolve_body_type_label(BodyType::BlackHole),
+        "Kerr Black Hole"
+    );
+    assert_eq!(resolve_body_type_label(BodyType::Moon), "Natural Moon");
+    assert_eq!(resolve_body_type_label(BodyType::Comet), "Active Comet");
+}
+
+#[test]
+fn test_hover_card_metrics_and_badges_formatting() {
+    use protostellar::game::ui::hover_card::{collect_hover_badges, format_hover_metrics};
+    use protostellar::simulation::tides::TidalState;
+
+    let pos = DVec3::new(1.0, 0.0, 0.0);
+    let vel = DVec3::new(0.0, std::f64::consts::TAU, 0.0);
+    let mass = 1.0 * protostellar::utils::constants::EARTH_MASS_SOLAR;
+    let rad = protostellar::utils::constants::EARTH_RADIUS_AU;
+    let temp = 288.0;
+
+    let metrics = format_hover_metrics(pos, vel, mass, rad, temp);
+    assert!(metrics.contains("Distance: 1.00 AU"));
+    assert!(metrics.contains("Mass: 1.00 M_earth"));
+    assert!(metrics.contains("Temp: 288 K"));
+
+    let climate = PlanetaryClimate {
+        climate_regime: ClimateRegime::TemperateHabitable,
+        ..default()
+    };
+    let bio = BiosphereState {
+        biomass_coverage_frac: 0.35,
+        technosignature: 0.8,
+        ..default()
+    };
+    let diff = InternalDifferentiation {
+        magnetic_field_gauss: 1.0,
+        ..default()
+    };
+    let tide = TidalState {
+        is_tidally_locked: true,
+        ..default()
+    };
+
+    let badges = collect_hover_badges(
+        Some(&climate),
+        Some(&bio),
+        None,
+        Some(&diff),
+        Some(&tide),
+        None,
+        None,
+        false,
+    );
+
+    assert!(badges.contains("🟢 Habitable"));
+    assert!(badges.contains("🌿 Biosphere"));
+    assert!(badges.contains("🏙️ Civilization"));
+    assert!(badges.contains("🧲 Magnetosphere"));
+    assert!(badges.contains("🔒 Tidally Locked"));
+}
+
+#[test]
+fn test_hover_card_screen_clamping() {
+    use protostellar::game::ui::hover_card::compute_clamped_card_position;
+
+    let window_size = Vec2::new(1920.0, 1080.0);
+    let card_size = Vec2::new(260.0, 130.0);
+
+    // Mid-screen: offsets +24 x, -30 y
+    let mid = Vec2::new(500.0, 500.0);
+    let clamped_mid = compute_clamped_card_position(mid, card_size, window_size);
+    assert_eq!(clamped_mid, Vec2::new(524.0, 470.0));
+
+    // Near right edge: flips to left of cursor
+    let right_edge = Vec2::new(1800.0, 500.0);
+    let clamped_right = compute_clamped_card_position(right_edge, card_size, window_size);
+    assert!(clamped_right.x < right_edge.x);
+
+    // Near bottom edge: flips upward above bottom bar
+    let bottom_edge = Vec2::new(500.0, 1020.0);
+    let clamped_bottom = compute_clamped_card_position(bottom_edge, card_size, window_size);
+    assert!(clamped_bottom.y < bottom_edge.y);
+}
+
+#[test]
+fn test_hover_card_ui_system_visibility_and_text_sync() {
+    use protostellar::game::ui::hover_card::{
+        update_hover_card_ui, HoverCardField, HoverCardRoot,
+    };
+    use protostellar::rendering::camera::PanOrbitCamera;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<PlayerInteractionState>();
+
+    // Spawn Window & 3D Camera
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+    app.world_mut().spawn((
+        Camera::default(),
+        PanOrbitCamera::default(),
+        GlobalTransform::from_translation(Vec3::new(0.0, 0.0, 5.0)),
+    ));
+
+    // Spawn earth
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(1.00 * protostellar::utils::constants::EARTH_MASS_SOLAR),
+            Radius(protostellar::utils::constants::EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(0.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, std::f64::consts::TAU, 0.0)),
+            Temperature(288.0),
+            Composition::default(),
+        ))
+        .id();
+
+    // Spawn hover card hierarchy
+    let card_root = app
+        .world_mut()
+        .spawn((
+            HoverCardRoot,
+            Node {
+                display: Display::None,
+                ..default()
+            },
+        ))
+        .with_children(|card| {
+            card.spawn((HoverCardField::Title, Text::new("")));
+            card.spawn((HoverCardField::Subhead, Text::new("")));
+            card.spawn((HoverCardField::Metrics, Text::new("")));
+            card.spawn((HoverCardField::Badges, Text::new("")));
+        })
+        .id();
+
+    app.add_systems(Update, update_hover_card_ui);
+
+    // 1. Initial frame: hovered_entity is None -> Display::None
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(card_root).unwrap().display,
+        Display::None
+    );
+
+    // 2. Set hovered_entity to Earth
+    {
+        let mut player = app.world_mut().resource_mut::<PlayerInteractionState>();
+        player.hovered_entity = Some(earth_ent);
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(card_root).unwrap().display,
+        Display::Flex
+    );
+
+    // Verify Title text was updated to "Earth"
+    let mut title_found = false;
+    for (field, text) in app.world_mut().query::<(&HoverCardField, &Text)>().iter(app.world()) {
+        if *field == HoverCardField::Title {
+            assert_eq!(text.0, "Earth");
+            title_found = true;
+        }
+    }
+    assert!(title_found);
+
+    // 3. Clear hovered_entity -> Display::None
+    {
+        let mut player = app.world_mut().resource_mut::<PlayerInteractionState>();
+        player.hovered_entity = None;
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(card_root).unwrap().display,
+        Display::None
+    );
+}

@@ -39,10 +39,11 @@
    - [Full-System Telemetry & Habitability Graphing](#full-system-telemetry--habitability-graphing)
    - [System Save / Load & Scenario Serializer](#system-save--load--scenario-serializer)
    - [Universal HUD Minimization & Restore Pills](#universal-hud-minimization--restore-pills)
+   - [Floating Holographic Hover Cards & 3D Targeting Reticles](#floating-holographic-hover-cards--3d-targeting-reticles)
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (440 Tests)](#-automated-test-suite-440-tests)
+6. [🧪 Automated Test Suite (444 Tests)](#-automated-test-suite-444-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -462,6 +463,19 @@ Keep your viewport clean and cinematic:
 
 ---
 
+### Floating Holographic Hover Cards & 3D Targeting Reticles
+Seamless, tactile visual feedback and fast body inspection right in the 3D viewport:
+- **Instant Cursor Raycasting**: Hovering over any star, planet, moon, or comet in the 3D viewport immediately projects a high-tech sci-fi targeting reticle around the body in 3D space.
+- **Holographic Targeting Reticles**: 4 billboarded corner brackets lock onto the hovered body with an inner electric ring pulsing at 6 Hz (electric cyan for planets/moons, golden stellar glow for stars).
+- **Glassmorphic Telemetry Hover Card**: A sleek floating card dynamically follows the body on-screen with smart margin clamping and offset positioning:
+  - **Body Name & Astronomical Classification**: (e.g. `🪐 Earth [ Terrestrial Planet ]`, `☀️ Sun [ G-Type Yellow Dwarf ]`, `🌕 The Moon [ Natural Moon ]`).
+  - **Core Telemetry Row**: Real-time orbital distance ($r$ in AU), orbital velocity ($v$ in km/s), mass ($M$ in $M_\oplus$ / $M_\odot$), physical radius ($R$ in km), and equilibrium surface temperature ($T$ in K).
+  - **Dynamic Status Badges**: Real-time astrophysical pills indicating `🟢 Habitable`, `🌿 Biosphere`, `🏙️ Civilization`, `🌋 Active Volcanism`, `❄️ Cryotectonic`, `🧲 Magnetosphere`, `🔒 Tidally Locked`, `🪐 Rings`, or `🛰️ Space Probe`.
+- **1-Click Direct Focus**: Left-clicking anywhere on the hovered body or hover card immediately selects the world, centers the camera with logarithmic framing, and activates the detailed Target Inspector without needing to search the UI!
+- **Zero Input Interference**: Hover card nodes use non-blocking picking filters, allowing uninterrupted 3D camera orbits, pans, and HUD interactions.
+
+---
+
 ## 🌌 Sandbox Scenario Library
 
 Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
@@ -606,14 +620,14 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 52 specialized test suites covering 440 automated tests
+    └── simulation_tests/         # 52 specialized test suites covering 444 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (440 Tests)
+## 🧪 Automated Test Suite (444 Tests)
 
-Protostellar enforces rigorous physical validity through **440 comprehensive integration tests** across 52 specialized test suites:
+Protostellar enforces rigorous physical validity through **444 comprehensive integration tests** across 52 specialized test suites:
 
 - **Surface Horizon Navigation, 3D Terrains & Rover Drive Mechanics**: Tangent horizon camera pose stabilization, surface altitude limits, collision avoidance, and terrain-skimming driving controls.
 - **Galilean Moons, Volcanism & Cryotectonics**: Io sulfur volcanism, Europa/Enceladus cryotectonic lineae, cryovolcanic planetary ring replenishment, and multi-moon non-overlapping orbital initialization.
