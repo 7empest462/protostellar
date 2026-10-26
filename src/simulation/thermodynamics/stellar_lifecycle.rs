@@ -407,8 +407,7 @@ pub fn step_stellar_evolution_cycle(
     evo.phase_timer_years += dt_yr;
 
     // Degenerate black holes never re-enter stellar nucleosynthesis branches
-    if body.body_type == BodyType::BlackHole
-        || evo.phase == StellarEvolutionPhase::BlackHoleRemnant
+    if body.body_type == BodyType::BlackHole || evo.phase == StellarEvolutionPhase::BlackHoleRemnant
     {
         step_stellar_remnant_evolution(mass, radius, temp, lum, body, evo, dt_yr);
         return;

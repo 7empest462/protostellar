@@ -503,7 +503,10 @@ fn test_circumstellar_environments_and_shader_validity() {
 }
 
 #[test]
-#[allow(clippy::type_complexity)]
+#[allow(
+    clippy::type_complexity,
+    reason = "Test coordinates multiple thermodynamic ECS queries, event writers, and commands"
+)]
 fn test_massive_hypergiant_direct_collapse_imbh_seed_and_no_reignition() {
     let mut app = App::new();
     app.add_message::<SupernovaEvent>();
@@ -553,16 +556,8 @@ fn test_massive_hypergiant_direct_collapse_imbh_seed_and_no_reignition() {
     let (mut commands, mut supernova_events, mut ignition_events, mut query) =
         state.get_mut(app.world_mut()).expect("SystemState valid");
 
-    let (
-        entity,
-        mut mass,
-        mut radius,
-        mut temp,
-        mut lum,
-        mut ignition,
-        mut body,
-        mut opt_evo,
-    ) = query.get_mut(star_entity).expect("Star exists");
+    let (entity, mut mass, mut radius, mut temp, mut lum, mut ignition, mut body, mut opt_evo) =
+        query.get_mut(star_entity).expect("Star exists");
 
     // 1. Step evolution to trigger supernova / direct collapse
     let evo = opt_evo.as_deref_mut().expect("Evo exists");
@@ -626,7 +621,10 @@ fn test_massive_hypergiant_direct_collapse_imbh_seed_and_no_reignition() {
         BodyType::BlackHole,
         "Black hole must never re-ignite into a main sequence star"
     );
-    assert_eq!(temp.0, 10.0, "Black hole surface temp must remain cold (10 K)");
+    assert_eq!(
+        temp.0, 10.0,
+        "Black hole surface temp must remain cold (10 K)"
+    );
     assert_eq!(lum.0, 0.0, "Black hole luminosity must remain 0");
 
     // 3. Step remnant evolution past 1500 years to reach BlackHoleRemnant phase
@@ -744,7 +742,10 @@ fn test_dynamic_galactic_nucleus_handoff_to_growing_black_hole() {
 }
 
 #[test]
-#[allow(clippy::type_complexity)]
+#[allow(
+    clippy::type_complexity,
+    reason = "Test verifies complex GMC GPU-to-CPU collapse system parameters and queries"
+)]
 fn test_gen1_primordial_pop_iii_hypergiant_spawning_masses() {
     use protostellar::gpu::gmc_collapse::receive_gmc_collapse_events;
     use protostellar::gpu::gmc_fluid::{GmcCollapseEventReceiver, GpuJeansCollapseEvent};
@@ -762,7 +763,11 @@ fn test_gen1_primordial_pop_iii_hypergiant_spawning_masses() {
     // Spawn 18 dummy stars far away so star_count becomes 19 upon collapse (Pop-III hypergiant slot 19)
     for i in 0..18 {
         app.world_mut().spawn((
-            SimPosition(bevy::math::DVec3::new(0.0, f64::from(i) * 10.0 + 200.0, 0.0)),
+            SimPosition(bevy::math::DVec3::new(
+                0.0,
+                f64::from(i) * 10.0 + 200.0,
+                0.0,
+            )),
             CelestialBody {
                 name: format!("Cluster Star {i}"),
                 body_type: BodyType::Protostar,

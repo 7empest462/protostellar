@@ -647,7 +647,8 @@ fn compute_protostar_bondi_hoyle_accretion(
         // Bondi-Hoyle gas accretion from GMC core and spiral arms:
         // Stars accrete gas proportional to M in dense regions, fueling rapid pre-supernova growth
         let base_bondi = 0.015 * (m * m) / (v_eff * v_eff * v_eff);
-        let is_pop_iii = body.body_type == BodyType::PopulationIIIStar || body.name.contains("Pop-III");
+        let is_pop_iii =
+            body.body_type == BodyType::PopulationIIIStar || body.name.contains("Pop-III");
         let max_rate = if is_pop_iii {
             (0.12 * m).clamp(0.05, 5.0)
         } else {
@@ -920,7 +921,8 @@ pub fn gmc_cluster_gas_accretion(
             let v_bh = vel.0.length();
             let v_eff = (c_s * c_s + v_bh * v_bh).sqrt().max(0.04);
             let max_bondi = (0.5 * m.sqrt()).clamp(1.0, 50.0);
-            let bondi_bh = (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, max_bondi);
+            let bondi_bh =
+                (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, max_bondi);
             // Hyper-Eddington photon-trapped accretion in ultra-dense core
             let edd_rate = (0.015 * m).min(25.0);
             let d_mass = (bondi_bh + edd_rate) * dt_yr;
@@ -934,8 +936,14 @@ pub fn gmc_cluster_gas_accretion(
                 }
                 // Update black hole milestone classifications
                 if new_m >= 100_000.0 && !body.name.contains("Supermassive") {
-                    body.name = format!("Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)", new_m / 1000.0);
-                } else if new_m >= 100.0 && !body.name.contains("Intermediate") && !body.name.contains("Supermassive") {
+                    body.name = format!(
+                        "Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)",
+                        new_m / 1000.0
+                    );
+                } else if new_m >= 100.0
+                    && !body.name.contains("Intermediate")
+                    && !body.name.contains("Supermassive")
+                {
                     body.name = format!("Intermediate-Mass Black Hole ({new_m:.1} M☉)");
                 }
             }
