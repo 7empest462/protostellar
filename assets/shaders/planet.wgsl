@@ -43,6 +43,7 @@ struct PlanetExtension {
     planet_center_and_radius: vec4<f32>, // xyz = planet center in world coordinates, w = visual radius
     civilization_params: vec4<f32>, // x: technosignature (0.0 to 2.0), yzw: flora, biolum, gravity
     tidal_deformation: vec4<f32>, // xyz = unit world vector toward tidal primary, w = roche_stretch (0..0.78) + 2.0 if tidally locked
+    cutaway_params: vec4<f32>, // x: cutaway_active (1.0 or 0.0), y: cut_angle, z: core_ratio, w: mantle_ratio
 };
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(101)
@@ -2237,6 +2238,13 @@ fn fragment(
     let s_tangent_z = cross(s_tangent_x, s_axis);
     let p_tilted = vec3<f32>(dot(surface_dir, s_tangent_x), sin_lat, dot(surface_dir, s_tangent_z));
     
+    // 3D Planetary Internal Cutaway Mode: discard exterior shell in the primary +X / +Z quadrant
+    if (planet.cutaway_params.x > 0.5) {
+        if (p_tilted.x > 0.0 && p_tilted.z > 0.0) {
+            discard;
+        }
+    }
+
     let t = planet.time;
     let temp = planet.temperature;
     

@@ -386,6 +386,7 @@ pub fn sync_celestial_transforms(
     mut materials: ResMut<Assets<PlanetMaterial>>,
     mut light_query: Query<&mut PointLight>,
     camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialBody>)>,
+    opt_player_state: Option<Res<PlayerInteractionState>>,
     mut query: CelestialBodyQuery,
 ) {
     let cam_pos = camera_query.iter().next().map(|t| t.translation);
@@ -444,6 +445,35 @@ pub fn sync_celestial_transforms(
         }
 
         if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
+            let is_cutaway = opt_player_state.as_deref().is_some_and(|ps| {
+                ps.is_cutaway_active()
+                    && ps.overlay_mode != DiagnosticOverlayMode::Hidden
+                    && (ps.selected_entity == Some(entity)
+                        || (ps.selected_entity.is_none() && ps.hovered_entity == Some(entity)))
+            });
+
+            mat.extension.uniforms.cutaway_params = if is_cutaway {
+                let strata = crate::rendering::effects::planetary::resolve_cutaway_strata(
+                    body,
+                    radius.0,
+                    opt_diff,
+                    &config,
+                );
+                let core_ratio = if visual_radius > 1e-6 {
+                    (strata.core_r / visual_radius).clamp(0.05, 0.95)
+                } else {
+                    0.55
+                };
+                let mantle_ratio = if visual_radius > 1e-6 {
+                    (strata.mantle_r / visual_radius).clamp(core_ratio + 0.05, 0.99)
+                } else {
+                    0.95
+                };
+                Vec4::new(1.0, 0.0, core_ratio, mantle_ratio)
+            } else {
+                Vec4::ZERO
+            };
+
             sync_body_uniforms(
                 &mut mat,
                 entity,

@@ -48,6 +48,8 @@ pub struct PlanetUniforms {
     pub civilization_params: Vec4,
     /// xyz: unit 3D direction toward dominant tidal perturber in world space, w: packed (roche_stretch 0.0..0.78 + 2.0 if tidally locked)
     pub tidal_deformation: Vec4,
+    /// x: cutaway_active (1.0 or 0.0), y: cut_angle, z: core_ratio, w: mantle_ratio
+    pub cutaway_params: Vec4,
 }
 
 impl Default for PlanetUniforms {
@@ -77,6 +79,7 @@ impl Default for PlanetUniforms {
             planet_center_and_radius: Vec4::new(0.0, 0.0, 0.0, 1.0),
             civilization_params: Vec4::ZERO,
             tidal_deformation: Vec4::ZERO,
+            cutaway_params: Vec4::ZERO,
         }
     }
 }

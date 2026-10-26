@@ -212,6 +212,27 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let r_planet = atmo.optical_params.z;
     let r_atmo = atmo.optical_params.w;
 
+    // 3D Planetary Internal Cutaway Mode: discard atmosphere in the primary +X / +Z quadrant
+    let atmo_flags = u32(round(max(atmo.ring_and_ozone_params.w, 0.0)));
+    if ((atmo_flags & 4u) != 0u) {
+        var s_axis = atmo.spin_axis.xyz;
+        if (length(s_axis) < 0.1) {
+            s_axis = vec3<f32>(0.0, 1.0, 0.0);
+        } else {
+            s_axis = normalize(s_axis);
+        }
+        let s_ref = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 1.0, 0.0), abs(s_axis.z) > 0.95);
+        let s_tangent_x = normalize(cross(s_axis, s_ref));
+        let s_tangent_z = cross(s_tangent_x, s_axis);
+
+        let p_rel = normalize(in.world_position.xyz - center);
+        let sin_lat_atmo = dot(p_rel, s_axis);
+        let p_tilted_atmo = vec3<f32>(dot(p_rel, s_tangent_x), sin_lat_atmo, dot(p_rel, s_tangent_z));
+        if (p_tilted_atmo.x > 0.0 && p_tilted_atmo.z > 0.0) {
+            discard;
+        }
+    }
+
     // Stellar Corona, Magnetic Helmet Streamers & Optical Diffraction Spikes Mode
     if (atmo.optical_params.y < -0.5) {
         out.color = render_stellar_corona_and_diffraction(ray_origin, ray_dir, center, r_planet, r_atmo);

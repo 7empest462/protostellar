@@ -46,8 +46,8 @@ pub use orbits::{
 };
 pub use planetary::{
     draw_body_selection_and_beacons, draw_cometary_escape_tails, draw_diagnostic_overlays,
-    draw_distant_optical_glint, draw_hover_targeting_reticle, draw_planetary_magnetospheres,
-    draw_volcanic_and_cryo_plumes,
+    draw_distant_optical_glint, draw_hover_targeting_reticle, draw_internal_planetary_cutaway,
+    draw_planetary_magnetospheres, draw_volcanic_and_cryo_plumes,
 };
 pub use relativistic::{
     draw_black_hole_spacetime_curvature, draw_ignition_shockwave, draw_kerr_ergosphere,
@@ -493,6 +493,22 @@ fn draw_single_body_gizmos(
             body_vec,
             body,
             opt_rad,
+            config,
+            params.cam_tf.as_ref(),
+            params.elapsed,
+        );
+    }
+
+    let is_cutaway = player_state.is_cutaway_active()
+        && (is_selected || (player_state.selected_entity.is_none() && is_hovered));
+    if is_cutaway && player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+        draw_internal_planetary_cutaway(
+            gizmos,
+            body_vec,
+            body,
+            opt_rad,
+            opt_diff,
+            opt_spin,
             config,
             params.cam_tf.as_ref(),
             params.elapsed,

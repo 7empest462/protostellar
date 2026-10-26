@@ -609,6 +609,57 @@ fn build_stellar_corona_state(
     (corona_u, true, corona_scale)
 }
 
+fn should_skip_atmosphere_shell(
+    body_type: BodyType,
+    opt_bhs: Option<&BlackHoleStarState>,
+) -> bool {
+    let is_blown_out_quasi = body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
+    body_type == BodyType::BlackHole
+        || is_blown_out_quasi
+        || matches!(
+            body_type,
+            BodyType::BlackDwarf
+                | BodyType::IronStar
+                | BodyType::Asteroid
+                | BodyType::Comet
+                | BodyType::DustGrain
+                | BodyType::Planetesimal
+        )
+}
+
+fn sync_single_atmosphere_entity(
+    commands: &mut Commands,
+    planet_ent: Entity,
+    mesh: Handle<Mesh>,
+    opt_children: Option<&Children>,
+    has_atmosphere: bool,
+    shell_outer_scale: f32,
+    uniforms: &AtmosphereUniforms,
+    atmo_children_query: &mut Query<
+        (&mut Transform, &MeshMaterial3d<AtmosphereMaterial>),
+        (With<VisualAtmosphereChild>, Without<VisualBody>),
+    >,
+    atmo_materials: &mut Assets<AtmosphereMaterial>,
+) {
+    let found_child = opt_children.is_some_and(|children| {
+        update_atmosphere_child_mesh(
+            children,
+            has_atmosphere,
+            shell_outer_scale,
+            uniforms,
+            atmo_children_query,
+            atmo_materials,
+        )
+    });
+
+    if !found_child && has_atmosphere {
+        let material = atmo_materials.add(AtmosphereMaterial {
+            uniforms: uniforms.clone(),
+        });
+        spawn_atmosphere_child(commands, planet_ent, mesh, material, shell_outer_scale);
+    }
+}
+
 /// Synchronizes 3D planetary atmospheric limb glow shells, stellar coronae, materials, and starlight vectors.
 #[allow(
     clippy::type_complexity,
@@ -675,20 +726,7 @@ pub fn sync_planetary_atmospheres(
         (opt_aurora, opt_diff, opt_spin, opt_flare, opt_bhs),
     ) in planets_query.iter()
     {
-        let is_blown_out_quasi =
-            body.body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
-        if body.body_type == BodyType::BlackHole
-            || is_blown_out_quasi
-            || matches!(
-                body.body_type,
-                BodyType::BlackDwarf
-                    | BodyType::IronStar
-                    | BodyType::Asteroid
-                    | BodyType::Comet
-                    | BodyType::DustGrain
-                    | BodyType::Planetesimal
-            )
-        {
+        if should_skip_atmosphere_shell(body.body_type, opt_bhs) {
             if let Some(children) = opt_children {
                 despawn_atmosphere_children(&mut commands, children, &atmo_children_query);
             }
@@ -702,7 +740,7 @@ pub fn sync_planetary_atmospheres(
                 .and_then(|assets| assets.get(&h.0))
         });
 
-        let (uniforms, has_atmosphere, shell_outer_scale) =
+        let (mut uniforms, has_atmosphere, shell_outer_scale) =
             if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
                 build_stellar_corona_state(
                     p_pos,
@@ -732,26 +770,20 @@ pub fn sync_planetary_atmospheres(
                 )
             };
 
-        let found_child = opt_children.is_some_and(|children| {
-            update_atmosphere_child_mesh(
-                children,
-                has_atmosphere,
-                shell_outer_scale,
-                &uniforms,
-                &mut atmo_children_query,
-                &mut atmo_materials,
-            )
-        });
-
-        if !found_child && has_atmosphere {
-            let material = atmo_materials.add(AtmosphereMaterial { uniforms });
-            spawn_atmosphere_child(
-                &mut commands,
-                planet_ent,
-                visual_assets.atmosphere_mesh.clone(),
-                material,
-                shell_outer_scale,
-            );
+        if opt_planet_mat.as_ref().is_some_and(|m| m.extension.uniforms.cutaway_params.x > 0.5) {
+            uniforms.ring_and_ozone_params.w += 4.0;
         }
+
+        sync_single_atmosphere_entity(
+            &mut commands,
+            planet_ent,
+            visual_assets.atmosphere_mesh.clone(),
+            opt_children,
+            has_atmosphere,
+            shell_outer_scale,
+            &uniforms,
+            &mut atmo_children_query,
+            &mut atmo_materials,
+        );
     }
 }

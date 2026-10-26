@@ -208,6 +208,7 @@ pub fn draw_diagnostic_overlays(
         }
         DiagnosticOverlayMode::Realistic
         | DiagnosticOverlayMode::Hidden
+        | DiagnosticOverlayMode::InternalCutaway
         | DiagnosticOverlayMode::MagneticFields
         | DiagnosticOverlayMode::DarkMatterHalos => {}
     }
@@ -354,6 +355,292 @@ pub fn draw_hover_targeting_reticle(
     let bl = body_vec - right * box_half - up * box_half;
     gizmos.line(bl, bl + right * corner_len, reticle_color);
     gizmos.line(bl, bl + up * corner_len, reticle_color);
+}
+
+/// Internal strata radii and visual colors for 3D cutaway rendering.
+#[derive(Debug, Clone, Copy)]
+pub struct CutawayStrata {
+    pub inner_core_r: f32,
+    pub core_r: f32,
+    pub mantle_r: f32,
+    pub crust_r: f32,
+    pub has_theia_llsvp: bool,
+    pub inner_core_col: Color,
+    pub outer_core_col: Color,
+    pub mantle_col: Color,
+    pub crust_col: Color,
+}
+
+pub fn resolve_cutaway_strata(
+    body: &CelestialBody,
+    rad_val: f64,
+    opt_diff: Option<&InternalDifferentiation>,
+    config: &SimulationConfig,
+) -> CutawayStrata {
+    let visual_r = config.calc_visual_radius_for_type(rad_val, body.body_type);
+
+    if body.body_type.is_star_or_remnant() {
+        CutawayStrata {
+            inner_core_r: visual_r * 0.12,
+            core_r: visual_r * 0.28,
+            mantle_r: visual_r * 0.72,
+            crust_r: visual_r,
+            has_theia_llsvp: false,
+            inner_core_col: Color::srgba(1.0, 1.0, 0.95, 0.98),
+            outer_core_col: Color::srgba(1.0, 0.75, 0.20, 0.88),
+            mantle_col: Color::srgba(1.0, 0.45, 0.08, 0.80),
+            crust_col: Color::srgba(0.95, 0.25, 0.05, 0.85),
+        }
+    } else if body.body_type == BodyType::GasGiant {
+        CutawayStrata {
+            inner_core_r: visual_r * 0.08,
+            core_r: visual_r * 0.20,
+            mantle_r: visual_r * 0.76,
+            crust_r: visual_r,
+            has_theia_llsvp: false,
+            inner_core_col: Color::srgba(0.85, 0.75, 0.35, 0.95),
+            outer_core_col: Color::srgba(0.35, 0.75, 1.0, 0.90),
+            mantle_col: Color::srgba(0.20, 0.55, 0.85, 0.82),
+            crust_col: Color::srgba(0.95, 0.65, 0.25, 0.85),
+        }
+    } else if body.body_type == BodyType::IceGiant {
+        CutawayStrata {
+            inner_core_r: visual_r * 0.09,
+            core_r: visual_r * 0.22,
+            mantle_r: visual_r * 0.80,
+            crust_r: visual_r,
+            has_theia_llsvp: false,
+            inner_core_col: Color::srgba(0.70, 0.60, 0.35, 0.95),
+            outer_core_col: Color::srgba(0.15, 0.88, 0.95, 0.90),
+            mantle_col: Color::srgba(0.12, 0.70, 0.85, 0.82),
+            crust_col: Color::srgba(0.35, 0.65, 1.0, 0.85),
+        }
+    } else {
+        let (core_r, mantle_r, has_theia_llsvp) = opt_diff.map_or(
+            (visual_r * 0.55, visual_r * 0.95, false),
+            |d| {
+                let c = if rad_val > 1e-6 {
+                    visual_r * (d.core_radius_au / rad_val).clamp(0.15, 0.75) as f32
+                } else {
+                    visual_r * 0.55
+                };
+                let m = if rad_val > 1e-6 {
+                    visual_r * (d.mantle_radius_au / rad_val).clamp(0.70, 0.98) as f32
+                } else {
+                    visual_r * 0.95
+                };
+                (c, m, d.has_theia_llsvp)
+            },
+        );
+
+        CutawayStrata {
+            inner_core_r: core_r * 0.38,
+            core_r,
+            mantle_r,
+            crust_r: visual_r,
+            has_theia_llsvp,
+            inner_core_col: Color::srgba(1.0, 0.94, 0.55, 0.95),
+            outer_core_col: Color::srgba(1.0, 0.52, 0.10, 0.88),
+            mantle_col: Color::srgba(0.85, 0.30, 0.12, 0.80),
+            crust_col: Color::srgba(0.35, 0.85, 1.0, 0.85),
+        }
+    }
+}
+
+fn draw_cutaway_planar_faces(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    s_axis: Vec3,
+    s_tangent_x: Vec3,
+    s_tangent_z: Vec3,
+    strata: &CutawayStrata,
+) {
+    let steps = 18;
+    for &dir in &[s_tangent_x, s_tangent_z] {
+        // Spokes along primary axes
+        gizmos.line(body_vec, body_vec + dir * strata.crust_r, strata.crust_col);
+        gizmos.line(body_vec, body_vec + s_axis * strata.crust_r, strata.crust_col);
+        gizmos.line(body_vec, body_vec - s_axis * strata.crust_r, strata.crust_col);
+
+        // Concentric strata boundary arcs from -Y to +Y pole
+        for i in 0..steps {
+            let theta1 = -std::f32::consts::FRAC_PI_2 + (i as f32 / steps as f32) * std::f32::consts::PI;
+            let theta2 = -std::f32::consts::FRAC_PI_2 + ((i + 1) as f32 / steps as f32) * std::f32::consts::PI;
+
+            // Inner Core Arc
+            let p1_ic = body_vec + dir * (strata.inner_core_r * theta1.cos()) + s_axis * (strata.inner_core_r * theta1.sin());
+            let p2_ic = body_vec + dir * (strata.inner_core_r * theta2.cos()) + s_axis * (strata.inner_core_r * theta2.sin());
+            gizmos.line(p1_ic, p2_ic, strata.inner_core_col);
+
+            // Outer Core Arc
+            let p1_oc = body_vec + dir * (strata.core_r * theta1.cos()) + s_axis * (strata.core_r * theta1.sin());
+            let p2_oc = body_vec + dir * (strata.core_r * theta2.cos()) + s_axis * (strata.core_r * theta2.sin());
+            gizmos.line(p1_oc, p2_oc, strata.outer_core_col);
+
+            // Mantle Arc
+            let p1_m = body_vec + dir * (strata.mantle_r * theta1.cos()) + s_axis * (strata.mantle_r * theta1.sin());
+            let p2_m = body_vec + dir * (strata.mantle_r * theta2.cos()) + s_axis * (strata.mantle_r * theta2.sin());
+            gizmos.line(p1_m, p2_m, strata.mantle_col);
+
+            // Crust Arc
+            let p1_c = body_vec + dir * (strata.crust_r * theta1.cos()) + s_axis * (strata.crust_r * theta1.sin());
+            let p2_c = body_vec + dir * (strata.crust_r * theta2.cos()) + s_axis * (strata.crust_r * theta2.sin());
+            gizmos.line(p1_c, p2_c, strata.crust_col);
+        }
+    }
+}
+
+fn draw_cutaway_spheres_and_plumes(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    s_tangent_x: Vec3,
+    strata: &CutawayStrata,
+    elapsed: f32,
+) {
+    let core_pulse = (elapsed * 3.0).sin().mul_add(0.08, 0.92);
+    let pulsed_inner_col = Color::srgba(
+        strata.inner_core_col.to_srgba().red,
+        strata.inner_core_col.to_srgba().green,
+        strata.inner_core_col.to_srgba().blue,
+        0.95 * core_pulse,
+    );
+
+    // 1. Incandescent 3D Solid Inner Core Sphere
+    gizmos.sphere(
+        Isometry3d::from_translation(body_vec),
+        strata.inner_core_r,
+        pulsed_inner_col,
+    );
+
+    // 2. Liquid Outer Core Concentric Rings
+    gizmos.circle(
+        Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+        strata.core_r,
+        strata.outer_core_col,
+    );
+
+    // 3. Mantle Boundary Circle
+    gizmos.circle(
+        Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+        strata.mantle_r,
+        strata.mantle_col,
+    );
+
+    // 4. Sunken Theia LLSVP Thermochemical Plumes
+    if strata.has_theia_llsvp {
+        let blob_r = (strata.core_r * 0.22).clamp(0.002, 0.8);
+        let blob_1 = body_vec + s_tangent_x * (strata.core_r * 1.04);
+        let blob_2 = body_vec - s_tangent_x * (strata.core_r * 1.04);
+        let blob_col = Color::srgba(0.85, 0.15, 0.85, 0.92);
+
+        gizmos.sphere(Isometry3d::from_translation(blob_1), blob_r, blob_col);
+        gizmos.sphere(Isometry3d::from_translation(blob_2), blob_r, blob_col);
+
+        // Plume upwelling thermal conduits
+        gizmos.line(blob_1, blob_1 + Vec3::Y * (blob_r * 1.8), blob_col);
+        gizmos.line(blob_2, blob_2 + Vec3::Y * (blob_r * 1.8), blob_col);
+    }
+}
+
+fn draw_cutaway_callout_leaders(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    s_tangent_x: Vec3,
+    s_tangent_z: Vec3,
+    strata: &CutawayStrata,
+    cam_tf: Option<&Transform>,
+) {
+    let cam_rot = cam_tf.map_or(Quat::IDENTITY, |t| t.rotation);
+    let right = cam_rot * Vec3::X;
+    let up = cam_rot * Vec3::Y;
+    let dot_r = (strata.crust_r * 0.035).max(0.001);
+
+    // Diagonal anchor direction into space in screen plane
+    let diag_up_right = (right * 0.85 + up * 0.55).normalize();
+    let diag_up_left = (-right * 0.85 + up * 0.55).normalize();
+    let diag_down_right = (right * 0.85 - up * 0.55).normalize();
+    let diag_down_left = (-right * 0.85 - up * 0.55).normalize();
+
+    let offset_scale = strata.crust_r * 1.35;
+
+    // 1. Inner Core Callout
+    let anchor_ic = body_vec + diag_down_left * (offset_scale * 0.85);
+    gizmos.line(body_vec, anchor_ic, strata.inner_core_col);
+    gizmos.circle(Isometry3d::new(anchor_ic, cam_rot), dot_r, strata.inner_core_col);
+
+    // 2. Outer Core Callout
+    let pt_oc = body_vec + s_tangent_x * strata.core_r;
+    let anchor_oc = body_vec + diag_down_right * (offset_scale * 1.05);
+    gizmos.line(pt_oc, anchor_oc, strata.outer_core_col);
+    gizmos.circle(Isometry3d::new(anchor_oc, cam_rot), dot_r, strata.outer_core_col);
+
+    // 3. Mantle Callout
+    let pt_m = body_vec + (s_tangent_x * 0.707 + s_tangent_z * 0.707) * strata.mantle_r;
+    let anchor_m = body_vec + diag_up_right * (offset_scale * 1.25);
+    gizmos.line(pt_m, anchor_m, strata.mantle_col);
+    gizmos.circle(Isometry3d::new(anchor_m, cam_rot), dot_r, strata.mantle_col);
+
+    // 4. Crust Callout
+    let pt_c = body_vec + s_tangent_z * strata.crust_r;
+    let anchor_c = body_vec + diag_up_left * (offset_scale * 1.35);
+    gizmos.line(pt_c, anchor_c, strata.crust_col);
+    gizmos.circle(Isometry3d::new(anchor_c, cam_rot), dot_r, strata.crust_col);
+
+    // 5. Theia LLSVP Callout
+    if strata.has_theia_llsvp {
+        let pt_blob = body_vec + s_tangent_x * (strata.core_r * 1.04);
+        let anchor_blob = body_vec + (right * 1.15) * offset_scale;
+        let blob_col = Color::srgba(0.85, 0.15, 0.85, 0.95);
+        gizmos.line(pt_blob, anchor_blob, blob_col);
+        gizmos.circle(Isometry3d::new(anchor_blob, cam_rot), dot_r, blob_col);
+    }
+}
+
+/// Renders a full 3D internal planetary / stellar cross-section cutaway view.
+/// Shows solid inner core, liquid outer core geodynamo, mantle convection strata,
+/// sunken Theia LLSVP piles, thin lithospheric crust, and holographic callout leaders.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "3D internal cutaway rendering requires body differentiation, composition, spin, and camera parameters"
+)]
+pub fn draw_internal_planetary_cutaway(
+    gizmos: &mut Gizmos,
+    body_vec: Vec3,
+    body: &CelestialBody,
+    opt_rad: Option<&Radius>,
+    opt_diff: Option<&InternalDifferentiation>,
+    opt_spin: Option<&SpinState>,
+    config: &SimulationConfig,
+    cam_tf: Option<&Transform>,
+    elapsed: f32,
+) {
+    let rad_val = opt_rad.map_or(0.005, |r| r.0);
+    let strata = resolve_cutaway_strata(body, rad_val, opt_diff, config);
+
+    // Compute 3D spin-aligned orthonormal basis
+    let s_axis = if let Some(spin) = opt_spin {
+        if spin.spin_vector.length_squared() > 1e-12 {
+            let n = spin.spin_vector.normalize();
+            Vec3::new(n.x as f32, n.y as f32, n.z as f32)
+        } else {
+            let tilt = (spin.axial_tilt_degrees as f32).to_radians();
+            Vec3::new(tilt.sin(), tilt.cos(), 0.0)
+        }
+    } else {
+        Vec3::Y
+    };
+
+    let s_ref = if s_axis.z.abs() > 0.95 {
+        Vec3::X
+    } else {
+        Vec3::Z
+    };
+    let s_tangent_x = s_axis.cross(s_ref).normalize();
+    let s_tangent_z = s_tangent_x.cross(s_axis).normalize();
+
+    draw_cutaway_planar_faces(gizmos, body_vec, s_axis, s_tangent_x, s_tangent_z, &strata);
+    draw_cutaway_spheres_and_plumes(gizmos, body_vec, s_tangent_x, &strata, elapsed);
+    draw_cutaway_callout_leaders(gizmos, body_vec, s_tangent_x, s_tangent_z, &strata, cam_tf);
 }
 
 /// Renders a SpaceEngine / Universe Sandbox style optical starlight glint (Airy disk)

@@ -460,6 +460,8 @@ pub enum DiagnosticOverlayMode {
     Realistic,
     SpectralComposition,
     HillSpheresAndGaps,
+    /// 3D Internal planetary cutaway view showing core, mantle, crust, and plumes
+    InternalCutaway,
     /// GPU-accelerated 3D volumetric magnetic field loops and magnetospheres
     MagneticFields,
     /// Dark matter halos (NFW potential profile & gravitational contours)
@@ -473,7 +475,8 @@ impl DiagnosticOverlayMode {
         match self {
             Self::Realistic => Self::SpectralComposition,
             Self::SpectralComposition => Self::HillSpheresAndGaps,
-            Self::HillSpheresAndGaps => Self::MagneticFields,
+            Self::HillSpheresAndGaps => Self::InternalCutaway,
+            Self::InternalCutaway => Self::MagneticFields,
             Self::MagneticFields => Self::DarkMatterHalos,
             Self::DarkMatterHalos => Self::Hidden,
             Self::Hidden => Self::Realistic,
@@ -485,6 +488,7 @@ impl DiagnosticOverlayMode {
             Self::Realistic => "Realistic PBR",
             Self::SpectralComposition => "Spectral Composition Map",
             Self::HillSpheresAndGaps => "Hill Spheres & Annular Gaps",
+            Self::InternalCutaway => "Internal Cutaway & Core Geodynamics",
             Self::MagneticFields => "Magnetic Fields (GPU)",
             Self::DarkMatterHalos => "Dark Matter Halos (NFW Potential)",
             Self::Hidden => "No Overlay",
@@ -722,6 +726,15 @@ pub struct PlayerInteractionState {
     /// Set true when celestial body selection was initiated by a UI interaction (e.g. Quick Bar),
     /// preventing 3D mouse picking from accidentally overriding the target in the same frame.
     pub just_selected_via_ui: bool,
+    /// Whether 3D internal planetary cutaway / cross-section mode is active for selected or inspected bodies.
+    pub cutaway_mode: bool,
+}
+
+impl PlayerInteractionState {
+    /// Returns true if 3D internal cutaway mode is enabled via hotkey toggle or overlay mode.
+    pub fn is_cutaway_active(&self) -> bool {
+        self.cutaway_mode || self.overlay_mode == DiagnosticOverlayMode::InternalCutaway
+    }
 }
 
 #[derive(Debug, Clone)]
