@@ -103,9 +103,7 @@ pub fn update_cutaway_hud_ui(
         && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
 
     let target_entity = if is_active {
-        player_state
-            .selected_entity
-            .or(player_state.hovered_entity)
+        player_state.selected_entity.or(player_state.hovered_entity)
     } else {
         None
     };
@@ -279,8 +277,8 @@ fn resolve_cutaway_labels(
         ]
     } else {
         // Terrestrial Planet / Moon
-        let (_core_km, mantle_km, crust_km, inner_core_km, outer_core_km, has_theia) =
-            opt_diff.map_or_else(
+        let (_core_km, mantle_km, crust_km, inner_core_km, outer_core_km, has_theia) = opt_diff
+            .map_or_else(
                 || {
                     let total_km = rad_au * AU_TO_KM;
                     let c = total_km * 0.55;

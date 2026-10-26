@@ -738,9 +738,14 @@ fn test_cutaway_hud_pill_spawning_and_strata_labels() {
 
     // Verify 4 pills were spawned
     let mut pill_count = 0;
-    let mut query = app.world_mut().query::<&protostellar::game::ui::cutaway_hud::CutawayCalloutPill>();
+    let mut query = app
+        .world_mut()
+        .query::<&protostellar::game::ui::cutaway_hud::CutawayCalloutPill>();
     for _ in query.iter(app.world()) {
         pill_count += 1;
     }
-    assert_eq!(pill_count, 4, "Must spawn exactly 4 strata callout pills (Crust, Mantle, Outer Core, Inner Core)");
+    assert_eq!(
+        pill_count, 4,
+        "Must spawn exactly 4 strata callout pills (Crust, Mantle, Outer Core, Inner Core)"
+    );
 }
