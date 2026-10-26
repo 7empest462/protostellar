@@ -604,38 +604,71 @@ pub fn update_simulation_visual_time(
 }
 
 /// Advances the N-body gravitational physics simulation using a Symplectic Kick-Drift-Kick Leapfrog integrator.
-fn enforce_dynamic_galactic_nucleus(
+pub fn enforce_dynamic_galactic_nucleus(
     body_data: &mut [PhysicsBodyEntry],
     is_gmc_cluster: bool,
     commands: &mut Commands,
 ) {
-    if is_gmc_cluster && !body_data.iter().any(|b| b.is_central_star) {
-        if let Some(anchor_idx) = body_data
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.body_type.is_star_or_remnant())
-            .max_by(|a, b| {
-                a.1.mass
-                    .partial_cmp(&b.1.mass)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .map(|(i, _)| i)
-        {
-            if let Some(anchor_b) = body_data.get(anchor_idx) {
-                let anchor_pos = anchor_b.pos;
-                let anchor_vel = anchor_b.vel;
-                let anchor_entity = anchor_b.entity;
+    if !is_gmc_cluster {
+        return;
+    }
 
-                // Smoothly translate the entire galaxy so the Nucleus is precisely at DVec3::ZERO!
-                for b in body_data.iter_mut() {
-                    b.pos -= anchor_pos;
-                    b.vel -= anchor_vel;
-                }
+    let candidate_anchor = body_data
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.body_type.is_star_or_remnant())
+        .max_by(|a, b| {
+            a.1.mass
+                .partial_cmp(&b.1.mass)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, b)| (i, b.entity, b.mass));
 
-                if let Some(anchor_mut) = body_data.get_mut(anchor_idx) {
-                    anchor_mut.is_central_star = true;
+    let Some((cand_idx, cand_entity, cand_mass)) = candidate_anchor else {
+        return;
+    };
+
+    let current_central = body_data
+        .iter()
+        .enumerate()
+        .find(|(_, b)| b.is_central_star)
+        .map(|(i, b)| (i, b.entity, b.mass));
+
+    let should_transfer = match current_central {
+        None => true,
+        Some((_curr_idx, curr_entity, curr_mass)) => {
+            curr_entity != cand_entity
+                && (cand_mass > curr_mass * 1.20 || (curr_mass < 5.0 && cand_mass >= 6.0))
+        }
+    };
+
+    if should_transfer {
+        if let Some((curr_idx, curr_entity, _)) = current_central {
+            if curr_entity != cand_entity {
+                if let Some(old_b) = body_data.get_mut(curr_idx) {
+                    old_b.is_central_star = false;
                 }
-                commands.entity(anchor_entity).insert(CentralStar);
+                if let Ok(mut cmd) = commands.get_entity(curr_entity) {
+                    cmd.remove::<CentralStar>();
+                }
+            }
+        }
+
+        if let Some(anchor_b) = body_data.get(cand_idx) {
+            let anchor_pos = anchor_b.pos;
+            let anchor_vel = anchor_b.vel;
+
+            // Smoothly translate the entire cluster so the Nucleus is precisely at DVec3::ZERO!
+            for b in body_data.iter_mut() {
+                b.pos -= anchor_pos;
+                b.vel -= anchor_vel;
+            }
+
+            if let Some(anchor_mut) = body_data.get_mut(cand_idx) {
+                anchor_mut.is_central_star = true;
+            }
+            if let Ok(mut cmd) = commands.get_entity(cand_entity) {
+                cmd.insert(CentralStar);
             }
         }
     }

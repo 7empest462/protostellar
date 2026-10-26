@@ -240,7 +240,7 @@ fn compute_effective_collision_radius(
                 let r_tidal = target_b.radius * (bh_b.mass / target_b.mass.max(1e-12)).cbrt();
                 let r_swallow = if bh_b.mass >= 5.0 && bh_b.mass < 1_000_000.0 {
                     // Massive black holes in dense cluster / galactic cores actively capture plunging stars
-                    (0.18 * bh_b.mass.cbrt()).clamp(0.4, 2.5)
+                    (0.35 * bh_b.mass.cbrt()).clamp(0.8, 5.0)
                 } else {
                     r_tidal
                 };

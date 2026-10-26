@@ -647,7 +647,12 @@ fn compute_protostar_bondi_hoyle_accretion(
         // Bondi-Hoyle gas accretion from GMC core and spiral arms:
         // Stars accrete gas proportional to M in dense regions, fueling rapid pre-supernova growth
         let base_bondi = 0.015 * (m * m) / (v_eff * v_eff * v_eff);
-        let max_rate = (0.045 * m).clamp(0.025, 0.65);
+        let is_pop_iii = body.body_type == BodyType::PopulationIIIStar || body.name.contains("Pop-III");
+        let max_rate = if is_pop_iii {
+            (0.12 * m).clamp(0.05, 5.0)
+        } else {
+            (0.045 * m).clamp(0.025, 0.85)
+        };
         let bondi_rate = (base_bondi * (rho_cloud / rho_0)).clamp(0.002, max_rate);
 
         // Radiation pressure and stellar wind suppression for ignited stars:
@@ -658,7 +663,15 @@ fn compute_protostar_bondi_hoyle_accretion(
             0.0
         } else if is_ignited {
             let lum_val = opt_lum.as_deref().map_or(1.0, |l| l.0);
-            if lum_val > 1_500_000.0 || m >= 65.0 {
+            if is_pop_iii {
+                // Pristine zero-metallicity Pop-III stars lack line-driven radiative winds,
+                // allowing massive hypergiant growth up to 500 M_sun before direct collapse
+                if m >= 500.0 {
+                    0.0
+                } else {
+                    0.05 * (1.0 - m / 500.0).clamp(0.0, 1.0)
+                }
+            } else if lum_val > 1_500_000.0 || m >= 120.0 {
                 0.0
             } else if m < 15.0 {
                 0.006
@@ -894,7 +907,7 @@ pub fn gmc_cluster_gas_accretion(
                 gas_scale,
             );
         } else if body.body_type == BodyType::BlackHole {
-            // High-rate Bondi-Hoyle + Eddington accretion for Black Holes in GMC cores
+            // High-rate Bondi-Hoyle + Super-Eddington accretion for Black Holes in GMC cores
             let r_bh = pos.0.length();
             let rho_bh = if r_bh < 350.0 {
                 let r_c = 140.0;
@@ -906,15 +919,24 @@ pub fn gmc_cluster_gas_accretion(
             let c_s = 0.058;
             let v_bh = vel.0.length();
             let v_eff = (c_s * c_s + v_bh * v_bh).sqrt().max(0.04);
-            let bondi_bh = (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, 0.15);
-            let edd_rate = 2.2e-7 * m;
+            let max_bondi = (0.5 * m.sqrt()).clamp(1.0, 50.0);
+            let bondi_bh = (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, max_bondi);
+            // Hyper-Eddington photon-trapped accretion in ultra-dense core
+            let edd_rate = (0.015 * m).min(25.0);
             let d_mass = (bondi_bh + edd_rate) * dt_yr;
             if d_mass > 1e-12 {
-                mass.0 = m + d_mass;
-                rad.0 = (1.974e-8 * mass.0).max(1e-7);
+                let new_m = m + d_mass;
+                mass.0 = new_m;
+                rad.0 = (1.974e-8 * new_m).max(1e-7);
                 if let Some(mut jet) = opt_jet {
                     jet.is_accreting = true;
                     jet.accretion_timer_years = 5.0; // Keep active for 5 years after eating gas
+                }
+                // Update black hole milestone classifications
+                if new_m >= 100_000.0 && !body.name.contains("Supermassive") {
+                    body.name = format!("Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)", new_m / 1000.0);
+                } else if new_m >= 100.0 && !body.name.contains("Intermediate") && !body.name.contains("Supermassive") {
+                    body.name = format!("Intermediate-Mass Black Hole ({new_m:.1} M☉)");
                 }
             }
         } else if body.body_type == BodyType::Protoplanet || body.body_type.is_planet() {

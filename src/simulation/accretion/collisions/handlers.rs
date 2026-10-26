@@ -655,6 +655,7 @@ pub fn handle_inelastic_merger(
         acc.0 = physics.new_acc;
         if physics.updated_type == BodyType::BlackHole {
             rad.0 = (1.974e-8 * physics.total_mass).max(1e-7);
+            t.0 = 10.0;
             if let Ok(mut cmd) = ctx.commands.get_entity(pair.primary_entity) {
                 cmd.remove::<PlanetaryRingSystem>();
                 cmd.remove::<PlanetaryClimate>();
@@ -908,13 +909,23 @@ pub fn handle_tidal_disruption_event(
         (pair.p_pos * pair.p_m + pair.s_pos * pair.s_m) / total_mass
     };
 
-    if let Ok((_, mut m, mut pos, mut vel, _, mut rad, ..)) =
+    if let Ok((_, mut m, mut pos, mut vel, _, mut rad, mut temp, _, mut body, ..)) =
         ctx.bodies_query.get_mut(pair.primary_entity)
     {
         m.0 = total_mass;
         pos.0 = merged_pos;
         vel.0 = merged_vel;
         rad.0 = (1.974e-8 * total_mass).max(1e-7);
+        temp.0 = 10.0;
+        body.body_type = BodyType::BlackHole;
+        update_merged_body_name(&mut body.name, BodyType::BlackHole, total_mass);
+        b1.name.clone_from(&body.name);
+    }
+
+    if let Ok(mut cmd) = ctx.commands.get_entity(pair.primary_entity) {
+        cmd.remove::<PlanetaryRingSystem>();
+        cmd.remove::<PlanetaryClimate>();
+        cmd.remove::<BiosphereState>();
     }
 
     if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {

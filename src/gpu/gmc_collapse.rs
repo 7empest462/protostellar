@@ -155,13 +155,14 @@ fn determine_protostar_properties(
     } else {
         // Gen-1: Cluster IMF spanning low-mass dwarfs, OB stars, supernova progenitors, and rare Pop-III hypergiants
         match imf_slot {
-            0..=3 => 0.35,                              // Red Dwarf (M-type)
-            4..=7 => 0.72,                              // Orange Dwarf (K-type)
-            8..=10 => 1.02,                             // Yellow Dwarf (G-type)
-            11..=13 => 1.75,                            // White Main Sequence (A-type)
-            14..=16 => 4.8,                             // Blue Giant (B-type)
-            17..=18 => 16.5, // Blue Supergiant (O-type core-collapse supernova progenitor)
-            _ => (jeans_mass * 32.0).clamp(32.0, 48.0), // Rare Pop-III Hypergiant
+            0..=3 => 0.35,                               // Red Dwarf (M-type)
+            4..=7 => 0.72,                               // Orange Dwarf (K-type)
+            8..=10 => 1.02,                              // Yellow Dwarf (G-type)
+            11..=13 => 1.75,                             // White Main Sequence (A-type)
+            14..=15 => 4.8,                              // Blue Giant (B-type)
+            16..=17 => 18.5,                             // Blue Supergiant (O-type core-collapse supernova progenitor)
+            18 => (jeans_mass * 40.0).clamp(45.0, 95.0),  // Massive Primordial Hypergiant / LBV Progenitor
+            _ => (jeans_mass * 85.0).clamp(85.0, 280.0), // Pop-III Primordial Hypergiant (Early Universe)
         }
     };
 
@@ -186,8 +187,13 @@ fn determine_protostar_properties(
         };
         (format!("Protostar Gen-II NovaCore-{star_count}"), comp)
     } else {
+        let name = if seed_mass >= 45.0 {
+            format!("Protostar Gen-I Pop-III Hypergiant-{star_count}")
+        } else {
+            format!("Protostar Gen-I Jeans-{star_count}")
+        };
         (
-            format!("Protostar Gen-I Jeans-{star_count}"),
+            name,
             Composition::pure_hydrogen(),
         )
     };

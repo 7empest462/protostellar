@@ -520,7 +520,7 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | **PSR B1913+16 Relativistic Binary** | `[HUD]` | Hulse-Taylor binary pulsar ($1.44\ M_\odot + 1.38\ M_\odot$) in an eccentric $0.013\text{ AU}$ orbit demonstrating $4.22^\circ/\text{yr}$ 1PN periastron advance and GW inspiral decay. |
 | **HD 80606 Kozai-Lidov Triple** | `[F11]` | Hierarchical triple system demonstrating periodic eccentricity and inclination exchange via the Kozai-Lidov mechanism ($e \to 0.88+$). |
 | **Sagittarius A\* (Galactic Center)** | `[HUD]` | $4.3 \times 10^6\ M_\odot$ supermassive black hole at true Schwarzschild scale ($0.085\text{ AU}$) orbited by relativistic S-stars (S2, S4714, S62, S0-102) and G2 gas cloud. |
-| **Giant Molecular Cloud (GMC)** | `[HUD]` | Volumetric 3D raymarched star-forming nebula with GPU Eulerian hydrodynamics, Jeans collapse, HII ionization bubbles, and GPU far-field cluster gravity. |
+| **Giant Molecular Cloud (GMC)** | `[HUD]` | Volumetric 3D raymarched star-forming nebula with GPU Eulerian hydrodynamics, Jeans collapse, Pop-III primordial hypergiants ($75 - 280\ M_\odot$), direct-collapse IMBH seeds, dynamic galactic nucleus handover, and Bondi-Hoyle super-Eddington accretion into supermassive black holes. |
 | **Milky Way & Andromeda Collision** | `[HUD]` | GPU N-body spiral galaxies bound in NFW dark matter halos with 4-arm Lin-Shu spiral density waves and tidal tail mergers. |
 
 ---
