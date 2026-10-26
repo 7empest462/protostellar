@@ -454,18 +454,16 @@ pub fn sync_celestial_transforms(
 
             mat.extension.uniforms.cutaway_params = if is_cutaway {
                 let strata = crate::rendering::effects::planetary::resolve_cutaway_strata(
-                    body,
-                    radius.0,
-                    opt_diff,
-                    &config,
+                    body, radius.0, opt_diff, &config,
                 );
                 let core_ratio = if visual_radius > 1e-6 {
-                    (strata.core_r / visual_radius).clamp(0.05, 0.95)
+                    (strata.core_r / visual_radius).clamp(0.05, 0.75)
                 } else {
                     0.55
                 };
+                let mantle_min = (core_ratio + 0.05).min(0.98);
                 let mantle_ratio = if visual_radius > 1e-6 {
-                    (strata.mantle_r / visual_radius).clamp(core_ratio + 0.05, 0.99)
+                    (strata.mantle_r / visual_radius).clamp(mantle_min, 0.99)
                 } else {
                     0.95
                 };

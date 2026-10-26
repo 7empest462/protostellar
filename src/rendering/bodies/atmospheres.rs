@@ -609,11 +609,9 @@ fn build_stellar_corona_state(
     (corona_u, true, corona_scale)
 }
 
-fn should_skip_atmosphere_shell(
-    body_type: BodyType,
-    opt_bhs: Option<&BlackHoleStarState>,
-) -> bool {
-    let is_blown_out_quasi = body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
+fn should_skip_atmosphere_shell(body_type: BodyType, opt_bhs: Option<&BlackHoleStarState>) -> bool {
+    let is_blown_out_quasi =
+        body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
     body_type == BodyType::BlackHole
         || is_blown_out_quasi
         || matches!(
@@ -770,7 +768,10 @@ pub fn sync_planetary_atmospheres(
                 )
             };
 
-        if opt_planet_mat.as_ref().is_some_and(|m| m.extension.uniforms.cutaway_params.x > 0.5) {
+        if opt_planet_mat
+            .as_ref()
+            .is_some_and(|m| m.extension.uniforms.cutaway_params.x > 0.5)
+        {
             uniforms.ring_and_ozone_params.w += 4.0;
         }
 

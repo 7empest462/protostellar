@@ -229,7 +229,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let sin_lat_atmo = dot(p_rel, s_axis);
         let p_tilted_atmo = vec3<f32>(dot(p_rel, s_tangent_x), sin_lat_atmo, dot(p_rel, s_tangent_z));
         if (p_tilted_atmo.x > 0.0 && p_tilted_atmo.z > 0.0) {
-            discard;
+            out.color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+            return out;
         }
     }
 

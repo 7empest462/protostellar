@@ -648,7 +648,10 @@ fn test_internal_cutaway_strata_archetype_resolution() {
     assert!(!strata_star.has_theia_llsvp);
     assert!(strata_star.inner_core_r < strata_star.core_r);
     assert!(strata_star.core_r < strata_star.mantle_r);
-    assert_eq!(strata_star.crust_r, config.calc_visual_radius_for_type(4.65e-3, BodyType::MainSequenceStar));
+    assert_eq!(
+        strata_star.crust_r,
+        config.calc_visual_radius_for_type(4.65e-3, BodyType::MainSequenceStar)
+    );
 }
 
 #[test]
@@ -667,7 +670,10 @@ fn test_player_interaction_cutaway_active_state_and_cycle() {
     // Diagnostic overlay cycle
     state.overlay_mode = DiagnosticOverlayMode::InternalCutaway;
     assert!(state.is_cutaway_active());
-    assert_eq!(state.overlay_mode.display_name(), "Internal Cutaway & Core Geodynamics");
+    assert_eq!(
+        state.overlay_mode.display_name(),
+        "Internal Cutaway & Core Geodynamics"
+    );
 
     // Cycle through and verify it returns
     let mut found_cutaway = false;
@@ -679,7 +685,10 @@ fn test_player_interaction_cutaway_active_state_and_cycle() {
             break;
         }
     }
-    assert!(found_cutaway, "DiagnosticOverlayMode cycle must include InternalCutaway");
+    assert!(
+        found_cutaway,
+        "DiagnosticOverlayMode cycle must include InternalCutaway"
+    );
 }
 
 #[test]

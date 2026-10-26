@@ -416,9 +416,8 @@ pub fn resolve_cutaway_strata(
             crust_col: Color::srgba(0.35, 0.65, 1.0, 0.85),
         }
     } else {
-        let (core_r, mantle_r, has_theia_llsvp) = opt_diff.map_or(
-            (visual_r * 0.55, visual_r * 0.95, false),
-            |d| {
+        let (core_r, mantle_r, has_theia_llsvp) =
+            opt_diff.map_or((visual_r * 0.55, visual_r * 0.95, false), |d| {
                 let c = if rad_val > 1e-6 {
                     visual_r * (d.core_radius_au / rad_val).clamp(0.15, 0.75) as f32
                 } else {
@@ -430,8 +429,7 @@ pub fn resolve_cutaway_strata(
                     visual_r * 0.95
                 };
                 (c, m, d.has_theia_llsvp)
-            },
-        );
+            });
 
         CutawayStrata {
             inner_core_r: core_r * 0.38,
@@ -459,32 +457,58 @@ fn draw_cutaway_planar_faces(
     for &dir in &[s_tangent_x, s_tangent_z] {
         // Spokes along primary axes
         gizmos.line(body_vec, body_vec + dir * strata.crust_r, strata.crust_col);
-        gizmos.line(body_vec, body_vec + s_axis * strata.crust_r, strata.crust_col);
-        gizmos.line(body_vec, body_vec - s_axis * strata.crust_r, strata.crust_col);
+        gizmos.line(
+            body_vec,
+            body_vec + s_axis * strata.crust_r,
+            strata.crust_col,
+        );
+        gizmos.line(
+            body_vec,
+            body_vec - s_axis * strata.crust_r,
+            strata.crust_col,
+        );
 
         // Concentric strata boundary arcs from -Y to +Y pole
         for i in 0..steps {
-            let theta1 = -std::f32::consts::FRAC_PI_2 + (i as f32 / steps as f32) * std::f32::consts::PI;
-            let theta2 = -std::f32::consts::FRAC_PI_2 + ((i + 1) as f32 / steps as f32) * std::f32::consts::PI;
+            let theta1 =
+                -std::f32::consts::FRAC_PI_2 + (i as f32 / steps as f32) * std::f32::consts::PI;
+            let theta2 = -std::f32::consts::FRAC_PI_2
+                + ((i + 1) as f32 / steps as f32) * std::f32::consts::PI;
 
             // Inner Core Arc
-            let p1_ic = body_vec + dir * (strata.inner_core_r * theta1.cos()) + s_axis * (strata.inner_core_r * theta1.sin());
-            let p2_ic = body_vec + dir * (strata.inner_core_r * theta2.cos()) + s_axis * (strata.inner_core_r * theta2.sin());
+            let p1_ic = body_vec
+                + dir * (strata.inner_core_r * theta1.cos())
+                + s_axis * (strata.inner_core_r * theta1.sin());
+            let p2_ic = body_vec
+                + dir * (strata.inner_core_r * theta2.cos())
+                + s_axis * (strata.inner_core_r * theta2.sin());
             gizmos.line(p1_ic, p2_ic, strata.inner_core_col);
 
             // Outer Core Arc
-            let p1_oc = body_vec + dir * (strata.core_r * theta1.cos()) + s_axis * (strata.core_r * theta1.sin());
-            let p2_oc = body_vec + dir * (strata.core_r * theta2.cos()) + s_axis * (strata.core_r * theta2.sin());
+            let p1_oc = body_vec
+                + dir * (strata.core_r * theta1.cos())
+                + s_axis * (strata.core_r * theta1.sin());
+            let p2_oc = body_vec
+                + dir * (strata.core_r * theta2.cos())
+                + s_axis * (strata.core_r * theta2.sin());
             gizmos.line(p1_oc, p2_oc, strata.outer_core_col);
 
             // Mantle Arc
-            let p1_m = body_vec + dir * (strata.mantle_r * theta1.cos()) + s_axis * (strata.mantle_r * theta1.sin());
-            let p2_m = body_vec + dir * (strata.mantle_r * theta2.cos()) + s_axis * (strata.mantle_r * theta2.sin());
+            let p1_m = body_vec
+                + dir * (strata.mantle_r * theta1.cos())
+                + s_axis * (strata.mantle_r * theta1.sin());
+            let p2_m = body_vec
+                + dir * (strata.mantle_r * theta2.cos())
+                + s_axis * (strata.mantle_r * theta2.sin());
             gizmos.line(p1_m, p2_m, strata.mantle_col);
 
             // Crust Arc
-            let p1_c = body_vec + dir * (strata.crust_r * theta1.cos()) + s_axis * (strata.crust_r * theta1.sin());
-            let p2_c = body_vec + dir * (strata.crust_r * theta2.cos()) + s_axis * (strata.crust_r * theta2.sin());
+            let p1_c = body_vec
+                + dir * (strata.crust_r * theta1.cos())
+                + s_axis * (strata.crust_r * theta1.sin());
+            let p2_c = body_vec
+                + dir * (strata.crust_r * theta2.cos())
+                + s_axis * (strata.crust_r * theta2.sin());
             gizmos.line(p1_c, p2_c, strata.crust_col);
         }
     }
@@ -566,13 +590,21 @@ fn draw_cutaway_callout_leaders(
     // 1. Inner Core Callout
     let anchor_ic = body_vec + diag_down_left * (offset_scale * 0.85);
     gizmos.line(body_vec, anchor_ic, strata.inner_core_col);
-    gizmos.circle(Isometry3d::new(anchor_ic, cam_rot), dot_r, strata.inner_core_col);
+    gizmos.circle(
+        Isometry3d::new(anchor_ic, cam_rot),
+        dot_r,
+        strata.inner_core_col,
+    );
 
     // 2. Outer Core Callout
     let pt_oc = body_vec + s_tangent_x * strata.core_r;
     let anchor_oc = body_vec + diag_down_right * (offset_scale * 1.05);
     gizmos.line(pt_oc, anchor_oc, strata.outer_core_col);
-    gizmos.circle(Isometry3d::new(anchor_oc, cam_rot), dot_r, strata.outer_core_col);
+    gizmos.circle(
+        Isometry3d::new(anchor_oc, cam_rot),
+        dot_r,
+        strata.outer_core_col,
+    );
 
     // 3. Mantle Callout
     let pt_m = body_vec + (s_tangent_x * 0.707 + s_tangent_z * 0.707) * strata.mantle_r;

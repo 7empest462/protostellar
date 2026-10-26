@@ -2238,13 +2238,6 @@ fn fragment(
     let s_tangent_z = cross(s_tangent_x, s_axis);
     let p_tilted = vec3<f32>(dot(surface_dir, s_tangent_x), sin_lat, dot(surface_dir, s_tangent_z));
     
-    // 3D Planetary Internal Cutaway Mode: discard exterior shell in the primary +X / +Z quadrant
-    if (planet.cutaway_params.x > 0.5) {
-        if (p_tilted.x > 0.0 && p_tilted.z > 0.0) {
-            discard;
-        }
-    }
-
     let t = planet.time;
     let temp = planet.temperature;
     
@@ -3802,6 +3795,95 @@ fn fragment(
     
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
 #endif
+
+    // 3D Planetary Internal Cutaway Mode: render internal geological cross-section in +X / +Z quadrant
+    if (planet.cutaway_params.x > 0.5 && p_tilted.x > 0.0 && p_tilted.z > 0.0) {
+        let core_ratio = planet.cutaway_params.z;
+        let mantle_ratio = planet.cutaway_params.w;
+        let inner_core_ratio = core_ratio * 0.40;
+
+        // View direction in tilted coordinate frame
+        let v_world = -pbr_input.V;
+        let v_tilted = vec3<f32>(dot(v_world, s_tangent_x), dot(v_world, s_axis), dot(v_world, s_tangent_z));
+
+        // Intersect ray with the two orthogonal cut planes:
+        // Plane 1: Z = 0 (valid for X >= 0)
+        // Plane 2: X = 0 (valid for Z >= 0)
+        var hit_r = 1.0;
+        var hit_dist = 1e6;
+
+        if (abs(v_tilted.z) > 1e-4) {
+            let t_z = -p_tilted.z / v_tilted.z;
+            if (t_z > 0.0) {
+                let p_hit = p_tilted + t_z * v_tilted;
+                if (p_hit.x >= -0.01 && length(p_hit) <= 1.02) {
+                    hit_dist = t_z;
+                    hit_r = length(p_hit);
+                }
+            }
+        }
+
+        if (abs(v_tilted.x) > 1e-4) {
+            let t_x = -p_tilted.x / v_tilted.x;
+            if (t_x > 0.0 && t_x < hit_dist) {
+                let p_hit = p_tilted + t_x * v_tilted;
+                if (p_hit.z >= -0.01 && length(p_hit) <= 1.02) {
+                    hit_dist = t_x;
+                    hit_r = length(p_hit);
+                }
+            }
+        }
+
+        // Ray-sphere intersection with the inner core sphere
+        let b = dot(p_tilted, v_tilted);
+        let c = dot(p_tilted, p_tilted) - core_ratio * core_ratio;
+        let disc = b * b - c;
+        if (disc > 0.0) {
+            let t_core = -b - sqrt(disc);
+            if (t_core > 0.0 && t_core < hit_dist) {
+                hit_dist = t_core;
+                hit_r = core_ratio * 0.98;
+            }
+        }
+
+        // Color based on physical internal geological strata:
+        var cut_col = vec3<f32>(0.92, 0.42, 0.15); // Silicate Mantle
+        var cut_glow = vec3<f32>(0.0);
+
+        if (hit_r < inner_core_ratio) {
+            // Solid Inner Core: crystalline solid Fe-Ni (T ~ 5,500 K, golden incandescence)
+            cut_col = vec3<f32>(1.0, 0.95, 0.72);
+            cut_glow = vec3<f32>(1.2, 1.0, 0.5) * 1.8;
+        } else if (hit_r < core_ratio) {
+            // Liquid Outer Core: convective molten Fe-Ni geodynamo (T ~ 4,500 K, amber glow)
+            let core_frac = (hit_r - inner_core_ratio) / max(core_ratio - inner_core_ratio, 0.01);
+            cut_col = mix(vec3<f32>(1.0, 0.70, 0.18), vec3<f32>(0.85, 0.35, 0.05), core_frac);
+            cut_glow = vec3<f32>(1.0, 0.5, 0.1) * 0.9;
+        } else if (hit_r < mantle_ratio) {
+            // Silicate Mantle: ductile peridotite / bridgmanite (T ~ 2,500 K, terracotta)
+            let mantle_frac = (hit_r - core_ratio) / max(mantle_ratio - core_ratio, 0.01);
+            let base_mantle = mix(vec3<f32>(0.82, 0.28, 0.10), vec3<f32>(0.65, 0.38, 0.22), mantle_frac);
+            // Sunken Theia LLSVP Plumes at Core-Mantle Boundary
+            let is_near_cmb = smoothstep(0.12, 0.0, abs(hit_r - core_ratio));
+            cut_col = mix(base_mantle, vec3<f32>(0.95, 0.15, 0.08), is_near_cmb * 0.75);
+            cut_glow = vec3<f32>(0.6, 0.1, 0.0) * is_near_cmb * 0.5;
+        } else {
+            // Rigid Lithospheric Crust & Hydrosphere
+            cut_col = vec3<f32>(0.45, 0.40, 0.35);
+        }
+
+        // Thin glowing holographic boundary lines between strata
+        let d_core = abs(hit_r - core_ratio);
+        let d_mantle = abs(hit_r - mantle_ratio);
+        let d_inner = abs(hit_r - inner_core_ratio);
+        let is_boundary = (d_core < 0.008) || (d_mantle < 0.008) || (d_inner < 0.008);
+        if (is_boundary) {
+            cut_col = vec3<f32>(0.3, 0.95, 1.0);
+            cut_glow = vec3<f32>(0.2, 0.8, 1.0) * 1.5;
+        }
+
+        out.color = vec4<f32>(cut_col + cut_glow, 1.0);
+    }
 
     return out;
 }
