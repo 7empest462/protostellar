@@ -40,10 +40,11 @@
    - [System Save / Load & Scenario Serializer](#system-save--load--scenario-serializer)
    - [Universal HUD Minimization & Restore Pills](#universal-hud-minimization--restore-pills)
    - [Floating Holographic Hover Cards & 3D Targeting Reticles](#floating-holographic-hover-cards--3d-targeting-reticles)
+   - [3D Internal Planetary Cutaway Views & Core Layer Inspection](#3d-internal-planetary-cutaway-views--core-layer-inspection)
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (444 Tests)](#-automated-test-suite-444-tests)
+6. [🧪 Automated Test Suite (447 Tests)](#-automated-test-suite-447-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -98,6 +99,13 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 ### 9. Symplectic Physics & Memory Optimizations
 - Fully allocation-free hot path: Eliminates thousands of `Vec` allocations per frame during symplectic N-body timestepping.
 - High-warp multi-threading with Rayon `par_iter` and $O(N)$ index lookups for enormous performance gains during fast-forwarded cosmological timescales.
+
+### 10. 3D Internal Planetary Cutaway Views & Core Geodynamics
+- **Authentic Multi-Layer Geophysics**: Press **`[Shift + X]`** (or click **`[🔬 Cutaway [Shift-X]]`** in the Target Inspector) to peel open a $90^\circ$ quadrant slice through the outer crust, atmosphere, and cloud deck of any planet, moon, or star.
+- **Concentric Geological Strata**: Renders the incandescent solid inner core ($T \approx 5,500\text{ K}$, golden Fe-Ni crystal lattice), convective molten outer core geodynamo ($T \approx 4,500\text{ K}$, amber-glow liquid), ductile silicate mantle ($T \approx 2,500\text{ K}$, terracotta peridotite/bridgmanite), and rigid lithospheric crust.
+- **Sunken Theia LLSVP Mantle Plumes**: Visualizes the ancient chemical remnants of Theia's iron-rich core sitting at the core-mantle boundary (the "blobs" with $+2.8\%$ density contrast) as glowing crimson thermochemical plumes.
+- **Exotic World Archetypes**: Specialized internal strata for Gas Giants (dense rocky/icy core, metallic liquid hydrogen geodynamo mantle, molecular hydrogen/helium envelope), Ice Giants (ionic water-ammonia-methane slush ocean), and Central Stars (thermonuclear fusion core at $15.7\text{ MK}$, radiative diffusion zone, and convective envelope).
+- **Holographic 3D Billboard Callout Leaders**: 3D leader lines project into open space identifying layer boundaries, temperatures, and physical thicknesses.
 
 ## 🎮 Flight Manual & How to Access Everything In-Game
 
@@ -476,6 +484,24 @@ Seamless, tactile visual feedback and fast body inspection right in the 3D viewp
 
 ---
 
+### 3D Internal Planetary Cutaway Views & Core Layer Inspection
+Inspect the interior geological cross-section and thermal structure of any celestial body in real time:
+- **Instant 1-Key Activation**: Press **`[Shift + X]`** (or click **`[🔬 Cutaway [Shift-X]]`** in the Target Inspector header/action list) to activate cutaway mode on the selected world (or hovered world if none is selected). You can also cycle diagnostic overlays with **`[V]`** until reaching `Internal Cutaway & Core Geodynamics`.
+- **GPU Fragment Discard**: `planet.wgsl` and `atmosphere.wgsl` discard fragments in the $+X/+Z$ axial quadrant, peeling back the surface terrain, ocean hydrosphere, clouds, and atmospheric limb haze.
+- **Concentric Geological Strata**:
+  - **Terrestrial Worlds**:
+    - **Solid Inner Core**: Incandescent crystalline Fe-Ni sphere ($T \approx 5,500\text{ K}$, golden incandescence).
+    - **Liquid Outer Core**: Convective molten Fe-Ni geodynamo rings ($T \approx 4,500\text{ K}$, molten amber).
+    - **Silicate Mantle**: Ductile peridotite/bridgmanite rock cross-section ($T \approx 2,500\text{ K}$, terracotta/crimson).
+    - **Theia LLSVP Plumes**: Deep mantle thermochemical piles at the Core-Mantle Boundary (CMB) visualized with pulsating crimson arcs.
+    - **Rigid Crust**: Silicate lithosphere and surface hydrosphere.
+  - **Gas Giants**: Dense rocky core, metallic liquid hydrogen geodynamo mantle, and outer molecular hydrogen/helium envelope.
+  - **Ice Giants**: Solid rocky-iron core, ionic liquid water-ammonia-methane slush ocean, and outer molecular envelope.
+  - **Stars**: Thermonuclear fusion core ($15.7\text{ MK}$), radiative diffusion zone, and outer convective envelope.
+- **Holographic 3D Billboard Callouts**: Crisp leader lines project into 3D space with billboarded text stating layer names, equilibrium temperatures, and physical thicknesses.
+
+---
+
 ## 🌌 Sandbox Scenario Library
 
 Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
@@ -533,6 +559,7 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | **`C`** | Cycle slingshot projectile archetype (in Slingshot mode) |
 | **`N`** | Toggle Trajectory Predictor & Encounter Forecaster (or trigger core-collapse supernova when star is focused) |
 | **`Shift + V`** | Toggle 3D Surface Horizon & Rover exploration mode |
+| **`Shift + X`** | Toggle 3D Internal Planetary Cutaway & Core Geodynamics |
 | **`Shift + H`** | Toggle Cosmic Hazards Control Drawer |
 | **`Shift + M`** | Toggle Campaign Objectives Panel |
 | **`Shift + R`** | Toggle Hertzsprung-Russell (H-R) Stellar Diagram Panel |
@@ -620,15 +647,16 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 52 specialized test suites covering 444 automated tests
+    └── simulation_tests/         # 52 specialized test suites covering 447 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (444 Tests)
+## 🧪 Automated Test Suite (447 Tests)
 
-Protostellar enforces rigorous physical validity through **444 comprehensive integration tests** across 52 specialized test suites:
+Protostellar enforces rigorous physical validity through **447 comprehensive integration tests** across 52 specialized test suites:
 
+- **3D Internal Planetary Cutaway Views & Geodynamics**: Quadrant discard shader logic, archetype core/mantle/crust strata resolution for terrestrial, gas giant, ice giant, and stellar bodies, Theia LLSVP mantle plume structures, diagnostic overlay cycling, and universal button visibility.
 - **Surface Horizon Navigation, 3D Terrains & Rover Drive Mechanics**: Tangent horizon camera pose stabilization, surface altitude limits, collision avoidance, and terrain-skimming driving controls.
 - **Galilean Moons, Volcanism & Cryotectonics**: Io sulfur volcanism, Europa/Enceladus cryotectonic lineae, cryovolcanic planetary ring replenishment, and multi-moon non-overlapping orbital initialization.
 - **Cosmic Hazards & Targeted Cometary Delivery**: Swept-closest-approach collision detection, proportional navigation intercept, guaranteed LHB ocean condensation, and water delivery budgets.
