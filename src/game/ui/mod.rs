@@ -7,6 +7,7 @@ pub mod buttons;
 pub mod campaign_panel;
 pub mod epoch_scrubber;
 pub mod hazards_panel;
+pub mod hover_card;
 pub mod hr_diagram_panel;
 pub mod inspector_panel;
 pub mod interactions;
@@ -33,6 +34,7 @@ pub use epoch_scrubber::{
 pub use hazards_panel::{
     spawn_hazards_panel, update_hazards_ui, HazardsPanelElement, HazardsPanelState,
 };
+pub use hover_card::{spawn_hover_card, update_hover_card_ui};
 pub use hr_diagram_panel::{
     handle_hr_diagram_action, spawn_hr_diagram_panel, update_hr_diagram_ui,
 };
