@@ -987,3 +987,138 @@ fn test_little_red_dot_blowout_reveals_supermassive_black_hole() {
     assert_eq!(jet_after.lorentz_factor, 20.0);
     assert_eq!(jet_after.jet_length_au, 40.0);
 }
+
+#[test]
+fn test_sagittarius_a_star_merger_preserves_canonical_name_never_milkomeda() {
+    use protostellar::simulation::accretion::collisions::process_accretion_and_collisions;
+    use protostellar::simulation::accretion::*;
+    use protostellar::simulation::scenarios::sagittarius::spawn_sagittarius_a_star_scenario;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Time<()>>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<TidalDisruptionPool>();
+    app.init_resource::<DiskParameters>();
+
+    app.add_message::<AccretionMergeEvent>();
+    app.add_message::<MoonFormationEvent>();
+    app.add_message::<CollisionBounceEvent>();
+    app.add_message::<RocheDisruptionEvent>();
+    app.add_message::<TidalDisruptionEvent>();
+
+    app.add_systems(Update, process_accretion_and_collisions);
+
+    let mut disk_params = DiskParameters::default();
+    let mut commands = app.world_mut().commands();
+    let sgr_a_entity = spawn_sagittarius_a_star_scenario(&mut commands, &mut disk_params);
+
+    // Spawn an infalling companion directly at ISCO to force a devourment/merger event
+    commands.spawn((
+        CelestialBody {
+            name: "Plunging Test Infaller".to_string(),
+            body_type: BodyType::Asteroid,
+        },
+        Mass(1.0),
+        Radius(0.001),
+        SimPosition(DVec3::new(0.01, 0.0, 0.0)),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+        Temperature(100.0),
+        Composition::rocky(),
+    ));
+
+    app.update();
+
+    // Verify Sgr A* swallowed or interacted, but its name remains "Sagittarius A* (Sgr A*)"
+    let sgr_body = app
+        .world()
+        .get::<CelestialBody>(sgr_a_entity)
+        .expect("Sgr A* must exist");
+    assert_eq!(sgr_body.body_type, BodyType::BlackHole);
+    assert_eq!(
+        sgr_body.name, "Sagittarius A* (Sgr A*)",
+        "Sagittarius A* must strictly preserve its canonical name and NEVER be renamed to Milkomeda"
+    );
+    assert!(
+        !sgr_body.name.contains("Milkomeda"),
+        "Sagittarius A* must never contain 'Milkomeda'"
+    );
+}
+
+#[test]
+fn test_milkomeda_andromeda_milky_way_merger_naming() {
+    use protostellar::simulation::accretion::collisions::process_accretion_and_collisions;
+    use protostellar::simulation::accretion::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<Time<()>>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<TidalDisruptionPool>();
+
+    app.add_message::<AccretionMergeEvent>();
+    app.add_message::<MoonFormationEvent>();
+    app.add_message::<CollisionBounceEvent>();
+    app.add_message::<RocheDisruptionEvent>();
+    app.add_message::<TidalDisruptionEvent>();
+
+    app.add_systems(Update, process_accretion_and_collisions);
+
+    // Andromeda SMBH (140M M_sun) and Milky Way SMBH (4.3M M_sun)
+    let andromeda_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Andromeda SMBH".to_string(),
+                body_type: BodyType::BlackHole,
+            },
+            Mass(140_000_000.0),
+            Radius(2.76),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration(DVec3::ZERO),
+            Temperature(1e-7),
+            Composition::pure_hydrogen(),
+        ))
+        .id();
+
+    let _mw_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Milky Way SMBH (Sagittarius A*)".to_string(),
+                body_type: BodyType::BlackHole,
+            },
+            Mass(4_300_000.0),
+            Radius(0.085),
+            SimPosition(DVec3::new(10.0, 0.0, 0.0)),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration(DVec3::ZERO),
+            Temperature(1e-7),
+            Composition::pure_hydrogen(),
+        ))
+        .id();
+
+    app.update();
+
+    let merged_body = app
+        .world()
+        .get::<CelestialBody>(andromeda_ent)
+        .expect("Merged black hole entity must exist");
+    assert!(
+        merged_body.name.contains("Milkomeda SMBH"),
+        "Galactic collision merger must produce Milkomeda SMBH, got: {}",
+        merged_body.name
+    );
+    assert_eq!(
+        merged_body.name,
+        "Merged Supermassive Black Hole (Milkomeda SMBH - 144.3M M☉)"
+    );
+}

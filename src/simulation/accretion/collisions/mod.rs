@@ -1,9 +1,11 @@
 //! Collision detection and accretion physics processing.
 
 pub mod handlers;
+pub mod naming;
 pub mod types;
 
 pub use handlers::*;
+pub use naming::*;
 pub use types::*;
 
 use bevy::math::DVec3;
@@ -241,6 +243,9 @@ fn compute_effective_collision_radius(
                 let r_swallow = if bh_b.mass >= 5.0 && bh_b.mass < 1_000_000.0 {
                     // Massive black holes in dense cluster / galactic cores actively capture plunging stars
                     (0.35 * bh_b.mass.cbrt()).clamp(0.8, 5.0)
+                } else if bh_b.mass >= 1_000_000.0 {
+                    // Supermassive black holes: clamp tidal disruption capture to prevent diffuse clouds from false-triggering
+                    r_tidal.min(15.0)
                 } else {
                     r_tidal
                 };

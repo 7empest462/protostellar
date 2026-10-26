@@ -13,6 +13,7 @@ use crate::utils::constants::*;
 use super::super::basins::*;
 use super::super::events::*;
 use super::super::impact_regimes::radius_from_mass_density;
+use super::naming::*;
 use super::types::*;
 use crate::simulation::components::classify_body_by_mass_and_comp;
 
@@ -680,7 +681,12 @@ pub fn handle_inelastic_merger(
         *comp = physics.merged_comp;
         body.body_type = physics.updated_type;
 
-        update_merged_body_name(&mut body.name, physics.updated_type, physics.total_mass);
+        update_merged_body_name(
+            &mut body.name,
+            &pair.s_name,
+            physics.updated_type,
+            physics.total_mass,
+        );
 
         if let Some(mut diff) = opt_diff {
             diff.recalculate(physics.total_mass, physics.new_radius, &physics.merged_comp);
@@ -733,66 +739,6 @@ pub fn handle_inelastic_merger(
     b1.comp = physics.merged_comp;
     b1.body_type = physics.updated_type;
     b1.spin = physics.merged_spin;
-}
-
-fn is_canonical_solar_name(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("earth")
-        || lower.contains("theia")
-        || lower.contains("moon")
-        || lower.contains("luna")
-        || lower.contains("mercury")
-        || lower.contains("venus")
-        || lower.contains("mars")
-        || lower.contains("jupiter")
-        || lower.contains("saturn")
-        || lower.contains("uranus")
-        || lower.contains("neptune")
-        || lower.contains("pluto")
-        || lower.contains("sun")
-        || lower.contains("sol")
-}
-
-fn update_merged_body_name(name: &mut String, updated_type: BodyType, total_mass: f64) {
-    if is_canonical_solar_name(name) {
-        return;
-    }
-    if updated_type == BodyType::ThorneZytkow {
-        *name = format!("Thorne-Żytkow Object ({total_mass:.1} M☉)");
-        return;
-    }
-    if updated_type == BodyType::QuarkStar {
-        *name = format!("Strange Quark Star ({total_mass:.2} M☉)");
-        return;
-    }
-    if updated_type == BodyType::BlueStraggler {
-        *name = format!("Blue Straggler Star ({total_mass:.1} M☉)");
-        return;
-    }
-    if updated_type == BodyType::BlackHole {
-        if total_mass >= 1_000_000.0 {
-            *name = format!(
-                "Merged Supermassive Black Hole (Milkomeda SMBH - {:.1}M M☉)",
-                total_mass / 1_000_000.0
-            );
-        } else if total_mass >= 40.0 {
-            *name = format!("Galactic Nucleus (SMBH Seed - {total_mass:.1} M☉)");
-        } else if total_mass >= 15.0 {
-            *name = format!("Intermediate-Mass Black Hole ({total_mass:.1} M☉)");
-        }
-        return;
-    }
-    let is_named_minor = name.contains("Comet") || name.contains("Asteroid");
-    if updated_type.is_planet() && (is_named_minor || !name.starts_with("Planet")) {
-        *name = match updated_type {
-            BodyType::TerrestrialPlanet => "Planet (Terrestrial World)".to_string(),
-            BodyType::SuperEarth => "Planet (Super-Earth)".to_string(),
-            BodyType::GasGiant => "Planet (Gas Giant)".to_string(),
-            BodyType::IceGiant => "Planet (Ice Giant)".to_string(),
-            BodyType::Protoplanet => "Protoplanet (Embryo)".to_string(),
-            _ => name.clone(),
-        };
-    }
 }
 
 fn deliver_volatiles_and_crater(ctx: &mut CollisionContext, pair: &SortedPair) {
@@ -918,7 +864,12 @@ pub fn handle_tidal_disruption_event(
         rad.0 = (1.974e-8 * total_mass).max(1e-7);
         temp.0 = 10.0;
         body.body_type = BodyType::BlackHole;
-        update_merged_body_name(&mut body.name, BodyType::BlackHole, total_mass);
+        update_merged_body_name(
+            &mut body.name,
+            &pair.s_name,
+            BodyType::BlackHole,
+            total_mass,
+        );
         b1.name.clone_from(&body.name);
     }
 
