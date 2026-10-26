@@ -489,9 +489,7 @@ fn test_hover_card_screen_clamping() {
 
 #[test]
 fn test_hover_card_ui_system_visibility_and_text_sync() {
-    use protostellar::game::ui::hover_card::{
-        update_hover_card_ui, HoverCardField, HoverCardRoot,
-    };
+    use protostellar::game::ui::hover_card::{update_hover_card_ui, HoverCardField, HoverCardRoot};
     use protostellar::rendering::camera::PanOrbitCamera;
 
     let mut app = App::new();
@@ -566,7 +564,11 @@ fn test_hover_card_ui_system_visibility_and_text_sync() {
 
     // Verify Title text was updated to "Earth"
     let mut title_found = false;
-    for (field, text) in app.world_mut().query::<(&HoverCardField, &Text)>().iter(app.world()) {
+    for (field, text) in app
+        .world_mut()
+        .query::<(&HoverCardField, &Text)>()
+        .iter(app.world())
+    {
         if *field == HoverCardField::Title {
             assert_eq!(text.0, "Earth");
             title_found = true;
@@ -583,5 +585,129 @@ fn test_hover_card_ui_system_visibility_and_text_sync() {
     assert_eq!(
         app.world().get::<Node>(card_root).unwrap().display,
         Display::None
+    );
+}
+
+#[test]
+fn test_internal_cutaway_strata_archetype_resolution() {
+    use protostellar::rendering::effects::planetary::resolve_cutaway_strata;
+    use protostellar::simulation::resources::SimulationConfig;
+
+    let config = SimulationConfig::default();
+
+    // 1. Terrestrial World with Mantle Plumes / LLSVP
+    let earth_body = CelestialBody {
+        name: "Earth".to_string(),
+        body_type: BodyType::TerrestrialPlanet,
+    };
+    let earth_diff = InternalDifferentiation {
+        is_differentiated: true,
+        differentiation_fraction: 1.0,
+        core_radius_au: 2.3e-5,
+        mantle_radius_au: 4.2e-5,
+        crust_thickness_au: 2.3e-7,
+        ocean_ice_thickness_au: 2.7e-8,
+        core_temp_k: 5500.0,
+        magnetic_field_gauss: 0.5,
+        has_theia_llsvp: true,
+        llsvp_density_contrast: 0.025,
+    };
+    let strata_terr = resolve_cutaway_strata(&earth_body, 4.26e-5, Some(&earth_diff), &config);
+    assert!(strata_terr.has_theia_llsvp);
+    assert!(strata_terr.inner_core_r < strata_terr.core_r);
+    assert!(strata_terr.core_r < strata_terr.mantle_r);
+    assert!(strata_terr.mantle_r <= strata_terr.crust_r);
+
+    // 2. Gas Giant (Jupiter)
+    let jupiter_body = CelestialBody {
+        name: "Jupiter".to_string(),
+        body_type: BodyType::GasGiant,
+    };
+    let strata_gas = resolve_cutaway_strata(&jupiter_body, 4.77e-4, None, &config);
+    assert!(!strata_gas.has_theia_llsvp);
+    assert!(strata_gas.inner_core_r < strata_gas.core_r);
+    assert!(strata_gas.core_r < strata_gas.mantle_r);
+    assert!(strata_gas.mantle_r < strata_gas.crust_r);
+
+    // 3. Ice Giant (Neptune)
+    let neptune_body = CelestialBody {
+        name: "Neptune".to_string(),
+        body_type: BodyType::IceGiant,
+    };
+    let strata_ice = resolve_cutaway_strata(&neptune_body, 1.64e-4, None, &config);
+    assert!(!strata_ice.has_theia_llsvp);
+    assert!(strata_ice.inner_core_r < strata_ice.core_r);
+    assert!(strata_ice.core_r < strata_ice.mantle_r);
+
+    // 4. Central Star (Sun)
+    let sun_body = CelestialBody {
+        name: "Sun".to_string(),
+        body_type: BodyType::MainSequenceStar,
+    };
+    let strata_star = resolve_cutaway_strata(&sun_body, 4.65e-3, None, &config);
+    assert!(!strata_star.has_theia_llsvp);
+    assert!(strata_star.inner_core_r < strata_star.core_r);
+    assert!(strata_star.core_r < strata_star.mantle_r);
+    assert_eq!(strata_star.crust_r, config.calc_visual_radius_for_type(4.65e-3, BodyType::MainSequenceStar));
+}
+
+#[test]
+fn test_player_interaction_cutaway_active_state_and_cycle() {
+    use protostellar::simulation::resources::DiagnosticOverlayMode;
+
+    let mut state = PlayerInteractionState::default();
+    assert!(!state.is_cutaway_active());
+
+    // Cutaway mode hotkey toggle
+    state.cutaway_mode = true;
+    assert!(state.is_cutaway_active());
+    state.cutaway_mode = false;
+    assert!(!state.is_cutaway_active());
+
+    // Diagnostic overlay cycle
+    state.overlay_mode = DiagnosticOverlayMode::InternalCutaway;
+    assert!(state.is_cutaway_active());
+    assert_eq!(state.overlay_mode.display_name(), "Internal Cutaway & Core Geodynamics");
+
+    // Cycle through and verify it returns
+    let mut found_cutaway = false;
+    let mut current = DiagnosticOverlayMode::Hidden;
+    for _ in 0..15 {
+        current = current.cycle();
+        if current == DiagnosticOverlayMode::InternalCutaway {
+            found_cutaway = true;
+            break;
+        }
+    }
+    assert!(found_cutaway, "DiagnosticOverlayMode cycle must include InternalCutaway");
+}
+
+#[test]
+fn test_cutaway_ui_button_universal_visibility() {
+    let (mut app, _entities) = setup_contextual_ui_app();
+
+    let btn_cutaway = app
+        .world_mut()
+        .spawn((UiButtonAction::ToggleInternalCutaway, Node::default()))
+        .id();
+
+    app.add_systems(Update, update_scenario_contextual_ui);
+
+    // Initial frame
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(btn_cutaway).unwrap().display,
+        Display::Flex
+    );
+
+    // Switch scenario preset
+    {
+        let mut scenario = app.world_mut().resource_mut::<ActiveScenarioState>();
+        scenario.current_preset = ScenarioPreset::LittleRedDot;
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(btn_cutaway).unwrap().display,
+        Display::Flex
     );
 }

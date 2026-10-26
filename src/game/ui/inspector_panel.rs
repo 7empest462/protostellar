@@ -75,6 +75,13 @@ fn spawn_inspector_header(panel: &mut ChildSpawnerCommands) {
                     Color::srgba(0.06, 0.24, 0.18, 0.92),
                     Color::srgb(0.35, 1.0, 0.78),
                 );
+                create_compact_button(
+                    right_hdr,
+                    UiButtonAction::ToggleInternalCutaway,
+                    "🔬 Cutaway [Shift-X]",
+                    Color::srgba(0.24, 0.12, 0.05, 0.92),
+                    Color::srgb(1.0, 0.75, 0.35),
+                );
                 right_hdr.spawn((
                     Text::new("↕ Scroll"),
                     TextFont {
@@ -324,7 +331,7 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 12] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 13] = [
                 (
                     UiButtonAction::FocusLock,
                     "Track [F]",
@@ -336,6 +343,12 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
                     "🎥 Surface [Shift-V]",
                     Color::srgba(0.06, 0.24, 0.18, 0.9),
                     Color::srgb(0.35, 1.0, 0.78),
+                ),
+                (
+                    UiButtonAction::ToggleInternalCutaway,
+                    "🔬 Cutaway [Shift-X]",
+                    Color::srgba(0.24, 0.12, 0.05, 0.9),
+                    Color::srgb(1.0, 0.75, 0.35),
                 ),
                 (
                     UiButtonAction::FixOrbit,
@@ -506,7 +519,7 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_children(|row| {
-            const BUTTONS: [(UiButtonAction, &str, Color, Color); 12] = [
+            const BUTTONS: [(UiButtonAction, &str, Color, Color); 13] = [
                 (
                     UiButtonAction::IgniteStar,
                     "Ignite [I]",
@@ -554,6 +567,12 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
                     "🎥 Surface [Shift-V]",
                     Color::srgba(0.06, 0.24, 0.18, 0.9),
                     Color::srgb(0.35, 1.0, 0.78),
+                ),
+                (
+                    UiButtonAction::ToggleInternalCutaway,
+                    "🔬 Cutaway [Shift-X]",
+                    Color::srgba(0.24, 0.12, 0.05, 0.9),
+                    Color::srgb(1.0, 0.75, 0.35),
                 ),
                 (
                     UiButtonAction::AgeStar,

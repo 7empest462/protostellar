@@ -24,6 +24,10 @@ fn test_magnetic_field_overlay_mode_cycle_and_names() {
     assert_eq!(mode.display_name(), "Hill Spheres & Annular Gaps");
 
     let mode = mode.cycle();
+    assert_eq!(mode, DiagnosticOverlayMode::InternalCutaway);
+    assert_eq!(mode.display_name(), "Internal Cutaway & Core Geodynamics");
+
+    let mode = mode.cycle();
     assert_eq!(mode, DiagnosticOverlayMode::MagneticFields);
     assert_eq!(mode.display_name(), "Magnetic Fields (GPU)");
 

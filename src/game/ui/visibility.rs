@@ -296,8 +296,10 @@ pub fn update_scenario_contextual_ui(
                     preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
                 );
             }
-            // Pop-III Hypergiant and Surface Horizon Camera are UNIVERSAL (always visible)
-            UiButtonAction::SpawnInfallPop3Star | UiButtonAction::ToggleSurfaceHorizonCamera => {
+            // Pop-III Hypergiant, Surface Horizon Camera, and 3D Internal Cutaway are UNIVERSAL (always visible)
+            UiButtonAction::SpawnInfallPop3Star
+            | UiButtonAction::ToggleSurfaceHorizonCamera
+            | UiButtonAction::ToggleInternalCutaway => {
                 node.display = Display::Flex;
             }
             // Molecular Cloud Supernova shockwave trigger

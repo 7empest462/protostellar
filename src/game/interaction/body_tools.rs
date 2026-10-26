@@ -177,8 +177,9 @@ fn handle_star_interaction_actions(
             }
         }
     }
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if let Some(qs) = opt_quasi {
-        if keyboard.just_pressed(KeyCode::KeyX) {
+        if !is_shift && keyboard.just_pressed(KeyCode::KeyX) {
             qs.toggle_super_eddington();
             let mode = if qs.super_eddington_active {
                 "4.5x Eddington (Hyper-Accretion Active)"
@@ -332,7 +333,8 @@ fn handle_planet_interaction_actions(
         }
         player_state.selected_entity = None;
     }
-    if keyboard.just_pressed(KeyCode::KeyX) {
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    if !is_shift && keyboard.just_pressed(KeyCode::KeyX) {
         if let Ok(mut cmd) = commands.get_entity(entity) {
             cmd.insert(PlanetaryRingSystem {
                 inner_radius_au: 0.0008,

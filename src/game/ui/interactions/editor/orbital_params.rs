@@ -247,6 +247,17 @@ pub fn handle_view_and_target(
             }
             true
         }
+        UiButtonAction::ToggleInternalCutaway => {
+            player_state.cutaway_mode = !player_state.cutaway_mode;
+            let status = if player_state.cutaway_mode {
+                "ENABLED (90° Core Cross-Section & Geodynamics Active)"
+            } else {
+                "DISABLED (Solid Surface View Restored)"
+            };
+            toast.message = format!("🔬 3D Planetary Cutaway {status}");
+            toast.timer = 3.5;
+            true
+        }
         UiButtonAction::ResetView => {
             if let Ok(mut cam) = camera_query.single_mut() {
                 cam.surface_horizon_mode = false;

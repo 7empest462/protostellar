@@ -85,6 +85,15 @@ pub fn handle_viewport_and_tool_hotkeys(
     if !is_shift && keyboard.just_pressed(KeyCode::KeyV) {
         player_state.overlay_mode = player_state.overlay_mode.cycle();
     }
+    if is_shift && keyboard.just_pressed(KeyCode::KeyX) {
+        player_state.cutaway_mode = !player_state.cutaway_mode;
+        toast.message = if player_state.cutaway_mode {
+            "🔬 3D Planetary Cutaway: ENABLED [Shift-X] (Core Cross-Section Active)".to_string()
+        } else {
+            "🔬 3D Planetary Cutaway: DISABLED [Shift-X] (Surface Restored)".to_string()
+        };
+        toast.timer = 2.5;
+    }
     if keyboard.just_pressed(KeyCode::KeyY) {
         player_state.orbit_mode = player_state.orbit_mode.cycle();
         // If the player toggles to cinematic/Hidden orbit mode, also hide

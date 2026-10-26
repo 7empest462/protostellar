@@ -474,6 +474,7 @@ pub enum UiButtonAction {
     VaporizeBody,
     FocusLock,
     ToggleSurfaceHorizonCamera,
+    ToggleInternalCutaway,
     ResetView,
     DeselectBody,
     FixOrbit,
@@ -619,6 +620,9 @@ impl UiButtonAction {
             UiButtonAction::FocusLock => "[F]: Focus & track camera onto selected celestial body.",
             UiButtonAction::ToggleSurfaceHorizonCamera => {
                 "[Shift+V]: Toggle First-Person Rover / Planetary Surface Horizon Camera (WASD to drive, R-Drag to look 360°)."
+            }
+            UiButtonAction::ToggleInternalCutaway => {
+                "[Shift+X]: Toggle 3D internal planetary cutaway cross-section & core geodynamics."
             }
             UiButtonAction::ResetView => "[R]: Reset camera to overview orientation.",
             UiButtonAction::DeselectBody => "[Esc]: Close inspector and clear selection.",
