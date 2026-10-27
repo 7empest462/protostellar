@@ -363,6 +363,9 @@ fn classify_ignited_protostar_to_zams(
     if body.name.starts_with("Protostar Gen-I Jeans-") {
         let idx = body.name.trim_start_matches("Protostar Gen-I Jeans-");
         body.name = format!("{label} Gen-I #{idx}");
+    } else if body.name.starts_with("Protostar Jeans-") {
+        let idx = body.name.trim_start_matches("Protostar Jeans-");
+        body.name = format!("{label} #{idx}");
     } else if body.name.starts_with("Protostar Gen-II NovaCore-") {
         let idx = body.name.trim_start_matches("Protostar Gen-II NovaCore-");
         body.name = format!("{label} Gen-II #{idx}");

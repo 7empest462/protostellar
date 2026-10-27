@@ -28,6 +28,8 @@ mod geological_epochs;
 mod gmc_black_hole_sinking;
 #[path = "simulation_tests/gmc_far_field.rs"]
 mod gmc_far_field;
+#[path = "simulation_tests/gmc_promotion.rs"]
+mod gmc_promotion;
 #[path = "simulation_tests/gpu_and_particles.rs"]
 mod gpu_and_particles;
 #[path = "simulation_tests/habitable_zone_and_lagrange.rs"]

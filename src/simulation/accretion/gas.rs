@@ -712,7 +712,7 @@ fn compute_protostar_bondi_hoyle_accretion(
     reason = "Acquisition logic needs many parameters"
 )]
 fn compute_protoplanet_envelope_accretion(
-    entity: Entity,
+    _entity: Entity,
     pos: &SimPosition,
     mass: &mut Mass,
     rad: &mut Radius,
@@ -720,23 +720,13 @@ fn compute_protoplanet_envelope_accretion(
     body: &mut CelestialBody,
     opt_vol: &mut Option<Mut<VolatileInventory>>,
     dt_yr: f64,
-    stars: &[(Entity, bevy::math::DVec3, f64)],
+    star_pos: bevy::math::DVec3,
+    star_m: f64,
 ) {
     let m = mass.0;
     // B. PROTOPLANET ACCRETION FROM CIRCUMSTELLAR ENVELOPE & GMC NEBULA
-    // Find closest host star
-    let closest_star = stars
-        .iter()
-        .filter(|(s_ent, _, _)| *s_ent != entity)
-        .min_by(|(_, p1, _), (_, p2, _)| {
-            let d1 = (*p1 - pos.0).length_squared();
-            let d2 = (*p2 - pos.0).length_squared();
-            d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-    if let Some((_, star_pos, star_m)) = closest_star {
-        let a_au = (pos.0 - *star_pos).length().clamp(0.4, 50.0);
-        let omega_k = (G_ASTRO * star_m / (a_au * a_au * a_au)).sqrt();
+    let a_au = (pos.0 - star_pos).length().clamp(0.4, 50.0);
+    let omega_k = (G_ASTRO * star_m / (a_au * a_au * a_au)).sqrt();
 
         let is_gas_giant = comp.gas_frac > 0.40
             || body.body_type == BodyType::GasGiant
@@ -818,6 +808,49 @@ fn compute_protoplanet_envelope_accretion(
                 }
             }
         }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Black hole hyper-accretion in dense GMC core requires orbital state and physical components"
+)]
+fn compute_gmc_black_hole_accretion(
+    m: f64,
+    pos: &SimPosition,
+    vel: &SimVelocity,
+    mass: &mut Mass,
+    rad: &mut Radius,
+    body: &mut CelestialBody,
+    mut opt_jet: Option<&mut crate::simulation::components::RelativisticJetState>,
+    dt_yr: f64,
+    gas_scale: f64,
+) {
+    let r_bh = pos.0.length();
+    let rho_bh = if r_bh < 350.0 {
+        3.4e-11 * (1.0 / (1.0 + (r_bh / 140.0).powi(2)).powf(1.5)) * gas_scale
+    } else {
+        1.5e-13 * gas_scale
+    };
+    let c_s = 0.058;
+    let v_bh = vel.0.length();
+    let v_eff = (c_s * c_s + v_bh * v_bh).sqrt().max(0.04);
+    let max_bondi = (0.5 * m.sqrt()).clamp(1.0, 50.0);
+    let bondi_bh = (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, max_bondi);
+    let edd_rate = (0.015 * m).min(25.0);
+    let d_mass = (bondi_bh + edd_rate) * dt_yr;
+    if d_mass > 1e-12 {
+        let new_m = m + d_mass;
+        mass.0 = new_m;
+        rad.0 = (1.974e-8 * new_m).max(1e-7);
+        if let Some(ref mut jet) = opt_jet {
+            jet.is_accreting = true;
+            jet.accretion_timer_years = 5.0;
+        }
+        if new_m >= 100_000.0 && !body.name.contains("Supermassive") {
+            body.name = format!("Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)", new_m / 1000.0);
+        } else if new_m >= 100.0 && !body.name.contains("Intermediate") && !body.name.contains("Supermassive") {
+            body.name = format!("Intermediate-Mass Black Hole ({new_m:.1} M☉)");
+        }
     }
 }
 
@@ -845,6 +878,7 @@ pub fn gmc_cluster_gas_accretion(
         Option<&IgnitionState>,
         Option<&mut VolatileInventory>,
         Option<&mut crate::simulation::components::RelativisticJetState>,
+        Option<&CircumstellarDisk>,
     )>,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
@@ -868,11 +902,14 @@ pub fn gmc_cluster_gas_accretion(
         |st| st.current_dt_yr.clamp(1e-6, 5.0),
     );
 
-    // 1. Collect all star positions and masses for planetary envelope accretion
-    let stars: Vec<(Entity, bevy::math::DVec3, f64)> = bodies_query
+    // 1. Collect all star positions, masses, and active disk status for planetary envelope accretion
+    let stars: Vec<(Entity, bevy::math::DVec3, f64, bool)> = bodies_query
         .iter()
-        .filter(|(_, _, _, _, _, _, body, _, _, _, _, _)| body.body_type.is_star_or_remnant())
-        .map(|(e, m, pos, _, _, _, _, _, _, _, _, _)| (e, pos.0, m.0))
+        .filter(|(_, _, _, _, _, _, body, _, _, _, _, _, _)| body.body_type.is_star_or_remnant())
+        .map(|(e, m, pos, _, _, _, _, _, _, _, _, _, opt_disk)| {
+            let is_active = opt_disk.is_none_or(|d| d.is_active_full_disk);
+            (e, pos.0, m.0, is_active)
+        })
         .collect();
 
     for (
@@ -887,78 +924,70 @@ pub fn gmc_cluster_gas_accretion(
         _opt_temp,
         opt_ign,
         mut opt_vol,
-        opt_jet,
+        mut opt_jet,
+        opt_disk,
     ) in bodies_query.iter_mut()
     {
         let m = mass.0;
+        let is_host_active = opt_disk.as_ref().is_none_or(|d| d.is_active_full_disk);
 
         // A. PROTOSTAR & STELLAR BONDI-HOYLE ACCRETION FROM CLOUD CORE
         if body.body_type == BodyType::Protostar
             || (body.body_type.is_star_or_remnant() && !body.body_type.is_remnant())
         {
-            compute_protostar_bondi_hoyle_accretion(
+            // Only run full accretion on is_active_full_disk hosts if accretion is expensive
+            if is_host_active {
+                compute_protostar_bondi_hoyle_accretion(
+                    pos,
+                    vel,
+                    &mut mass,
+                    &mut rad,
+                    &mut body,
+                    &mut opt_lum,
+                    opt_ign,
+                    dt_yr,
+                    gas_scale,
+                );
+            }
+        } else if body.body_type == BodyType::BlackHole {
+            compute_gmc_black_hole_accretion(
+                m,
                 pos,
                 vel,
                 &mut mass,
                 &mut rad,
                 &mut body,
-                &mut opt_lum,
-                opt_ign,
+                opt_jet.as_deref_mut(),
                 dt_yr,
                 gas_scale,
             );
-        } else if body.body_type == BodyType::BlackHole {
-            // High-rate Bondi-Hoyle + Super-Eddington accretion for Black Holes in GMC cores
-            let r_bh = pos.0.length();
-            let rho_bh = if r_bh < 350.0 {
-                let r_c = 140.0;
-                let prof = 1.0 / (1.0 + (r_bh / r_c).powi(2)).powf(1.5);
-                3.4e-11 * prof * gas_scale
-            } else {
-                1.5e-13 * gas_scale
-            };
-            let c_s = 0.058;
-            let v_bh = vel.0.length();
-            let v_eff = (c_s * c_s + v_bh * v_bh).sqrt().max(0.04);
-            let max_bondi = (0.5 * m.sqrt()).clamp(1.0, 50.0);
-            let bondi_bh =
-                (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, max_bondi);
-            // Hyper-Eddington photon-trapped accretion in ultra-dense core
-            let edd_rate = (0.015 * m).min(25.0);
-            let d_mass = (bondi_bh + edd_rate) * dt_yr;
-            if d_mass > 1e-12 {
-                let new_m = m + d_mass;
-                mass.0 = new_m;
-                rad.0 = (1.974e-8 * new_m).max(1e-7);
-                if let Some(mut jet) = opt_jet {
-                    jet.is_accreting = true;
-                    jet.accretion_timer_years = 5.0; // Keep active for 5 years after eating gas
-                }
-                // Update black hole milestone classifications
-                if new_m >= 100_000.0 && !body.name.contains("Supermassive") {
-                    body.name = format!(
-                        "Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)",
-                        new_m / 1000.0
+        } else if body.body_type == BodyType::Protoplanet || body.body_type.is_planet() {
+            let closest_star = stars
+                .iter()
+                .filter(|(s_ent, _, _, _)| *s_ent != entity)
+                .min_by(|(_, p1, _, _), (_, p2, _, _)| {
+                    let d1 = (*p1 - pos.0).length_squared();
+                    let d2 = (*p2 - pos.0).length_squared();
+                    d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+            // Only run full envelope accretion if host star's disk is active
+            if let Some((_, star_pos, star_m, is_active)) = closest_star {
+                if *is_active {
+                    compute_protoplanet_envelope_accretion(
+                        entity,
+                        pos,
+                        &mut mass,
+                        &mut rad,
+                        &mut comp,
+                        &mut body,
+                        &mut opt_vol,
+                        dt_yr,
+                        *star_pos,
+                        *star_m,
                     );
-                } else if new_m >= 100.0
-                    && !body.name.contains("Intermediate")
-                    && !body.name.contains("Supermassive")
-                {
-                    body.name = format!("Intermediate-Mass Black Hole ({new_m:.1} M☉)");
                 }
             }
-        } else if body.body_type == BodyType::Protoplanet || body.body_type.is_planet() {
-            compute_protoplanet_envelope_accretion(
-                entity,
-                pos,
-                &mut mass,
-                &mut rad,
-                &mut comp,
-                &mut body,
-                &mut opt_vol,
-                dt_yr,
-                &stars,
-            );
         }
     }
 }

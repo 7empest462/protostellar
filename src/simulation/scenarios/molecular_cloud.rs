@@ -617,6 +617,7 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
     let bitangent = tangent.cross(DVec3::Y).normalize();
 
     let embryos = get_gmc_promotion_embryos(star_name, star_mass, metallicity);
+    let embryo_count = embryos.len();
     for e in embryos {
         let a_au = e.semi_major_axis_au;
         let v_circ = (G_ASTRO * star_mass / a_au).sqrt();
@@ -646,15 +647,19 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
         ));
     }
 
+    let display_star_name = if let Some(idx) = star_name.strip_prefix("Protostar Gen-I Jeans-") {
+        format!("Protostar Jeans-{idx}")
+    } else {
+        star_name.to_string()
+    };
+
     if let Some(ref mut t) = toast {
-        t.message = format!(
-            "🌟 GMC Promotion: {star_name} stabilized! Attached circumstellar disk and seeded protoplanetary embryos."
-        );
+        t.message = format!("{display_star_name}: disk attached ({embryo_count} embryos)");
         t.timer = 5.0;
     }
 
     bevy::log::info!(
-        "🌟 GMC Promotion: {star_name} stabilized! Attached circumstellar disk ({inner_r:.1}-{outer_r:.1} AU) and seeded embryos."
+        "{display_star_name}: disk attached ({embryo_count} embryos) [{inner_r:.1}-{outer_r:.1} AU]"
     );
 }
 
@@ -746,5 +751,73 @@ pub fn update_gmc_circumstellar_disks(
                 }
             }
         }
+    }
+}
+
+/// Tracks the Center of Mass (COM) of the star cluster once 3+ stellar systems exist,
+/// framing the multi-system cluster when the camera is not locked onto an individual target entity.
+pub fn update_gmc_cluster_com_camera(
+    scenario_state: Option<Res<ActiveScenarioState>>,
+    mut camera_query: Query<&mut crate::rendering::camera::PanOrbitCamera>,
+    stars_query: Query<(
+        Entity,
+        &SimPosition,
+        &Mass,
+        &CelestialBody,
+        Option<&CircumstellarDisk>,
+    )>,
+) {
+    let is_gmc = scenario_state.as_ref().is_some_and(|s| {
+        s.current_preset == ScenarioPreset::MolecularCloudCluster
+    });
+    if !is_gmc && scenario_state.is_some() {
+        return;
+    }
+
+    let Ok(mut camera) = camera_query.single_mut() else {
+        return;
+    };
+
+    // If the user has focused / locked onto a specific target body, respect user focus
+    if camera.target_entity.is_some() {
+        return;
+    }
+
+    // Count systems (stars or protostars)
+    let mut total_weighted_pos = DVec3::ZERO;
+    let mut total_mass = 0.0f64;
+    let mut star_positions = Vec::new();
+
+    for (_e, pos, mass, body, _opt_disk) in stars_query.iter() {
+        if body.body_type.is_star_or_remnant() || body.body_type == BodyType::Protostar {
+            total_weighted_pos += pos.0 * mass.0;
+            total_mass += mass.0;
+            star_positions.push(pos.0);
+        }
+    }
+
+    // Only activate once you have 3+ systems
+    if star_positions.len() < 3 || total_mass <= 1e-6 {
+        return;
+    }
+
+    let com = total_weighted_pos / total_mass;
+    let com_vec3 = Vec3::new(com.x as f32, com.y as f32, com.z as f32);
+
+    // Smoothly track Cluster Center of Mass
+    camera.target_focus = com_vec3;
+
+    // Calculate cluster radius from COM to frame the chaotic multi-system fantasy
+    let mut max_dist = 0.0f64;
+    for pos in &star_positions {
+        let dist = (*pos - com).length();
+        if dist > max_dist {
+            max_dist = dist;
+        }
+    }
+
+    let ideal_radius = (max_dist * 2.2).clamp(200.0, 1200.0) as f32;
+    if camera.target_radius < ideal_radius * 0.75 {
+        camera.target_radius = camera.target_radius.max(ideal_radius * 0.85);
     }
 }

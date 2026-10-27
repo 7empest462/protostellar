@@ -178,8 +178,14 @@ impl Plugin for SimulationPlugin {
                     crate::simulation::accretion::roche::cleanup_roche_lobe_overflow
                         .after(process_roche_lobe_overflow),
                     process_classical_novae.after(process_roche_lobe_overflow),
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     promote_stabilized_gmc_protostars.after(update_thermodynamics),
                     update_gmc_circumstellar_disks.after(step_physics_simulation),
+                    update_gmc_cluster_com_camera.after(step_physics_simulation),
                 ),
             )
             .init_resource::<TimelineScrubber>();

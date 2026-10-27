@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use super::types::*;
 use crate::simulation::components::{
-    Composition, PlanetaryClimate, RelativisticJetState, VolatileInventory,
+    CircumstellarDisk, Composition, PlanetaryClimate, RelativisticJetState, VolatileInventory,
 };
 
 /// Spawns the bottom-left Target Inspector and actions panel.
@@ -829,4 +829,44 @@ pub fn append_space_weather_telemetry(
             aurora.auroral_intensity * 100.0
         );
     }
+}
+
+/// Formats circumstellar accretion disk telemetry (age, mass budget, active full disk state) for the Target Inspector panel.
+pub fn append_circumstellar_disk_telemetry(out: &mut String, disk: &CircumstellarDisk) {
+    use std::fmt::Write;
+    let status_str = if disk.is_active_full_disk {
+        "ACTIVE (Full 3D Accretion)"
+    } else {
+        "CLEARED / DISSIPATED"
+    };
+    let age_str = if disk.age_years >= 1_000_000.0 {
+        format!("{:.2} Myr", disk.age_years / 1_000_000.0)
+    } else if disk.age_years >= 1_000.0 {
+        format!("{:.1} kyr", disk.age_years / 1_000.0)
+    } else {
+        format!("{:.0} yr", disk.age_years)
+    };
+    let lifetime_str = if disk.lifetime_years >= 1_000_000.0 {
+        format!("{:.2} Myr", disk.lifetime_years / 1_000_000.0)
+    } else {
+        format!("{:.0} kyr", disk.lifetime_years / 1_000.0)
+    };
+    let mass_str = if disk.disk_mass_solar >= 0.001 {
+        format!(
+            "{:.4} M☉ ({:.1} M_J)",
+            disk.disk_mass_solar,
+            disk.disk_mass_solar / crate::utils::constants::JUPITER_MASS_SOLAR
+        )
+    } else {
+        format!(
+            "{:.2} M_earth",
+            disk.disk_mass_solar / crate::utils::constants::EARTH_MASS_SOLAR
+        )
+    };
+    let _ = write!(
+        out,
+        "\n━━━ ⟪ CIRCUMSTELLAR ACCRETION DISK ⟫ ━━━━━━━━━━━━━━\n  • Status:     {status_str}\n  • Disk Age:   {age_str} / {lifetime_str}\n  • Disk Mass:  {mass_str}\n  • Extent:     {:.1} - {:.1} AU\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        disk.inner_radius_au,
+        disk.outer_radius_au
+    );
 }

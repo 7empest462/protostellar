@@ -297,6 +297,7 @@ fn update_inspector_body_telemetry(
         &crate::simulation::probes::SpaceProbe,
         &crate::simulation::probes::FlightComputer,
     )>,
+    disk_hud_query: &Query<&CircumstellarDisk>,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
 ) {
@@ -376,6 +377,10 @@ fn update_inspector_body_telemetry(
 
     if let Ok((probe, comp)) = probes_hud_query.get(selected_entity) {
         append_probe_telemetry(&mut text.0, probe, comp);
+    }
+
+    if let Ok(disk) = disk_hud_query.get(selected_entity) {
+        super::inspector_panel::append_circumstellar_disk_telemetry(&mut text.0, disk);
     }
 }
 
@@ -553,6 +558,7 @@ pub fn update_hud(
         &crate::simulation::probes::SpaceProbe,
         &crate::simulation::probes::FlightComputer,
     )>,
+    disk_hud_query: Query<&CircumstellarDisk>,
     mut text_queries: HudTextQueries,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
@@ -595,6 +601,7 @@ pub fn update_hud(
                 &jet_hud_query,
                 &space_weather_hud_query,
                 &probes_hud_query,
+                &disk_hud_query,
                 &phase_mgr,
                 &config,
             );
