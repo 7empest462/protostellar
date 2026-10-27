@@ -250,23 +250,14 @@ pub fn update_scenario_contextual_ui(
         opt_star.is_some() || body.body_type.is_star_or_remnant()
     });
 
-    let is_planetary_scenario = matches!(
-        preset,
-        crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
-            | crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
-            | crate::simulation::scenarios::ScenarioPreset::Trappist1System
-            | crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary
-            | crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration
-            | crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby
-            | crate::simulation::scenarios::ScenarioPreset::KozaiLidovTriple
-    );
-
     // 1. Synchronize inspector section containers
     for (section, mut node) in section_nodes.iter_mut() {
         node.display = match section {
             InspectorSection::TerraformingBombardment | InspectorSection::HydrosphereBathymetry => {
-                // Terraforming and hydrosphere only appear in planetary scenarios and for solid/planetary bodies (never probes)
-                flex_or_none(is_planetary_scenario && !is_star_like && !is_probe)
+                // Targeted bombardment (Comet, Chondrite Asteroid, Volatile Salvo, Core Impactor)
+                // and hydrosphere bathymetry are universally available across all scenarios
+                // for planets, moons, embryos, planetesimals, and minor bodies (any non-star, non-probe body).
+                flex_or_none(!is_star_like && !is_probe)
             }
             InspectorSection::ExoticExperiments
             | InspectorSection::OrbitTracking
@@ -315,9 +306,9 @@ pub fn update_scenario_contextual_ui(
                         || is_star_like,
                 );
             }
-            // Biosphere seeding: planetary scenarios on solid non-star worlds
+            // Biosphere seeding: universally available on solid non-star, non-probe worlds
             UiButtonAction::SeedLife => {
-                node.display = flex_or_none(is_planetary_scenario && !is_star_like);
+                node.display = flex_or_none(!is_star_like && !is_probe);
             }
             // Geological Epoch scrubber: scenarios with planetary era timelines
             UiButtonAction::ToggleEpochScrubberPanel => {

@@ -301,3 +301,202 @@ fn test_gmc_cluster_com_camera_activates_with_3_plus_systems() {
         "Cluster COM camera must not override individual target entity focus"
     );
 }
+
+#[test]
+fn test_universal_bombardment_availability_across_scenarios_and_body_types() {
+    use protostellar::game::ui::types::*;
+    use protostellar::game::ui::visibility::update_scenario_contextual_ui;
+
+    let mut app = App::new();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<SimulationConfig>();
+
+    let sec_bombardment = app
+        .world_mut()
+        .spawn((InspectorSection::TerraformingBombardment, Node::default()))
+        .id();
+    app.world_mut()
+        .spawn((Text::new(""), InspectorExoticHeader));
+
+    app.add_systems(Update, update_scenario_contextual_ui);
+
+    // Non-solar scenarios to test
+    let test_presets = [
+        ScenarioPreset::MolecularCloudCluster,
+        ScenarioPreset::SagittariusAStar,
+        ScenarioPreset::TidalDisruptionEvent,
+        ScenarioPreset::RelativisticBinary,
+        ScenarioPreset::LittleRedDot,
+    ];
+
+    // Body types to test: Planet, Moon, Embryo (Protoplanet), Planetesimal
+    let target_body_types = [
+        (BodyType::TerrestrialPlanet, "Target Planet"),
+        (BodyType::Moon, "Target Moon"),
+        (BodyType::Protoplanet, "Target Embryo"),
+        (BodyType::Planetesimal, "Target Planetesimal"),
+    ];
+
+    for preset in test_presets {
+        let mut sc = ActiveScenarioState::default();
+        sc.current_preset = preset;
+        app.insert_resource(sc);
+
+        for (b_type, name) in target_body_types {
+            let target_ent = app
+                .world_mut()
+                .spawn((
+                    CelestialBody {
+                        name: name.to_string(),
+                        body_type: b_type,
+                    },
+                    Mass(0.0001),
+                    Radius(0.0001),
+                    SimPosition(bevy::math::DVec3::new(10.0, 0.0, 0.0)),
+                    SimVelocity(bevy::math::DVec3::new(0.0, 0.5, 0.0)),
+                    Composition::rocky(),
+                    Temperature(200.0),
+                ))
+                .id();
+
+            // Select this body
+            app.world_mut()
+                .resource_mut::<PlayerInteractionState>()
+                .selected_entity = Some(target_ent);
+            app.update();
+
+            // Verify Bombardment section is available and visible
+            let display = app.world().get::<Node>(sec_bombardment).unwrap().display;
+            assert_eq!(
+                display,
+                Display::Flex,
+                "Terraforming & Bombardment section must be visible in {:?} for {:?}",
+                preset,
+                b_type
+            );
+
+            // Clean up target
+            app.world_mut().despawn(target_ent);
+        }
+    }
+}
+
+#[test]
+fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
+    use protostellar::game::ui::interactions::editor::terraforming_actions::handle_bombardment_trigger;
+    use protostellar::game::ui::types::*;
+    use protostellar::simulation::terraforming::{
+        update_guided_bombardment_projectiles, BombardmentEvent, BombardmentProjectile,
+        BombardmentType,
+    };
+
+    let mut app = App::new();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<NotificationToast>();
+    app.add_message::<BombardmentEvent>();
+
+    // Test launching all 4 bombardment weapons at an Embryo in GMC scenario
+    let mut sc = ActiveScenarioState::default();
+    sc.current_preset = ScenarioPreset::MolecularCloudCluster;
+    app.insert_resource(sc);
+
+    let embryo_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "GMC Cluster Embryo-IV".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            Mass(0.0001),
+            Radius(0.0001),
+            SimPosition(bevy::math::DVec3::new(15.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.8, 0.0)),
+            Composition::rocky(),
+            Temperature(180.0),
+        ))
+        .id();
+
+    app.world_mut()
+        .resource_mut::<PlayerInteractionState>()
+        .selected_entity = Some(embryo_ent);
+
+    let weapons = [
+        (UiButtonAction::BombardComet, BombardmentType::IcyComet),
+        (
+            UiButtonAction::BombardChondrite,
+            BombardmentType::CarbonaceousChondrite,
+        ),
+        (
+            UiButtonAction::BombardSalvo,
+            BombardmentType::VolatileAblationSalvo,
+        ),
+        (UiButtonAction::BombardCore, BombardmentType::IronAsteroid),
+    ];
+
+    let mut toast = NotificationToast::default();
+
+    for (action, expected_type) in weapons {
+        let mut state: bevy::ecs::system::SystemState<(
+            Commands,
+            SelectedWorldQuery,
+            Res<PlayerInteractionState>,
+        )> = bevy::ecs::system::SystemState::new(app.world_mut());
+        let (mut commands, mut query, player) = state.get_mut(app.world_mut()).unwrap();
+
+        handle_bombardment_trigger(
+            &action,
+            &mut query,
+            &player,
+            &mut commands,
+            100.0,
+            &mut toast,
+        );
+        state.apply(app.world_mut());
+
+        assert!(
+            toast.message.contains(expected_type.name()),
+            "Toast must announce bombardment launch for {:?}",
+            expected_type
+        );
+
+        // Find the spawned guided bombardment projectile
+        let mut proj_query = app.world_mut().query::<(&BombardmentProjectile, &CelestialBody)>();
+        let spawned = proj_query
+            .iter(app.world())
+            .find(|(p, _)| p.bombardment_type == expected_type && p.target_entity == embryo_ent);
+
+        assert!(
+            spawned.is_some(),
+            "Guided projectile for {:?} must be spawned targeting embryo",
+            expected_type
+        );
+    }
+
+    // Move projectile to target contact distance to trigger impact resolution
+    for (mut p_pos, _) in app
+        .world_mut()
+        .query::<(&mut SimPosition, &BombardmentProjectile)>()
+        .iter_mut(app.world_mut())
+    {
+        p_pos.0 = bevy::math::DVec3::new(15.0, 0.0, 0.0);
+    }
+
+    // Advance simulation to trigger guided impact navigation and impact resolution
+    app.add_systems(Update, update_guided_bombardment_projectiles);
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.current_dt_yr = 0.01;
+        sim_time.elapsed_years = 100.01; // Past arrival time
+    }
+    app.update();
+
+    // Embryo should have received volatiles/inventory from the impacts
+    let vol = app.world().get::<VolatileInventory>(embryo_ent);
+    assert!(
+        vol.is_some(),
+        "Target embryo must have received volatile inventory from bombardment impacts"
+    );
+}
