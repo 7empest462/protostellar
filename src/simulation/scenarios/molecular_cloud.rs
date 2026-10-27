@@ -17,7 +17,8 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
-use crate::simulation::resources::DiskParameters;
+use crate::simulation::resources::{DiskParameters, SimTime, SimulationConfig, TimeWarp};
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
 
 /// Total gas and stellar mass of the dense molecular cloud core in Solar Masses.
@@ -28,6 +29,9 @@ pub const GMC_CORE_RADIUS_AU: f64 = 550.0;
 
 /// Ambient cold molecular gas temperature in Kelvin (T ~ 10-15 K).
 pub const GMC_CLOUD_TEMPERATURE_K: f64 = 15.0;
+
+/// Mean radius of Jupiter in Astronomical Units (~71,492 km).
+pub const JUPITER_RADIUS_AU: f64 = 0.000_477;
 
 /// Calculates the isothermal sound speed c_s in AU/yr for molecular gas (mu = 2.3).
 pub fn calculate_gmc_sound_speed_au_yr(temp_k: f64) -> f64 {
@@ -370,4 +374,377 @@ pub fn spawn_preseeded_cluster_fixture(
     spawn_outer_cluster_members_and_clumps(commands, 3.5);
 
     primary_protostar
+}
+
+/// Maximum number of concurrent active full 3D circumstellar disks in the GMC cluster to maintain 60+ FPS.
+pub const MAX_GMC_ACTIVE_FULL_DISKS: usize = 4;
+
+/// Resource managing active full circumstellar disks and enforcing the concurrency cap for cluster performance.
+#[derive(Resource, Debug, Clone)]
+pub struct GmcClusterDiskManager {
+    pub max_active_full_disks: usize,
+}
+
+impl Default for GmcClusterDiskManager {
+    fn default() -> Self {
+        Self {
+            max_active_full_disks: MAX_GMC_ACTIVE_FULL_DISKS,
+        }
+    }
+}
+
+/// Caps the number of active full 3D circumstellar disks in the cluster to `max_disks` (3..=6).
+/// Dissipates the oldest active disk(s) into cleared planetary systems with surviving embryos.
+pub fn cap_gmc_active_full_disks(
+    commands: &mut Commands,
+    max_disks: usize,
+    existing_disks: &mut Query<(Entity, &mut CircumstellarDisk, Option<&PlanetaryRingSystem>)>,
+) {
+    let mut active_disks: Vec<(Entity, f64)> = existing_disks
+        .iter()
+        .filter(|(_, d, _)| d.is_active_full_disk)
+        .map(|(e, d, _)| (e, d.age_years))
+        .collect();
+
+    if active_disks.len() >= max_disks {
+        active_disks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let to_remove = (active_disks.len() + 1).saturating_sub(max_disks);
+        for &(oldest_e, _) in active_disks.iter().take(to_remove) {
+            if let Ok((_, mut old_disk, opt_ring)) = existing_disks.get_mut(oldest_e) {
+                old_disk.is_active_full_disk = false;
+                if opt_ring.is_some() {
+                    commands.entity(oldest_e).remove::<PlanetaryRingSystem>();
+                }
+            }
+        }
+    }
+}
+
+pub struct GmcEmbryoSpec {
+    pub name: String,
+    pub semi_major_axis_au: f64,
+    pub mass_solar: f64,
+    pub radius_au: f64,
+    pub composition: Composition,
+    pub body_type: BodyType,
+    pub angle_rad: f64,
+}
+
+pub fn get_gmc_promotion_embryos(
+    star_name: &str,
+    star_mass: f64,
+    metallicity: f32,
+) -> Vec<GmcEmbryoSpec> {
+    let m_ratio = (star_mass / 1.0).max(0.1);
+    if metallicity >= 0.045 {
+        // Gen-III: Mature SolCore Solar System analogues (Terra & Jovian)
+        vec![
+            GmcEmbryoSpec {
+                name: format!("{star_name} b (Terra Embryo)"),
+                semi_major_axis_au: 1.0 * m_ratio.sqrt(),
+                mass_solar: EARTH_MASS_SOLAR,
+                radius_au: EARTH_RADIUS_AU,
+                composition: Composition {
+                    metal_frac: 0.32,
+                    silicate_frac: 0.65,
+                    ice_frac: 0.02,
+                    organics_frac: 0.01,
+                    gas_frac: 0.0,
+                },
+                body_type: BodyType::TerrestrialPlanet,
+                angle_rad: 1.2,
+            },
+            GmcEmbryoSpec {
+                name: format!("{star_name} c (Jovian Embryo)"),
+                semi_major_axis_au: 5.2 * m_ratio.sqrt(),
+                mass_solar: JUPITER_MASS_SOLAR,
+                radius_au: JUPITER_RADIUS_AU,
+                composition: Composition::solar_gas(),
+                body_type: BodyType::GasGiant,
+                angle_rad: 3.8,
+            },
+        ]
+    } else if metallicity >= 0.005 {
+        // Gen-II: Enriched Supernova Remnant protoplanets (Iron-Rich, Rocky Earth, Volatile Ocean)
+        vec![
+            GmcEmbryoSpec {
+                name: format!("{star_name} b (Iron-Rich Embryo World)"),
+                semi_major_axis_au: 1.4 * m_ratio.sqrt(),
+                mass_solar: EARTH_MASS_SOLAR,
+                radius_au: EARTH_RADIUS_AU,
+                composition: Composition {
+                    metal_frac: 0.60,
+                    silicate_frac: 0.35,
+                    ice_frac: 0.01,
+                    organics_frac: 0.01,
+                    gas_frac: 0.03,
+                },
+                body_type: BodyType::Protoplanet,
+                angle_rad: 0.9,
+            },
+            GmcEmbryoSpec {
+                name: format!("{star_name} c (Rocky Earth-Analogue Embryo)"),
+                semi_major_axis_au: 2.8 * m_ratio.sqrt(),
+                mass_solar: 2.0 * EARTH_MASS_SOLAR,
+                radius_au: 1.3 * EARTH_RADIUS_AU,
+                composition: Composition {
+                    metal_frac: 0.30,
+                    silicate_frac: 0.58,
+                    ice_frac: 0.05,
+                    organics_frac: 0.03,
+                    gas_frac: 0.04,
+                },
+                body_type: BodyType::Protoplanet,
+                angle_rad: 2.7,
+            },
+            GmcEmbryoSpec {
+                name: format!("{star_name} d (Volatile Ocean Embryo World)"),
+                semi_major_axis_au: 5.8 * m_ratio.sqrt(),
+                mass_solar: 5.0 * EARTH_MASS_SOLAR,
+                radius_au: 2.0 * EARTH_RADIUS_AU,
+                composition: Composition {
+                    metal_frac: 0.12,
+                    silicate_frac: 0.36,
+                    ice_frac: 0.35,
+                    organics_frac: 0.12,
+                    gas_frac: 0.05,
+                },
+                body_type: BodyType::Protoplanet,
+                angle_rad: 4.8,
+            },
+        ]
+    } else {
+        // Gen-I: Pristine gas giant embryos (Pop-III)
+        vec![
+            GmcEmbryoSpec {
+                name: format!("{star_name} b1 (Gas Giant Embryo)"),
+                semi_major_axis_au: 12.5 * m_ratio.sqrt(),
+                mass_solar: 3.0 * JUPITER_MASS_SOLAR,
+                radius_au: 1.5 * JUPITER_RADIUS_AU,
+                composition: Composition::pure_hydrogen(),
+                body_type: BodyType::GasGiant,
+                angle_rad: 2.4,
+            },
+            GmcEmbryoSpec {
+                name: format!("{star_name} b2 (Gas Giant Embryo)"),
+                semi_major_axis_au: 21.0 * m_ratio.sqrt(),
+                mass_solar: 3.0 * JUPITER_MASS_SOLAR,
+                radius_au: 1.5 * JUPITER_RADIUS_AU,
+                composition: Composition::pure_hydrogen(),
+                body_type: BodyType::GasGiant,
+                angle_rad: 4.8,
+            },
+            GmcEmbryoSpec {
+                name: format!("{star_name} b3 (Gas Giant Embryo)"),
+                semi_major_axis_au: 29.5 * m_ratio.sqrt(),
+                mass_solar: 3.0 * JUPITER_MASS_SOLAR,
+                radius_au: 1.5 * JUPITER_RADIUS_AU,
+                composition: Composition::pure_hydrogen(),
+                body_type: BodyType::GasGiant,
+                angle_rad: 1.1,
+            },
+        ]
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "GMC promotion coordinates disk attachment, embryo spawning, and active cap"
+)]
+pub fn apply_gmc_promotion(
+    commands: &mut Commands,
+    star_ent: Entity,
+    star_name: &str,
+    star_pos: DVec3,
+    star_vel: DVec3,
+    star_mass: f64,
+    metallicity: f32,
+    max_disks: usize,
+    existing_disks: &mut Query<(Entity, &mut CircumstellarDisk, Option<&PlanetaryRingSystem>)>,
+    toast: &mut Option<ResMut<crate::game::ui::NotificationToast>>,
+) {
+    // 1. Cap active full disks: dissipate oldest if at or above limit
+    cap_gmc_active_full_disks(commands, max_disks, existing_disks);
+
+    // 2. Attach small circumstellar disk & spawn embryos
+    attach_gmc_circumstellar_disk_and_embryos(
+        commands,
+        star_ent,
+        star_name,
+        star_pos,
+        star_vel,
+        star_mass,
+        metallicity,
+        toast,
+    );
+}
+
+/// Attaches a small circumstellar accretion disk and seeds orbiting protoplanetary embryos.
+pub fn attach_gmc_circumstellar_disk_and_embryos(
+    commands: &mut Commands,
+    star_ent: Entity,
+    star_name: &str,
+    star_pos: DVec3,
+    star_vel: DVec3,
+    star_mass: f64,
+    metallicity: f32,
+    toast: &mut Option<ResMut<crate::game::ui::NotificationToast>>,
+) {
+    let m_ratio = (star_mass / 1.0).max(0.1);
+    let inner_r = (0.60 * m_ratio.sqrt()).clamp(0.40, 2.0) as f32;
+    let outer_r = (7.5 * m_ratio.powf(0.35)).clamp(4.5, 18.0) as f32;
+    let disk_m = (0.015 * star_mass).clamp(0.005, 0.08);
+
+    commands.entity(star_ent).insert((
+        CircumstellarDisk::new(inner_r, outer_r, disk_m),
+        PlanetaryRingSystem {
+            inner_radius_au: inner_r,
+            outer_radius_au: outer_r,
+            ring_mass_earth: disk_m * 333_000.0 * 0.01,
+            optical_depth: 0.82,
+            ice_fraction: if metallicity >= 0.02 { 0.45 } else { 0.20 },
+            silicate_fraction: if metallicity >= 0.02 { 0.55 } else { 0.80 },
+        },
+    ));
+
+    let tangent = if star_vel.length_squared() > 1e-4 {
+        star_vel.normalize()
+    } else if star_pos.cross(DVec3::Y).length_squared() > 1e-4 {
+        star_pos.cross(DVec3::Y).normalize()
+    } else {
+        DVec3::new(1.0, 0.0, 0.0)
+    };
+    let bitangent = tangent.cross(DVec3::Y).normalize();
+
+    let embryos = get_gmc_promotion_embryos(star_name, star_mass, metallicity);
+    for e in embryos {
+        let a_au = e.semi_major_axis_au;
+        let v_circ = (G_ASTRO * star_mass / a_au).sqrt();
+        let pos = star_pos
+            + tangent * (a_au * e.angle_rad.cos())
+            + bitangent * (a_au * e.angle_rad.sin());
+        let vel = star_vel
+            + tangent * (-v_circ * e.angle_rad.sin())
+            + bitangent * (v_circ * e.angle_rad.cos());
+
+        commands.spawn((
+            CelestialBody {
+                body_type: e.body_type,
+                name: e.name,
+            },
+            Mass(e.mass_solar),
+            SimPosition(pos),
+            SimVelocity(vel),
+            SimAcceleration::default(),
+            Radius(e.radius_au),
+            Temperature((280.0 / a_au.sqrt()).max(25.0)),
+            Luminosity(0.0),
+            AngularMomentum::default(),
+            e.composition,
+            VolatileInventory::default(),
+            SpinState::default(),
+        ));
+    }
+
+    if let Some(ref mut t) = toast {
+        t.message = format!(
+            "🌟 GMC Promotion: {star_name} stabilized! Attached circumstellar disk and seeded protoplanetary embryos."
+        );
+        t.timer = 5.0;
+    }
+
+    bevy::log::info!(
+        "🌟 GMC Promotion: {star_name} stabilized! Attached circumstellar disk ({inner_r:.1}-{outer_r:.1} AU) and seeded embryos."
+    );
+}
+
+/// When a protostar stabilizes (transitions to main sequence / ignited state) in the GMC scenario:
+/// 1. Attaches a small circumstellar accretion disk (CircumstellarDisk + PlanetaryRingSystem).
+/// 2. Spawns 2 to 4 protoplanetary embryos on stable Keplerian orbits.
+/// 3. Caps active full 3D disks (default 4, within 3..=6) to preserve high GPU/CPU cluster performance,
+///    dissipating older disks into their surviving planetary systems.
+pub fn promote_stabilized_gmc_protostars(
+    mut commands: Commands,
+    scenario_state: Option<Res<ActiveScenarioState>>,
+    disk_mgr: Option<Res<GmcClusterDiskManager>>,
+    mut existing_disks: Query<(Entity, &mut CircumstellarDisk, Option<&PlanetaryRingSystem>)>,
+    newly_stabilized: Query<
+        (
+            Entity,
+            &SimPosition,
+            &SimVelocity,
+            &Mass,
+            &CelestialBody,
+            &IgnitionState,
+        ),
+        Without<CircumstellarDisk>,
+    >,
+    mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
+) {
+    let is_gmc = scenario_state.as_ref().is_some_and(|s| {
+        s.current_preset == ScenarioPreset::MolecularCloudCluster
+    });
+    if !is_gmc && scenario_state.is_some() {
+        return;
+    }
+
+    let max_disks = disk_mgr
+        .as_ref()
+        .map_or(MAX_GMC_ACTIVE_FULL_DISKS, |m| m.max_active_full_disks);
+
+    for (star_ent, star_pos, star_vel, star_mass, body, ignition) in newly_stabilized.iter() {
+        if !ignition.is_ignited {
+            continue;
+        }
+
+        apply_gmc_promotion(
+            &mut commands,
+            star_ent,
+            &body.name,
+            star_pos.0,
+            star_vel.0,
+            star_mass.0,
+            0.02, // Default cluster metallicity
+            max_disks,
+            &mut existing_disks,
+            &mut toast,
+        );
+    }
+}
+
+/// Evolves and dissipates circumstellar accretion disks in the Giant Molecular Cloud cluster over time.
+pub fn update_gmc_circumstellar_disks(
+    mut commands: Commands,
+    scenario_state: Option<Res<ActiveScenarioState>>,
+    sim_time: Option<Res<SimTime>>,
+    time_warp: Res<TimeWarp>,
+    config: Res<SimulationConfig>,
+    mut disk_query: Query<(Entity, &mut CircumstellarDisk, Option<&PlanetaryRingSystem>)>,
+) {
+    if time_warp.is_paused && !time_warp.step_once {
+        return;
+    }
+    let is_gmc = scenario_state.as_ref().is_some_and(|s| {
+        s.current_preset == ScenarioPreset::MolecularCloudCluster
+    });
+    if !is_gmc && scenario_state.is_some() {
+        return;
+    }
+
+    let dt_yr = sim_time.as_deref().map_or_else(
+        || (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(5.0),
+        |st| st.current_dt_yr.clamp(1e-6, 5.0),
+    );
+
+    for (star_ent, mut disk, opt_ring) in disk_query.iter_mut() {
+        if disk.is_active_full_disk {
+            disk.age_years += dt_yr;
+            if disk.age_years >= disk.lifetime_years {
+                disk.is_active_full_disk = false;
+                if opt_ring.is_some() {
+                    commands.entity(star_ent).remove::<PlanetaryRingSystem>();
+                }
+            }
+        }
+    }
 }

@@ -61,31 +61,46 @@ pub fn sync_planetary_rings(
             }
             continue;
         }
-        let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
-            (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
+        let is_star = body.body_type.is_star_or_remnant();
+        let ring_outer_scale = if is_star {
+            let vis_r = planet_trans.scale.x.max(0.001);
+            let target_outer_r = if ring_sys.outer_radius_au > 0.0 {
+                ring_sys.outer_radius_au
+            } else {
+                (radius.0 as f32 * 8.0).clamp(2.5, 18.0)
+            };
+            (target_outer_r / vis_r) * 2.0
         } else {
-            2.85
+            let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
+                (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
+            } else {
+                2.85
+            };
+            ring_ratio * 2.0
         };
-        // The parent planet mesh is a unit sphere (radius 1.0) scaled by planet_render_rad.
-        // The ring mesh is a Plane3d (size 1.0x1.0, half-width 0.5).
-        // Since child local transform scales relative to parent, a local XZ scale of ring_ratio * 2.0
-        // extends the ring mesh to exactly ring_ratio times the planet's visual radius.
-        let ring_outer_scale = ring_ratio * 2.0;
 
         // Planetary rings physically form in the planet's equatorial plane (perpendicular to spin axis).
         // Since the parent planet entity's transform is already rotated to align with spin_dir,
         // the child ring mesh (Plane3d with normal +Y) naturally sits in the equator with Quat::IDENTITY.
         let ring_rotation = Quat::IDENTITY;
 
-        let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
-        let star_dir_world = if star_dir_world.length_squared() < 0.01 {
+        let star_dir_local = if is_star {
             Vec3::Y
         } else {
-            star_dir_world
+            let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
+            let star_dir_world = if star_dir_world.length_squared() < 0.01 {
+                Vec3::Y
+            } else {
+                star_dir_world
+            };
+            let ring_world_rot = planet_trans.rotation;
+            (ring_world_rot.inverse() * star_dir_world).normalize_or_zero()
         };
-        let ring_world_rot = planet_trans.rotation;
-        let star_dir_local = (ring_world_rot.inverse() * star_dir_world).normalize_or_zero();
-        let planet_radius_ratio = 1.0 / ring_ratio;
+        let planet_radius_ratio = if is_star {
+            (planet_trans.scale.x / (ring_outer_scale * 0.5 * planet_trans.scale.x)).clamp(0.01, 0.25)
+        } else {
+            1.0 / (ring_outer_scale * 0.5)
+        };
 
         let inner_ratio_mesh = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
             (ring_sys.inner_radius_au / ring_sys.outer_radius_au).clamp(planet_radius_ratio, 0.95)

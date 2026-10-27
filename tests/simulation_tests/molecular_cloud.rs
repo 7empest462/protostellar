@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
 use protostellar::simulation::scenarios::molecular_cloud::*;
+use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use protostellar::utils::constants::*;
 
 #[test]
@@ -530,4 +531,270 @@ fn test_non_central_protostar_ignition_and_engulfment_bypass() {
     app.update();
     verify_engulfment_bypass(&app, beta_ent, planet_ent);
     verify_protostar_ignition(&app, beta_ent);
+}
+
+#[test]
+fn test_gmc_protostar_stabilization_promotion_attaches_disk_and_embryos() {
+    use bevy::math::DVec3;
+
+    let mut app = App::new();
+    let mut scenario_state = ActiveScenarioState::default();
+    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    app.insert_resource(scenario_state);
+    app.init_resource::<GmcClusterDiskManager>();
+    app.add_systems(Update, promote_stabilized_gmc_protostars);
+
+    // Spawn an unignited protostar in GMC
+    let star_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Protostar Genesis-1".to_string(),
+                body_type: BodyType::Protostar,
+            },
+            Mass(1.2),
+            Radius(3.0 * SOLAR_RADIUS_AU),
+            Temperature(3800.0),
+            Luminosity(2.5),
+            SimPosition(DVec3::new(10.0, 0.0, 5.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 0.5)),
+            IgnitionState {
+                core_temperature: 8.5e6,
+                fusion_fraction: 0.85,
+                is_ignited: false,
+                shockwave_radius: 0.0,
+            },
+        ))
+        .id();
+
+    // Tick while unignited - must NOT have disk or embryos yet
+    app.update();
+    assert!(
+        app.world().get::<CircumstellarDisk>(star_ent).is_none(),
+        "Unignited protostar must not yet possess a circumstellar disk"
+    );
+    let embryo_count_before = app
+        .world_mut()
+        .query_filtered::<Entity, With<CelestialBody>>()
+        .iter(app.world())
+        .count();
+    assert_eq!(
+        embryo_count_before, 1,
+        "Only the protostar exists before stabilization"
+    );
+
+    // Protostar stabilizes / ignites fusion
+    {
+        let mut ign = app.world_mut().get_mut::<IgnitionState>(star_ent).unwrap();
+        ign.is_ignited = true;
+        ign.fusion_fraction = 1.0;
+        ign.core_temperature = 1.2e7;
+    }
+
+    // Tick - GMC promotion triggers
+    app.update();
+
+    // 1. Verify CircumstellarDisk and PlanetaryRingSystem attachment
+    let disk = app.world().get::<CircumstellarDisk>(star_ent);
+    assert!(
+        disk.is_some(),
+        "Stabilized protostar must receive a CircumstellarDisk"
+    );
+    let disk = disk.unwrap();
+    assert!(disk.is_active_full_disk, "New circumstellar disk must be active");
+    assert!(disk.inner_radius_au > 0.0 && disk.outer_radius_au > disk.inner_radius_au);
+
+    let ring = app.world().get::<PlanetaryRingSystem>(star_ent);
+    assert!(
+        ring.is_some(),
+        "Stabilized protostar must receive PlanetaryRingSystem for 3D visual geometry"
+    );
+
+    // 2. Verify spawned protoplanetary embryos
+    let mut query = app
+        .world_mut()
+        .query::<(&CelestialBody, &Mass, &SimPosition, &SimVelocity)>();
+    let mut embryos = Vec::new();
+    for (body, mass, pos, vel) in query.iter(app.world()) {
+        if body.name.contains("Embryo") {
+            embryos.push((body.name.clone(), body.body_type, mass.0, pos.0, vel.0));
+        }
+    }
+
+    assert_eq!(
+        embryos.len(),
+        3,
+        "GMC promotion must spawn exactly 3 protoplanetary embryos (got {})",
+        embryos.len()
+    );
+    for (name, b_type, m, pos, vel) in embryos {
+        assert_eq!(
+            b_type,
+            BodyType::Protoplanet,
+            "Embryo {name} must be BodyType::Protoplanet"
+        );
+        assert!(m > 0.0, "Embryo {name} must have positive mass");
+        let dist = (pos - DVec3::new(10.0, 0.0, 5.0)).length();
+        assert!(
+            dist > 0.3 && dist < 20.0,
+            "Embryo {name} must orbit host star within circumstellar disk bounds (got {:.2} AU)",
+            dist
+        );
+        assert!(
+            vel.length() > 0.0,
+            "Embryo {name} must possess Keplerian orbital velocity"
+        );
+    }
+}
+
+#[test]
+fn test_gmc_active_full_disk_capping() {
+    use bevy::math::DVec3;
+
+    let mut app = App::new();
+    let mut scenario_state = ActiveScenarioState::default();
+    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    app.insert_resource(scenario_state);
+
+    // Enforce a strict cap of 3 active full disks
+    app.insert_resource(GmcClusterDiskManager {
+        max_active_full_disks: 3,
+    });
+    app.add_systems(Update, promote_stabilized_gmc_protostars);
+
+    let mut star_entities = Vec::new();
+    for i in 1..=4 {
+        let ent = app
+            .world_mut()
+            .spawn((
+                CelestialBody {
+                    name: format!("Star-{i}"),
+                    body_type: BodyType::YellowDwarf,
+                },
+                Mass(1.0 + i as f64 * 0.2),
+                Radius(SOLAR_RADIUS_AU),
+                Temperature(5800.0),
+                Luminosity(1.0),
+                SimPosition(DVec3::new(i as f64 * 50.0, 0.0, 0.0)),
+                SimVelocity(DVec3::new(0.0, 0.0, 0.2)),
+                IgnitionState {
+                    core_temperature: 1.2e7,
+                    fusion_fraction: 1.0,
+                    is_ignited: true,
+                    shockwave_radius: 0.5,
+                },
+            ))
+            .id();
+        star_entities.push(ent);
+
+        // Advance simulated time slightly for each star so ages are distinct
+        if i > 1 {
+            let prev = star_entities[i - 2];
+            if let Some(mut prev_disk) = app.world_mut().get_mut::<CircumstellarDisk>(prev) {
+                prev_disk.age_years += 1000.0;
+            }
+        }
+
+        app.update();
+    }
+
+    // After 4 stars stabilized with cap=3, active full disks must be capped at 3
+    let mut active_count = 0;
+    for &ent in &star_entities {
+        if let Some(disk) = app.world().get::<CircumstellarDisk>(ent) {
+            let has_ring = app.world().get::<PlanetaryRingSystem>(ent).is_some();
+            if disk.is_active_full_disk && has_ring {
+                active_count += 1;
+            }
+        }
+    }
+    assert_eq!(
+        active_count, 3,
+        "Active full disks must be capped at max_active_full_disks (3)"
+    );
+
+    // Oldest star (Star-1) must have had its disk dissipated
+    let star1_disk = app.world().get::<CircumstellarDisk>(star_entities[0]).unwrap();
+    assert!(
+        !star1_disk.is_active_full_disk,
+        "Oldest star's circumstellar disk must be marked inactive"
+    );
+    assert!(
+        app.world().get::<PlanetaryRingSystem>(star_entities[0]).is_none(),
+        "Oldest star's PlanetaryRingSystem mesh must be removed to free GPU fill rate"
+    );
+
+    // Star-1's orbiting embryos must STILL exist!
+    let star1_embryos = app
+        .world_mut()
+        .query::<&CelestialBody>()
+        .iter(app.world())
+        .filter(|b| b.name.starts_with("Star-1") && b.name.contains("Embryo"))
+        .count();
+    assert_eq!(
+        star1_embryos, 3,
+        "Star-1's planetary embryos must survive disk dissipation"
+    );
+
+    // Newest star (Star-4) must possess an active full disk
+    let star4_disk = app.world().get::<CircumstellarDisk>(star_entities[3]).unwrap();
+    assert!(
+        star4_disk.is_active_full_disk,
+        "Most recently stabilized star must possess an active full disk"
+    );
+    assert!(
+        app.world().get::<PlanetaryRingSystem>(star_entities[3]).is_some(),
+        "Most recently stabilized star must possess PlanetaryRingSystem"
+    );
+}
+
+#[test]
+fn test_gmc_circumstellar_disk_photoevaporation_lifetime() {
+    let mut app = App::new();
+    let mut scenario_state = ActiveScenarioState::default();
+    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    app.insert_resource(scenario_state);
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+
+    let star_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Star-Photoevaporating".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            Mass(1.0),
+            CircumstellarDisk {
+                inner_radius_au: 0.6,
+                outer_radius_au: 8.0,
+                disk_mass_solar: 0.015,
+                is_active_full_disk: true,
+                age_years: 74_999.0,
+                lifetime_years: 75_000.0,
+            },
+            PlanetaryRingSystem::default(),
+        ))
+        .id();
+
+    app.add_systems(Update, update_gmc_circumstellar_disks);
+
+    // Advance simulated time past 75,000 years lifetime
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.current_dt_yr = 2.0;
+    }
+
+    app.update();
+
+    let disk = app.world().get::<CircumstellarDisk>(star_ent).unwrap();
+    assert!(
+        !disk.is_active_full_disk,
+        "Circumstellar disk exceeding its lifetime must transition to inactive"
+    );
+    assert!(
+        app.world().get::<PlanetaryRingSystem>(star_ent).is_none(),
+        "PlanetaryRingSystem must be removed upon photoevaporation clearing"
+    );
 }

@@ -105,6 +105,36 @@ impl Default for PlanetaryRingSystem {
     }
 }
 
+/// Circumstellar protoplanetary accretion disk orbiting a young stabilized star.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CircumstellarDisk {
+    pub inner_radius_au: f32,
+    pub outer_radius_au: f32,
+    pub disk_mass_solar: f64,
+    pub is_active_full_disk: bool,
+    pub age_years: f64,
+    pub lifetime_years: f64,
+}
+
+impl CircumstellarDisk {
+    pub fn new(inner_radius_au: f32, outer_radius_au: f32, disk_mass_solar: f64) -> Self {
+        Self {
+            inner_radius_au,
+            outer_radius_au,
+            disk_mass_solar,
+            is_active_full_disk: true,
+            age_years: 0.0,
+            lifetime_years: 75_000.0,
+        }
+    }
+}
+
+impl Default for CircumstellarDisk {
+    fn default() -> Self {
+        Self::new(0.60, 8.0, 0.015)
+    }
+}
+
 /// Major thermodynamic climate regimes for terrestrial and giant planets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ClimateRegime {

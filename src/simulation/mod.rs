@@ -108,6 +108,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<TidalDisruptionPool>()
             .init_resource::<HabitableZoneConfig>()
             .init_resource::<LagrangeOverlayConfig>()
+            .init_resource::<GmcClusterDiskManager>()
             .add_message::<AccretionMergeEvent>()
             .add_message::<MoonFormationEvent>()
             .add_message::<CollisionBounceEvent>()
@@ -177,6 +178,8 @@ impl Plugin for SimulationPlugin {
                     crate::simulation::accretion::roche::cleanup_roche_lobe_overflow
                         .after(process_roche_lobe_overflow),
                     process_classical_novae.after(process_roche_lobe_overflow),
+                    promote_stabilized_gmc_protostars.after(update_thermodynamics),
+                    update_gmc_circumstellar_disks.after(step_physics_simulation),
                 ),
             )
             .init_resource::<TimelineScrubber>();
