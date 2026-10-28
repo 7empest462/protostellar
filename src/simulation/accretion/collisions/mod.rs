@@ -378,6 +378,8 @@ fn process_body_pair(
     let max_linear_dt = if b1.body_type.is_planet() && b2.body_type.is_planet() {
         let r_min = b1.pos.length().min(b2.pos.length());
         (0.20 * r_min / v_rel.max(1e-2)).min(0.005)
+    } else if b1.body_type == BodyType::BlackHole || b2.body_type == BodyType::BlackHole {
+        (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(25.0)
     } else {
         0.05
     };

@@ -661,6 +661,11 @@ pub fn handle_inelastic_merger(
                 cmd.remove::<PlanetaryRingSystem>();
                 cmd.remove::<PlanetaryClimate>();
                 cmd.remove::<BiosphereState>();
+                cmd.insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
+                    physics.total_mass,
+                    0.70,
+                    bevy::math::DVec3::Y,
+                ));
             }
         } else if physics.updated_type == BodyType::QuarkStar {
             rad.0 = 0.00008;
@@ -702,13 +707,17 @@ pub fn handle_inelastic_merger(
     if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {
         cmd.remove::<SatelliteOf>();
     }
-    if pair.s_is_central {
+    if pair.s_is_central
+        || (physics.updated_type == BodyType::BlackHole && physics.total_mass >= 1_000_000.0)
+    {
         if let Ok(mut cmd) = ctx.commands.get_entity(pair.primary_entity) {
             cmd.insert(CentralStar);
         }
     }
 
-    if ctx.player_state.selected_entity == Some(pair.secondary_entity) {
+    if ctx.player_state.selected_entity == Some(pair.secondary_entity)
+        || ctx.player_state.selected_entity.is_none()
+    {
         ctx.player_state.selected_entity = Some(pair.primary_entity);
     }
 
@@ -877,12 +886,19 @@ pub fn handle_tidal_disruption_event(
         cmd.remove::<PlanetaryRingSystem>();
         cmd.remove::<PlanetaryClimate>();
         cmd.remove::<BiosphereState>();
+        cmd.insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
+            total_mass,
+            0.70,
+            bevy::math::DVec3::Y,
+        ));
     }
 
     if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {
         cmd.remove::<SatelliteOf>();
     }
-    if ctx.player_state.selected_entity == Some(pair.secondary_entity) {
+    if ctx.player_state.selected_entity == Some(pair.secondary_entity)
+        || ctx.player_state.selected_entity.is_none()
+    {
         ctx.player_state.selected_entity = Some(pair.primary_entity);
     }
     ctx.merged_away.insert(pair.secondary_entity);

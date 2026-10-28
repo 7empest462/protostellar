@@ -677,3 +677,78 @@ fn test_s_star_tidal_disruption_and_black_hole_rigid_geometry() {
     );
     assert_eq!(pool.streams[0].bh_entity, bh_entity);
 }
+
+#[test]
+fn test_milkomeda_natural_approach_merger() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_plugins(protostellar::simulation::SimulationPlugin);
+    app.update();
+
+    // Clear default bodies
+    let entities_to_despawn: Vec<Entity> = app
+        .world_mut()
+        .query_filtered::<Entity, With<CelestialBody>>()
+        .iter(app.world())
+        .collect();
+    for entity in entities_to_despawn {
+        if let Ok(mut cmd) = app.world_mut().commands().get_entity(entity) {
+            cmd.despawn();
+        }
+    }
+    app.update();
+
+    app.world_mut()
+        .resource_mut::<ActiveScenarioState>()
+        .current_preset = ScenarioPreset::GalacticCollision;
+    let mut disk_params = DiskParameters::default();
+    let mw_smbh = protostellar::simulation::scenarios::galaxy::spawn_galactic_collision_scenario(
+        &mut app.world_mut().commands(),
+        &mut disk_params,
+    );
+    app.world_mut()
+        .resource_mut::<PlayerInteractionState>()
+        .selected_entity = Some(mw_smbh);
+    app.world_mut().resource_mut::<TimeWarp>().multiplier = 2000.0; // Fast forward
+    app.update();
+
+    for _step in 0..100 {
+        app.update();
+        let elapsed = app.world().resource::<SimTime>().elapsed_years;
+
+        let black_hole_count = app
+            .world_mut()
+            .query::<&CelestialBody>()
+            .iter(app.world())
+            .filter(|b| b.body_type == BodyType::BlackHole)
+            .count();
+        if black_hole_count == 0 {
+            panic!("ALL BLACK HOLES WERE LOST at T = {elapsed:.2} yr!");
+        }
+    }
+
+    let black_holes: Vec<(Entity, String, Mass)> = app
+        .world_mut()
+        .query::<(Entity, &CelestialBody, &Mass)>()
+        .iter(app.world())
+        .filter(|(_, b, _)| b.body_type == BodyType::BlackHole)
+        .map(|(e, b, m)| (e, b.name.clone(), *m))
+        .collect();
+    assert_eq!(black_holes.len(), 1, "Expected 1 merged black hole");
+    assert!(
+        black_holes[0].1.contains("Milkomeda"),
+        "Merged black hole must be named Milkomeda SMBH, got {}",
+        black_holes[0].1
+    );
+    assert!(
+        black_holes[0].2 .0 > 140_000_000.0,
+        "Merged black hole must have combined mass, got {}",
+        black_holes[0].2 .0
+    );
+    let selected = app
+        .world()
+        .resource::<PlayerInteractionState>()
+        .selected_entity;
+    assert_eq!(selected, Some(black_holes[0].0));
+}

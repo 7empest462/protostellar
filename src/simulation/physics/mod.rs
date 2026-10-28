@@ -121,14 +121,18 @@ fn write_back_physics_results(
         } else if let Some(&b) = body_map.get(&e) {
             let r_mag = b.pos.length();
             let debris_escape_radius = if is_little_red_dot { 15_000.0 } else { 2000.0 };
-            if r_mag > debris_escape_radius
-                && (matches!(
-                    body.body_type,
-                    BodyType::Planetesimal
-                        | BodyType::Asteroid
-                        | BodyType::Comet
-                        | BodyType::DustGrain
-                ) || b.vel.dot(b.pos) > 0.0)
+            let is_minor_debris = matches!(
+                body.body_type,
+                BodyType::Planetesimal
+                    | BodyType::Asteroid
+                    | BodyType::Comet
+                    | BodyType::DustGrain
+                    | BodyType::DebrisRing
+            );
+            if !is_galaxy_collision
+                && is_minor_debris
+                && r_mag > debris_escape_radius
+                && b.vel.dot(b.pos) > 0.0
             {
                 escaped_minor_debris.push(e);
                 continue;

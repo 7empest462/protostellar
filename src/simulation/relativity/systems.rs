@@ -344,6 +344,74 @@ fn apply_relativistic_kinematics_and_telemetry(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    reason = "Host state mutation and event resolution across compact merger outcome"
+)]
+fn apply_relativistic_coalescence_outcome(
+    commands: &mut Commands,
+    host_entity: Entity,
+    companion_entity: Entity,
+    companion_name: &str,
+    remnant_mass: f64,
+    new_radius: f64,
+    remnant_type: BodyType,
+    star_query: &mut Query<
+        (
+            Entity,
+            &SimPosition,
+            &SimVelocity,
+            &mut Mass,
+            &mut Radius,
+            Option<&mut CelestialBody>,
+            Option<&mut KerrBlackHole>,
+        ),
+        With<CentralStar>,
+    >,
+    player_state: &mut Option<ResMut<PlayerInteractionState>>,
+) {
+    let mut merged_name = format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)");
+    if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) =
+        star_query
+            .iter_mut()
+            .find(|(star_e, _, _, _, _, _, _)| *star_e == host_entity)
+    {
+        s_mass.0 = remnant_mass;
+        s_rad.0 = new_radius;
+        if let Some(ref mut b) = opt_s_body {
+            b.body_type = remnant_type;
+            crate::simulation::accretion::naming::update_merged_body_name(
+                &mut b.name,
+                companion_name,
+                remnant_type,
+                remnant_mass,
+            );
+            merged_name.clone_from(&b.name);
+        }
+        if let Some(ref mut kerr) = opt_kerr {
+            kerr.recalculate(remnant_mass);
+        }
+    }
+
+    if let Ok(mut host_cmd) = commands.get_entity(host_entity) {
+        host_cmd.insert((
+            Mass(remnant_mass),
+            Radius(new_radius),
+            CelestialBody {
+                name: merged_name,
+                body_type: remnant_type,
+            },
+        ));
+    }
+
+    if let Some(ref mut ps) = player_state {
+        if ps.selected_entity == Some(companion_entity) || ps.selected_entity.is_none() {
+            ps.selected_entity = Some(host_entity);
+        }
+    }
+}
+
 /// Updates 1PN relativistic periastron precession and Peters (1964) gravitational wave dissipation.
 #[allow(
     clippy::type_complexity,
@@ -380,6 +448,7 @@ pub fn update_relativity_evolution(
         ),
         Without<CentralStar>,
     >,
+    mut player_state: Option<ResMut<PlayerInteractionState>>,
 ) {
     if !rel_config.enable_1pn_precession
         && !rel_config.enable_gw_radiation
@@ -445,33 +514,17 @@ pub fn update_relativity_evolution(
                 sep_au,
                 ctx.kerr_spin.map(|(a, _)| a),
             ) {
-                // Apply remnant mass and type to primary host
-                if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) =
-                    star_query
-                        .iter_mut()
-                        .find(|(star_e, _, _, _, _, _, _)| *star_e == ctx.host_entity)
-                {
-                    s_mass.0 = remnant_mass;
-                    s_rad.0 = new_radius;
-                    if let Some(ref mut b) = opt_s_body {
-                        b.body_type = remnant_type;
-                        b.name = format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)");
-                    }
-                    if let Some(ref mut kerr) = opt_kerr {
-                        kerr.recalculate(remnant_mass);
-                    }
-                }
-
-                if let Ok(mut host_cmd) = commands.get_entity(ctx.host_entity) {
-                    host_cmd.insert((
-                        Mass(remnant_mass),
-                        Radius(new_radius),
-                        CelestialBody {
-                            name: format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)"),
-                            body_type: remnant_type,
-                        },
-                    ));
-                }
+                apply_relativistic_coalescence_outcome(
+                    &mut commands,
+                    ctx.host_entity,
+                    entity,
+                    &body.name,
+                    remnant_mass,
+                    new_radius,
+                    remnant_type,
+                    &mut star_query,
+                    &mut player_state,
+                );
 
                 // Companion was despawned: do NOT insert components on despawned entity
                 continue;
