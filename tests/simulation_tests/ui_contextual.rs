@@ -848,9 +848,10 @@ fn test_cutaway_hud_pill_spawning_and_strata_labels() {
     }
     app.update();
 
-    let mut pill_query = app
-        .world_mut()
-        .query::<(&protostellar::game::ui::cutaway_hud::CutawayCalloutPill, &Node)>();
+    let mut pill_query = app.world_mut().query::<(
+        &protostellar::game::ui::cutaway_hud::CutawayCalloutPill,
+        &Node,
+    )>();
     for (p, node) in pill_query.iter(app.world()) {
         assert_eq!(
             node.display,

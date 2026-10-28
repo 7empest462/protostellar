@@ -38,7 +38,13 @@ pub fn format_body_inspector_type(body_type: BodyType, mass_solar: f64) -> &'sta
         BodyType::BlackDwarf => "Black Dwarf (Cooled Degenerate Diamond)",
         BodyType::NeutronStar => "Neutron Star Remnant",
         BodyType::Pulsar => "Relativistic Pulsar Remnant",
-        BodyType::Magnetar => "Magnetar Remnant (10¹⁵ Gauss)",
+        BodyType::Magnetar => {
+            if mass_solar >= 1.80 {
+                "Quark Magnetar (Strange Quark Matter / 10¹⁵ G)"
+            } else {
+                "Magnetar Remnant (10¹⁵ Gauss)"
+            }
+        }
         BodyType::QuarkStar => "Quark Star (Strange Quark Matter)",
         BodyType::DarkStar => "Dark Star (WIMP Dark Matter Powered)",
         BodyType::BosonStar => "Boson Star (Gravitational Soliton)",

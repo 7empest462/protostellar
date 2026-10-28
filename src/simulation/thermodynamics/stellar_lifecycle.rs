@@ -286,16 +286,17 @@ fn apply_stellar_collapse_limits(
             ejected_composition: Composition::supernova_ejecta(),
         });
         mass.0 = 1.40;
-    } else if matches!(
-        body.body_type,
-        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
-    ) && mass.0 > 1.80
+    } else if matches!(body.body_type, BodyType::NeutronStar | BodyType::Pulsar)
+        && mass.0 > 1.80
         && mass.0 <= 2.17
     {
         // High-density nucleonic deconfinement into Strange Quark Matter (Quark Star)
         if body.body_type != BodyType::QuarkStar {
             body.body_type = BodyType::QuarkStar;
-            body.name = format!("{} (Strange Quark Star)", body.name);
+            if !body.name.contains("Quark Star") {
+                let base = body.name.split(" (").next().unwrap_or(&body.name);
+                body.name = format!("{base} (Strange Quark Star)");
+            }
             temp.0 = 10_000_000.0;
             lum.0 = 180.0;
         }
@@ -806,16 +807,26 @@ fn step_stellar_remnant_evolution(
                 lum.0 = 0.0;
             }
         }
-        StellarEvolutionPhase::NeutronStarPulsar | StellarEvolutionPhase::MagnetarRemnant => {
+        StellarEvolutionPhase::NeutronStarPulsar => {
             let cool_rate = 0.001;
             temp.0 = (temp.0 - cool_rate * dt_yr).max(10_000.0);
 
             // Accretion past 1.8 M_sun decongests nucleons into strange quark matter (Quark Star)
             if mass.0 >= 1.80 && mass.0 < 2.17 && body.body_type != BodyType::QuarkStar {
                 body.body_type = BodyType::QuarkStar;
-                body.name = "The Star (Strange Quark Star)".to_string();
+                if !body.name.contains("Quark Star") {
+                    let base = body.name.split(" (").next().unwrap_or(&body.name);
+                    body.name = format!("{base} (Strange Quark Star)");
+                }
                 temp.0 = 10_000_000.0;
             }
+        }
+        StellarEvolutionPhase::MagnetarRemnant => {
+            let cool_rate = 0.001;
+            temp.0 = (temp.0 - cool_rate * dt_yr).max(10_000.0);
+            // Magnetars preserve their ultra-strong magnetic field (B ~ 10^15 G) and Magnetar identity.
+            // If massive (>= 1.80 M_sun), strange quark matter core deconfinement forms a Quark Magnetar.
+            // Accretion exceeding the Tolman-Oppenheimer-Volkoff limit (> 2.17 M_sun) collapses to a Black Hole.
         }
         _ => {}
     }

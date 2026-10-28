@@ -108,6 +108,61 @@ fn test_magnetar_scenario_preset() {
     assert!(lbv_found);
 }
 
+#[test]
+fn test_magnetar_preserves_identity_and_quark_magnetar_classification() {
+    use protostellar::game::ui::telemetry_format::format_body_inspector_type;
+    use protostellar::simulation::components::planetary::{
+        PlanetaryEngulfmentEvent, SupernovaEvent,
+    };
+    use protostellar::simulation::scenarios::spawn_magnetar_outburst_scenario;
+    use protostellar::simulation::thermodynamics::StarIgnitionEvent;
+
+    // 1. Verify telemetry classification:
+    // A standard mass (< 1.80 M☉) magnetar is labeled as a classic Magnetar Remnant
+    assert_eq!(
+        format_body_inspector_type(BodyType::Magnetar, 1.50),
+        "Magnetar Remnant (10¹⁵ Gauss)"
+    );
+    // A massive (>= 1.80 M☉) magnetar like SGR 1806-20 (1.95 M☉) features a deconfined
+    // strange-quark core with color-ferromagnetism, scientifically classified as a Quark Magnetar
+    assert_eq!(
+        format_body_inspector_type(BodyType::Magnetar, 1.95),
+        "Quark Magnetar (Strange Quark Matter / 10¹⁵ G)"
+    );
+
+    // 2. Verify that running thermodynamics does NOT overwrite SGR 1806-20 with "The Star"
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<TimeWarp>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_message::<SupernovaEvent>();
+
+    let mut disk_params = DiskParameters::default();
+    let magnetar_ent =
+        spawn_magnetar_outburst_scenario(&mut app.world_mut().commands(), &mut disk_params);
+    app.add_systems(
+        Update,
+        protostellar::simulation::thermodynamics::update_thermodynamics,
+    );
+    app.update();
+
+    let world = app.world();
+    let body = world.get::<CelestialBody>(magnetar_ent).unwrap();
+    assert_eq!(
+        body.body_type,
+        BodyType::Magnetar,
+        "SGR 1806-20 must preserve BodyType::Magnetar"
+    );
+    assert!(
+        body.name.contains("SGR 1806-20"),
+        "Magnetar name must not be overwritten with 'The Star': got {}",
+        body.name
+    );
+}
+
 fn setup_pulsar_magnetar_app() -> App {
     use protostellar::rendering::bodies::{
         sync_magnetar_structures, sync_pulsar_beams, VisualAssets,
