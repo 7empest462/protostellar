@@ -372,10 +372,9 @@ fn apply_relativistic_coalescence_outcome(
     player_state: &mut Option<ResMut<PlayerInteractionState>>,
 ) {
     let mut merged_name = format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)");
-    if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) =
-        star_query
-            .iter_mut()
-            .find(|(star_e, _, _, _, _, _, _)| *star_e == host_entity)
+    if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) = star_query
+        .iter_mut()
+        .find(|(star_e, _, _, _, _, _, _)| *star_e == host_entity)
     {
         s_mass.0 = remnant_mass;
         s_rad.0 = new_radius;

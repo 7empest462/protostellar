@@ -173,10 +173,26 @@ pub fn handle_star_aging_transition(
     }
 }
 
-pub fn handle_age_star(selected_query: &mut SelectedWorldQuery, toast: &mut NotificationToast) {
-    let mut star_opt = selected_query
-        .iter_mut()
-        .find(|(_, _, _, _, _, _, _, is_star, ..)| is_star.is_some());
+pub fn handle_age_star(
+    selected_query: &mut SelectedWorldQuery,
+    selected_ent: Option<Entity>,
+    toast: &mut NotificationToast,
+) {
+    let mut star_opt = selected_ent
+        .filter(|&ent| {
+            selected_query
+                .get(ent)
+                .is_ok_and(|(_, _, _, _, _, _, body, is_star, ..)| {
+                    is_star.is_some() || body.body_type.is_star_or_remnant()
+                })
+        })
+        .and_then(|ent| selected_query.get_mut(ent).ok());
+
+    if star_opt.is_none() {
+        star_opt = selected_query
+            .iter_mut()
+            .find(|(_, _, _, _, _, _, _, is_star, ..)| is_star.is_some());
+    }
 
     if let Some((
         _ent,
@@ -194,6 +210,15 @@ pub fn handle_age_star(selected_query: &mut SelectedWorldQuery, toast: &mut Noti
         ..,
     )) = star_opt
     {
+        if body.body_type.is_remnant() || opt_evo.as_ref().is_some_and(|e| e.phase.is_remnant()) {
+            toast.message = format!(
+                "⚠️ Terminal State: {} is already a degenerate remnant and cannot age further!",
+                body.name
+            );
+            toast.timer = 5.0;
+            return;
+        }
+
         if !ignition.is_ignited {
             ignition.core_temperature = 1.0e7;
             ignition.is_ignited = true;
@@ -240,13 +265,51 @@ pub fn handle_age_star(selected_query: &mut SelectedWorldQuery, toast: &mut Noti
     }
 }
 
-pub fn handle_ignite_star(selected_query: &mut SelectedWorldQuery, toast: &mut NotificationToast) {
-    let mut star_opt = selected_query
-        .iter_mut()
-        .find(|(_, _, _, _, _, _, _, is_star, ..)| is_star.is_some());
+pub fn handle_ignite_star(
+    selected_query: &mut SelectedWorldQuery,
+    selected_ent: Option<Entity>,
+    toast: &mut NotificationToast,
+) {
+    let mut star_opt = selected_ent
+        .filter(|&ent| {
+            selected_query
+                .get(ent)
+                .is_ok_and(|(_, _, _, _, _, _, body, is_star, ..)| {
+                    is_star.is_some() || body.body_type.is_star_or_remnant()
+                })
+        })
+        .and_then(|ent| selected_query.get_mut(ent).ok());
+
+    if star_opt.is_none() {
+        star_opt = selected_query
+            .iter_mut()
+            .find(|(_, _, _, _, _, _, _, is_star, ..)| is_star.is_some());
+    }
+
     if let Some((_, _, _, _, _, _, mut body, _, Some(ref mut ignition), ref mut opt_evo, ..)) =
         star_opt
     {
+        if body.body_type.is_remnant() || opt_evo.as_ref().is_some_and(|e| e.phase.is_remnant()) {
+            if body.body_type == BodyType::BlackHole
+                || opt_evo
+                    .as_ref()
+                    .is_some_and(|e| e.phase == StellarEvolutionPhase::BlackHoleRemnant)
+            {
+                ignition.shockwave_radius = 2.0;
+                toast.message = format!(
+                    "⚡ Accretion Flare: Relativistic burst erupted from {}!",
+                    body.name
+                );
+            } else {
+                toast.message = format!(
+                    "⚠️ Degenerate Remnant: {} has exhausted core fusion and cannot ignite!",
+                    body.name
+                );
+            }
+            toast.timer = 5.0;
+            return;
+        }
+
         if ignition.is_ignited {
             ignition.shockwave_radius = 1.6;
             toast.message = "☀️ Coronal Mass Ejection & Solar Blast Triggered!".to_string();
@@ -270,12 +333,26 @@ pub fn handle_ignite_star(selected_query: &mut SelectedWorldQuery, toast: &mut N
 
 pub fn handle_trigger_cme(
     selected_query: &mut SelectedWorldQuery,
+    selected_ent: Option<Entity>,
     commands: &mut Commands,
     toast: &mut NotificationToast,
 ) {
-    let mut star_opt = selected_query
-        .iter_mut()
-        .find(|(_, _, _, _, _, _, _, is_star, ..)| is_star.is_some());
+    let mut star_opt = selected_ent
+        .filter(|&ent| {
+            selected_query
+                .get(ent)
+                .is_ok_and(|(_, _, _, _, _, _, body, is_star, ..)| {
+                    is_star.is_some() || body.body_type.is_star_or_remnant()
+                })
+        })
+        .and_then(|ent| selected_query.get_mut(ent).ok());
+
+    if star_opt.is_none() {
+        star_opt = selected_query
+            .iter_mut()
+            .find(|(_, _, _, _, _, _, _, is_star, ..)| is_star.is_some());
+    }
+
     if let Some((star_ent, _, _, _, _, _, _, _, Some(ref mut ignition), ..)) = star_opt {
         ignition.shockwave_radius = 0.1;
         commands

@@ -249,6 +249,9 @@ pub fn update_scenario_contextual_ui(
     let is_star_like = selected_info.is_some_and(|(body, opt_star, _)| {
         opt_star.is_some() || body.body_type.is_star_or_remnant()
     });
+    let is_active_star = selected_info.is_some_and(|(body, opt_star, _)| {
+        !body.body_type.is_remnant() && (opt_star.is_some() || body.body_type.is_star_or_remnant())
+    });
 
     // 1. Synchronize inspector section containers
     for (section, mut node) in section_nodes.iter_mut() {
@@ -309,6 +312,10 @@ pub fn update_scenario_contextual_ui(
             // Biosphere seeding: universally available on solid non-star, non-probe worlds
             UiButtonAction::SeedLife => {
                 node.display = flex_or_none(!is_star_like && !is_probe);
+            }
+            // Stellar ignition & aging: only active on hydrogen-burning or protostellar bodies (never degenerate remnants)
+            UiButtonAction::IgniteStar | UiButtonAction::AgeStar => {
+                node.display = flex_or_none(is_active_star);
             }
             // Geological Epoch scrubber: scenarios with planetary era timelines
             UiButtonAction::ToggleEpochScrubberPanel => {

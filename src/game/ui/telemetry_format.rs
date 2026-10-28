@@ -147,13 +147,22 @@ pub fn format_stellar_extra_telemetry(
                 "🧲 MAGNETAR REMNANT (B: 10^15 G | Extreme Magnetic Reconnection Arcs)".to_string()
             }
             StellarEvolutionPhase::BlackHoleRemnant => {
-                "🕳️ STELLAR-MASS BLACK HOLE (Event Horizon & Relativistic Accretion Disk)"
-                    .to_string()
+                if rad.0 > 0.01 {
+                    "🕳️ SUPERMASSIVE BLACK HOLE (Event Horizon & Relativistic Accretion Disk)"
+                        .to_string()
+                } else {
+                    "🕳️ STELLAR-MASS BLACK HOLE (Event Horizon & Relativistic Accretion Disk)"
+                        .to_string()
+                }
             }
         }
     } else {
         "Active Hydrogen Fusion".to_string()
     };
+
+    if opt_evo.is_some_and(|e| e.phase.is_remnant()) {
+        return format!("\nStellar State: {evo_str}");
+    }
 
     let status = if ignition.is_ignited {
         format!(

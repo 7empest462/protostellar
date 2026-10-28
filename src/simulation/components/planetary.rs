@@ -308,6 +308,20 @@ pub enum StellarEvolutionPhase {
     BlackHoleRemnant,
 }
 
+impl StellarEvolutionPhase {
+    /// Returns true if this evolutionary phase represents a degenerate stellar remnant.
+    #[must_use]
+    pub const fn is_remnant(&self) -> bool {
+        matches!(
+            self,
+            Self::WhiteDwarf
+                | Self::NeutronStarPulsar
+                | Self::MagnetarRemnant
+                | Self::BlackHoleRemnant
+        )
+    }
+}
+
 /// Far-future stellar evolution, fuel consumption, and planetary nebula state.
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct StellarEvolutionState {

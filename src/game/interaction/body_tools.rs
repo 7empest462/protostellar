@@ -115,6 +115,34 @@ pub fn trigger_star_ignition_or_flare(
     shift: bool,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
+    if body.body_type.is_remnant() {
+        if body.body_type == BodyType::BlackHole {
+            commands
+                .entity(star_ent)
+                .insert(crate::simulation::space_weather::StellarFlareState {
+                    flare_frequency: 2.0,
+                    current_flare_intensity: 8.5,
+                    flare_decay_timer_years: 0.20,
+                    cme_front_radius_au: 0.10,
+                    cme_speed_au_day: 0.85,
+                    cme_density_multiplier: 50.0,
+                    cme_active: true,
+                });
+            ignition.shockwave_radius = 2.0;
+            toast.message = format!(
+                "⚡ Accretion Flare: Relativistic X-ray burst erupted from {}!",
+                body.name
+            );
+        } else {
+            toast.message = format!(
+                "⚠️ Degenerate Remnant: {} has exhausted core fusion and cannot ignite!",
+                body.name
+            );
+        }
+        toast.timer = 5.0;
+        return;
+    }
+
     if shift {
         commands
             .entity(star_ent)
@@ -165,7 +193,7 @@ fn handle_star_interaction_actions(
             trigger_star_ignition_or_flare(commands, entity, body, ignition, shift, toast);
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star_or_remnant() {
+    if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star() {
         if let Some(ref mut ignition) = ignition_opt {
             if !ignition.is_ignited {
                 ignition.core_temperature = 1.0e7;
@@ -449,7 +477,8 @@ pub fn handle_unselected_star_ignition_hotkey(
             selected_query
                 .iter_mut()
                 .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star)| {
-                    opt_star.is_some() || body.body_type.is_star_or_remnant()
+                    !body.body_type.is_remnant()
+                        && (opt_star.is_some() || body.body_type.is_star_or_remnant())
                 })
         {
             trigger_star_ignition_or_flare(

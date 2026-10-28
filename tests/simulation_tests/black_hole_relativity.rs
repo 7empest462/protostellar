@@ -752,3 +752,112 @@ fn test_milkomeda_natural_approach_merger() {
         .selected_entity;
     assert_eq!(selected, Some(black_holes[0].0));
 }
+
+#[test]
+fn test_sagittarius_a_ignition_and_aging_immunity() {
+    let mut app = App::new();
+    let mut disk_params = DiskParameters::default();
+    let sgr_a_ent =
+        spawn_sagittarius_a_star_scenario(&mut app.world_mut().commands(), &mut disk_params);
+    app.update();
+
+    let (body, ignition, evo) = {
+        let world = app.world();
+        (
+            world.get::<CelestialBody>(sgr_a_ent).unwrap().clone(),
+            world.get::<IgnitionState>(sgr_a_ent).unwrap().clone(),
+            world
+                .get::<StellarEvolutionState>(sgr_a_ent)
+                .unwrap()
+                .clone(),
+        )
+    };
+
+    assert_eq!(body.body_type, BodyType::BlackHole);
+    assert!(body.name.contains("Sagittarius A*"));
+    assert!(
+        ignition.is_ignited,
+        "Sagittarius A* must be initialized as an ignited/collapsed remnant"
+    );
+    assert_eq!(evo.phase, StellarEvolutionPhase::BlackHoleRemnant);
+    assert!(body.body_type.is_remnant());
+    assert!(!body.body_type.is_star());
+    assert!(evo.phase.is_remnant());
+
+    // 1. Hotkey 'I' via trigger_star_ignition_or_flare
+    let mut toast = protostellar::game::ui::NotificationToast::default();
+    {
+        let mut state: bevy::ecs::system::SystemState<(
+            Commands,
+            Query<(&mut CelestialBody, &mut IgnitionState)>,
+        )> = bevy::ecs::system::SystemState::new(app.world_mut());
+        let (mut commands, mut query) = state.get_mut(app.world_mut()).unwrap();
+        let (mut body, mut ignition) = query.get_mut(sgr_a_ent).unwrap();
+        protostellar::game::interaction::body_tools::trigger_star_ignition_or_flare(
+            &mut commands,
+            sgr_a_ent,
+            &mut body,
+            &mut ignition,
+            false,
+            &mut toast,
+        );
+        state.apply(app.world_mut());
+    }
+    app.update();
+
+    let body_after = app.world().get::<CelestialBody>(sgr_a_ent).unwrap();
+    assert_eq!(
+        body_after.body_type,
+        BodyType::BlackHole,
+        "Ignition hotkey must NOT convert black hole to star"
+    );
+    assert!(
+        body_after.name.contains("Sagittarius A*"),
+        "Name must be preserved"
+    );
+    assert!(
+        toast.message.contains("Accretion Flare"),
+        "Should trigger accretion flare toast: {}",
+        toast.message
+    );
+
+    // 2. Editor toolbar action via handle_ignite_star
+    {
+        let mut state: bevy::ecs::system::SystemState<
+            protostellar::game::ui::types::SelectedWorldQuery,
+        > = bevy::ecs::system::SystemState::new(app.world_mut());
+        let mut query = state.get_mut(app.world_mut()).unwrap();
+        protostellar::game::ui::interactions::editor::stellar::handle_ignite_star(
+            &mut query,
+            Some(sgr_a_ent),
+            &mut toast,
+        );
+    }
+    let body_after_ignite = app.world().get::<CelestialBody>(sgr_a_ent).unwrap();
+    assert_eq!(body_after_ignite.body_type, BodyType::BlackHole);
+
+    // 3. Editor toolbar action via handle_age_star
+    {
+        let mut state: bevy::ecs::system::SystemState<
+            protostellar::game::ui::types::SelectedWorldQuery,
+        > = bevy::ecs::system::SystemState::new(app.world_mut());
+        let mut query = state.get_mut(app.world_mut()).unwrap();
+        protostellar::game::ui::interactions::editor::stellar::handle_age_star(
+            &mut query,
+            Some(sgr_a_ent),
+            &mut toast,
+        );
+    }
+    let body_after_age = app.world().get::<CelestialBody>(sgr_a_ent).unwrap();
+    assert_eq!(body_after_age.body_type, BodyType::BlackHole);
+    let mass_after_age = app.world().get::<Mass>(sgr_a_ent).unwrap();
+    assert!(
+        mass_after_age.0 > 4.0e6,
+        "SMBH mass must not be clamped by star aging"
+    );
+    assert!(
+        toast.message.contains("Terminal State"),
+        "Should trigger terminal state toast: {}",
+        toast.message
+    );
+}

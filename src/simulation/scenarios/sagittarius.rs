@@ -137,10 +137,14 @@ fn spawn_sagittarius_a_black_hole(commands: &mut Commands) -> Entity {
             AngularMomentum::default(),
             Composition::pure_hydrogen(),
             IgnitionState {
-                core_temperature: 0.0,
-                fusion_fraction: 0.0,
-                is_ignited: false,
+                core_temperature: 1.0e7,
+                fusion_fraction: 1.0,
+                is_ignited: true,
                 shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::BlackHoleRemnant,
+                ..default()
             },
             RelativisticState::default(),
         ))

@@ -197,6 +197,12 @@ impl BodyType {
         )
     }
 
+    /// Returns true if this body is an active star (nuclear fusion or pre-main-sequence contraction).
+    #[must_use]
+    pub fn is_star(&self) -> bool {
+        self.is_star_or_remnant() && !self.is_remnant()
+    }
+
     /// Returns true if this body is a theoretical or hypothetical star.
     pub fn is_hypothetical(&self) -> bool {
         matches!(

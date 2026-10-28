@@ -67,11 +67,16 @@ pub fn handle_body_editor_action(
             true
         }
         UiButtonAction::IgniteStar => {
-            handle_ignite_star(selected_query, toast);
+            handle_ignite_star(selected_query, player_state.selected_entity, toast);
             true
         }
         UiButtonAction::TriggerCoronalMassEjection => {
-            handle_trigger_cme(selected_query, commands, toast);
+            handle_trigger_cme(
+                selected_query,
+                player_state.selected_entity,
+                commands,
+                toast,
+            );
             true
         }
         UiButtonAction::TriggerLhb => {
@@ -84,7 +89,7 @@ pub fn handle_body_editor_action(
             true
         }
         UiButtonAction::AgeStar => {
-            handle_age_star(selected_query, toast);
+            handle_age_star(selected_query, player_state.selected_entity, toast);
             true
         }
         UiButtonAction::TidalLock => {

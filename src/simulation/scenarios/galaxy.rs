@@ -33,7 +33,16 @@ pub fn spawn_galactic_collision_scenario(
             SimAcceleration::default(),
             Temperature(1e-7),
             Luminosity(100.0),
-            IgnitionState::default(),
+            IgnitionState {
+                core_temperature: 1.0e7,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::BlackHoleRemnant,
+                ..default()
+            },
             Composition::pure_hydrogen(),
             AngularMomentum::default(),
             RelativisticState::default(),
@@ -57,7 +66,16 @@ pub fn spawn_galactic_collision_scenario(
             SimAcceleration::default(),
             Temperature(1e-7),
             Luminosity(500.0),
-            IgnitionState::default(),
+            IgnitionState {
+                core_temperature: 1.0e7,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::BlackHoleRemnant,
+                ..default()
+            },
             Composition::pure_hydrogen(),
             AngularMomentum::default(),
             RelativisticState::default(),
