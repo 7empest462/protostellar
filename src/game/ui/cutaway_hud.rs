@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use crate::rendering::camera::{IgnoreUiPicking, PanOrbitCamera};
-use crate::rendering::effects::planetary::resolve_cutaway_strata;
+use crate::rendering::effects::planetary::{resolve_cutaway_strata, CutawayStrata};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::AU_TO_KM;
@@ -105,60 +105,31 @@ fn project_world_to_viewport(
     Some(Vec2::new(screen_x, screen_y))
 }
 
-/// Dynamic system updating floating cutaway callout positions and physical text.
-#[allow(
-    clippy::type_complexity,
-    reason = "Cutaway HUD requires camera projection, celestial components, and UI nodes"
-)]
-pub fn update_cutaway_hud_ui(
-    windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform, &Transform, Option<&PanOrbitCamera>)>,
-    player_state: Res<PlayerInteractionState>,
-    config: Res<SimulationConfig>,
-    mut pill_query: Query<(Entity, &CutawayCalloutPill, &mut Node, &mut BorderColor)>,
-    mut text_query: Query<(&ChildOf, &CutawayField, &mut Text, &mut TextColor)>,
-    bodies_query: Query<(
-        &SimPosition,
-        &Radius,
-        &CelestialBody,
-        Option<&InternalDifferentiation>,
-        Option<&Composition>,
-    )>,
-) {
-    let Some(window) = windows.iter().next() else {
-        return;
-    };
-    let Some((camera, cam_gt, cam_tf, opt_pan)) = camera_query.iter().next() else {
-        return;
-    };
-
+/// Resolves which celestial body is currently targeted for 3D cutaway inspection.
+fn resolve_active_cutaway_target(
+    player_state: &PlayerInteractionState,
+    opt_pan: Option<&PanOrbitCamera>,
+) -> Option<Entity> {
     let is_active = player_state.is_cutaway_active()
         && (player_state.cutaway_mode
             || player_state.overlay_mode != DiagnosticOverlayMode::Hidden);
 
-    let target_entity = if is_active {
+    if is_active {
         player_state
             .selected_entity
             .or(player_state.hovered_entity)
             .or_else(|| opt_pan.and_then(|p| p.target_entity))
     } else {
         None
-    };
+    }
+}
 
-    let target_data = target_entity.and_then(|ent| bodies_query.get(ent).ok());
-
-    let Some((sim_pos, radius, body, opt_diff, _opt_comp)) = target_data else {
-        // Hide all 4 callout cards
-        for (_, _, mut node, _) in &mut pill_query {
-            node.display = Display::None;
-        }
-        return;
-    };
-    let body_vec = Vec3::new(sim_pos.x as f32, sim_pos.y as f32, sim_pos.z as f32);
-    let strata = resolve_cutaway_strata(body, radius.0, opt_diff, &config);
-
-    // Compute anchor points in 3D world space (matching draw_cutaway_callout_leaders)
-    let cam_rot = cam_tf.rotation;
+/// Computes anchor points in 3D world space matching `draw_cutaway_callout_leaders`.
+fn compute_cutaway_anchors(
+    body_vec: Vec3,
+    cam_rot: Quat,
+    strata: &CutawayStrata,
+) -> [(Vec3, bool, Color); 4] {
     let right = cam_rot * Vec3::X;
     let up = cam_rot * Vec3::Y;
 
@@ -169,7 +140,7 @@ pub fn update_cutaway_hud_ui(
 
     let offset_scale = strata.crust_r * 1.35;
 
-    let anchors = [
+    [
         // 0: Crust (Up-Left)
         (
             body_vec + diag_up_left * (offset_scale * 1.35),
@@ -194,64 +165,137 @@ pub fn update_cutaway_hud_ui(
             true,
             strata.inner_core_col,
         ),
-    ];
+    ]
+}
 
-    let labels = resolve_cutaway_labels(body, radius.0, opt_diff);
+/// Projects and positions a single floating callout pill card node, updating its labels.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Pill card projection and layout synchronization requires camera, window, node, and text query"
+)]
+fn sync_cutaway_pill_card(
+    pill_ent: Entity,
+    idx: usize,
+    anchors: &[(Vec3, bool, Color); 4],
+    labels: &[(String, String); 4],
+    camera: &Camera,
+    cam_gt: &GlobalTransform,
+    window: &Window,
+    node: &mut Node,
+    border_col: &mut BorderColor,
+    text_query: &mut Query<(&ChildOf, &CutawayField, &mut Text, &mut TextColor)>,
+) {
+    let Some(&(anchor_pos, is_left, stratum_col)) = anchors.get(idx) else {
+        node.display = Display::None;
+        return;
+    };
+    let Some((title, sub)) = labels.get(idx) else {
+        node.display = Display::None;
+        return;
+    };
 
-    for (pill_ent, pill, mut node, mut border_col) in &mut pill_query {
-        let idx = pill.0;
-        let Some(&(anchor_pos, is_left, stratum_col)) = anchors.get(idx) else {
-            node.display = Display::None;
-            continue;
+    if let Some(screen_pos) =
+        project_world_to_viewport(camera, cam_gt, anchor_pos, window.width(), window.height())
+    {
+        let card_w = 175.0;
+        let card_h = 36.0;
+
+        let target_x = if is_left {
+            screen_pos.x - card_w - 10.0
+        } else {
+            screen_pos.x + 10.0
         };
-        let Some((title, sub)) = labels.get(idx) else {
-            node.display = Display::None;
-            continue;
-        };
+        let target_y = screen_pos.y - card_h * 0.5;
 
-        if let Some(screen_pos) = project_world_to_viewport(
-            camera,
-            cam_gt,
-            anchor_pos,
-            window.width(),
-            window.height(),
-        ) {
-            let card_w = 175.0;
-            let card_h = 36.0;
+        // Clamp inside viewport
+        let clamped_x = target_x.clamp(10.0, (window.width() - card_w - 10.0).max(10.0));
+        let clamped_y = target_y.clamp(10.0, (window.height() - card_h - 10.0).max(10.0));
 
-            let target_x = if is_left {
-                screen_pos.x - card_w - 10.0
-            } else {
-                screen_pos.x + 10.0
-            };
-            let target_y = screen_pos.y - card_h * 0.5;
+        node.display = Display::Flex;
+        node.left = Val::Px(clamped_x);
+        node.top = Val::Px(clamped_y);
+        *border_col = BorderColor::all(stratum_col);
 
-            // Clamp inside viewport
-            let clamped_x = target_x.clamp(10.0, (window.width() - card_w - 10.0).max(10.0));
-            let clamped_y = target_y.clamp(10.0, (window.height() - card_h - 10.0).max(10.0));
-
-            node.display = Display::Flex;
-            node.left = Val::Px(clamped_x);
-            node.top = Val::Px(clamped_y);
-            *border_col = BorderColor::all(stratum_col);
-
-            // Sync texts
-            for (child_of, field, mut text, mut text_col) in &mut text_query {
-                if child_of.parent() == pill_ent {
-                    match field {
-                        CutawayField::Title => {
-                            text.0.clone_from(title);
-                            text_col.0 = stratum_col;
-                        }
-                        CutawayField::Subtitle => {
-                            text.0.clone_from(sub);
-                        }
+        // Sync texts
+        for (child_of, field, mut text, mut text_col) in text_query.iter_mut() {
+            if child_of.parent() == pill_ent {
+                match field {
+                    CutawayField::Title => {
+                        text.0.clone_from(title);
+                        text_col.0 = stratum_col;
+                    }
+                    CutawayField::Subtitle => {
+                        text.0.clone_from(sub);
                     }
                 }
             }
-        } else {
+        }
+    } else {
+        node.display = Display::None;
+    }
+}
+
+/// Dynamic system updating floating cutaway callout positions and physical text.
+#[allow(
+    clippy::type_complexity,
+    reason = "Cutaway HUD requires camera projection, celestial components, and UI nodes"
+)]
+pub fn update_cutaway_hud_ui(
+    windows: Query<&Window>,
+    camera_query: Query<(
+        &Camera,
+        &GlobalTransform,
+        &Transform,
+        Option<&PanOrbitCamera>,
+    )>,
+    player_state: Res<PlayerInteractionState>,
+    config: Res<SimulationConfig>,
+    mut pill_query: Query<(Entity, &CutawayCalloutPill, &mut Node, &mut BorderColor)>,
+    mut text_query: Query<(&ChildOf, &CutawayField, &mut Text, &mut TextColor)>,
+    bodies_query: Query<(
+        &SimPosition,
+        &Radius,
+        &CelestialBody,
+        Option<&InternalDifferentiation>,
+        Option<&Composition>,
+    )>,
+) {
+    let Some(window) = windows.iter().next() else {
+        return;
+    };
+    let Some((camera, cam_gt, cam_tf, opt_pan)) = camera_query.iter().next() else {
+        return;
+    };
+
+    let target_entity = resolve_active_cutaway_target(&player_state, opt_pan);
+    let target_data = target_entity.and_then(|ent| bodies_query.get(ent).ok());
+
+    let Some((sim_pos, radius, body, opt_diff, _opt_comp)) = target_data else {
+        // Hide all 4 callout cards
+        for (_, _, mut node, _) in &mut pill_query {
             node.display = Display::None;
         }
+        return;
+    };
+
+    let body_vec = Vec3::new(sim_pos.x as f32, sim_pos.y as f32, sim_pos.z as f32);
+    let strata = resolve_cutaway_strata(body, radius.0, opt_diff, &config);
+    let anchors = compute_cutaway_anchors(body_vec, cam_tf.rotation, &strata);
+    let labels = resolve_cutaway_labels(body, radius.0, opt_diff);
+
+    for (pill_ent, pill, mut node, mut border_col) in &mut pill_query {
+        sync_cutaway_pill_card(
+            pill_ent,
+            pill.0,
+            &anchors,
+            &labels,
+            camera,
+            cam_gt,
+            window,
+            &mut node,
+            &mut border_col,
+            &mut text_query,
+        );
     }
 }
 
