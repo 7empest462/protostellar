@@ -10,7 +10,7 @@ pub fn receive_gmc_collapse_events(
     mut commands: Commands,
     receiver: Res<GmcCollapseEventReceiver>,
     scenario_state: Option<Res<ActiveScenarioState>>,
-    existing_bodies: Query<(&SimPosition, &CelestialBody)>,
+    existing_bodies: Query<(&SimPosition, &CelestialBody, Option<&Mass>)>,
     mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
     let Some(state) = scenario_state.as_ref() else {
@@ -31,11 +31,21 @@ pub fn receive_gmc_collapse_events(
 
     let mut star_positions: Vec<bevy::math::DVec3> = existing_bodies
         .iter()
-        .filter(|(_, body)| body.body_type.is_star_or_remnant())
-        .map(|(pos, _)| pos.0)
+        .filter(|(_, body, _)| body.body_type.is_star_or_remnant())
+        .map(|(pos, _, _)| pos.0)
         .collect();
     let mut star_count = star_positions.len();
     let mut spawned_this_frame = 0usize;
+
+    // Detect live mass of central star or black hole to calibrate orbital velocities
+    let central_mass = existing_bodies
+        .iter()
+        .filter(|(pos, body, _)| {
+            pos.0.length() < 60.0
+                && (body.body_type == BodyType::BlackHole || body.body_type.is_star_or_remnant())
+        })
+        .filter_map(|(_, _, opt_m)| opt_m.map(|m| m.0))
+        .fold(3.5, f64::max);
 
     while let Ok(events) = receiver.rx.try_recv() {
         for ev in events {
@@ -67,7 +77,15 @@ pub fn receive_gmc_collapse_events(
             star_positions.push(ev_pos);
             star_count += 1;
             spawned_this_frame += 1;
-            spawn_jeans_collapse_system(&mut commands, &ev, ev_pos, r_len, star_count, &mut toast);
+            spawn_jeans_collapse_system(
+                &mut commands,
+                &ev,
+                ev_pos,
+                r_len,
+                star_count,
+                central_mass,
+                &mut toast,
+            );
         }
     }
 }
@@ -81,23 +99,29 @@ fn compute_collapse_kinematics(
     ev: &GpuJeansCollapseEvent,
     ev_pos: bevy::math::DVec3,
     r_len: f64,
+    central_mass: f64,
 ) -> CollapseKinematics {
     let raw_vel = bevy::math::DVec3::new(
         f64::from(ev.com_velocity[0]),
         f64::from(ev.com_velocity[1]),
         f64::from(ev.com_velocity[2]),
     );
-    let safe_r = r_len.max(10.0);
-    let v_circ = (crate::utils::constants::G_ASTRO * 24.0 * safe_r
-        / (safe_r * safe_r + 160.0 * 160.0).powf(1.5))
-    .sqrt();
+    let safe_r = r_len.max(5.0);
+    // Dynamically calculate circular orbital speed balancing central black hole / protostar,
+    // cloud core (50 M☉), and Dark Matter NFW halo (8000 M☉)
+    let v_circ = crate::simulation::scenarios::molecular_cloud::calculate_gmc_orbital_speed(
+        safe_r,
+        central_mass,
+        8000.0,
+        50.0,
+    );
     let tangent = if ev_pos.cross(bevy::math::DVec3::Y).length_squared() > 1e-4 {
         ev_pos.cross(bevy::math::DVec3::Y).normalize()
     } else {
         bevy::math::DVec3::new(0.0, 0.0, 1.0)
     };
-    let seed_vel = (tangent * v_circ * 0.85 + raw_vel.clamp_length_max(v_circ * 0.35))
-        .clamp_length_max(v_circ * 1.15);
+    let seed_vel = (tangent * v_circ * 0.98 + raw_vel.clamp_length_max(v_circ * 0.08))
+        .clamp_length_max(v_circ * 1.05);
     let local_speed =
         (seed_vel.length() * crate::utils::constants::AU_PER_YR_TO_KM_PER_S).max(0.25);
     let jeans_mass =
@@ -208,9 +232,10 @@ fn spawn_jeans_collapse_system(
     ev_pos: bevy::math::DVec3,
     r_len: f64,
     star_count: usize,
+    central_mass: f64,
     toast: &mut Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
-    let kinematics = compute_collapse_kinematics(ev, ev_pos, r_len);
+    let kinematics = compute_collapse_kinematics(ev, ev_pos, r_len, central_mass);
     let props = determine_protostar_properties(ev.metallicity, kinematics.jeans_mass, star_count);
 
     let star_name =

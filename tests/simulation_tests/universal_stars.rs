@@ -790,7 +790,7 @@ fn test_gen1_primordial_pop_iii_hypergiant_spawning_masses() {
         Commands,
         Res<GmcCollapseEventReceiver>,
         Option<Res<ActiveScenarioState>>,
-        Query<(&SimPosition, &CelestialBody)>,
+        Query<(&SimPosition, &CelestialBody, Option<&Mass>)>,
         Option<ResMut<protostellar::game::ui::NotificationToast>>,
     )> = bevy::ecs::system::SystemState::new(app.world_mut());
 

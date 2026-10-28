@@ -53,8 +53,7 @@ fn test_gmc_promotion_toast_formatting() {
         .unwrap();
 
     assert_eq!(
-        toast_res.message,
-        "Protostar Jeans-3: disk attached (3 embryos)",
+        toast_res.message, "Protostar Jeans-3: disk attached (3 embryos)",
         "Toast must match user visible handoff format"
     );
     assert!(toast_res.timer > 0.0);
@@ -463,7 +462,9 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
         );
 
         // Find the spawned guided bombardment projectile
-        let mut proj_query = app.world_mut().query::<(&BombardmentProjectile, &CelestialBody)>();
+        let mut proj_query = app
+            .world_mut()
+            .query::<(&BombardmentProjectile, &CelestialBody)>();
         let spawned = proj_query
             .iter(app.world())
             .find(|(p, _)| p.bombardment_type == expected_type && p.target_entity == embryo_ent);

@@ -43,6 +43,7 @@ pub fn spawn_cutaway_hud(root: &mut ChildSpawnerCommands) {
             },
             BackgroundColor(Color::srgba(0.02, 0.05, 0.11, 0.92)),
             BorderColor::all(Color::srgba(0.25, 0.82, 0.98, 0.75)),
+            GlobalZIndex(30),
         ))
         .with_children(|card| {
             // Title
@@ -72,6 +73,38 @@ pub fn spawn_cutaway_hud(root: &mut ChildSpawnerCommands) {
     }
 }
 
+/// Projects a 3D world space position into 2D viewport screen coordinates.
+/// Falls back to analytical perspective projection if camera viewport rect is not yet initialized.
+fn project_world_to_viewport(
+    camera: &Camera,
+    cam_gt: &GlobalTransform,
+    pos: Vec3,
+    win_w: f32,
+    win_h: f32,
+) -> Option<Vec2> {
+    if let Ok(sp) = camera.world_to_viewport(cam_gt, pos) {
+        return Some(sp);
+    }
+    if win_w <= 0.0 || win_h <= 0.0 {
+        return None;
+    }
+    let cam_mat = cam_gt.to_matrix();
+    let view_pos = cam_mat.inverse().transform_point3(pos);
+    // In camera space (right-handed), the camera looks along -Z
+    if view_pos.z >= -1e-4 {
+        return None; // Behind camera
+    }
+    let aspect = win_w / win_h;
+    let proj = Mat4::perspective_infinite_reverse_rh(std::f32::consts::FRAC_PI_4, aspect, 0.0001);
+    let clip = proj.project_point3(view_pos);
+    if !clip.is_finite() {
+        return None;
+    }
+    let screen_x = (clip.x * 0.5 + 0.5) * win_w;
+    let screen_y = (-clip.y * 0.5 + 0.5) * win_h;
+    Some(Vec2::new(screen_x, screen_y))
+}
+
 /// Dynamic system updating floating cutaway callout positions and physical text.
 #[allow(
     clippy::type_complexity,
@@ -79,7 +112,7 @@ pub fn spawn_cutaway_hud(root: &mut ChildSpawnerCommands) {
 )]
 pub fn update_cutaway_hud_ui(
     windows: Query<&Window>,
-    camera_query: Query<(&Camera, &GlobalTransform, &Transform), With<PanOrbitCamera>>,
+    camera_query: Query<(&Camera, &GlobalTransform, &Transform, Option<&PanOrbitCamera>)>,
     player_state: Res<PlayerInteractionState>,
     config: Res<SimulationConfig>,
     mut pill_query: Query<(Entity, &CutawayCalloutPill, &mut Node, &mut BorderColor)>,
@@ -92,18 +125,22 @@ pub fn update_cutaway_hud_ui(
         Option<&Composition>,
     )>,
 ) {
-    let Ok(window) = windows.single() else {
+    let Some(window) = windows.iter().next() else {
         return;
     };
-    let Ok((camera, cam_gt, cam_tf)) = camera_query.single() else {
+    let Some((camera, cam_gt, cam_tf, opt_pan)) = camera_query.iter().next() else {
         return;
     };
 
     let is_active = player_state.is_cutaway_active()
-        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden;
+        && (player_state.cutaway_mode
+            || player_state.overlay_mode != DiagnosticOverlayMode::Hidden);
 
     let target_entity = if is_active {
-        player_state.selected_entity.or(player_state.hovered_entity)
+        player_state
+            .selected_entity
+            .or(player_state.hovered_entity)
+            .or_else(|| opt_pan.and_then(|p| p.target_entity))
     } else {
         None
     };
@@ -172,7 +209,13 @@ pub fn update_cutaway_hud_ui(
             continue;
         };
 
-        if let Ok(screen_pos) = camera.world_to_viewport(cam_gt, anchor_pos) {
+        if let Some(screen_pos) = project_world_to_viewport(
+            camera,
+            cam_gt,
+            anchor_pos,
+            window.width(),
+            window.height(),
+        ) {
             let card_w = 175.0;
             let card_h = 36.0;
 

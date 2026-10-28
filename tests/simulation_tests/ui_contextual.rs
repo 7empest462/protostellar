@@ -723,16 +723,60 @@ fn test_cutaway_ui_button_universal_visibility() {
 
 #[test]
 fn test_cutaway_hud_pill_spawning_and_strata_labels() {
+    use protostellar::rendering::camera::PanOrbitCamera;
+    use protostellar::simulation::components::*;
+
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.init_resource::<PlayerInteractionState>();
     app.init_resource::<protostellar::simulation::resources::SimulationConfig>();
+
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        resolution: (1280u32, 720u32).into(),
+        ..default()
+    });
+
+    let _camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera3d::default(),
+            Camera::default(),
+            PanOrbitCamera {
+                radius: 16.0,
+                target_radius: 16.0,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 5.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+            GlobalTransform::from(
+                Transform::from_xyz(0.0, 5.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ),
+        ))
+        .id();
+
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(1.0),
+            Radius(0.005),
+            SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+        ))
+        .id();
 
     app.add_systems(Startup, |mut commands: Commands| {
         commands.spawn(Node::default()).with_children(|root| {
             protostellar::game::ui::cutaway_hud::spawn_cutaway_hud(root);
         });
     });
+
+    app.add_systems(
+        Update,
+        protostellar::game::ui::cutaway_hud::update_cutaway_hud_ui,
+    );
 
     app.update();
 
@@ -748,4 +792,71 @@ fn test_cutaway_hud_pill_spawning_and_strata_labels() {
         pill_count, 4,
         "Must spawn exactly 4 strata callout pills (Crust, Mantle, Outer Core, Inner Core)"
     );
+
+    // Now activate cutaway mode and select Earth
+    {
+        let mut ps = app.world_mut().resource_mut::<PlayerInteractionState>();
+        ps.cutaway_mode = true;
+        ps.selected_entity = Some(earth_ent);
+    }
+
+    app.update();
+
+    let mut pill_entities = Vec::new();
+    let mut pill_query = app.world_mut().query::<(
+        Entity,
+        &protostellar::game::ui::cutaway_hud::CutawayCalloutPill,
+        &Node,
+    )>();
+    for (ent, p, node) in pill_query.iter(app.world()) {
+        assert_eq!(
+            node.display,
+            Display::Flex,
+            "Pill {} must be visible (Display::Flex) when cutaway mode is active on selected body",
+            p.0
+        );
+        pill_entities.push((p.0, ent));
+    }
+    assert_eq!(pill_entities.len(), 4);
+
+    // Verify that the title text inside each pill matches Earth's geological strata
+    let mut text_query = app.world_mut().query::<(
+        &ChildOf,
+        &protostellar::game::ui::cutaway_hud::CutawayField,
+        &Text,
+    )>();
+    for (p_idx, p_ent) in &pill_entities {
+        for (child_of, field, text) in text_query.iter(app.world()) {
+            if child_of.parent() == *p_ent
+                && *field == protostellar::game::ui::cutaway_hud::CutawayField::Title
+            {
+                match p_idx {
+                    0 => assert!(text.0.contains("CRUST")),
+                    1 => assert!(text.0.contains("MANTLE")),
+                    2 => assert!(text.0.contains("OUTER CORE")),
+                    3 => assert!(text.0.contains("INNER CORE")),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // When cutaway mode is toggled off, all pills must hide
+    {
+        let mut ps = app.world_mut().resource_mut::<PlayerInteractionState>();
+        ps.cutaway_mode = false;
+    }
+    app.update();
+
+    let mut pill_query = app
+        .world_mut()
+        .query::<(&protostellar::game::ui::cutaway_hud::CutawayCalloutPill, &Node)>();
+    for (p, node) in pill_query.iter(app.world()) {
+        assert_eq!(
+            node.display,
+            Display::None,
+            "Pill {} must hide (Display::None) when cutaway is inactive",
+            p.0
+        );
+    }
 }

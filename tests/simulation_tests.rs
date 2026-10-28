@@ -6,6 +6,8 @@ mod accretion;
 mod atmosphere_escape;
 #[path = "simulation_tests/atmospheres.rs"]
 mod atmospheres;
+#[path = "simulation_tests/black_hole_kerr.rs"]
+mod black_hole_kerr;
 #[path = "simulation_tests/black_hole_relativity.rs"]
 mod black_hole_relativity;
 #[path = "simulation_tests/camera.rs"]
@@ -88,6 +90,8 @@ mod storms;
 mod supernova_enrichment;
 #[path = "simulation_tests/supernova_explosion.rs"]
 mod supernova_explosion;
+#[path = "simulation_tests/surface_camera.rs"]
+mod surface_camera;
 #[path = "simulation_tests/telemetry.rs"]
 mod telemetry;
 #[path = "simulation_tests/terraforming.rs"]

@@ -728,86 +728,86 @@ fn compute_protoplanet_envelope_accretion(
     let a_au = (pos.0 - star_pos).length().clamp(0.4, 50.0);
     let omega_k = (G_ASTRO * star_m / (a_au * a_au * a_au)).sqrt();
 
-        let is_gas_giant = comp.gas_frac > 0.40
-            || body.body_type == BodyType::GasGiant
-            || body.body_type == BodyType::BrownDwarf;
+    let is_gas_giant = comp.gas_frac > 0.40
+        || body.body_type == BodyType::GasGiant
+        || body.body_type == BodyType::BrownDwarf;
 
-        let max_planet_m = if is_gas_giant {
-            0.015 // ~15 M_Jupiter
-        } else if comp.ice_frac > 0.20 {
-            0.000_060 // ~20 M_Earth (Sub-Neptune / Water World)
-        } else {
-            0.000_035 // ~12 M_Earth (Rocky Super-Earth)
-        };
+    let max_planet_m = if is_gas_giant {
+        0.015 // ~15 M_Jupiter
+    } else if comp.ice_frac > 0.20 {
+        0.000_060 // ~20 M_Earth (Sub-Neptune / Water World)
+    } else {
+        0.000_035 // ~12 M_Earth (Rocky Super-Earth)
+    };
 
-        if m < max_planet_m {
-            let growth_coef = if is_gas_giant { 0.00018 } else { 0.000_008 };
-            let d_mass = (growth_coef * m.powf(0.5) * omega_k * dt_yr).min(max_planet_m - m);
+    if m < max_planet_m {
+        let growth_coef = if is_gas_giant { 0.00018 } else { 0.000_008 };
+        let d_mass = (growth_coef * m.powf(0.5) * omega_k * dt_yr).min(max_planet_m - m);
 
-            if d_mass > 1e-12 {
-                let new_m = m + d_mass;
-                mass.0 = new_m;
+        if d_mass > 1e-12 {
+            let new_m = m + d_mass;
+            mass.0 = new_m;
 
-                // Nebular composition blend from molecular cloud gas and icy volatiles
-                let nebular_feed = Composition::solar_gas();
-                *comp = comp.mass_weighted_merge(m, &nebular_feed, d_mass);
+            // Nebular composition blend from molecular cloud gas and icy volatiles
+            let nebular_feed = Composition::solar_gas();
+            *comp = comp.mass_weighted_merge(m, &nebular_feed, d_mass);
 
-                if !is_gas_giant {
-                    // In a GMC, rocky/ocean planets retain a primordial atmosphere
-                    // clamped to physical terrestrial/sub-Neptune envelope limits (2% - 8%)
-                    let max_gas = 0.08;
-                    if comp.gas_frac > max_gas {
-                        let excess = comp.gas_frac - max_gas;
-                        comp.gas_frac = max_gas;
-                        comp.silicate_frac += excess;
-                    } else if comp.gas_frac < 0.02 {
-                        let deficit = 0.02 - comp.gas_frac;
-                        comp.gas_frac = 0.02;
-                        comp.silicate_frac = (comp.silicate_frac - deficit).max(0.1);
-                    }
-                    *comp = comp.normalized();
-                    comp.gas_frac = comp.gas_frac.clamp(0.02, 0.08);
+            if !is_gas_giant {
+                // In a GMC, rocky/ocean planets retain a primordial atmosphere
+                // clamped to physical terrestrial/sub-Neptune envelope limits (2% - 8%)
+                let max_gas = 0.08;
+                if comp.gas_frac > max_gas {
+                    let excess = comp.gas_frac - max_gas;
+                    comp.gas_frac = max_gas;
+                    comp.silicate_frac += excess;
+                } else if comp.gas_frac < 0.02 {
+                    let deficit = 0.02 - comp.gas_frac;
+                    comp.gas_frac = 0.02;
+                    comp.silicate_frac = (comp.silicate_frac - deficit).max(0.1);
                 }
+                *comp = comp.normalized();
+                comp.gas_frac = comp.gas_frac.clamp(0.02, 0.08);
+            }
 
-                // Update physical radius based on bulk density and degenerate envelope
-                if is_gas_giant {
-                    // Gas giant degenerate radius ~1.0-1.6 R_Jup
-                    rad.0 = (0.000_477 * (new_m / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085);
-                } else {
-                    // Rocky terrestrial density
-                    let density = comp.average_density();
-                    let volume = new_m / density;
-                    rad.0 = ((3.0 * volume) / (4.0 * PI))
-                        .cbrt()
-                        .max(EARTH_RADIUS_AU * 0.3);
-                }
+            // Update physical radius based on bulk density and degenerate envelope
+            if is_gas_giant {
+                // Gas giant degenerate radius ~1.0-1.6 R_Jup
+                rad.0 = (0.000_477 * (new_m / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085);
+            } else {
+                // Rocky terrestrial density
+                let density = comp.average_density();
+                let volume = new_m / density;
+                rad.0 = ((3.0 * volume) / (4.0 * PI))
+                    .cbrt()
+                    .max(EARTH_RADIUS_AU * 0.3);
+            }
 
-                // Update volatile inventory and atmospheric pressure
-                if let Some(ref mut vol) = opt_vol {
-                    let d_mass_earth = d_mass / EARTH_MASS_SOLAR;
-                    let gas_added = d_mass_earth * comp.gas_frac;
-                    let water_added = d_mass_earth * comp.ice_frac;
+            // Update volatile inventory and atmospheric pressure
+            if let Some(ref mut vol) = opt_vol {
+                let d_mass_earth = d_mass / EARTH_MASS_SOLAR;
+                let gas_added = d_mass_earth * comp.gas_frac;
+                let water_added = d_mass_earth * comp.ice_frac;
 
-                    vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
-                        + (gas_added * 100.0) as f32)
-                        .clamp(0.1, if is_gas_giant { 2000.0 } else { 120.0 });
+                vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
+                    + (gas_added * 100.0) as f32)
+                    .clamp(0.1, if is_gas_giant { 2000.0 } else { 120.0 });
 
-                    vol.delivered_water_m_earth += water_added;
-                    if !is_gas_giant
-                        && vol.delivered_water_m_earth > 0.0001
-                        && vol.ocean_coverage_frac < 0.1
-                    {
-                        vol.ocean_coverage_frac =
-                            (vol.delivered_water_m_earth / 0.005).clamp(0.0, 0.95) as f32;
-                    }
-                }
-
-                // Re-classify Protoplanet into its mature body type
-                if body.body_type == BodyType::Protoplanet {
-                    body.body_type = classify_body_by_mass_and_comp(new_m, comp, false);
+                vol.delivered_water_m_earth += water_added;
+                if !is_gas_giant
+                    && vol.delivered_water_m_earth > 0.0001
+                    && vol.ocean_coverage_frac < 0.1
+                {
+                    vol.ocean_coverage_frac =
+                        (vol.delivered_water_m_earth / 0.005).clamp(0.0, 0.95) as f32;
                 }
             }
+
+            // Re-classify Protoplanet into its mature body type
+            if body.body_type == BodyType::Protoplanet {
+                body.body_type = classify_body_by_mass_and_comp(new_m, comp, false);
+            }
         }
+    }
 }
 
 #[allow(
@@ -847,8 +847,14 @@ fn compute_gmc_black_hole_accretion(
             jet.accretion_timer_years = 5.0;
         }
         if new_m >= 100_000.0 && !body.name.contains("Supermassive") {
-            body.name = format!("Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)", new_m / 1000.0);
-        } else if new_m >= 100.0 && !body.name.contains("Intermediate") && !body.name.contains("Supermassive") {
+            body.name = format!(
+                "Galactic Nucleus (Supermassive Black Hole - {:.1}k M☉)",
+                new_m / 1000.0
+            );
+        } else if new_m >= 100.0
+            && !body.name.contains("Intermediate")
+            && !body.name.contains("Supermassive")
+        {
             body.name = format!("Intermediate-Mass Black Hole ({new_m:.1} M☉)");
         }
     }

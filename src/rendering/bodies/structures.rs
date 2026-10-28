@@ -12,6 +12,151 @@ use super::{VisualAssets, VisualBody};
 #[derive(Component, Debug, Clone, Copy)]
 pub struct VisualRingChild;
 
+struct RingVisualGeometry {
+    outer_scale: f32,
+    inner_ratio_mesh: f32,
+    star_dir_local: Vec3,
+    planet_radius_ratio: f32,
+}
+
+fn compute_ring_geometry(
+    body: &CelestialBody,
+    ring_sys: &PlanetaryRingSystem,
+    radius: &Radius,
+    planet_trans: &Transform,
+    star_world_pos: Vec3,
+) -> RingVisualGeometry {
+    let is_star = body.body_type.is_star_or_remnant();
+    let ring_outer_scale = if is_star {
+        let vis_r = planet_trans.scale.x.max(0.001);
+        let target_outer_r = if ring_sys.outer_radius_au > 0.0 {
+            ring_sys.outer_radius_au
+        } else {
+            (radius.0 as f32 * 8.0).clamp(2.5, 18.0)
+        };
+        (target_outer_r / vis_r) * 2.0
+    } else {
+        let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
+            (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
+        } else {
+            2.85
+        };
+        ring_ratio * 2.0
+    };
+
+    let star_dir_local = if is_star {
+        Vec3::Y
+    } else {
+        let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
+        let star_dir_world = if star_dir_world.length_squared() < 0.01 {
+            Vec3::Y
+        } else {
+            star_dir_world
+        };
+        let ring_world_rot = planet_trans.rotation;
+        (ring_world_rot.inverse() * star_dir_world).normalize_or_zero()
+    };
+    let planet_radius_ratio = if is_star {
+        (planet_trans.scale.x / (ring_outer_scale * 0.5 * planet_trans.scale.x)).clamp(0.01, 0.25)
+    } else {
+        1.0 / (ring_outer_scale * 0.5)
+    };
+
+    let inner_ratio_mesh = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
+        (ring_sys.inner_radius_au / ring_sys.outer_radius_au).clamp(planet_radius_ratio, 0.95)
+    } else {
+        (1.25f32 / 2.35f32).clamp(planet_radius_ratio, 0.95)
+    };
+
+    RingVisualGeometry {
+        outer_scale: ring_outer_scale,
+        inner_ratio_mesh,
+        star_dir_local,
+        planet_radius_ratio,
+    }
+}
+
+fn update_existing_ring_children(
+    opt_children: Option<&Children>,
+    ring_children_query: &mut Query<
+        (&mut Transform, &MeshMaterial3d<RingMaterial>),
+        (With<VisualRingChild>, Without<CelestialBody>),
+    >,
+    ring_materials: &mut Assets<RingMaterial>,
+    ring_sys: &PlanetaryRingSystem,
+    geom: &RingVisualGeometry,
+    elapsed_secs: f32,
+) -> bool {
+    let mut found = false;
+    if let Some(children) = opt_children {
+        for child in children.iter() {
+            if let Ok((mut transform, mat_handle)) = ring_children_query.get_mut(child) {
+                found = true;
+                transform.scale = Vec3::new(geom.outer_scale, 1.0, geom.outer_scale);
+                transform.rotation = Quat::IDENTITY;
+
+                if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
+                    mat.uniforms.inner_radius = geom.inner_ratio_mesh;
+                    mat.uniforms.outer_radius = 1.0;
+                    mat.uniforms.optical_depth = ring_sys.optical_depth;
+                    mat.uniforms.ice_fraction = ring_sys.ice_fraction;
+                    mat.uniforms.ring_color = calc_ring_color(ring_sys.ice_fraction);
+                    mat.uniforms.star_dir_local = Vec4::new(
+                        geom.star_dir_local.x,
+                        geom.star_dir_local.y,
+                        geom.star_dir_local.z,
+                        geom.planet_radius_ratio,
+                    );
+                    mat.uniforms.shadow_params = Vec4::new(0.03, 0.022, 0.97, elapsed_secs);
+                }
+            }
+        }
+    }
+    found
+}
+
+fn spawn_planetary_ring_child(
+    commands: &mut Commands,
+    planet_entity: Entity,
+    visual_assets: &VisualAssets,
+    ring_materials: &mut Assets<RingMaterial>,
+    ring_sys: &PlanetaryRingSystem,
+    geom: &RingVisualGeometry,
+    elapsed_secs: f32,
+) {
+    let ring_color = calc_ring_color(ring_sys.ice_fraction);
+    let material = ring_materials.add(RingMaterial {
+        uniforms: RingUniforms {
+            inner_radius: geom.inner_ratio_mesh,
+            outer_radius: 1.0,
+            optical_depth: ring_sys.optical_depth,
+            ice_fraction: ring_sys.ice_fraction,
+            ring_color,
+            star_dir_local: Vec4::new(
+                geom.star_dir_local.x,
+                geom.star_dir_local.y,
+                geom.star_dir_local.z,
+                geom.planet_radius_ratio,
+            ),
+            shadow_params: Vec4::new(0.03, 0.022, 0.97, elapsed_secs),
+        },
+    });
+
+    if let Ok(mut p_cmd) = commands.get_entity(planet_entity) {
+        p_cmd.with_children(|parent| {
+            parent.spawn((
+                VisualRingChild,
+                Mesh3d(visual_assets.ring_mesh.clone()),
+                MeshMaterial3d(material),
+                Transform::from_scale(Vec3::new(geom.outer_scale, 1.0, geom.outer_scale))
+                    .with_rotation(Quat::IDENTITY),
+                Visibility::default(),
+                NotShadowCaster,
+            ));
+        });
+    }
+}
+
 /// Synchronizes 3D planetary ring system meshes, materials, and axial tilt transforms.
 #[allow(clippy::type_complexity, reason = "Planetary ring query")]
 pub fn sync_planetary_rings(
@@ -61,111 +206,28 @@ pub fn sync_planetary_rings(
             }
             continue;
         }
-        let is_star = body.body_type.is_star_or_remnant();
-        let ring_outer_scale = if is_star {
-            let vis_r = planet_trans.scale.x.max(0.001);
-            let target_outer_r = if ring_sys.outer_radius_au > 0.0 {
-                ring_sys.outer_radius_au
-            } else {
-                (radius.0 as f32 * 8.0).clamp(2.5, 18.0)
-            };
-            (target_outer_r / vis_r) * 2.0
-        } else {
-            let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
-                (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
-            } else {
-                2.85
-            };
-            ring_ratio * 2.0
-        };
 
-        // Planetary rings physically form in the planet's equatorial plane (perpendicular to spin axis).
-        // Since the parent planet entity's transform is already rotated to align with spin_dir,
-        // the child ring mesh (Plane3d with normal +Y) naturally sits in the equator with Quat::IDENTITY.
-        let ring_rotation = Quat::IDENTITY;
+        let geom = compute_ring_geometry(body, ring_sys, radius, planet_trans, star_world_pos);
 
-        let star_dir_local = if is_star {
-            Vec3::Y
-        } else {
-            let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
-            let star_dir_world = if star_dir_world.length_squared() < 0.01 {
-                Vec3::Y
-            } else {
-                star_dir_world
-            };
-            let ring_world_rot = planet_trans.rotation;
-            (ring_world_rot.inverse() * star_dir_world).normalize_or_zero()
-        };
-        let planet_radius_ratio = if is_star {
-            (planet_trans.scale.x / (ring_outer_scale * 0.5 * planet_trans.scale.x)).clamp(0.01, 0.25)
-        } else {
-            1.0 / (ring_outer_scale * 0.5)
-        };
-
-        let inner_ratio_mesh = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
-            (ring_sys.inner_radius_au / ring_sys.outer_radius_au).clamp(planet_radius_ratio, 0.95)
-        } else {
-            (1.25f32 / 2.35f32).clamp(planet_radius_ratio, 0.95)
-        };
-
-        let mut found_child = false;
-        if let Some(children) = opt_children {
-            for child in children.iter() {
-                if let Ok((mut transform, mat_handle)) = ring_children_query.get_mut(child) {
-                    found_child = true;
-                    transform.scale = Vec3::new(ring_outer_scale, 1.0, ring_outer_scale);
-                    transform.rotation = ring_rotation;
-
-                    if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
-                        mat.uniforms.inner_radius = inner_ratio_mesh;
-                        mat.uniforms.outer_radius = 1.0;
-                        mat.uniforms.optical_depth = ring_sys.optical_depth;
-                        mat.uniforms.ice_fraction = ring_sys.ice_fraction;
-                        mat.uniforms.ring_color = calc_ring_color(ring_sys.ice_fraction);
-                        mat.uniforms.star_dir_local = Vec4::new(
-                            star_dir_local.x,
-                            star_dir_local.y,
-                            star_dir_local.z,
-                            planet_radius_ratio,
-                        );
-                        mat.uniforms.shadow_params = Vec4::new(0.03, 0.022, 0.97, elapsed_secs);
-                    }
-                }
-            }
-        }
+        let found_child = update_existing_ring_children(
+            opt_children,
+            &mut ring_children_query,
+            &mut ring_materials,
+            ring_sys,
+            &geom,
+            elapsed_secs,
+        );
 
         if !found_child {
-            let ring_color = calc_ring_color(ring_sys.ice_fraction);
-            let material = ring_materials.add(RingMaterial {
-                uniforms: RingUniforms {
-                    inner_radius: inner_ratio_mesh,
-                    outer_radius: 1.0,
-                    optical_depth: ring_sys.optical_depth,
-                    ice_fraction: ring_sys.ice_fraction,
-                    ring_color,
-                    star_dir_local: Vec4::new(
-                        star_dir_local.x,
-                        star_dir_local.y,
-                        star_dir_local.z,
-                        planet_radius_ratio,
-                    ),
-                    shadow_params: Vec4::new(0.03, 0.022, 0.97, elapsed_secs),
-                },
-            });
-
-            if let Ok(mut p_cmd) = commands.get_entity(planet_entity) {
-                p_cmd.with_children(|parent| {
-                    parent.spawn((
-                        VisualRingChild,
-                        Mesh3d(visual_assets.ring_mesh.clone()),
-                        MeshMaterial3d(material),
-                        Transform::from_scale(Vec3::new(ring_outer_scale, 1.0, ring_outer_scale))
-                            .with_rotation(ring_rotation),
-                        Visibility::default(),
-                        NotShadowCaster,
-                    ));
-                });
-            }
+            spawn_planetary_ring_child(
+                &mut commands,
+                planet_entity,
+                &visual_assets,
+                &mut ring_materials,
+                ring_sys,
+                &geom,
+                elapsed_secs,
+            );
         }
     }
 }

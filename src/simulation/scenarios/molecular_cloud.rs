@@ -77,20 +77,54 @@ struct ClusterSeedConfig {
     is_protostar: bool,
 }
 
+/// Computes the stable circular orbital speed in the GMC cluster scenario,
+/// dynamically balancing the central star or supermassive black hole, the gaseous
+/// cloud core (50 M☉), and the stabilizing Dark Matter NFW halo (8000 M☉).
+pub fn calculate_gmc_orbital_speed(
+    r_len: f64,
+    central_mass: f64,
+    dark_matter_mass: f64,
+    cloud_core_mass: f64,
+) -> f64 {
+    let safe_r = r_len.max(5.0);
+    let mut total_eff_mass = central_mass;
+
+    // Cloud core Plummer potential: M_cloud_eff = M_core * r^3 / (r^2 + r_c^2)^1.5 (r_core = 35.0 AU)
+    let r_core = 35.0;
+    let cloud_factor = safe_r * safe_r / (safe_r * safe_r + r_core * r_core).powf(1.5);
+    total_eff_mass += cloud_core_mass * cloud_factor * safe_r;
+
+    // Dark Matter NFW Halo: M_DM(r) = M_DM_total * (ln(1 + x) - x / (1 + x)) (r_s = 150.0 AU)
+    let r_s = 150.0;
+    let x = safe_r / r_s;
+    if x > 1e-4 {
+        let ln_1p_x = (1.0 + x).ln();
+        let dm_enc = dark_matter_mass * (ln_1p_x - x / (1.0 + x));
+        total_eff_mass += dm_enc;
+    }
+
+    (G_ASTRO * total_eff_mass / safe_r).sqrt()
+}
+
 fn compute_seed_3d_state(cfg: &ClusterSeedConfig, m_central: f64) -> (DVec3, DVec3) {
     let inc = cfg.inclination_deg.to_radians();
     let a = cfg.semi_major_axis_au;
     let e = cfg.eccentricity;
     let r_peri = a * (1.0 - e);
 
-    let mu = G_ASTRO * (m_central + cfg.mass_solar);
-    let v_peri = (mu * (2.0 / r_peri - 1.0 / a)).sqrt();
+    // Compute circular speed balanced by central star/BH, cloud core (50 M☉), and Dark Matter NFW halo (8000 M☉)
+    let v_circ = calculate_gmc_orbital_speed(r_peri, m_central + cfg.mass_solar, 8000.0, 50.0);
+    let v_peri = v_circ * (1.0 + e).sqrt();
 
-    // Pericenter position in orbital plane, inclined along X-Z
-    let pos = DVec3::new(r_peri * inc.cos(), r_peri * inc.sin(), 0.0);
+    // Natural azimuthal distribution around cluster disk based on semi-major axis
+    let phi = (a * 1.37 + cfg.inclination_deg * 2.1).to_radians();
 
-    // Tangential Keplerian orbital velocity
-    let mut vel = DVec3::new(0.0, 0.0, v_peri);
+    // Position in orbital plane, inclined around X-Z
+    let r_proj = r_peri * inc.cos();
+    let pos = DVec3::new(r_proj * phi.cos(), r_peri * inc.sin(), r_proj * phi.sin());
+
+    // Tangential prograde orbital velocity
+    let mut vel = DVec3::new(-v_peri * phi.sin(), 0.0, v_peri * phi.cos());
 
     // Add 3D turbulent velocity perturbation from supersonic GMC cloud turbulence
     let v_turb_au_yr = cfg.turbulent_kick_km_s / AU_PER_YR_TO_KM_PER_S;
@@ -686,9 +720,9 @@ pub fn promote_stabilized_gmc_protostars(
     >,
     mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
-    let is_gmc = scenario_state.as_ref().is_some_and(|s| {
-        s.current_preset == ScenarioPreset::MolecularCloudCluster
-    });
+    let is_gmc = scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
     if !is_gmc && scenario_state.is_some() {
         return;
     }
@@ -729,9 +763,9 @@ pub fn update_gmc_circumstellar_disks(
     if time_warp.is_paused && !time_warp.step_once {
         return;
     }
-    let is_gmc = scenario_state.as_ref().is_some_and(|s| {
-        s.current_preset == ScenarioPreset::MolecularCloudCluster
-    });
+    let is_gmc = scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
     if !is_gmc && scenario_state.is_some() {
         return;
     }
@@ -767,9 +801,9 @@ pub fn update_gmc_cluster_com_camera(
         Option<&CircumstellarDisk>,
     )>,
 ) {
-    let is_gmc = scenario_state.as_ref().is_some_and(|s| {
-        s.current_preset == ScenarioPreset::MolecularCloudCluster
-    });
+    let is_gmc = scenario_state
+        .as_ref()
+        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
     if !is_gmc && scenario_state.is_some() {
         return;
     }

@@ -601,7 +601,10 @@ fn test_gmc_protostar_stabilization_promotion_attaches_disk_and_embryos() {
         "Stabilized protostar must receive a CircumstellarDisk"
     );
     let disk = disk.unwrap();
-    assert!(disk.is_active_full_disk, "New circumstellar disk must be active");
+    assert!(
+        disk.is_active_full_disk,
+        "New circumstellar disk must be active"
+    );
     assert!(disk.inner_radius_au > 0.0 && disk.outer_radius_au > disk.inner_radius_au);
 
     let ring = app.world().get::<PlanetaryRingSystem>(star_ent);
@@ -714,13 +717,18 @@ fn test_gmc_active_full_disk_capping() {
     );
 
     // Oldest star (Star-1) must have had its disk dissipated
-    let star1_disk = app.world().get::<CircumstellarDisk>(star_entities[0]).unwrap();
+    let star1_disk = app
+        .world()
+        .get::<CircumstellarDisk>(star_entities[0])
+        .unwrap();
     assert!(
         !star1_disk.is_active_full_disk,
         "Oldest star's circumstellar disk must be marked inactive"
     );
     assert!(
-        app.world().get::<PlanetaryRingSystem>(star_entities[0]).is_none(),
+        app.world()
+            .get::<PlanetaryRingSystem>(star_entities[0])
+            .is_none(),
         "Oldest star's PlanetaryRingSystem mesh must be removed to free GPU fill rate"
     );
 
@@ -737,13 +745,18 @@ fn test_gmc_active_full_disk_capping() {
     );
 
     // Newest star (Star-4) must possess an active full disk
-    let star4_disk = app.world().get::<CircumstellarDisk>(star_entities[3]).unwrap();
+    let star4_disk = app
+        .world()
+        .get::<CircumstellarDisk>(star_entities[3])
+        .unwrap();
     assert!(
         star4_disk.is_active_full_disk,
         "Most recently stabilized star must possess an active full disk"
     );
     assert!(
-        app.world().get::<PlanetaryRingSystem>(star_entities[3]).is_some(),
+        app.world()
+            .get::<PlanetaryRingSystem>(star_entities[3])
+            .is_some(),
         "Most recently stabilized star must possess PlanetaryRingSystem"
     );
 }
@@ -796,5 +809,116 @@ fn test_gmc_circumstellar_disk_photoevaporation_lifetime() {
     assert!(
         app.world().get::<PlanetaryRingSystem>(star_ent).is_none(),
         "PlanetaryRingSystem must be removed upon photoevaporation clearing"
+    );
+}
+
+#[test]
+fn test_gmc_cluster_orbital_speed_and_dark_matter_stability() {
+    // 1. Initial protostar stage (3.5 M☉ central seed)
+    // Dark Matter halo (8000 M☉) and cloud core (50 M☉) dominate outer gravity
+    let r = 120.0;
+    let v_early = calculate_gmc_orbital_speed(r, 3.5, 8000.0, 50.0);
+    assert!(
+        v_early > 15.0 && v_early < 30.0,
+        "Early orbital speed at r=120 AU must be balanced by dark matter and core (got {:.2} AU/yr)",
+        v_early
+    );
+
+    // 2. Intermediate-Mass Black Hole stage (1000 M☉)
+    let v_imbh = calculate_gmc_orbital_speed(r, 1000.0, 8000.0, 50.0);
+    assert!(
+        v_imbh > v_early,
+        "Orbital speed must scale higher as black hole accretes mass"
+    );
+
+    // 3. Supermassive Black Hole stage (100,000 M☉)
+    let v_smbh = calculate_gmc_orbital_speed(r, 100_000.0, 8000.0, 50.0);
+    // Keplerian circular speed around 100,000 M☉ at 120 AU: sqrt(39.478 * 100,000 / 120) ~ 181.4 AU/yr
+    assert!(
+        v_smbh > 170.0 && v_smbh < 220.0,
+        "Supermassive black hole orbital speed must provide full Keplerian circular support (got {:.2} AU/yr)",
+        v_smbh
+    );
+
+    // 4. Verification that newly formed star with calculate_gmc_orbital_speed maintains a stable, bound orbit
+    use bevy::math::DVec3;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+
+    // Active GMC cluster scenario preset
+    let mut scenario_state = ActiveScenarioState::default();
+    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    app.insert_resource(scenario_state);
+
+    let _smbh = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            CelestialBody {
+                body_type: BodyType::BlackHole,
+                name: "Galactic Nucleus (Supermassive Black Hole)".to_string(),
+            },
+            Mass(100_000.0),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration::default(),
+            Radius(0.005),
+        ))
+        .id();
+
+    let star_pos = DVec3::new(120.0, 0.0, 0.0);
+    let star_vel = DVec3::new(0.0, 0.0, v_smbh);
+    let star_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Protostar,
+                name: "Orbiting Protostar".to_string(),
+            },
+            Mass(2.0),
+            SimPosition(star_pos),
+            SimVelocity(star_vel),
+            SimAcceleration::default(),
+            Radius(SOLAR_RADIUS_AU),
+        ))
+        .id();
+
+    app.add_systems(
+        Update,
+        protostellar::simulation::physics::step_physics_simulation,
+    );
+
+    // Run 50 simulation steps with dt = 0.001 yr (~18 hours per step)
+    {
+        let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+        sim_time.current_dt_yr = 0.001;
+    }
+
+    for _ in 0..50 {
+        app.update();
+    }
+
+    let end_pos = app.world().get::<SimPosition>(star_ent).unwrap().0;
+    let end_r = end_pos.length();
+
+    // The star must stay in a stable orbit around 120 AU and NOT plunge into the central black hole (r < 10 AU)
+    assert!(
+        end_r > 90.0 && end_r < 150.0,
+        "Orbiting star must remain stably bound around SMBH (r = {:.2} AU)",
+        end_r
+    );
+    // Check that it actively rotated along Z
+    assert!(
+        end_pos.z.abs() > 5.0,
+        "Orbiting star must actively rotate around the central black hole in the cluster plane (z = {:.2} AU)",
+        end_pos.z
     );
 }
