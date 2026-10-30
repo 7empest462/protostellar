@@ -7,12 +7,12 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 
-use super::telemetry_format::format_mass_string;
+use super::telemetry_format::{format_body_radius_display, format_mass_string};
 use crate::rendering::camera::{IgnoreUiPicking, PanOrbitCamera};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::simulation::tides::TidalState;
-use crate::utils::constants::{AU_PER_YR_TO_KM_PER_S, AU_TO_KM};
+use crate::utils::constants::AU_PER_YR_TO_KM_PER_S;
 
 /// Root marker for the 2D floating holographic hover card.
 #[derive(Component, Debug, Clone, Copy, Default)]
@@ -186,14 +186,7 @@ pub fn format_hover_metrics(pos: DVec3, vel: DVec3, mass: f64, rad: f64, temp: f
         0.0
     };
     let mass_str = format_mass_string(mass);
-    let radius_km = (rad * AU_TO_KM).max(0.01);
-    let rad_disp = if radius_km >= 100.0 {
-        format!("{radius_km:.0} km")
-    } else if radius_km >= 10.0 {
-        format!("{radius_km:.1} km")
-    } else {
-        format!("{radius_km:.2} km")
-    };
+    let rad_disp = format_body_radius_display(rad);
 
     format!(
         "Distance: {dist_au:.2} AU  •  Speed: {speed_km_s:.1} km/s\nMass: {mass_str}\nRadius: {rad_disp}  •  Temp: {temp:.0} K"

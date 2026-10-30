@@ -110,15 +110,41 @@ pub fn sync_probe_transforms(
         &mut Transform,
         &crate::simulation::components::SimPosition,
         &SpaceProbe,
+        Option<&FlightComputer>,
     )>,
+    targets: Query<(Option<&Transform>, Option<&Radius>, &CelestialBody), Without<SpaceProbe>>,
     config: Option<Res<crate::simulation::resources::SimulationConfig>>,
 ) {
-    let min_vis_r = config
+    let transit_vis_r = config
         .as_ref()
         .map_or(0.00008, |c| c.min_body_visual_radius * 0.08);
-    for (mut transform, pos, probe) in probes.iter_mut() {
+
+    for (mut transform, pos, probe, opt_computer) in probes.iter_mut() {
         transform.translation = pos.0.as_vec3();
-        transform.scale = Vec3::splat(min_vis_r);
+
+        let scale = match probe.status {
+            ProbeStatus::Transit => transit_vis_r,
+            ProbeStatus::InOrbit => transit_vis_r * 0.65,
+            ProbeStatus::Landed => {
+                let target_vis_rad = opt_computer
+                    .and_then(|comp| targets.get(comp.target_entity).ok())
+                    .and_then(|(opt_t, opt_r, body)| {
+                        opt_t.map(|t| t.scale.x).filter(|&s| s > 1e-6).or_else(|| {
+                            let r = opt_r.map_or(0.001, |rad| rad.0);
+                            config
+                                .as_ref()
+                                .map(|c| c.calc_visual_radius_for_type(r, body.body_type))
+                        })
+                    })
+                    .unwrap_or(0.001);
+
+                // When landed on a planetary body, shrink from exaggerated transit icon scale
+                // to a realistic planetary surface rover scale (~0.0006 * host visual radius)
+                (target_vis_rad * 0.0006).clamp(1e-7, 0.00004)
+            }
+        };
+
+        transform.scale = Vec3::splat(scale);
         transform.rotation = Quat::from_xyzw(
             probe.orientation.x as f32,
             probe.orientation.y as f32,
@@ -219,7 +245,7 @@ fn process_launch_requests(
             SimVelocity(start_vel),
             SimAcceleration::default(),
             Mass(0.0),
-            Radius(1e-7),
+            Radius(if is_orbiter { 1.5e-11 } else { 1.0e-11 }),
             Temperature(290.0),
             Composition::metal_rich(),
             CelestialBody {
@@ -269,11 +295,26 @@ pub fn draw_probe_navigation_gizmos(
     probes: Query<(Entity, &SimPosition, &SpaceProbe, &FlightComputer)>,
     targets: Query<GizmoTargetQueryData, Without<SpaceProbe>>,
     player_state: Option<Res<PlayerInteractionState>>,
-    camera_query: Query<&Transform, With<Camera>>,
+    camera_query: Query<
+        (
+            &Transform,
+            Option<&crate::rendering::camera::PanOrbitCamera>,
+        ),
+        With<Camera>,
+    >,
     sim_time: Option<Res<crate::simulation::resources::SimTime>>,
     config: Option<Res<SimulationConfig>>,
 ) {
-    let cam_pos = camera_query.iter().next().map(|t| t.translation);
+    let (cam_pos, is_surface_cam) =
+        camera_query
+            .iter()
+            .next()
+            .map_or((None, false), |(t, opt_cam)| {
+                (
+                    Some(t.translation),
+                    opt_cam.is_some_and(|c| c.surface_horizon_mode),
+                )
+            });
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
 
@@ -283,6 +324,7 @@ pub fn draw_probe_navigation_gizmos(
         let is_selected = player_state
             .as_ref()
             .is_some_and(|ps| ps.selected_entity == Some(probe_ent));
+        let hide_orbital_beacon = is_surface_cam && probe.status == ProbeStatus::Landed;
 
         // Vibrant neon palette: Cyan for Orbiters, Amber-Gold for Rovers
         let (main_color, glow_color) = match probe.probe_type {
@@ -307,53 +349,17 @@ pub fn draw_probe_navigation_gizmos(
             Quat::IDENTITY
         };
 
-        gizmos.circle(
-            Isometry3d::new(probe_vec, billboard_rot),
-            beacon_r,
-            main_color,
-        );
-        gizmos.circle(
-            Isometry3d::new(probe_vec, billboard_rot),
-            beacon_r * 0.55,
-            glow_color,
-        );
-
-        gizmos.circle(
-            Isometry3d::new(
+        if !hide_orbital_beacon {
+            draw_probe_billboard_beacon(
+                &mut gizmos,
                 probe_vec,
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
-            beacon_r * 0.85,
-            glow_color,
-        );
-        gizmos.circle(
-            Isometry3d::new(probe_vec, Quat::IDENTITY),
-            beacon_r * 0.85,
-            glow_color,
-        );
-
-        let right = billboard_rot * Vec3::X;
-        let up = billboard_rot * Vec3::Y;
-        let tick_len = beacon_r * 0.45;
-        gizmos.line(
-            probe_vec - right * (beacon_r + tick_len),
-            probe_vec + right * (beacon_r + tick_len),
-            main_color,
-        );
-        gizmos.line(
-            probe_vec - up * (beacon_r + tick_len),
-            probe_vec + up * (beacon_r + tick_len),
-            main_color,
-        );
-
-        let min_beacon_h = if cam_dist < 0.05 { 0.0004 } else { 0.05 };
-        let beacon_h = (cam_dist * 0.08).clamp(min_beacon_h, 8.0);
-        gizmos.line(probe_vec, probe_vec + Vec3::Y * beacon_h, glow_color);
-        gizmos.sphere(
-            Isometry3d::from_translation(probe_vec + Vec3::Y * beacon_h),
-            beacon_r * 0.25,
-            main_color,
-        );
+                billboard_rot,
+                beacon_r,
+                cam_dist,
+                main_color,
+                glow_color,
+            );
+        }
 
         if let Ok((target_pos, opt_rad, target_body, opt_spin, opt_transform)) =
             targets.get(computer.target_entity)
@@ -390,7 +396,7 @@ pub fn draw_probe_navigation_gizmos(
             }
         }
 
-        if is_selected {
+        if is_selected && !hide_orbital_beacon {
             let select_r = beacon_r * 1.5;
             gizmos.circle(
                 Isometry3d::new(probe_vec, billboard_rot),
@@ -404,6 +410,64 @@ pub fn draw_probe_navigation_gizmos(
             );
         }
     }
+}
+
+fn draw_probe_billboard_beacon(
+    gizmos: &mut Gizmos,
+    probe_vec: Vec3,
+    billboard_rot: Quat,
+    beacon_r: f32,
+    cam_dist: f32,
+    main_color: Color,
+    glow_color: Color,
+) {
+    gizmos.circle(
+        Isometry3d::new(probe_vec, billboard_rot),
+        beacon_r,
+        main_color,
+    );
+    gizmos.circle(
+        Isometry3d::new(probe_vec, billboard_rot),
+        beacon_r * 0.55,
+        glow_color,
+    );
+
+    gizmos.circle(
+        Isometry3d::new(
+            probe_vec,
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        ),
+        beacon_r * 0.85,
+        glow_color,
+    );
+    gizmos.circle(
+        Isometry3d::new(probe_vec, Quat::IDENTITY),
+        beacon_r * 0.85,
+        glow_color,
+    );
+
+    let right = billboard_rot * Vec3::X;
+    let up = billboard_rot * Vec3::Y;
+    let tick_len = beacon_r * 0.45;
+    gizmos.line(
+        probe_vec - right * (beacon_r + tick_len),
+        probe_vec + right * (beacon_r + tick_len),
+        main_color,
+    );
+    gizmos.line(
+        probe_vec - up * (beacon_r + tick_len),
+        probe_vec + up * (beacon_r + tick_len),
+        main_color,
+    );
+
+    let min_beacon_h = if cam_dist < 0.05 { 0.0004 } else { 0.05 };
+    let beacon_h = (cam_dist * 0.08).clamp(min_beacon_h, 8.0);
+    gizmos.line(probe_vec, probe_vec + Vec3::Y * beacon_h, glow_color);
+    gizmos.sphere(
+        Isometry3d::from_translation(probe_vec + Vec3::Y * beacon_h),
+        beacon_r * 0.25,
+        main_color,
+    );
 }
 
 #[allow(

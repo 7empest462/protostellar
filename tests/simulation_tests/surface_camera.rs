@@ -379,3 +379,83 @@ fn test_3d_planetary_surface_ecs_lifecycle() {
         "Exiting surface horizon mode must cleanly despawn PlanetarySurfaceTerrainRoot and children"
     );
 }
+
+#[test]
+fn test_landed_rover_scale_shrinking_and_radius_formatting() {
+    use protostellar::game::ui::telemetry_format::format_body_radius_display;
+    use protostellar::simulation::probes::{
+        sync_probe_transforms, FlightComputer, ProbeStatus, ProbeType, SpaceProbe,
+    };
+    use protostellar::simulation::resources::SimulationConfig;
+
+    // 1. Verify metric radius formatting for rovers, small debris, and planets
+    assert_eq!(format_body_radius_display(1.0e-11), "1.50 m");
+    assert_eq!(format_body_radius_display(1.5e-11), "2.24 m");
+    assert_eq!(format_body_radius_display(1.0e-10), "15.0 m");
+    assert_eq!(format_body_radius_display(1.0e-7), "15.0 km");
+    assert_eq!(format_body_radius_display(4.25875e-5), "6371 km");
+
+    // 2. Verify rover transform scale shrinks on touchdown
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    let config = SimulationConfig::default();
+    let transit_scale = config.min_body_visual_radius * 0.08;
+    app.insert_resource(config);
+    app.add_systems(Update, sync_probe_transforms);
+
+    let moon_vis_r = 0.001f32;
+    let moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Moon,
+                name: "The Moon".to_string(),
+            },
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            Radius(1.16e-5),
+            Transform::from_scale(Vec3::splat(moon_vis_r)),
+        ))
+        .id();
+
+    let rover = app
+        .world_mut()
+        .spawn((
+            SpaceProbe::new(ProbeType::Rover, 1),
+            FlightComputer {
+                target_entity: moon,
+                target_name: "The Moon".to_string(),
+                launch_pos: DVec3::new(0.9, 0.0, 0.0),
+                distance_to_target: 0.1,
+                relative_speed: 2.0,
+            },
+            SimPosition(DVec3::new(0.95, 0.0, 0.0)),
+            Transform::from_scale(Vec3::splat(transit_scale)),
+        ))
+        .id();
+
+    // In transit: scale is standard exaggerated transit icon scale
+    app.update();
+    let t_transit = *app.world().get::<Transform>(rover).unwrap();
+    assert!(
+        (t_transit.scale.x - transit_scale).abs() < 1e-6,
+        "In transit, probe must use visible transit icon scale"
+    );
+
+    // When landed: scale must shrink down to normal planetary rover scale (~0.0006 * vis_rad)
+    if let Some(mut probe) = app.world_mut().get_mut::<SpaceProbe>(rover) {
+        probe.status = ProbeStatus::Landed;
+    }
+    app.update();
+    let t_landed = *app.world().get::<Transform>(rover).unwrap();
+    let expected_landed_scale = moon_vis_r * 0.0006;
+    assert!(
+        (t_landed.scale.x - expected_landed_scale).abs() < 1e-7,
+        "Landed rover must shrink to normal surface scale (expected {:.8}, got {:.8})",
+        expected_landed_scale,
+        t_landed.scale.x
+    );
+    assert!(
+        t_landed.scale.x < t_transit.scale.x * 0.02,
+        "Landed rover scale must be at least 50x smaller than interplanetary transit scale"
+    );
+}

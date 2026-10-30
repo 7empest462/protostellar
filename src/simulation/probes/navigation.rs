@@ -28,6 +28,7 @@ pub fn probe_navigation_system(
         &mut SimPosition,
         &mut SpaceProbe,
         &mut FlightComputer,
+        Option<&mut Radius>,
     )>,
     mut targets: Query<NavigationTargetData, Without<SpaceProbe>>,
     sim_time: Res<SimTime>,
@@ -43,7 +44,7 @@ pub fn probe_navigation_system(
         sim_time.current_dt_yr.max(0.0)
     };
 
-    for (mut probe_vel, mut probe_pos, mut probe, mut computer) in probes.iter_mut() {
+    for (mut probe_vel, mut probe_pos, mut probe, mut computer, mut opt_rad) in probes.iter_mut() {
         if let Ok((
             target_pos,
             target_vel,
@@ -109,6 +110,13 @@ pub fn probe_navigation_system(
                     &mut opt_bio,
                     &mut toast,
                 );
+                if probe.status == ProbeStatus::Landed {
+                    if let Some(ref mut r) = opt_rad {
+                        if r.0 > 1e-10 {
+                            r.0 = 1.0e-11;
+                        }
+                    }
+                }
             }
             update_probe_orientation(
                 &mut probe,

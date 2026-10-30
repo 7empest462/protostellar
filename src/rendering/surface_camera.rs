@@ -476,7 +476,8 @@ pub fn update_surface_horizon_camera(
                 vis_rad,
             );
             let spun_d = spin_rot_d * unspun_d;
-            probe_pos.0 = pos.0 + spun_d * f64::from((vis_rad + rover_h) * 1.002);
+            let rover_lift = (vis_rad + rover_h) + vis_rad * 0.00003;
+            probe_pos.0 = pos.0 + spun_d * f64::from(rover_lift);
         }
     }
 

@@ -74,6 +74,27 @@ pub fn format_body_inspector_type(body_type: BodyType, mass_solar: f64) -> &'sta
     }
 }
 
+/// Formats a physical radius in AU into human-readable metric units (km or m).
+/// For objects >= 50 meters, formats in kilometers (e.g. "6371 km", "15.0 km", "0.15 km").
+/// For small objects < 50 meters (probes, rovers, small debris), formats in meters (e.g. "1.50 m", "15.0 m").
+pub fn format_body_radius_display(rad_au: f64) -> String {
+    let radius_km = rad_au * AU_TO_KM;
+    if radius_km >= 100.0 {
+        format!("{radius_km:.0} km")
+    } else if radius_km >= 10.0 {
+        format!("{radius_km:.1} km")
+    } else if radius_km >= 0.05 {
+        format!("{radius_km:.2} km")
+    } else {
+        let radius_m = radius_km * 1000.0;
+        if radius_m >= 10.0 {
+            format!("{radius_m:.1} m")
+        } else {
+            format!("{radius_m:.2} m")
+        }
+    }
+}
+
 pub fn format_stellar_extra_telemetry(
     opt_ignition: Option<&IgnitionState>,
     opt_evo: Option<&StellarEvolutionState>,

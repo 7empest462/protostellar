@@ -77,14 +77,7 @@ fn update_toast_text(
             } else {
                 0.0
             };
-            let rad_km = (rad.0 * AU_TO_KM).max(0.01);
-            let rad_str = if rad_km >= 100.0 {
-                format!("{rad_km:.0} km")
-            } else if rad_km >= 10.0 {
-                format!("{rad_km:.1} km")
-            } else {
-                format!("{rad_km:.2} km")
-            };
+            let rad_str = format_body_radius_display(rad.0);
 
             toast_text.0 = format!(
                 ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
@@ -468,14 +461,7 @@ fn format_primary_telemetry(
     let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
 
     let mass_str = format_mass_string(mass);
-    let radius_km = (rad * AU_TO_KM).max(0.01);
-    let rad_disp = if radius_km >= 100.0 {
-        format!("{radius_km:.0} km")
-    } else if radius_km >= 10.0 {
-        format!("{radius_km:.1} km")
-    } else {
-        format!("{radius_km:.2} km")
-    };
+    let rad_disp = format_body_radius_display(rad);
     let volume_au3 = (4.0 / 3.0) * std::f64::consts::PI * rad.powi(3);
     let density_g_cm3 = if volume_au3 > 1e-35 && mass > 0.0 {
         let conversion_factor = SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0);
