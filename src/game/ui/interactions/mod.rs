@@ -185,6 +185,8 @@ fn dispatch_pressed_button_action(
         &mut core.player_state,
         camera_query,
     ) {
+        core.hud_visibility.scenarios_is_open = false;
+        core.hud_visibility.scenarios_minimized = true;
         return;
     }
     handle_body_editor_action(

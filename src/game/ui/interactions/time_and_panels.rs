@@ -105,7 +105,14 @@ pub fn handle_panel_toggle_action(
             true
         }
         UiButtonAction::ToggleScenariosPanel => {
-            hud_visibility.scenarios_minimized = !hud_visibility.scenarios_minimized;
+            hud_visibility.scenarios_is_open = !hud_visibility.scenarios_is_open;
+            hud_visibility.scenarios_minimized = !hud_visibility.scenarios_is_open;
+            toast.message = if hud_visibility.scenarios_is_open {
+                "🌌 Scenario Selector Opened".to_string()
+            } else {
+                "🌌 Scenario Selector Closed".to_string()
+            };
+            toast.timer = 2.5;
             true
         }
         UiButtonAction::ToggleTopControlsPanel => {

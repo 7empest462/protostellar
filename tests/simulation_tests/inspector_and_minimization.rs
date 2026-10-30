@@ -219,7 +219,7 @@ fn test_hud_panel_initial_default_visibility() {
     );
     assert_eq!(
         app.world().get::<Node>(e.scenarios_panel).unwrap().display,
-        Display::Flex
+        Display::None
     );
     assert_eq!(
         app.world().get::<Node>(e.scenarios_pill).unwrap().display,
@@ -231,6 +231,40 @@ fn test_hud_panel_initial_default_visibility() {
     );
     assert_eq!(
         app.world().get::<Node>(e.telemetry_pill).unwrap().display,
+        Display::None
+    );
+}
+
+#[test]
+fn test_scenario_presets_modal_drawer_toggle() {
+    let (mut app, e) = setup_test_hud_app();
+    app.update();
+
+    // Default: modal drawer is closed (Display::None)
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_panel).unwrap().display,
+        Display::None
+    );
+
+    // Open modal drawer
+    {
+        let mut hud = app.world_mut().resource_mut::<HudVisibilityState>();
+        hud.scenarios_is_open = true;
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_panel).unwrap().display,
+        Display::Flex
+    );
+
+    // Close modal drawer
+    {
+        let mut hud = app.world_mut().resource_mut::<HudVisibilityState>();
+        hud.scenarios_is_open = false;
+    }
+    app.update();
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_panel).unwrap().display,
         Display::None
     );
 }

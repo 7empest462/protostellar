@@ -2,7 +2,6 @@
 
 use bevy::prelude::*;
 
-use super::presets_panel::{spawn_scenario_presets_panel, spawn_scenario_presets_pill};
 use super::types::*;
 
 fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
@@ -134,9 +133,6 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                         },
                     ));
                 });
-
-            spawn_scenario_presets_panel(center_col);
-            spawn_scenario_presets_pill(center_col);
         });
 }
 
@@ -939,6 +935,7 @@ pub fn setup_hud(mut commands: Commands) {
             });
 
             // MODAL DRAWERS (Absolute by default inside their spawn functions)
+            super::presets_panel::spawn_scenario_presets_panel(root);
             super::builder_panel::spawn_planet_builder_panel(root);
             super::telemetry_panel::spawn_telemetry_panel(root);
             super::trophies_panel::spawn_trophies_panel(root);

@@ -205,6 +205,8 @@ pub struct HudVisibilityState {
     pub inspector_minimized: bool,
     /// Whether the scenario presets bar is collapsed.
     pub scenarios_minimized: bool,
+    /// Whether the scenario presets modal drawer is currently open.
+    pub scenarios_is_open: bool,
     /// Whether the top-right view and tool controls card is collapsed.
     pub top_controls_minimized: bool,
     /// Whether the bottom-right navigation and shortcuts panel is collapsed.
@@ -668,7 +670,7 @@ impl UiButtonAction {
             UiButtonAction::ToggleTopLeftPanel => "Minimize or expand top-left system statistics panel.",
             UiButtonAction::ToggleTopRightPanel => "Minimize or expand top-right diagnostics and time controls.",
             UiButtonAction::ToggleInspectorPanel => "Minimize or expand celestial body inspector & action toolbar.",
-            UiButtonAction::ToggleScenariosPanel => "Minimize or expand sandbox scenario presets bar.",
+            UiButtonAction::ToggleScenariosPanel => "Open or close the astrophysical sandbox scenario presets drawer [F1–F11].",
             UiButtonAction::ToggleTopControlsPanel => "Minimize or expand top-right view & tool controls card.",
             UiButtonAction::ToggleBottomRightPanel => "Minimize or expand bottom-right navigation and keyboard shortcuts panel.",
             UiButtonAction::ToggleBottomCenterPanel => "Minimize or expand bottom-center simulation timer and speed controls.",

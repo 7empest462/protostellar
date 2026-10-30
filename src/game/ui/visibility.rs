@@ -86,10 +86,12 @@ fn update_panel_nodes(
             HudPanelElement::TopRightPill => flex_or_none(hud_visibility.top_right_minimized),
             HudPanelElement::InspectorPanel => flex_or_none(!hud_visibility.inspector_minimized),
             HudPanelElement::InspectorChip => flex_or_none(hud_visibility.inspector_minimized),
-            HudPanelElement::ScenarioPresets => flex_or_none(!hud_visibility.scenarios_minimized),
-            HudPanelElement::ScenarioPresetsPill => {
-                flex_or_none(hud_visibility.scenarios_minimized)
-            }
+            HudPanelElement::ScenarioPresets => flex_or_none(
+                hud_visibility.scenarios_is_open && !hud_visibility.is_full_screen_clean,
+            ),
+            HudPanelElement::ScenarioPresetsPill => flex_or_none(
+                hud_visibility.scenarios_minimized && !hud_visibility.is_full_screen_clean,
+            ),
             HudPanelElement::TopControlsPanel => {
                 flex_or_none(!hud_visibility.top_controls_minimized)
             }
