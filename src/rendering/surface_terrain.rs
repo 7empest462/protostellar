@@ -664,11 +664,26 @@ fn spawn_surface_terrain_patch(
         surface_g,
         patch_radius,
     );
+    let has_bio =
+        opt_bio.is_some_and(|b| b.biomass_coverage_frac > 0.01 || b.habitability_score > 0.10);
+    let (veg_emissive, veg_roughness, veg_reflectance) = if has_bio {
+        let biolum = opt_bio.map_or(0.0, |b| b.bioluminescence_intensity);
+        if biolum > 0.05 {
+            (LinearRgba::new(0.25, 0.45, 0.35, 1.0) * biolum, 0.65, 0.40)
+        } else {
+            (LinearRgba::new(0.04, 0.05, 0.04, 1.0), 0.75, 0.30)
+        }
+    } else {
+        // Barren planetary bodies (Moon, Mercury, Mars, etc.): natural rocky regolith
+        // Zero emissive self-illumination, high roughness, low reflectance
+        (LinearRgba::BLACK, 0.92, 0.16)
+    };
+
     let veg_mat = std_materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        emissive: LinearRgba::new(0.16, 0.18, 0.16, 1.0),
-        perceptual_roughness: 0.72,
-        reflectance: 0.35,
+        emissive: veg_emissive,
+        perceptual_roughness: veg_roughness,
+        reflectance: veg_reflectance,
         cull_mode: None,
         ..default()
     });

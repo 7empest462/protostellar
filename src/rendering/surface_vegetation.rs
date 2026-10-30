@@ -97,7 +97,21 @@ pub fn generate_surface_vegetation_mesh(
                 pigment,
             );
         } else {
-            let boulder_r = vis_rad * (0.0022 + 0.0038 * hash);
+            // Barren, airless, or prebiotic worlds (The Moon, Mercury, Mars, asteroids, icy moons):
+            // Natural impact-fragmented boulders and faceted rock rubble.
+            // Natural clustering and open dusty expanses (avoiding synthetic overcrowding)
+            if hash < 0.60 {
+                continue;
+            }
+            // Skip sheer cliff faces where loose boulders cannot rest
+            if slope_grad > 0.55 {
+                continue;
+            }
+
+            // Realistic low-profile boulder scale relative to rover and camera eye level
+            let boulder_r = vis_rad * (0.0006 + 0.0014 * hash);
+            let boulder_h = boulder_r * (0.38 + 0.32 * hash);
+
             append_3d_geological_outcrop(
                 &mut positions,
                 &mut normals,
@@ -107,8 +121,10 @@ pub fn generate_surface_vegetation_mesh(
                 base_pos,
                 sphere_dir,
                 boulder_r,
+                boulder_h,
+                comp,
                 temp_k,
-                comp.ice_frac as f32,
+                body_type,
                 idx,
             );
         }
@@ -474,8 +490,65 @@ fn append_foliage_dome(
     );
 }
 
-/// Appends a 3D geological formation (canyon hoodoo spire, faceted boulder, ice penitente,
-/// or hydrothermal vent) on barren, cryogenic, or volcanic worlds.
+/// Resolves natural surface rock and regolith color palettes based on physical composition,
+/// temperature, and planetary archetype.
+fn resolve_geological_boulder_palette(
+    body_type: BodyType,
+    comp: &Composition,
+    temp_k: f32,
+    idx: usize,
+) -> ([f32; 4], [f32; 4]) {
+    let f_idx = idx as f32;
+    let var = ((f_idx * 1.37).sin() * 0.5 + 0.5).clamp(0.0, 1.0);
+
+    if comp.ice_frac >= 0.35 || (temp_k < 180.0 && comp.ice_frac > 0.15) {
+        // Cryogenic ice worlds (Europa, Enceladus, Triton, Pluto, Comets)
+        let base_col = LinearRgba::new(0.48, 0.60, 0.72, 1.0)
+            .mix(&LinearRgba::new(0.58, 0.70, 0.82, 1.0), var);
+        let top_col = LinearRgba::new(0.78, 0.88, 0.95, 1.0)
+            .mix(&LinearRgba::new(0.88, 0.94, 1.00, 1.0), var);
+        (
+            [base_col.red, base_col.green, base_col.blue, 1.0],
+            [top_col.red, top_col.green, top_col.blue, 1.0],
+        )
+    } else if temp_k >= 450.0 || (body_type == BodyType::TerrestrialPlanet && temp_k >= 400.0) {
+        // Volcanic or scorched worlds (Io, Venus, close-in rocky planets)
+        let base_col = LinearRgba::new(0.16, 0.15, 0.15, 1.0)
+            .mix(&LinearRgba::new(0.22, 0.20, 0.18, 1.0), var);
+        let top_col = LinearRgba::new(0.30, 0.26, 0.22, 1.0)
+            .mix(&LinearRgba::new(0.40, 0.35, 0.24, 1.0), var);
+        (
+            [base_col.red, base_col.green, base_col.blue, 1.0],
+            [top_col.red, top_col.green, top_col.blue, 1.0],
+        )
+    } else if (body_type == BodyType::TerrestrialPlanet
+        && comp.silicate_frac > 0.40
+        && comp.ice_frac < 0.10)
+        || (comp.metal_frac > 0.30 && temp_k > 200.0)
+    {
+        // Oxidized iron-silicate worlds (Mars-like terrestrial deserts)
+        let base_col = LinearRgba::new(0.40, 0.22, 0.14, 1.0)
+            .mix(&LinearRgba::new(0.48, 0.28, 0.18, 1.0), var);
+        let top_col = LinearRgba::new(0.55, 0.34, 0.22, 1.0)
+            .mix(&LinearRgba::new(0.64, 0.42, 0.26, 1.0), var);
+        (
+            [base_col.red, base_col.green, base_col.blue, 1.0],
+            [top_col.red, top_col.green, top_col.blue, 1.0],
+        )
+    } else {
+        // Airless rocky worlds, moons, asteroids, and lunar regolith (The Moon, Mercury, etc.)
+        // Anorthosite highland & mare basalt natural cool grays
+        let gray_base = 0.28 + var * 0.10;
+        let gray_top = gray_base + 0.14;
+        (
+            [gray_base, gray_base * 1.01, gray_base * 1.02, 1.0],
+            [gray_top, gray_top * 1.01, gray_top * 1.02, 1.0],
+        )
+    }
+}
+
+/// Appends a 3D geological boulder outcrop (natural faceted rock or fractured ice block)
+/// on barren, cryogenic, airless, or volcanic planetary bodies.
 #[allow(clippy::too_many_arguments, reason = "3D geological outcrop builder")]
 fn append_3d_geological_outcrop(
     positions: &mut Vec<[f32; 3]>,
@@ -485,112 +558,154 @@ fn append_3d_geological_outcrop(
     indices: &mut Vec<u32>,
     base_pos: Vec3,
     up: Vec3,
-    radius: f32,
+    boulder_r: f32,
+    boulder_h: f32,
+    comp: &Composition,
     temp_k: f32,
-    ice_frac: f32,
+    body_type: BodyType,
     idx: usize,
 ) {
     let (east, _, north) = compute_surface_tangent_basis(up, Vec3::Y);
-    if temp_k >= 500.0 {
-        let h = radius * 2.8;
-        append_tapered_cylinder(
-            positions,
-            normals,
-            uvs,
-            colors,
-            indices,
-            base_pos,
-            up,
-            east,
-            north,
-            radius * 0.85,
-            radius * 0.42,
-            h,
-            6,
-            [0.18, 0.15, 0.14, 1.0],
-        );
-        append_foliage_cone(
-            positions,
-            normals,
-            uvs,
-            colors,
-            indices,
-            base_pos + up * h,
-            up,
-            east,
-            north,
-            radius * 0.45,
-            radius * 0.55,
-            6,
-            [0.95, 0.32, 0.05, 1.0],
-            [1.00, 0.75, 0.18, 1.0],
-        );
-    } else if temp_k <= 230.0 && ice_frac >= 0.20 {
-        append_foliage_cone(
-            positions,
-            normals,
-            uvs,
-            colors,
-            indices,
-            base_pos,
-            up,
-            east,
-            north,
-            radius * 0.65,
-            radius * 3.4,
-            6,
-            [0.35, 0.80, 0.96, 1.0],
-            [0.88, 0.97, 1.00, 1.0],
-        );
-    } else if idx.is_multiple_of(4) {
-        let h = radius * 2.6;
-        append_tapered_cylinder(
-            positions,
-            normals,
-            uvs,
-            colors,
-            indices,
-            base_pos,
-            up,
-            east,
-            north,
-            radius * 0.75,
-            radius * 0.55,
-            h,
-            6,
-            [0.68, 0.32, 0.18, 1.0],
-        );
-        append_foliage_cone(
-            positions,
-            normals,
-            uvs,
-            colors,
-            indices,
-            base_pos + up * h,
-            up,
-            east,
-            north,
-            radius * 0.68,
-            radius * 0.55,
-            6,
-            [0.80, 0.68, 0.48, 1.0],
-            [0.62, 0.52, 0.38, 1.0],
-        );
-    } else {
-        append_foliage_dome(
-            positions,
-            normals,
-            uvs,
-            colors,
-            indices,
-            base_pos,
-            up,
-            east,
-            north,
-            radius,
-            radius * 1.15,
-            [0.48, 0.40, 0.34, 1.0],
-            [0.64, 0.54, 0.46, 1.0],
-        );
+    let (base_color, top_color) = resolve_geological_boulder_palette(body_type, comp, temp_k, idx);
+
+    append_faceted_boulder(
+        positions, normals, uvs, colors, indices, base_pos, up, east, north, boulder_r, boulder_h,
+        base_color, top_color, idx,
+    );
+}
+
+/// Appends a natural, physically grounded 3D faceted rock boulder (or fractured ice block)
+/// with an irregular polygonal base embedded in the regolith, a chamfered waist, and a
+/// chiseled multi-faceted top face.
+#[allow(clippy::too_many_arguments, reason = "3D faceted boulder mesh builder")]
+fn append_faceted_boulder(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+    base_pos: Vec3,
+    up: Vec3,
+    east: Vec3,
+    north: Vec3,
+    radius: f32,
+    height: f32,
+    base_color: [f32; 4],
+    top_color: [f32; 4],
+    seed: usize,
+) {
+    let sides = 5 + (seed % 3); // 5, 6, or 7 sides
+    let mut base_pts = Vec::with_capacity(sides);
+    let mut mid_pts = Vec::with_capacity(sides);
+
+    let seed_f = seed as f32;
+
+    // 1. Base ring: irregular polygon slightly embedded below the ground surface
+    for i in 0..sides {
+        let frac = i as f32 / sides as f32;
+        let theta = frac * 2.0 * PI + ((seed_f * 13.0 + i as f32 * 29.0).sin() * 0.20);
+        let (st, ct) = theta.sin_cos();
+        let radial = east * ct + north * st;
+        let r_b = radius * (0.75 + 0.30 * ((seed_f * 31.0 + i as f32 * 47.0).cos().abs()));
+        let p_b = base_pos + radial * r_b - up * (height * 0.20);
+        base_pts.push(p_b);
+
+        // 2. Mid-level waist chamfer ring
+        let theta_m = theta + ((seed_f * 23.0 + i as f32 * 19.0).sin() * 0.15);
+        let (st_m, ct_m) = theta_m.sin_cos();
+        let radial_m = east * ct_m + north * st_m;
+        let r_m = radius * (0.85 + 0.32 * ((seed_f * 41.0 + i as f32 * 53.0).sin().abs()));
+        let h_m = height * (0.35 + 0.25 * ((seed_f * 17.0 + i as f32 * 67.0).cos().abs()));
+        let p_m = base_pos + radial_m * r_m + up * h_m;
+        mid_pts.push(p_m);
+    }
+
+    // 3. Top faceted cap ring (flat/sloping fractured plate, NOT a single cone apex!)
+    let top_sides = (sides - 2).max(3);
+    let mut top_pts = Vec::with_capacity(top_sides);
+    let tilt_angle = (seed_f * 0.73).sin() * 0.35;
+    let tilt_axis =
+        (east * (seed_f * 1.11).cos() + north * (seed_f * 1.11).sin()).normalize_or_zero();
+
+    for j in 0..top_sides {
+        let frac = j as f32 / top_sides as f32;
+        let phi = frac * 2.0 * PI + ((seed_f * 19.0 + j as f32 * 37.0).sin() * 0.18);
+        let (sp, cp) = phi.sin_cos();
+        let radial_t = east * cp + north * sp;
+        let r_t = radius * (0.30 + 0.22 * ((seed_f * 59.0 + j as f32 * 71.0).cos().abs()));
+        let h_t = height * (0.80 + 0.20 * ((seed_f * 73.0 + j as f32 * 89.0).sin().abs()));
+        let tilt_disp = tilt_axis * tilt_angle * radius * 0.25;
+        let p_t = base_pos + radial_t * r_t + tilt_disp + up * h_t;
+        top_pts.push(p_t);
+    }
+
+    // Mid-color between base and top for chamfer vertices
+    let mid_color = [
+        base_color[0] * 0.45 + top_color[0] * 0.55,
+        base_color[1] * 0.45 + top_color[1] * 0.55,
+        base_color[2] * 0.45 + top_color[2] * 0.55,
+        1.0,
+    ];
+
+    let mut add_tri = |p0: Vec3, p1: Vec3, p2: Vec3, c0: [f32; 4], c1: [f32; 4], c2: [f32; 4]| {
+        let norm = (p1 - p0).cross(p2 - p0).normalize_or_zero();
+        if norm.length_squared() > 1e-6 {
+            let start = positions.len() as u32;
+            positions.push(p0.to_array());
+            positions.push(p1.to_array());
+            positions.push(p2.to_array());
+            normals.push(norm.to_array());
+            normals.push(norm.to_array());
+            normals.push(norm.to_array());
+            uvs.push([0.0, 0.0]);
+            uvs.push([1.0, 0.0]);
+            uvs.push([0.5, 1.0]);
+            colors.push(c0);
+            colors.push(c1);
+            colors.push(c2);
+            indices.push(start);
+            indices.push(start + 1);
+            indices.push(start + 2);
+        }
+    };
+
+    // 4. Connect base ring to mid ring (quads)
+    for i in 0..sides {
+        let next_i = (i + 1) % sides;
+        if let (Some(&b0), Some(&b1), Some(&m0), Some(&m1)) = (
+            base_pts.get(i),
+            base_pts.get(next_i),
+            mid_pts.get(i),
+            mid_pts.get(next_i),
+        ) {
+            add_tri(b0, b1, m1, base_color, base_color, mid_color);
+            add_tri(b0, m1, m0, base_color, mid_color, mid_color);
+        }
+    }
+
+    // 5. Connect mid ring to top ring
+    for i in 0..sides {
+        let next_i = (i + 1) % sides;
+        let j0 = (i * top_sides) / sides;
+        let j1 = (next_i * top_sides) / sides;
+        if let (Some(&m0), Some(&m1), Some(&t0)) =
+            (mid_pts.get(i), mid_pts.get(next_i), top_pts.get(j0))
+        {
+            if j0 == j1 {
+                add_tri(m0, m1, t0, mid_color, mid_color, top_color);
+            } else if let Some(&t1) = top_pts.get(j1) {
+                add_tri(m0, m1, t1, mid_color, mid_color, top_color);
+                add_tri(m0, t1, t0, mid_color, top_color, top_color);
+            }
+        }
+    }
+
+    // 6. Top facet fan (chiseled flat/sloping rock cap)
+    if let Some(&t0) = top_pts.first() {
+        for j in 1..(top_sides - 1) {
+            if let (Some(&tj), Some(&tj1)) = (top_pts.get(j), top_pts.get(j + 1)) {
+                add_tri(t0, tj, tj1, top_color, top_color, top_color);
+            }
+        }
     }
 }

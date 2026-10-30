@@ -273,6 +273,33 @@ fn test_3d_planetary_surface_terrain_and_vegetation() {
         "Vegetation mesh must include triangle indices"
     );
 
+    // Test 3D Geological Boulder Mesh Generation on Barren / Airless World (The Moon)
+    let moon_comp = Composition {
+        silicate_frac: 0.85,
+        metal_frac: 0.15,
+        ice_frac: 0.0,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    };
+    let moon_boulder_mesh = generate_surface_vegetation_mesh(
+        unspun_center,
+        vis_rad * 0.272,
+        &moon_comp,
+        290.0,
+        BodyType::Moon,
+        None,
+        0.166,
+        vis_rad * 0.272 * 0.24,
+    );
+    assert!(
+        moon_boulder_mesh.count_vertices() > 0,
+        "Barren Moon surface must generate natural 3D faceted boulder vertices"
+    );
+    assert!(
+        moon_boulder_mesh.indices().is_some(),
+        "Boulder mesh must include triangle indices"
+    );
+
     // 4. Test 3D Water Plane Generation
     let water_mesh = generate_surface_water_mesh(unspun_center, vis_rad, vis_rad * 0.24);
     assert!(
