@@ -100,6 +100,12 @@ fn test_inspector_scrolling_clamping_and_reset() {
 }
 
 struct TestHudEntities {
+    top_left_panel: Entity,
+    top_left_pill: Entity,
+    top_right_panel: Entity,
+    top_right_pill: Entity,
+    inspector_panel: Entity,
+    inspector_chip: Entity,
     top_controls_panel: Entity,
     top_controls_pill: Entity,
     bottom_right_panel: Entity,
@@ -123,6 +129,30 @@ fn setup_test_hud_app() -> (App, TestHudEntities) {
     app.add_systems(Update, update_hud_visibility);
 
     let entities = TestHudEntities {
+        top_left_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TopLeftPanel))
+            .id(),
+        top_left_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TopLeftPill))
+            .id(),
+        top_right_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TopRightPanel))
+            .id(),
+        top_right_pill: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::TopRightPill))
+            .id(),
+        inspector_panel: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::InspectorPanel))
+            .id(),
+        inspector_chip: app
+            .world_mut()
+            .spawn((Node::default(), HudPanelElement::InspectorChip))
+            .id(),
         top_controls_panel: app
             .world_mut()
             .spawn((Node::default(), HudPanelElement::TopControlsPanel))
@@ -172,50 +202,74 @@ fn setup_test_hud_app() -> (App, TestHudEntities) {
 fn test_hud_panel_initial_default_visibility() {
     let (mut app, e) = setup_test_hud_app();
 
-    // Initial default state: panels visible, pills hidden
+    // Initial default state: all panels minimized, pills displayed
     app.update();
 
+    assert_eq!(
+        app.world().get::<Node>(e.top_left_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_left_pill).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_right_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_right_pill).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.inspector_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.inspector_chip).unwrap().display,
+        Display::Flex
+    );
     assert_eq!(
         app.world()
             .get::<Node>(e.top_controls_panel)
             .unwrap()
             .display,
-        Display::Flex
+        Display::None
     );
     assert_eq!(
         app.world()
             .get::<Node>(e.top_controls_pill)
             .unwrap()
             .display,
-        Display::None
+        Display::Flex
     );
     assert_eq!(
         app.world()
             .get::<Node>(e.bottom_right_panel)
             .unwrap()
             .display,
-        Display::Flex
+        Display::None
     );
     assert_eq!(
         app.world()
             .get::<Node>(e.bottom_right_pill)
             .unwrap()
             .display,
-        Display::None
+        Display::Flex
     );
     assert_eq!(
         app.world()
             .get::<Node>(e.bottom_center_panel)
             .unwrap()
             .display,
-        Display::Flex
+        Display::None
     );
     assert_eq!(
         app.world()
             .get::<Node>(e.bottom_center_pill)
             .unwrap()
             .display,
-        Display::None
+        Display::Flex
     );
     assert_eq!(
         app.world().get::<Node>(e.scenarios_panel).unwrap().display,
@@ -223,7 +277,7 @@ fn test_hud_panel_initial_default_visibility() {
     );
     assert_eq!(
         app.world().get::<Node>(e.scenarios_pill).unwrap().display,
-        Display::None
+        Display::Flex
     );
     assert_eq!(
         app.world().get::<Node>(e.builder_pill).unwrap().display,
@@ -294,6 +348,30 @@ fn test_hud_panel_minimized_visibility() {
 
     // Panels should now be hidden, pills displayed
     assert_eq!(
+        app.world().get::<Node>(e.top_left_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_left_pill).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_right_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_right_pill).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.inspector_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.inspector_chip).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
         app.world()
             .get::<Node>(e.top_controls_panel)
             .unwrap()
@@ -350,5 +428,100 @@ fn test_hud_panel_minimized_visibility() {
     assert_eq!(
         app.world().get::<Node>(e.telemetry_pill).unwrap().display,
         Display::Flex
+    );
+}
+
+#[test]
+fn test_hud_panel_expanded_visibility() {
+    let (mut app, e) = setup_test_hud_app();
+
+    // Expand all panels
+    {
+        let mut hud = app.world_mut().resource_mut::<HudVisibilityState>();
+        hud.top_left_minimized = false;
+        hud.top_right_minimized = false;
+        hud.inspector_minimized = false;
+        hud.top_controls_minimized = false;
+        hud.bottom_right_minimized = false;
+        hud.bottom_center_minimized = false;
+        hud.scenarios_minimized = false;
+    }
+
+    app.update();
+
+    // Panels should now be displayed, pills hidden
+    assert_eq!(
+        app.world().get::<Node>(e.top_left_panel).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_left_pill).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_right_panel).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.top_right_pill).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.inspector_panel).unwrap().display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.inspector_chip).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.top_controls_panel)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.top_controls_pill)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_right_panel)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_right_pill)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_center_panel)
+            .unwrap()
+            .display,
+        Display::Flex
+    );
+    assert_eq!(
+        app.world()
+            .get::<Node>(e.bottom_center_pill)
+            .unwrap()
+            .display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_panel).unwrap().display,
+        Display::None
+    );
+    assert_eq!(
+        app.world().get::<Node>(e.scenarios_pill).unwrap().display,
+        Display::None
     );
 }

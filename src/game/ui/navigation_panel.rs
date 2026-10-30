@@ -19,7 +19,7 @@ pub fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) 
                     HudPanelElement::BottomRightPill,
                     Node {
                         padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
-                        display: Display::None,
+                        display: Display::Flex,
                         border: UiRect::all(Val::Px(1.0)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
@@ -44,6 +44,7 @@ pub fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) 
                 .spawn((
                     HudPanelElement::BottomRightPanel,
                     Node {
+                        display: Display::None,
                         flex_direction: FlexDirection::Column,
                         padding: UiRect::all(Val::Px(6.0)),
                         max_width: Val::Px(240.0),

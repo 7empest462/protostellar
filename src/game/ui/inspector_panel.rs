@@ -21,6 +21,7 @@ pub fn spawn_bottom_left_inspector_panel(bottom_row: &mut ChildSpawnerCommands) 
             col.spawn((
                 HudPanelElement::InspectorPanel,
                 Node {
+                    display: Display::None,
                     flex_direction: FlexDirection::Column,
                     padding: UiRect::all(Val::Px(8.0)),
                     width: Val::Px(380.0),
@@ -164,7 +165,7 @@ fn spawn_inspector_chip(col: &mut ChildSpawnerCommands) {
         HudPanelElement::InspectorChip,
         Node {
             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-            display: Display::None,
+            display: Display::Flex,
             border: UiRect::all(Val::Px(1.5)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,

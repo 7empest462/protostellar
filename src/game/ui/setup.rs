@@ -16,6 +16,7 @@ fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
                 .spawn((
                     HudPanelElement::TopLeftPanel,
                     Node {
+                        display: Display::None,
                         flex_direction: FlexDirection::Column,
                         padding: UiRect::all(Val::Px(8.0)),
                         width: Val::Px(280.0),
@@ -70,7 +71,7 @@ fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
                     HudPanelElement::TopLeftPill,
                     Node {
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                        display: Display::None,
+                        display: Display::Flex,
                         border: UiRect::all(Val::Px(1.0)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
@@ -153,7 +154,7 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
                 Node {
                     padding: UiRect::axes(Val::Px(6.0), Val::Px(2.5)),
                     margin: UiRect::all(Val::Px(1.5)),
-                    display: Display::None,
+                    display: Display::Flex,
                     border: UiRect::all(Val::Px(1.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -177,6 +178,7 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
             col.spawn((
                 HudPanelElement::TopControlsPanel,
                 Node {
+                    display: Display::None,
                     flex_direction: FlexDirection::Column,
                     padding: UiRect::all(Val::Px(6.0)),
                     border: UiRect::all(Val::Px(1.0)),
@@ -569,7 +571,7 @@ fn spawn_top_right_pill(col: &mut ChildSpawnerCommands) {
         Node {
             padding: UiRect::axes(Val::Px(6.0), Val::Px(2.5)),
             margin: UiRect::all(Val::Px(1.5)),
-            display: Display::None,
+            display: Display::Flex,
             border: UiRect::all(Val::Px(1.0)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -596,6 +598,7 @@ fn spawn_simulation_metrics_card(right_col: &mut ChildSpawnerCommands) {
         .spawn((
             HudPanelElement::TopRightPanel,
             Node {
+                display: Display::None,
                 width: Val::Px(280.0),
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(8.0)),
@@ -699,7 +702,7 @@ fn spawn_bottom_center_pill(center_dock: &mut ChildSpawnerCommands) {
             HudPanelElement::BottomCenterPill,
             Node {
                 padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
-                display: Display::None,
+                display: Display::Flex,
                 border: UiRect::all(Val::Px(1.0)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -727,6 +730,7 @@ fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
         .spawn((
             HudPanelElement::BottomCenterPanel,
             Node {
+                display: Display::None,
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
                 align_items: AlignItems::Center,

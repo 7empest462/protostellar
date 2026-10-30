@@ -205,27 +205,36 @@ fn test_hud_visibility_and_collapsible_panel_states() {
 
     let mut hud_state = HudVisibilityState::default();
 
-    // Default state: master HUD visible, all panels expanded
+    // Default state: master HUD visible, all panels minimized to pills on startup
     assert!(!hud_state.is_full_screen_clean);
-    assert!(!hud_state.top_left_minimized);
-    assert!(!hud_state.top_right_minimized);
-    assert!(!hud_state.inspector_minimized);
-    assert!(!hud_state.scenarios_minimized);
+    assert!(hud_state.top_left_minimized);
+    assert!(hud_state.top_right_minimized);
+    assert!(hud_state.inspector_minimized);
+    assert!(hud_state.scenarios_minimized);
+    assert!(hud_state.top_controls_minimized);
+    assert!(hud_state.bottom_right_minimized);
+    assert!(hud_state.bottom_center_minimized);
 
     // Toggle clean fullscreen
     hud_state.is_full_screen_clean = true;
     assert!(hud_state.is_full_screen_clean);
 
-    // Minimize individual panels
-    hud_state.top_left_minimized = true;
-    hud_state.top_right_minimized = true;
-    hud_state.inspector_minimized = true;
-    hud_state.scenarios_minimized = true;
+    // Expand individual panels
+    hud_state.top_left_minimized = false;
+    hud_state.top_right_minimized = false;
+    hud_state.inspector_minimized = false;
+    hud_state.scenarios_minimized = false;
+    hud_state.top_controls_minimized = false;
+    hud_state.bottom_right_minimized = false;
+    hud_state.bottom_center_minimized = false;
 
-    assert!(hud_state.top_left_minimized);
-    assert!(hud_state.top_right_minimized);
-    assert!(hud_state.inspector_minimized);
-    assert!(hud_state.scenarios_minimized);
+    assert!(!hud_state.top_left_minimized);
+    assert!(!hud_state.top_right_minimized);
+    assert!(!hud_state.inspector_minimized);
+    assert!(!hud_state.scenarios_minimized);
+    assert!(!hud_state.top_controls_minimized);
+    assert!(!hud_state.bottom_right_minimized);
+    assert!(!hud_state.bottom_center_minimized);
 
     // Restore HUD
     hud_state.is_full_screen_clean = false;

@@ -193,7 +193,7 @@ pub struct QuickBarState {
 }
 
 /// Global visibility and panel collapse states for the HUD overlay.
-#[derive(Resource, Debug, Clone, Default)]
+#[derive(Resource, Debug, Clone)]
 pub struct HudVisibilityState {
     /// When true, all HUD panels are hidden for an immersive, unobstructed full-screen view.
     pub is_full_screen_clean: bool,
@@ -215,6 +215,23 @@ pub struct HudVisibilityState {
     pub bottom_center_minimized: bool,
     /// Whether the floating telemetry & climate graphing panel is collapsed.
     pub telemetry_minimized: bool,
+}
+
+impl Default for HudVisibilityState {
+    fn default() -> Self {
+        Self {
+            is_full_screen_clean: false,
+            top_left_minimized: true,
+            top_right_minimized: true,
+            inspector_minimized: true,
+            scenarios_minimized: true,
+            scenarios_is_open: false,
+            top_controls_minimized: true,
+            bottom_right_minimized: true,
+            bottom_center_minimized: true,
+            telemetry_minimized: true,
+        }
+    }
 }
 
 /// Discriminant component for HUD panel containers whose visibility is toggled dynamically.
