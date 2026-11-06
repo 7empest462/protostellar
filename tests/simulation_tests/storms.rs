@@ -586,3 +586,354 @@ struct VertexOutput {
         ring_valid_res.err()
     );
 }
+
+#[test]
+fn test_distant_optical_glint_photometry_and_dark_remnant_suppression() {
+    use protostellar::rendering::bodies::palettes::{
+        compute_optical_glint_photometry, is_optically_luminous_or_reflective_glint_body,
+    };
+    use protostellar::simulation::components::{BodyType, CelestialBody, Composition};
+
+    assert!(!is_optically_luminous_or_reflective_glint_body(
+        BodyType::BlackHole,
+        false
+    ));
+    assert!(!is_optically_luminous_or_reflective_glint_body(
+        BodyType::BlackDwarf,
+        false
+    ));
+    assert!(!is_optically_luminous_or_reflective_glint_body(
+        BodyType::IronStar,
+        false
+    ));
+    assert!(!is_optically_luminous_or_reflective_glint_body(
+        BodyType::QuasiStar,
+        true
+    ));
+    assert!(is_optically_luminous_or_reflective_glint_body(
+        BodyType::QuasiStar,
+        false
+    ));
+    assert!(is_optically_luminous_or_reflective_glint_body(
+        BodyType::TerrestrialPlanet,
+        false
+    ));
+
+    let earth_comp = Composition {
+        silicate_frac: 0.65,
+        metal_frac: 0.30,
+        ice_frac: 0.05,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    };
+    let earth_body = CelestialBody {
+        name: "Earth".to_string(),
+        body_type: BodyType::TerrestrialPlanet,
+    };
+    let (earth_col, earth_w) =
+        compute_optical_glint_photometry(&earth_body, 3.0e-6, 288.0, &earth_comp);
+    let earth_glint = earth_col.to_srgba();
+    assert!(
+        earth_glint.blue > earth_glint.red && earth_w > 0.5,
+        "Earth distant glint must reflect Pale Blue Dot photometry (B > R), got {:?}",
+        earth_glint
+    );
+
+    let mars_body = CelestialBody {
+        name: "Mars".to_string(),
+        body_type: BodyType::TerrestrialPlanet,
+    };
+    let (mars_col, _) =
+        compute_optical_glint_photometry(&mars_body, 3.2e-7, 210.0, &Composition::rocky());
+    let mars_glint = mars_col.to_srgba();
+    assert!(
+        mars_glint.red > mars_glint.blue,
+        "Mars distant glint must reflect ferric-ochre photometry (R > B), got {:?}",
+        mars_glint
+    );
+
+    let neptune_body = CelestialBody {
+        name: "Neptune".to_string(),
+        body_type: BodyType::IceGiant,
+    };
+    let neptune_comp = Composition {
+        silicate_frac: 0.15,
+        metal_frac: 0.05,
+        ice_frac: 0.65,
+        organics_frac: 0.05,
+        gas_frac: 0.10,
+    };
+    let (neptune_col, _) =
+        compute_optical_glint_photometry(&neptune_body, 5.15e-5, 72.0, &neptune_comp);
+    let neptune_glint = neptune_col.to_srgba();
+    assert!(
+        neptune_glint.blue > neptune_glint.red,
+        "Neptune distant glint must reflect cobalt-methane photometry (B > R), got {:?}",
+        neptune_glint
+    );
+}
+
+#[test]
+fn test_synced_visual_radius_close_camera_framing_and_cutaway_consistency() {
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::transforms::{
+        compute_close_camera_framing_radius, compute_realistic_visual_radius,
+        resolve_synced_visual_radius,
+    };
+    use protostellar::rendering::effects::resolve_cutaway_strata_with_visual_radius;
+    use protostellar::simulation::components::{BodyType, CelestialBody};
+    use protostellar::simulation::resources::SimulationConfig;
+
+    let config = SimulationConfig::default();
+    let r_nan = compute_realistic_visual_radius(
+        f64::NAN,
+        BodyType::TerrestrialPlanet,
+        f32::NAN,
+        f32::INFINITY,
+        f32::NAN,
+        &config,
+    );
+    assert!(
+        r_nan.is_finite() && r_nan > 0.0,
+        "Visual radius solver must be resilient to NaN/Inf inputs, got {r_nan}"
+    );
+
+    let earth_phys = 0.0000426;
+    // Unsynced Transform::IDENTITY (scale = 1.0) on a planet must NOT resolve to 1.0 AU
+    let unsynced = resolve_synced_visual_radius(
+        Some(&Transform::IDENTITY),
+        earth_phys,
+        BodyType::TerrestrialPlanet,
+        1.0,
+        0.005,
+        &config,
+    );
+    assert!(
+        (unsynced - 0.00018).abs() < 1e-5,
+        "Unsynced Transform::IDENTITY must fall back to computed close-up radius (~0.00018), got {unsynced}"
+    );
+
+    let synced_tf = Transform::from_scale(Vec3::splat(0.00024));
+    let synced = resolve_synced_visual_radius(
+        Some(&synced_tf),
+        earth_phys,
+        BodyType::TerrestrialPlanet,
+        1.0,
+        25.0,
+        &config,
+    );
+    assert!(
+        (synced - 0.00024).abs() < 1e-6,
+        "Synced Transform.scale.x must be returned in O(1)"
+    );
+
+    let close_frame = compute_close_camera_framing_radius(
+        earth_phys,
+        BodyType::TerrestrialPlanet,
+        1.0,
+        0.38,
+        &config,
+    );
+    assert!(
+        (close_frame - 0.00018 * 3.6).abs() < 1e-4,
+        "Close-up camera framing for Earth ({close_frame}) must converge to ~3.6x close visual radius"
+    );
+
+    let earth_body = CelestialBody {
+        name: "Earth".to_string(),
+        body_type: BodyType::TerrestrialPlanet,
+    };
+    let strata = resolve_cutaway_strata_with_visual_radius(&earth_body, earth_phys, 0.00018, None);
+    assert!(
+        (strata.crust_r - 0.00018).abs() < 1e-6 && strata.core_r < strata.mantle_r,
+        "Cutaway outer stratum ({}) must match actual close-up visual radius",
+        strata.crust_r
+    );
+}
+
+#[test]
+fn test_distant_glints_and_reticles_persist_when_orbit_lines_off() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::components::{
+        BodyType, CelestialBody, CentralStar, Composition, Mass, Radius, SatelliteOf, SimPosition,
+        SimVelocity, Temperature,
+    };
+    use protostellar::simulation::resources::{
+        DiagnosticOverlayMode, ImpactShockwavePool, OrbitVisualizationMode, PlayerInteractionState,
+        RocheDebrisPool, SimulationConfig,
+    };
+
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        bevy::asset::AssetPlugin::default(),
+        bevy::gizmos::GizmoPlugin,
+    ));
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<ImpactShockwavePool>()
+        .init_resource::<RocheDebrisPool>();
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::MainSequenceStar,
+        },
+        Mass(1.0),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Radius(0.00465),
+        Temperature(5778.0),
+        Composition::solar_gas(),
+    ));
+
+    let earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(3.0e-6),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 6.28)),
+            Radius(0.0000426),
+            Temperature(288.0),
+            Composition::rocky(),
+            Transform::from_translation(Vec3::X).with_scale(Vec3::splat(0.0029)),
+        ))
+        .id();
+
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "The Moon".to_string(),
+            body_type: BodyType::Moon,
+        },
+        SatelliteOf {
+            parent: earth,
+            semi_major_axis_au: 0.00257,
+            orbital_period_years: 0.0748,
+            true_anomaly: 0.0,
+        },
+        Mass(3.7e-8),
+        SimPosition(DVec3::new(1.00257, 0.0, 0.0)),
+        SimVelocity(DVec3::new(0.0, 0.0, 6.50)),
+        Radius(0.0000116),
+        Temperature(250.0),
+        Composition::rocky(),
+        Transform::from_translation(Vec3::new(1.00257, 0.0, 0.0)).with_scale(Vec3::splat(0.00075)),
+    ));
+
+    {
+        let mut ps = app.world_mut().resource_mut::<PlayerInteractionState>();
+        ps.orbit_mode = OrbitVisualizationMode::Off;
+        ps.overlay_mode = DiagnosticOverlayMode::Realistic;
+        ps.selected_entity = Some(earth);
+    }
+
+    app.world_mut().spawn((
+        Camera3d::default(),
+        Transform::from_translation(Vec3::new(0.0, 20.0, 45.0)),
+    ));
+
+    let mut sched = Schedule::default();
+    sched.add_systems(protostellar::rendering::effects::draw_orbital_effects_and_gizmos);
+    sched.run(app.world_mut());
+}
+
+#[test]
+fn test_surface_terrain_homogeneous_scale_sync_during_atmospheric_descent() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::game::ui::NotificationToast;
+    use protostellar::rendering::camera::PanOrbitCamera;
+    use protostellar::rendering::surface_camera::update_surface_horizon_camera;
+    use protostellar::rendering::surface_terrain::{
+        sync_surface_terrain_system, SurfaceTerrainState,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.init_resource::<Time>()
+        .init_resource::<ButtonInput<MouseButton>>()
+        .init_resource::<ButtonInput<KeyCode>>()
+        .init_resource::<SimulationConfig>()
+        .init_resource::<NotificationToast>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<SurfaceTerrainState>()
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .add_message::<MouseMotion>()
+        .add_message::<MouseWheel>();
+
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(3.0e-6),
+            Radius(0.0000426),
+            Temperature(288.0),
+            Composition::rocky(),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            Transform::from_translation(Vec3::X).with_scale(Vec3::splat(0.0029)),
+        ))
+        .id();
+
+    let cam_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                target_entity: Some(earth_ent),
+                surface_horizon_mode: true,
+                entry_transition_progress: 0.0,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(1.0, 0.5, 1.5)),
+            Projection::Perspective(PerspectiveProjection::default()),
+        ))
+        .id();
+
+    let mut sched = Schedule::default();
+    sched.add_systems((update_surface_horizon_camera, sync_surface_terrain_system).chain());
+    sched.run(app.world_mut());
+
+    let root_ent = app
+        .world()
+        .resource::<SurfaceTerrainState>()
+        .root_entity
+        .expect("Terrain root must spawn on frame 1");
+
+    // Simulate Earth shrinking from far scale (0.0029) to close-up scale (0.00018) on descent
+    app.world_mut()
+        .get_mut::<Transform>(earth_ent)
+        .unwrap()
+        .scale = Vec3::splat(0.00018);
+    sched.run(app.world_mut());
+
+    let root_tf = app.world().get::<Transform>(root_ent).unwrap();
+    let expected_ratio = 0.00018 / 0.0029;
+    assert!(
+        (root_tf.scale.x - expected_ratio).abs() < 1e-4,
+        "Surface terrain root must scale homogeneously ({}) to match descending planet scale ({expected_ratio})",
+        root_tf.scale.x
+    );
+
+    let proj = app.world().get::<Projection>(cam_ent).unwrap();
+    if let Projection::Perspective(p) = proj {
+        assert!(
+            p.near < 0.00018 * 0.001,
+            "Surface near plane ({}) must scale below rover camera eye height to prevent foreground clipping",
+            p.near
+        );
+    } else {
+        panic!("Expected PerspectiveProjection");
+    }
+}

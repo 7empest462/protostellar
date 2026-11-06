@@ -342,6 +342,25 @@ fn test_atmosphere_and_planet_shader_sources_validity() {
         idx_type4.unwrap() < idx_type3.unwrap(),
         "planet_type 4u (minor bodies) must precede planet_type 3u to prevent volatile hijacking"
     );
+
+    // Verify multi-layer volumetric cloud shadows, Coriolis cyclones, and spherical Chapman scattering
+    assert!(
+        planet_src.contains("fn evaluate_multilayer_clouds_and_shadows("),
+        "planet.wgsl must define evaluate_multilayer_clouds_and_shadows"
+    );
+    assert!(
+        planet_src.contains("fn evaluate_coriolis_cyclones("),
+        "planet.wgsl must define evaluate_coriolis_cyclones"
+    );
+    assert!(
+        planet_src.contains("fn chapman_spherical_airmass("),
+        "planet.wgsl must define chapman_spherical_airmass"
+    );
+    assert!(
+        atmo_src.contains("fn chapman_spherical_airmass(")
+            && atmo_src.contains("fn dual_lobe_mie_phase("),
+        "atmosphere.wgsl must define chapman_spherical_airmass and dual_lobe_mie_phase"
+    );
 }
 
 #[test]
@@ -485,5 +504,30 @@ fn test_stellar_corona_uniforms_and_impact_blackbody_cooling() {
     assert!(
         flash_early.blue > flash_mid.blue && flash_mid.red > flash_late.red,
         "Impact fireball blackbody color must cool from blue-white to orange-red to dull ember"
+    );
+}
+
+#[test]
+fn test_surface_sky_dome_clouds_and_realtime_cloud_pacing() {
+    let atmo_src = std::fs::read_to_string("assets/shaders/atmosphere.wgsl")
+        .expect("atmosphere.wgsl must be readable");
+    assert!(
+        atmo_src.contains("cloud_and_time_params: vec4<f32>")
+            && atmo_src.contains("fn evaluate_surface_sky_clouds(")
+            && atmo_src.contains("let is_surface_view = cam_alt_ratio < 1.42;"),
+        "atmosphere.wgsl must support scale-invariant surface sky dome and 3D overhead clouds"
+    );
+
+    let planet_src = std::fs::read_to_string("assets/shaders/planet.wgsl")
+        .expect("planet.wgsl must be readable");
+    assert!(
+        planet_src.contains("let orbital_cloud_vis = smoothstep(1.15, 1.42, cam_alt_ratio);"),
+        "planet.wgsl must fade out painted ground cloud albedo when in Surface Horizon Mode"
+    );
+    assert!(
+        !planet_src.contains("spin_angle * 1.24")
+            && !planet_src.contains("spin_angle * 1.06")
+            && !planet_src.contains("spin_angle * 1.42"),
+        "planet.wgsl must not multiply spin_angle by non-integers to prevent TAU-wrap jumps"
     );
 }

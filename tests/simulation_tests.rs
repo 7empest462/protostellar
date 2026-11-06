@@ -12,6 +12,8 @@ mod black_hole_kerr;
 mod black_hole_relativity;
 #[path = "simulation_tests/camera.rs"]
 mod camera;
+#[path = "simulation_tests/camera_monotonicity.rs"]
+mod camera_monotonicity;
 #[path = "simulation_tests/campaign_tests.rs"]
 mod campaign_tests;
 #[path = "simulation_tests/comets.rs"]
@@ -102,10 +104,14 @@ mod theia_moon;
 mod thermodynamics;
 #[path = "simulation_tests/tides.rs"]
 mod tides;
+#[path = "simulation_tests/time_warp.rs"]
+mod time_warp;
 #[path = "simulation_tests/ui.rs"]
 mod ui;
 #[path = "simulation_tests/ui_contextual.rs"]
 mod ui_contextual;
+#[path = "simulation_tests/ui_modals_and_tabs.rs"]
+mod ui_modals_and_tabs;
 #[path = "simulation_tests/universal_stars.rs"]
 mod universal_stars;
 #[path = "simulation_tests/volcanism.rs"]

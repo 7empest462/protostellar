@@ -628,3 +628,141 @@ fn test_planet_uniforms_impact_basins_layout() {
         assert_eq!(*data, Vec4::ZERO);
     }
 }
+
+#[test]
+fn test_kdtree_broadphase_matches_exhaustive_pair_search() {
+    use bevy::math::DVec3;
+    use bevy::prelude::Entity;
+    use protostellar::simulation::accretion::collisions::{
+        build_kdtree_broadphase_candidates, BodySnapshot,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::utils::constants::*;
+
+    let make_snap = |bits: u64, pos: DVec3, body_type: BodyType, mass: f64| BodySnapshot {
+        entity: Entity::from_bits(bits),
+        mass,
+        pos,
+        vel: DVec3::ZERO,
+        radius: EARTH_RADIUS_AU,
+        temp: 300.0,
+        comp: Composition::rocky(),
+        body_type,
+        spin: DVec3::ZERO,
+        name: format!("Body-{bits}"),
+        is_central: false,
+        satellite_parent: None,
+    };
+
+    let snapshots = vec![
+        make_snap(
+            1,
+            DVec3::new(1.0, 0.0, 0.0),
+            BodyType::TerrestrialPlanet,
+            EARTH_MASS_SOLAR,
+        ),
+        make_snap(2, DVec3::new(1.2, 0.1, -0.3), BodyType::Asteroid, 1e-10),
+        make_snap(
+            3,
+            DVec3::new(25.0, 0.0, 0.0),
+            BodyType::IceGiant,
+            15.0 * EARTH_MASS_SOLAR,
+        ),
+        make_snap(4, DVec3::new(28.5, -1.0, 2.0), BodyType::Comet, 1e-11),
+        make_snap(5, DVec3::new(0.0, 0.0, 0.0), BodyType::BlackHole, 20.0),
+    ];
+
+    let kd_candidates = build_kdtree_broadphase_candidates(&snapshots);
+    assert!(
+        kd_candidates[0].contains(&1),
+        "Earth and nearby Asteroid must be broadphase neighbors"
+    );
+    assert!(
+        !kd_candidates[0].contains(&2),
+        "Earth (1 AU) and IceGiant (25 AU) must not be broadphase neighbors"
+    );
+    assert!(
+        kd_candidates[0].contains(&4),
+        "Earth (1 AU) and BlackHole (0 AU, 50 AU reach) must be broadphase neighbors"
+    );
+    assert!(
+        kd_candidates[2].contains(&3),
+        "IceGiant (25 AU) and Comet (28.5 AU) must be broadphase neighbors"
+    );
+}
+
+#[test]
+fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
+    use bevy::math::DVec3;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::serialization::{
+        deserialize_system_postcard, serialize_system_postcard, CelestialBodySave, ConfigSave,
+        EventFlagsSave, SystemSaveData, TimeWarpSave,
+    };
+    use protostellar::utils::constants::*;
+
+    let save = SystemSaveData {
+        version: 1,
+        timestamp_epoch_yr: std::f64::consts::PI * 1234.5678901234567,
+        step_count: 98_765,
+        time_warp: TimeWarpSave::default(),
+        disk_parameters: DiskParameters::default(),
+        config_save: ConfigSave::default(),
+        bodies: vec![CelestialBodySave {
+            name: "Earth".to_string(),
+            body_type: BodyType::TerrestrialPlanet,
+            position: DVec3::new(0.9999999999999999, -1e-15, 0.12345678901234568),
+            velocity: DVec3::new(-0.012345678901234567, 0.0, 6.283185307179586),
+            mass: EARTH_MASS_SOLAR,
+            radius: EARTH_RADIUS_AU,
+            temperature: 288.15,
+            luminosity: 0.0,
+            composition: Composition::rocky(),
+            spin: SpinState::default(),
+            differentiation: None,
+            volatile_inventory: None,
+            ring_system: None,
+            basins: None,
+            climate: None,
+            biosphere: None,
+            electromagnetic: None,
+            is_central_star: false,
+            ignition_state: None,
+            stellar_evolution: None,
+            black_hole_state: None,
+            satellite: None,
+            tidal_state: None,
+            relativistic_state: None,
+            atmospheric_escape: None,
+            kozai_lidov: None,
+        }],
+        event_flags: EventFlagsSave::default(),
+        scenario_preset: None,
+    };
+
+    let bytes = serialize_system_postcard(&save).expect("postcard serialization should succeed");
+    let json = serde_json::to_vec(&save).expect("json serialization should succeed");
+    assert!(
+        bytes.len() < json.len() / 2,
+        "Postcard binary snapshot ({} B) should be less than half the size of JSON ({} B)",
+        bytes.len(),
+        json.len()
+    );
+
+    let restored =
+        deserialize_system_postcard(&bytes).expect("postcard deserialization should succeed");
+    assert_eq!(
+        restored.timestamp_epoch_yr.to_bits(),
+        save.timestamp_epoch_yr.to_bits(),
+        "Postcard binary snapshot must preserve IEEE-754 f64 bits identically"
+    );
+    assert_eq!(
+        restored.bodies[0].position.x.to_bits(),
+        save.bodies[0].position.x.to_bits()
+    );
+    assert_eq!(
+        restored.bodies[0].velocity.z.to_bits(),
+        save.bodies[0].velocity.z.to_bits()
+    );
+}

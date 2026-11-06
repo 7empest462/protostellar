@@ -678,3 +678,229 @@ fn test_phase7_rover_geodesic_surface_navigation_and_sampling() {
         "Rover must collect additional crustal/astrobiological samples as it roves"
     );
 }
+
+#[test]
+fn test_desiccated_planet_with_gas_atmosphere_not_airless_and_no_steam_clouds() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_message::<SupernovaEvent>();
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::MainSequenceStar,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        Temperature(5778.0),
+        Luminosity(1.0),
+        IgnitionState {
+            core_temperature: 1.5e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 50.0,
+        },
+    ));
+
+    // Desiccated Earth (0% water, 3% gas, 3.38 bar atmospheric pressure at 369 K)
+    let dry_earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(1.31 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 1.15),
+            SimPosition(DVec3::new(0.99, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 30.3)),
+            Temperature(369.0),
+            Composition {
+                silicate_frac: 0.66,
+                ice_frac: 0.0,
+                metal_frac: 0.31,
+                organics_frac: 0.0,
+                gas_frac: 0.03,
+            },
+            VolatileInventory {
+                delivered_water_m_earth: 0.0,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 3.38,
+                cometary_impact_count: 0,
+            },
+        ))
+        .id();
+
+    app.add_systems(Update, update_thermodynamics);
+    app.update();
+
+    let climate = app
+        .world()
+        .get::<PlanetaryClimate>(dry_earth)
+        .expect("PlanetaryClimate must be inserted");
+    assert_ne!(
+        climate.climate_regime,
+        ClimateRegime::AirlessVacuum,
+        "A planet with 3.38 bar atmospheric pressure and 3% gas must never be classified as AirlessVacuum"
+    );
+    assert!(
+        climate.cloud_coverage_frac >= 0.25 && climate.cloud_coverage_frac <= 0.75,
+        "A desiccated planet with 3% gas and 3.38 bar must have visible volatile cloud cover (25%..75%), not 0% or 100% boiling-ocean whiteout (got {:.2})",
+        climate.cloud_coverage_frac
+    );
+}
+
+#[test]
+fn test_four_stage_geochemical_earth_ocean_origin_and_critical_point_deluge() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::game::ui::telemetry_format::format_geology_and_volatiles_telemetry;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::*;
+    use protostellar::utils::constants::*;
+
+    // Stage 1: Endogenous Enstatite Chondrite (-OH) + H2/FeO magma ocean oxidation water budget
+    let earth_comp = Composition::rocky();
+    let endogenous_water =
+        compute_endogenous_water_m_earth(EARTH_MASS_SOLAR, &earth_comp, 1.0, 1.0);
+    assert!(
+        endogenous_water > 0.00035 && endogenous_water < 0.00060,
+        "1 M_earth rocky planet in gas-rich inner disk must acquire ~0.00043 M_earth endogenous water (got {endogenous_water:.6})"
+    );
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<TimeWarp>();
+    app.insert_resource(SimTime {
+        elapsed_years: 1000.0,
+        current_dt_yr: 1.0,
+        visual_time_secs: 1.0,
+        ..Default::default()
+    });
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_message::<SupernovaEvent>();
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "The Sun".to_string(),
+            body_type: BodyType::MainSequenceStar,
+        },
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        Temperature(5778.0),
+        Luminosity(1.0),
+        IgnitionState {
+            core_temperature: 1.5e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 50.0,
+        },
+    ));
+
+    // Stage 3a: Hot Hadean Proto-Earth above the 647 K critical point of water (T = 900 K)
+    let proto_earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 29.8)),
+            Temperature(900.0),
+            earth_comp,
+            VolatileInventory {
+                delivered_water_m_earth: endogenous_water,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 1.0,
+                cometary_impact_count: 0,
+            },
+        ))
+        .id();
+
+    app.add_systems(Update, update_thermodynamics);
+    app.update();
+
+    {
+        let vol = app.world().get::<VolatileInventory>(proto_earth).unwrap();
+        let climate = app.world().get::<PlanetaryClimate>(proto_earth).unwrap();
+        assert_eq!(
+            vol.ocean_coverage_frac, 0.0,
+            "Above 647 K critical point, water must remain in supercritical steam atmosphere (0% liquid ocean)"
+        );
+        assert!(
+            climate.cloud_coverage_frac >= 0.90,
+            "Supercritical steam envelope must produce dense cloud cover (got {:.2})",
+            climate.cloud_coverage_frac
+        );
+
+        // Stage 4: Telemetry readout indicates supercritical steam outgassing
+        let telemetry = format_geology_and_volatiles_telemetry(None, Some(vol), None);
+        assert!(
+            telemetry.contains("[Supercritical Steam Outgassing — Condenses < 647 K]"),
+            "Hot protoplanet telemetry must report supercritical steam outgassing: {telemetry}"
+        );
+    }
+
+    // Stage 3b: The Great Deluge — crust cools below 647 K down to temperate 288 K
+    app.world_mut()
+        .get_mut::<Temperature>(proto_earth)
+        .unwrap()
+        .0 = 288.0;
+    app.update();
+
+    {
+        let vol = app.world().get::<VolatileInventory>(proto_earth).unwrap();
+        assert!(
+            vol.ocean_coverage_frac > 0.65,
+            "Cooled Earth must rain out its endogenous steam into global Archean oceans (>65% coverage, got {:.2})",
+            vol.ocean_coverage_frac
+        );
+        let telemetry = format_geology_and_volatiles_telemetry(None, Some(vol), None);
+        assert!(
+            !telemetry.contains("[Supercritical Steam Outgassing — Condenses < 647 K]"),
+            "Once condensed into oceans, supercritical steam indicator must disappear"
+        );
+    }
+
+    // Stage 5: Even if atmospheric_pressure_bar starts at 0.0 or undergoes 2.5 Myr of XUV/solar-wind escape,
+    // a terrestrial planet with liquid oceans maintains its outgassed N2/CO2/H2O atmosphere (never Airless Vacuum).
+    app.world_mut()
+        .get_mut::<VolatileInventory>(proto_earth)
+        .unwrap()
+        .atmospheric_pressure_bar = 0.0;
+    app.update();
+    {
+        let vol = app.world().get::<VolatileInventory>(proto_earth).unwrap();
+        let climate = app.world().get::<PlanetaryClimate>(proto_earth).unwrap();
+        assert!(
+            vol.atmospheric_pressure_bar >= 0.50,
+            "Ocean-bearing terrestrial planet must maintain outgassed N2/CO2/H2O atmospheric pressure (got {:.3} bar)",
+            vol.atmospheric_pressure_bar
+        );
+        assert_ne!(
+            climate.climate_regime,
+            ClimateRegime::AirlessVacuum,
+            "A planet with surface water must never classify as AirlessVacuum"
+        );
+    }
+}

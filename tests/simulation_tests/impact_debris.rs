@@ -245,3 +245,96 @@ fn test_reimpact_detection_culls_subsurface_fragments() {
     );
     assert!(pool.fragments[0].position.distance(planet_pos) > planet_rad * 2.0);
 }
+
+#[test]
+fn test_comet_impact_ejecta_blasts_into_space_and_gets_reabsorbed() {
+    use protostellar::simulation::components::{ImpactBasin, PlanetaryBasins};
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_message::<MoonFormationEvent>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .init_resource::<ImpactEjectaPool>()
+        .insert_resource(TimeWarp::default())
+        .insert_resource(SimTime::default())
+        .add_systems(Update, update_impact_ejecta);
+
+    let planet_pos = Vec3::new(1.0, 0.0, 0.0);
+    let visual_radius = 0.03_f32;
+    let impact_normal = Vec3::new(-0.7071, 0.7071, 0.0).normalize();
+
+    let planet_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            Transform::from_translation(planet_pos).with_scale(Vec3::splat(visual_radius)),
+            PlanetaryBasins {
+                basins: vec![ImpactBasin {
+                    surface_normal: impact_normal,
+                    angular_radius: 0.12,
+                    formation_time_yr: 0.0,
+                    melt_glow_fraction: 1.0,
+                    elongation: 1.0,
+                    scar_intensity: 1.0,
+                }],
+            },
+        ))
+        .id();
+
+    // Step 1: First update detects the fresh impact basin and spawns the 3D ballistic ejecta fountain
+    app.update();
+
+    let initial_count = {
+        let pool = app.world().resource::<ImpactEjectaPool>();
+        assert!(
+            pool.fragments.len() >= 18,
+            "Fresh comet/asteroid impact basin must spawn 3D ballistic ejecta fragments (got {})",
+            pool.fragments.len()
+        );
+        for frag in &pool.fragments {
+            assert_eq!(frag.primary_entity, planet_ent);
+            let d = frag.position.distance(planet_pos);
+            assert!(
+                d >= visual_radius,
+                "Ejecta must spawn outside the planet's visual mesh radius ({d} vs {visual_radius})"
+            );
+        }
+        pool.fragments.len()
+    };
+
+    // Decay melt_glow_fraction slightly so it doesn't keep spawning new fountains on subsequent frames
+    app.world_mut()
+        .entity_mut(planet_ent)
+        .get_mut::<PlanetaryBasins>()
+        .unwrap()
+        .basins[0]
+        .melt_glow_fraction = 0.85;
+
+    // Step 2: Advance over ~240 frames (~4 seconds of ballistic flight) and track peak altitude & reabsorption
+    let mut peak_altitude_ratio = 1.0_f32;
+    for _ in 0..240 {
+        app.update();
+        let pool = app.world().resource::<ImpactEjectaPool>();
+        for frag in &pool.fragments {
+            let ratio = frag.position.distance(planet_pos) / visual_radius;
+            if ratio > peak_altitude_ratio {
+                peak_altitude_ratio = ratio;
+            }
+        }
+    }
+
+    assert!(
+        peak_altitude_ratio > 1.35,
+        "Ejecta must blast significantly out into space above the planet surface (peak ratio: {peak_altitude_ratio:.3})"
+    );
+
+    let remaining = app.world().resource::<ImpactEjectaPool>().fragments.len();
+    assert!(
+        remaining < initial_count / 4,
+        "Sub-orbital ballistic ejecta must curve back under planet gravity and get reabsorbed into the planet (initial: {initial_count}, remaining: {remaining})"
+    );
+}

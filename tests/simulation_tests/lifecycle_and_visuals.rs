@@ -186,7 +186,7 @@ fn test_system_worlds_numerical_ordering_and_reindexing() {
 
 #[test]
 fn test_trappist1_compact_disk_particle_sampling() {
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::with_seed(42);
     let disk_params = protostellar::simulation::resources::DiskParameters {
         central_star_mass: 0.0898,
         inner_radius_au: 0.005,
@@ -913,7 +913,12 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
         sync_celestial_transforms.after(update_simulation_visual_time),
     ));
 
-    // 1. Unpaused: Advance time by 0.1s
+    // 1. Unpaused: Advance time by 0.1s with a non-zero physics timestep
+    {
+        let mut st = app.world_mut().resource_mut::<SimTime>();
+        st.elapsed_years = 0.01;
+        st.current_dt_yr = 0.0005;
+    }
     {
         let mut t = app.world_mut().resource_mut::<Time>();
         t.advance_by(Duration::from_millis(100));
@@ -923,9 +928,14 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
     let materials = app.world().resource::<Assets<PlanetMaterial>>();
     let mat = materials.get(&mat_handle).unwrap();
     let unpaused_time = mat.extension.uniforms.time;
+    let unpaused_spin = mat.extension.uniforms.spin_angle;
     assert!(
         unpaused_time > 0.09,
         "Material time should match visual time: {unpaused_time}"
+    );
+    assert!(
+        unpaused_spin > 0.0,
+        "Planet spin_angle should advance when unpaused: {unpaused_spin}"
     );
 
     // 2. Paused: Advance time by 0.5s over 5 frames
@@ -941,6 +951,10 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
         assert_eq!(
             mat.extension.uniforms.time, unpaused_time,
             "Shader material time must freeze 100% when time is paused"
+        );
+        assert_eq!(
+            mat.extension.uniforms.spin_angle, unpaused_spin,
+            "Planet spin_angle must freeze 100% when time is paused"
         );
     }
 

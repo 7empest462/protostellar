@@ -59,7 +59,8 @@ fn test_near_field_grid_plus_far_field_matches_all_pairs() {
 
     // Build the grid exactly like the physics step.
     let inv_cell = 1.0 / near_radius;
-    let mut grid: hashbrown::HashMap<(i32, i32, i32), Vec<usize>> = hashbrown::HashMap::new();
+    let mut grid: rustc_hash::FxHashMap<(i32, i32, i32), smallvec::SmallVec<[usize; 8]>> =
+        rustc_hash::FxHashMap::default();
     for (k, m) in massive.iter().enumerate() {
         if k != 0 {
             grid.entry(grid_cell(m.0, inv_cell)).or_default().push(k);
@@ -82,7 +83,7 @@ fn test_near_field_grid_plus_far_field_matches_all_pairs() {
         }
         acc
     };
-    let far_acc: hashbrown::HashMap<Entity, DVec3> = bodies
+    let far_acc: rustc_hash::FxHashMap<Entity, DVec3> = bodies
         .iter()
         .enumerate()
         .map(|(i, b)| (b.entity, far_for(i)))

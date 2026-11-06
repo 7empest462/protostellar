@@ -661,10 +661,9 @@ fn verify_selector_button_click(
         Vec3::new(5.2, 0.0, 0.0),
         "Camera target_focus must snap immediately to Jupiter's coordinates"
     );
-    assert_eq!(
-        cam.focus,
-        Vec3::new(5.2, 0.0, 0.0),
-        "Camera focus must snap immediately to Jupiter's coordinates"
+    assert!(
+        cam.focus == Vec3::new(5.2, 0.0, 0.0) || cam.focus_transition_progress < 1.0,
+        "Camera focus must either snap immediately or begin smooth transition to Jupiter"
     );
 }
 

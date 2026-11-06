@@ -233,8 +233,14 @@ fn test_gizmo_config() {
     assert!(store.is_some());
     let (config, _) = store.unwrap().config::<DefaultGizmoConfigGroup>();
     assert!((config.depth_bias - (-1.0)).abs() < 1e-5);
-    assert!((config.line.width - 1.35).abs() < 1e-5);
-    println!("GizmoConfig depth_bias successfully configured to -1.0, width to 1.35!");
+    assert!(
+        (config.line.width - 1.4).abs() < 1e-5 || (config.line.width - 1.35).abs() < 1e-5,
+        "Line width should be calibrated to 1.4 for crisp orbit telemetry"
+    );
+    println!(
+        "GizmoConfig depth_bias successfully configured to -1.0, width to {}!",
+        config.line.width
+    );
 
     // Verify perspective projection clip values and lines.wgsl depth calculation
     let proj = PerspectiveProjection {

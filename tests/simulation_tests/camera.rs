@@ -728,3 +728,223 @@ fn test_camera_zoom_ui_interaction_suppression() {
 
     app.world_mut().despawn(ui_node);
 }
+
+#[test]
+fn test_camera_smooth_interplanetary_flight_on_selection() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    app.world_mut().spawn(Window {
+        title: "Test Window".to_string(),
+        ..default()
+    });
+
+    let jupiter_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Jupiter".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            Mass(0.000954),
+            Radius(0.000477),
+            SimPosition(bevy::math::DVec3::new(5.2, 0.0, 0.0)),
+            Transform::from_xyz(5.2, 0.0, 0.0),
+        ))
+        .id();
+
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                focus: Vec3::ZERO,
+                target_focus: Vec3::ZERO,
+                radius: 16.0,
+                target_radius: 16.0,
+                focus_transition_progress: 1.0,
+                focus_transition_start: Vec3::ZERO,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 5.0, 16.0),
+            GlobalTransform::IDENTITY,
+        ))
+        .id();
+
+    let mut sched = Schedule::default();
+    sched.add_systems(update_pan_orbit_camera);
+
+    // Initial frame at origin
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(std::time::Duration::from_millis(16));
+    }
+    sched.run(app.world_mut());
+    let cam = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    assert_eq!(cam.focus, Vec3::ZERO);
+
+    // Select Jupiter (> 0.05 AU away)
+    {
+        let mut cam_mut = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam_mut.target_entity = Some(jupiter_ent);
+    }
+
+    // Step 1: Camera begins interplanetary smooth flight
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(std::time::Duration::from_millis(16));
+    }
+    sched.run(app.world_mut());
+    let cam_step1 = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    assert!(
+        cam_step1.focus_transition_progress < 1.0,
+        "Camera must initiate smooth transition when targeting distant body"
+    );
+    assert_eq!(cam_step1.focus_transition_start, Vec3::ZERO);
+    assert!(
+        cam_step1.focus.x >= 0.0 && cam_step1.focus.x <= 5.2,
+        "Focus must interpolate towards Jupiter"
+    );
+
+    // Step 2: Advance frames until transition completes (35 * 16ms = 0.56s > 0.45s)
+    for _ in 0..35 {
+        {
+            let mut t = app.world_mut().resource_mut::<Time>();
+            t.advance_by(std::time::Duration::from_millis(16));
+        }
+        sched.run(app.world_mut());
+    }
+
+    let cam_final = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    assert_eq!(
+        cam_final.focus_transition_progress, 1.0,
+        "Transition must complete and lock to target"
+    );
+    assert!(
+        (cam_final.focus.x - 5.2).abs() < 1e-4,
+        "Camera focus must lock tightly onto Jupiter at 5.2 AU"
+    );
+}
+
+#[test]
+fn test_surface_horizon_atmospheric_entry_transition() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use bevy::prelude::*;
+    use protostellar::game::ui::NotificationToast;
+    use protostellar::rendering::camera::PanOrbitCamera;
+    use protostellar::rendering::surface_camera::{
+        toggle_surface_horizon_mode, update_surface_horizon_camera,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+
+    let mut app = App::new();
+    app.init_resource::<Time>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ButtonInput<KeyCode>>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<NotificationToast>();
+    app.add_message::<MouseMotion>();
+    app.add_message::<MouseWheel>();
+    app.init_resource::<PlayerInteractionState>();
+
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(3e-6),
+            Radius(4.25875e-5),
+            Temperature(288.0),
+            Composition::default(),
+            SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+        ))
+        .id();
+
+    let orbital_pos = Vec3::new(1.0, 0.05, 0.1);
+    let camera_ent = app
+        .world_mut()
+        .spawn((
+            Camera::default(),
+            PanOrbitCamera {
+                target_entity: Some(earth_ent),
+                focus: Vec3::new(1.0, 0.0, 0.0),
+                target_focus: Vec3::new(1.0, 0.0, 0.0),
+                radius: 0.1,
+                target_radius: 0.1,
+                surface_horizon_mode: false,
+                entry_transition_progress: 1.0,
+                ..default()
+            },
+            Transform::from_translation(orbital_pos),
+            Projection::Perspective(PerspectiveProjection::default()),
+        ))
+        .id();
+
+    let mut sched = Schedule::default();
+    sched.add_systems(update_surface_horizon_camera);
+
+    // Activate Surface Horizon Mode via toggle
+    {
+        let mut toast = NotificationToast::default();
+        let mut cam = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        toggle_surface_horizon_mode(&mut cam, Some(earth_ent), &mut toast);
+        assert!(cam.surface_horizon_mode);
+        assert_eq!(cam.entry_transition_progress, 0.0);
+    }
+
+    // Step 1: Camera begins atmospheric entry descent
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(std::time::Duration::from_millis(16));
+    }
+    sched.run(app.world_mut());
+    let cam1 = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    assert!(
+        cam1.entry_transition_progress > 0.0 && cam1.entry_transition_progress <= 1.0,
+        "Atmospheric entry progress must advance during descent"
+    );
+
+    // Step 2: Complete descent over subsequent frames (70 * 16ms = 1.12s > 1.0s)
+    for _ in 0..70 {
+        {
+            let mut t = app.world_mut().resource_mut::<Time>();
+            t.advance_by(std::time::Duration::from_millis(16));
+        }
+        sched.run(app.world_mut());
+    }
+
+    let cam_landed = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    let tf_landed = *app.world().get::<Transform>(camera_ent).unwrap();
+    assert_eq!(
+        cam_landed.entry_transition_progress, 1.0,
+        "Entry descent must complete and reach 1.0"
+    );
+    // Camera has descended significantly closer to Earth center than the orbital vantage point
+    let dist_landed = tf_landed.translation.distance(Vec3::new(1.0, 0.0, 0.0));
+    let dist_orbital = orbital_pos.distance(Vec3::new(1.0, 0.0, 0.0));
+    assert!(
+        dist_landed < dist_orbital * 0.5,
+        "Landed surface camera ({dist_landed}) must descend well below orbital vantage ({dist_orbital})"
+    );
+}

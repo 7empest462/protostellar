@@ -489,6 +489,7 @@ fn test_t1_r4_scenario_state_reset_and_teardown() {
         total_energy: -50.0,
         relative_energy_drift: 0.05,
         initialized: true,
+        ..Default::default()
     };
 
     // Resetting state

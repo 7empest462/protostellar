@@ -277,3 +277,60 @@ fn test_solar_nebula_mmsn_spawns_io_europa_and_enceladus() {
         "Enceladus must be spawned in Solar MMSN scenario"
     );
 }
+
+#[test]
+fn test_ice_dwarf_vs_cryotectonic_moon_shader_routing() {
+    use protostellar::rendering::bodies::palettes::resolve_planet_type_and_subtype;
+
+    let icy_comp = Composition {
+        metal_frac: 0.02,
+        silicate_frac: 0.06,
+        ice_frac: 0.92,
+        gas_frac: 0.0,
+        organics_frac: 0.0,
+    };
+
+    // Canonical terrestrial planets and major moons must route to planet_type == 3 with exact landmark subtypes
+    let expected_terrestrials = [
+        ("Mars", BodyType::TerrestrialPlanet, 1.0_f32),
+        ("The Moon", BodyType::Moon, 2.0_f32),
+        ("Mercury", BodyType::TerrestrialPlanet, 3.0_f32),
+        ("Earth", BodyType::TerrestrialPlanet, 4.0_f32),
+        ("Venus", BodyType::TerrestrialPlanet, 5.0_f32),
+        ("Ganymede", BodyType::Moon, 6.0_f32),
+        ("Callisto", BodyType::Moon, 7.0_f32),
+        ("Titan", BodyType::Moon, 8.0_f32),
+        ("Europa", BodyType::Moon, 0.0_f32),
+        ("Enceladus", BodyType::Moon, 0.0_f32),
+    ];
+    for (name, b_type, exp_sub) in expected_terrestrials {
+        let (p_type, subtype) = resolve_planet_type_and_subtype(b_type, name, &icy_comp);
+        assert_eq!(
+            p_type, 3,
+            "{name} must route to planet_type 3, got {p_type}"
+        );
+        assert!(
+            (subtype - exp_sub).abs() < 1e-5,
+            "{name} expected terrestrial subtype {exp_sub}, got {subtype}"
+        );
+    }
+
+    // Named dwarf planets must route to planet_type == 9 with exact subtypes 1.0..=7.0
+    let expected_dwarfs = [
+        ("Pluto", BodyType::TerrestrialPlanet, 1.0_f32),
+        ("Charon", BodyType::Moon, 2.0_f32),
+        ("Eris", BodyType::TerrestrialPlanet, 3.0_f32),
+        ("Haumea", BodyType::TerrestrialPlanet, 4.0_f32),
+        ("Makemake", BodyType::TerrestrialPlanet, 5.0_f32),
+        ("Sedna", BodyType::TerrestrialPlanet, 6.0_f32),
+        ("Ceres", BodyType::Asteroid, 7.0_f32),
+    ];
+    for (name, b_type, exp_sub) in expected_dwarfs {
+        let (p_type, subtype) = resolve_planet_type_and_subtype(b_type, name, &icy_comp);
+        assert_eq!(p_type, 9, "{name} must route to planet_type 9");
+        assert!(
+            (subtype - exp_sub).abs() < 1e-5,
+            "{name} expected subtype {exp_sub}, got {subtype}"
+        );
+    }
+}

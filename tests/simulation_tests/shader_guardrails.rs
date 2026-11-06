@@ -350,4 +350,8 @@ fn test_planet_wgsl_ocean_hypsometry_guardrails() {
         content.contains("if (in_ice_cap) {"),
         "planet.wgsl must guard ice cap rendering by in_ice_cap"
     );
+    assert!(
+        content.contains("let boil_steam_factor = clamp((temp - 345.0) / 35.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles"),
+        "planet.wgsl must strictly require has_water_volatiles before activating boiling-ocean steam clouds"
+    );
 }

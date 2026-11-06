@@ -149,11 +149,10 @@ fn test_surface_horizon_camera_pose_and_rover_drive() {
 }
 
 #[test]
-fn test_3d_planetary_surface_terrain_and_vegetation() {
+fn test_3d_planetary_surface_terrain_mesh() {
     use bevy::render::mesh::VertexAttributeValues;
     use protostellar::rendering::surface_terrain::*;
 
-    let unspun_center = Vec3::Y;
     let vis_rad = 0.025f32;
     let comp = Composition {
         silicate_frac: 0.70,
@@ -252,6 +251,27 @@ fn test_3d_planetary_surface_terrain_and_vegetation() {
     } else {
         panic!("Terrain mesh must contain ATTRIBUTE_COLOR");
     }
+}
+
+#[test]
+fn test_3d_planetary_surface_vegetation_and_boulder_mesh() {
+    use protostellar::rendering::surface_terrain::*;
+
+    let unspun_center = Vec3::Y;
+    let vis_rad = 0.025f32;
+    let comp = Composition {
+        silicate_frac: 0.70,
+        metal_frac: 0.20,
+        ice_frac: 0.10,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    };
+    let bio = BiosphereState {
+        habitability_score: 0.95,
+        biomass_coverage_frac: 0.75,
+        flora_pigment: FloraPigmentClass::SolarChlorophyll,
+        ..default()
+    };
 
     // 3. Test 3D Vegetation Mesh Generation
     let veg_mesh = generate_surface_vegetation_mesh(
