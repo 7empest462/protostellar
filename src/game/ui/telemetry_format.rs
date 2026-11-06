@@ -207,28 +207,30 @@ pub fn format_geology_and_volatiles_telemetry(
     let mut out = String::new();
 
     if let Some(diff) = opt_diff {
+        out.push_str("\n━━━ ⟪ GEODYNAMICS & CORE ⟫ ━━━");
         if diff.is_differentiated {
             let core_km = diff.core_radius_au * AU_TO_KM;
             let mantle_km = (diff.mantle_radius_au - diff.core_radius_au).max(0.0) * AU_TO_KM;
             let crust_km = diff.crust_thickness_au * AU_TO_KM;
             let _ = write!(
                 out,
-                "\nStructure: Differentiated (Core: {:.0} km | Mantle: {:.0} km | Crust: {:.0} km)\nDynamo: {:.2} G | Core Temp: {:.0} K",
+                "\n▸ Structure: Differentiated (Core: {:.0} km | Mantle: {:.0} km | Crust: {:.0} km)\n▸ Dynamo: {:.2} G | Core Temp: {:.0} K",
                 core_km, mantle_km, crust_km, diff.magnetic_field_gauss, diff.core_temp_k
             );
             if diff.has_theia_llsvp {
                 let _ = write!(
                     out,
-                    "\nMantle Blobs (LLSVPs): +{:.1}% denser (Theia basal mantle remnants)",
+                    "\n▸ Mantle Blobs (LLSVPs): +{:.1}% denser (Theia basal mantle remnants)",
                     diff.llsvp_density_contrast * 100.0
                 );
             }
         } else {
-            out.push_str("\nStructure: Undifferentiated Chondritic Mixture");
+            out.push_str("\n▸ Structure: Undifferentiated Chondritic Mixture");
         }
     }
 
     if let Some(vol) = opt_vol {
+        out.push_str("\n━━━ ⟪ HYDROSPHERE & VOLATILES ⟫ ━━━");
         let bathymetry_state = if vol.ocean_coverage_frac >= 0.85 {
             "Waterworld / Abyssal Submersion"
         } else if vol.ocean_coverage_frac >= 0.60 {
@@ -240,15 +242,26 @@ pub fn format_geology_and_volatiles_telemetry(
         } else {
             "Desiccated (Dried Basins & Salt Pans)"
         };
+        let displayed_water_m_earth =
+            if vol.ocean_coverage_frac >= 0.005 || vol.delivered_water_m_earth > 1e-5 {
+                vol.delivered_water_m_earth
+                    .max(f64::from(vol.ocean_coverage_frac) * 0.0005)
+                    .max(0.0001)
+            } else {
+                vol.delivered_water_m_earth
+            };
         let _ = write!(
             out,
-            "\nHydrosphere: {:.4} M_earth H₂O | Sea Level: {:.0}% ({})\nAtmospheric Pressure: {:.2} bar | Icy Bombardment Impacts: {}",
-            vol.delivered_water_m_earth,
+            "\n▸ Hydrosphere: {:.4} M_earth H₂O | Sea Level: {:.0}% ({})\n▸ Atmospheric Pressure: {:.2} bar | Icy Bombardment Impacts: {}",
+            displayed_water_m_earth,
             vol.ocean_coverage_frac * 100.0,
             bathymetry_state,
             vol.atmospheric_pressure_bar,
             vol.cometary_impact_count
         );
+        if vol.delivered_water_m_earth > 1e-5 && vol.ocean_coverage_frac < 0.01 {
+            out.push_str("\n▸ [Supercritical Steam Outgassing — Condenses < 647 K]");
+        }
     }
 
     if let Some(ring) = opt_rings {
@@ -256,7 +269,7 @@ pub fn format_geology_and_volatiles_telemetry(
         let outer_km = f64::from(ring.outer_radius_au) * AU_TO_KM;
         let _ = write!(
             out,
-            "\nRing System: Active (Span: {:.0} - {:.0} km | Opacity: {:.0}% | {:.0}% Ice)",
+            "\n▸ Ring System: Active (Span: {:.0} - {:.0} km | Opacity: {:.0}% | {:.0}% Ice)",
             inner_km,
             outer_km,
             ring.optical_depth * 100.0,
@@ -285,7 +298,7 @@ pub fn format_atmospheric_escape_telemetry(
             });
             let _ = write!(
                 out,
-                "\nAtmosphere: {} ({:.2} M_earth/Myr{}) | Shielding: {:.0}%",
+                "\n▸ Atmosphere: {} ({:.2} M_earth/Myr{}) | Shielding: {:.0}%",
                 esc.escape_regime.label(),
                 esc.total_loss_rate_m_earth_per_myr,
                 tail_str,
@@ -296,7 +309,7 @@ pub fn format_atmospheric_escape_telemetry(
         if tail.is_active && tail.tail_length_au > 0.01 {
             let _ = write!(
                 out,
-                "\nPhotoevaporation: Active (Loss: {:.2} M_earth/Myr | Tail: {:.2} AU)",
+                "\n▸ Photoevaporation: Active (Loss: {:.2} M_earth/Myr | Tail: {:.2} AU)",
                 tail.loss_rate_m_earth_per_myr, tail.tail_length_au
             );
         }
@@ -310,6 +323,10 @@ pub fn format_climate_biosphere_telemetry(
     opt_tide: Option<&TidalState>,
 ) -> String {
     let mut out = String::new();
+
+    if opt_climate.is_some() || opt_bio.is_some() || opt_tide.is_some() {
+        out.push_str("\n━━━ ⟪ CLIMATE & BIOSPHERE ⟫ ━━━");
+    }
 
     if let Some(climate) = opt_climate {
         let regime_name = match climate.climate_regime {
@@ -326,7 +343,7 @@ pub fn format_climate_biosphere_telemetry(
         };
         let _ = write!(
             out,
-            "\nClimate: {} (T: {:.0} K | Albedo: {:.2}{})",
+            "\n▸ Climate: {} (T: {:.0} K | Albedo: {:.2}{})",
             regime_name, climate.surface_temperature_k, climate.albedo, ice_cap_str
         );
     }
@@ -343,7 +360,7 @@ pub fn format_climate_biosphere_telemetry(
         };
         let _ = write!(
             out,
-            "\nBiosphere: {} (Biomass: {:.0}% | O2: {:.1}% | Habitability: {:.0}%)",
+            "\n▸ Biosphere: {} (Biomass: {:.0}% | O2: {:.1}% | Habitability: {:.0}%)",
             status,
             bio.biomass_coverage_frac * 100.0,
             bio.oxygen_fraction * 100.0,
@@ -365,7 +382,7 @@ pub fn format_climate_biosphere_telemetry(
             };
             let _ = write!(
                 out,
-                "\nEcosphere: {}{}{}",
+                "\n▸ Ecosphere: {}{}{}",
                 bio.flora_pigment.label(),
                 biolum_str,
                 samples_str
@@ -386,7 +403,7 @@ pub fn format_climate_biosphere_telemetry(
         let flux_mw = tide.tidal_heating_flux_w_m2 * 1000.0;
         let _ = write!(
             out,
-            "\nTidal State: {} (Flux: {:.1} mW/m² | de/dt: {:.2e}/Myr)",
+            "\n▸ Tidal State: {} (Flux: {:.1} mW/m² | de/dt: {:.2e}/Myr)",
             lock_label, flux_mw, tide.circularization_rate_per_myr
         );
     }
@@ -399,6 +416,7 @@ pub fn format_relativistic_telemetry(opt_rel: Option<&RelativisticState>) -> Str
 
     if let Some(rel) = opt_rel {
         if rel.precession_rate_arcsec_century > 0.01 || rel.gw_luminosity_watts > 1.0 {
+            out.push_str("\n━━━ ⟪ GENERAL RELATIVITY & FIELDS ⟫ ━━━");
             let advance_deg = rel.precession_advance_per_orbit_rad.to_degrees();
             let prec_str = if advance_deg >= 0.01 {
                 format!("+{advance_deg:.2}°/orb")
@@ -412,7 +430,7 @@ pub fn format_relativistic_telemetry(opt_rel: Option<&RelativisticState>) -> Str
             };
             let _ = write!(
                 out,
-                "\n1PN Precession: {} (+{:.3}° total) | Status: {}",
+                "\n▸ 1PN Precession: {} (+{:.3}° total) | Status: {}",
                 prec_str,
                 rel.accumulated_precession_rad.to_degrees(),
                 status
@@ -420,7 +438,7 @@ pub fn format_relativistic_telemetry(opt_rel: Option<&RelativisticState>) -> Str
             if rel.total_redshift_z > 1e-7 || rel.beta_v_over_c > 0.001 {
                 let _ = write!(
                     out,
-                    "\nRelativity: z = {:.4e} | β = {:.2}% c",
+                    "\n▸ Relativity: z = {:.4e} | β = {:.2}% c",
                     rel.total_redshift_z,
                     rel.beta_v_over_c * 100.0
                 );
@@ -428,7 +446,7 @@ pub fn format_relativistic_telemetry(opt_rel: Option<&RelativisticState>) -> Str
             if rel.gw_luminosity_watts > 10.0 {
                 let _ = write!(
                     out,
-                    "\nGravitational Waves: {:.2e} W (f_GW: {:.2e} Hz | h: {:.1e}) | Inspiral: {:.2e} yr",
+                    "\n▸ Gravitational Waves: {:.2e} W (f_GW: {:.2e} Hz | h: {:.1e}) | Inspiral: {:.2e} yr",
                     rel.gw_luminosity_watts,
                     rel.gw_frequency_hz,
                     rel.gw_strain,

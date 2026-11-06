@@ -86,9 +86,9 @@ pub struct HudActionTooltipText;
 #[derive(Component)]
 pub struct HudToastText;
 
-/// Marker for the fixed bottom-right persistent simulation clock.
-#[derive(Component)]
-pub struct HudBottomTimerText;
+/// Marker for the persistent bottom-center simulation clock (`true` = compact pill, `false` = expanded dock).
+#[derive(Component, Default, Clone, Copy)]
+pub struct HudBottomTimerText(pub bool);
 
 /// Disjoint query bundle for all live on-screen text elements in the HUD.
 #[derive(SystemParam)]
@@ -152,7 +152,7 @@ pub struct HudTextQueries<'w, 's> {
     pub bottom_timer: Query<
         'w,
         's,
-        &'static mut Text,
+        (&'static mut Text, &'static HudBottomTimerText),
         (
             With<HudBottomTimerText>,
             Without<HudHeaderStatsText>,
@@ -192,6 +192,15 @@ pub struct QuickBarState {
     pub expanded_belts: BTreeSet<BeltZone>,
 }
 
+/// Active tab in the bottom-left Target Inspector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InspectorTab {
+    #[default]
+    Overview,
+    GeodynamicsBio,
+    RelativityFields,
+}
+
 /// Global visibility and panel collapse states for the HUD overlay.
 #[derive(Resource, Debug, Clone)]
 pub struct HudVisibilityState {
@@ -215,6 +224,8 @@ pub struct HudVisibilityState {
     pub bottom_center_minimized: bool,
     /// Whether the floating telemetry & climate graphing panel is collapsed.
     pub telemetry_minimized: bool,
+    /// Currently active tab in the bottom-left Target Inspector.
+    pub active_inspector_tab: InspectorTab,
 }
 
 impl Default for HudVisibilityState {
@@ -230,6 +241,7 @@ impl Default for HudVisibilityState {
             bottom_right_minimized: true,
             bottom_center_minimized: true,
             telemetry_minimized: true,
+            active_inspector_tab: InspectorTab::Overview,
         }
     }
 }
@@ -420,6 +432,10 @@ pub enum UiButtonAction {
     TimeSpeedRealtime,
     TimeSpeed1Min,
     TimeSpeed5Min,
+    TimeSpeed6Hr,
+    TimeSpeed12Hr,
+    TimeSpeed24Hr,
+    TimeSpeed72Hr,
     TimeSpeed1,
     TimeSpeed100,
     TimeSpeed10k,
@@ -558,19 +574,48 @@ pub enum UiButtonAction {
     // System Save / Load & Scenario Serializer
     QuickSave,
     QuickLoad,
+    // Inspector Tab Switching
+    SelectInspectorTab(InspectorTab),
 }
 
 impl UiButtonAction {
-    pub fn tooltip_description(&self) -> &'static str {
-        match self {
+    fn time_and_scenario_tooltip(&self) -> Option<&'static str> {
+        Some(match self {
             UiButtonAction::TimePause => "[Space]: Pause or resume continuous orbital physics flow.",
             UiButtonAction::TimeSpeedRealtime => "[1]: 1:1 Real-time progression (1s = 1s).",
             UiButtonAction::TimeSpeed1Min => "[9] or [S-1]: 1 second = 1 minute simulation time (60x real-time).",
             UiButtonAction::TimeSpeed5Min => "[0] or [S-2]: 1 second = 5 minutes simulation time (300x real-time).",
+            UiButtonAction::TimeSpeed6Hr => "[S-3]: 1 second = 6 hours simulation time (21,600x real-time).",
+            UiButtonAction::TimeSpeed12Hr => "[S-4]: 1 second = 12 hours simulation time (43,200x real-time).",
+            UiButtonAction::TimeSpeed24Hr => "[S-5]: 1 second = 24 hours / 1 day simulation time (86,400x real-time).",
+            UiButtonAction::TimeSpeed72Hr => "[S-6]: 1 second = 72 hours / 3 days simulation time (259,200x real-time).",
             UiButtonAction::TimeSpeed1 => "[2]: 1.0x Orbital flow speed (1s = 11.0 days).",
             UiButtonAction::TimeSpeed100 => "[4]: 100x Accelerated time progression (~3.0 yr/sec).",
             UiButtonAction::TimeSpeed10k => "[6]: 10,000x High-speed planetary accretion flow (~300 yr/sec).",
             UiButtonAction::TimeSpeed1M => "[8]: 1,000,000x Deep astronomical time-warp (~30 kyr/sec).",
+            UiButtonAction::LoadScenarioSolar => "[F1]: Reset to standard 4.5 Gyr Hayashi Solar Nebula MMSN with central protostar and 10 embryos.",
+            UiButtonAction::LoadScenarioGenesis => "[S-F1]: Load Protoplanetary Disk Genesis: SPH viscous gas, aerodynamic drag, snow line trap & organic planet formation.",
+            UiButtonAction::LoadScenarioTrappist => "[F2]: Load TRAPPIST-1 ultracool red dwarf system with 7 resonant Earths (3 in Habitable Zone).",
+            UiButtonAction::LoadScenarioKepler16 => "[F3]: Load Kepler-16 'Tatooine' circumbinary system with K/M binary star pair and giant planet.",
+            UiButtonAction::LoadScenarioHotJupiter => "[F4]: Load Hot Jupiter inward migration scenario (Type II disk migration from 5.2 AU -> 0.045 AU).",
+            UiButtonAction::LoadScenarioRoguePlanet => "[F5]: Load Rogue Planet Flyby scenario (Hyperbolic 3.5 M_Jup interloper scattering the solar system).",
+            UiButtonAction::LoadScenarioLittleRedDot => "[F6]: Load JWST Little Red Dot (100,000 M☉ Black Hole Star encased in 60 AU hydrogen cocoon).",
+            UiButtonAction::LoadScenarioPulsar => "[F7]: Load PSR B1257+12 (Millisecond pulsar Lich with 3 confirmed zombie exoplanets).",
+            UiButtonAction::LoadScenarioMagnetar => "[F9]: Load SGR 1806-20 (Ultra-magnetized 10¹⁵ G magnetar with starquake flares & companion).",
+            UiButtonAction::LoadScenarioRelativisticBinary => "[F10]: Load PSR B1913+16 Hulse-Taylor relativistic binary pulsar and gravitational waves.",
+            UiButtonAction::LoadScenarioKozaiTriple => "[F11]: Load HD 80606 Kozai-Lidov hierarchical triple secular resonance and tidal migration.",
+            UiButtonAction::LoadScenarioSagittariusAStar => "[F10]: Load Sagittarius A* supermassive black hole (4.3×10⁶ M☉) with relativistic S-star cluster.",
+            UiButtonAction::LoadScenarioMolecularCloud => "Load Giant Molecular Cloud (24 M☉) Jeans instability cluster collapse with 10 protostellar seeds.",
+            UiButtonAction::LoadScenarioGalacticCollision => "Load Milkomeda Galactic Collision: N-Body Galaxy merger with Dark Matter Halos and 200,000 stars.",
+            _ => return None,
+        })
+    }
+
+    pub fn tooltip_description(&self) -> &'static str {
+        if let Some(desc) = self.time_and_scenario_tooltip() {
+            return desc;
+        }
+        match self {
             UiButtonAction::SelectEntity(_) => "Focus and inspect this celestial body.",
             UiButtonAction::SelectStar => "Select the central star to inspect solar mass, temperature, and corona.",
             UiButtonAction::SelectMercury => "Select the innermost rocky terrestrial planet.",
@@ -632,24 +677,16 @@ impl UiButtonAction {
             UiButtonAction::CycleComposition => "[C]: Cycle composition between Rocky, Metallic, Icy, and Volatile.",
             UiButtonAction::BoostDeltaV => "[=]: Prograde orbital velocity acceleration boost.",
             UiButtonAction::BrakeDeltaV => "[-]: Retrograde orbital velocity braking burn.",
-            UiButtonAction::InjectEmbryo => {
-                "[M]: Trigger Theia-Earth Moon-forming giant impact / intercept trajectory."
-            }
+            UiButtonAction::InjectEmbryo => "[M]: Trigger Theia-Earth Moon-forming giant impact / intercept trajectory.",
             UiButtonAction::VaporizeBody => "[Del]: Shatter selected celestial body into dust & fragments.",
             UiButtonAction::FocusLock => "[F]: Focus & track camera onto selected celestial body.",
-            UiButtonAction::ToggleSurfaceHorizonCamera => {
-                "[Shift+V]: Toggle First-Person Rover / Planetary Surface Horizon Camera (WASD to drive, R-Drag to look 360°)."
-            }
-            UiButtonAction::ToggleInternalCutaway => {
-                "[Shift+X]: Toggle 3D internal planetary cutaway cross-section & core geodynamics."
-            }
+            UiButtonAction::ToggleSurfaceHorizonCamera => "[Shift+V]: Toggle First-Person Rover / Planetary Surface Horizon Camera (WASD to drive, R-Drag to look 360°).",
+            UiButtonAction::ToggleInternalCutaway => "[Shift+X]: Toggle 3D internal planetary cutaway cross-section & core geodynamics.",
             UiButtonAction::ResetView => "[R]: Reset camera to overview orientation.",
             UiButtonAction::DeselectBody => "[Esc]: Close inspector and clear selection.",
             UiButtonAction::FixOrbit => "[Z]: Circularize orbital eccentricity to 0.00.",
             UiButtonAction::IgniteStar => "[I]: Force instant core ignition / coronal solar blast.",
-            UiButtonAction::TriggerCoronalMassEjection => {
-                "[Shift+I]: Trigger extreme Coronal Mass Ejection (CME) flare & plasma shockwave."
-            }
+            UiButtonAction::TriggerCoronalMassEjection => "[Shift+I]: Trigger extreme Coronal Mass Ejection (CME) flare & plasma shockwave.",
             UiButtonAction::TriggerLhb => "[G]: Trigger 2:1 resonance migration & Late Heavy Bombardment.",
             UiButtonAction::ShatterIntoRings => "[X]: Tidally disrupt selected moon/body into glowing planetary rings.",
             UiButtonAction::SeedLife => "[E]: Seed primordial water oceans, atmosphere, and photosynthetic biosphere.",
@@ -665,20 +702,6 @@ impl UiButtonAction {
             UiButtonAction::TidalLock => "Synchronize planetary rotation with orbital period (1:1 lock) and align spin axis.",
             UiButtonAction::AccelerateInspiral => "Accelerate gravitational wave inspiral decay for selected compact binary pair.",
             UiButtonAction::StripAtmosphere => "Trigger extreme photoevaporative XUV burst to strip volatile envelope down to bare rocky core.",
-            UiButtonAction::LoadScenarioSolar => "[F1]: Reset to standard 4.5 Gyr Hayashi Solar Nebula MMSN with central protostar and 10 embryos.",
-            UiButtonAction::LoadScenarioGenesis => "[S-F1]: Load Protoplanetary Disk Genesis: SPH viscous gas, aerodynamic drag, snow line trap & organic planet formation.",
-            UiButtonAction::LoadScenarioTrappist => "[F2]: Load TRAPPIST-1 ultracool red dwarf system with 7 resonant Earths (3 in Habitable Zone).",
-            UiButtonAction::LoadScenarioKepler16 => "[F3]: Load Kepler-16 'Tatooine' circumbinary system with K/M binary star pair and giant planet.",
-            UiButtonAction::LoadScenarioHotJupiter => "[F4]: Load Hot Jupiter inward migration scenario (Type II disk migration from 5.2 AU -> 0.045 AU).",
-            UiButtonAction::LoadScenarioRoguePlanet => "[F5]: Load Rogue Planet Flyby scenario (Hyperbolic 3.5 M_Jup interloper scattering the solar system).",
-            UiButtonAction::LoadScenarioLittleRedDot => "[F6]: Load JWST Little Red Dot (100,000 M☉ Black Hole Star encased in 60 AU hydrogen cocoon).",
-            UiButtonAction::LoadScenarioPulsar => "[F7]: Load PSR B1257+12 (Millisecond pulsar Lich with 3 confirmed zombie exoplanets).",
-            UiButtonAction::LoadScenarioMagnetar => "[F9]: Load SGR 1806-20 (Ultra-magnetized 10¹⁵ G magnetar with starquake flares & companion).",
-            UiButtonAction::LoadScenarioRelativisticBinary => "[F10]: Load PSR B1913+16 Hulse-Taylor relativistic binary pulsar and gravitational waves.",
-            UiButtonAction::LoadScenarioKozaiTriple => "[F11]: Load HD 80606 Kozai-Lidov hierarchical triple secular resonance and tidal migration.",
-            UiButtonAction::LoadScenarioSagittariusAStar => "[F10]: Load Sagittarius A* supermassive black hole (4.3×10⁶ M☉) with relativistic S-star cluster.",
-            UiButtonAction::LoadScenarioMolecularCloud => "Load Giant Molecular Cloud (24 M☉) Jeans instability cluster collapse with 10 protostellar seeds.",
-            UiButtonAction::LoadScenarioGalacticCollision => "Load Milkomeda Galactic Collision: N-Body Galaxy merger with Dark Matter Halos and 200,000 stars.",
             UiButtonAction::ToggleSuperEddington => "[X]: Toggle Super-Eddington hyper-accretion onto the central black hole seed.",
             UiButtonAction::TriggerBlowoutCocoon => "[B]: Trigger radiation envelope blowout to unveil the naked Supermassive Quasar.",
             UiButtonAction::SpawnInfallPop3Star => "[T]: Spawn an infalling Population III hypergiant star to observe a Tidal Disruption Event (TDE).",
@@ -697,9 +720,15 @@ impl UiButtonAction {
             UiButtonAction::CycleSlingshotArchetype => "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue).",
             UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",
             UiButtonAction::QuickLoad => "[Shift+F12]: Quick Load saved solar system state from disk.",
+            UiButtonAction::SelectInspectorTab(tab) => match tab {
+                InspectorTab::Overview => "Switch to the Overview inspector tab (orbital parameters, mass, and bulk composition).",
+                InspectorTab::GeodynamicsBio => "Switch to Geodynamics & Biosphere tab (volcanism, tectonics, oceans, and terraforming).",
+                InspectorTab::RelativityFields => "Switch to Fields & Relativity tab (magnetic fields, general relativity, and high-energy physics).",
+            },
             UiButtonAction::AdvanceCivilization => "Advance civilization: spawns a high-tech biosphere and activates city lights on the night side.",
             UiButtonAction::LaunchProbe => "Launch a Space Probe: sends an Orbiter or Rover from a technologically advanced world (or star) to explore the selected target.",
             UiButtonAction::ToggleListSortMode => "Toggle whether the list of celestial bodies is sorted by distance from the central star or by descending mass.",
+            _ => "",
         }
     }
 }

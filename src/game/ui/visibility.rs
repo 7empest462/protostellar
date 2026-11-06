@@ -7,8 +7,8 @@ use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
     HrDiagramPanel, HrDiagramPanelState, HudDynamicText, HudPanelElement, HudVisibilityState,
-    InspectorExoticHeader, InspectorSection, PlanetBuilderPanel, PlanetBuilderState,
-    TelemetryGraphPanel, TelemetryPanelState, UiButtonAction,
+    InspectorExoticHeader, InspectorSection, InspectorTab, PlanetBuilderPanel, PlanetBuilderState,
+    QuickBarButtonBaseColor, TelemetryGraphPanel, TelemetryPanelState, UiButtonAction,
 };
 use crate::simulation::resources::{
     DiagnosticOverlayMode, HabitableZoneConfig, LagrangeOverlayConfig,
@@ -36,6 +36,15 @@ pub fn update_hud_visibility(
     mut text_query: Query<(&mut Text, &HudDynamicText)>,
     names_query: Query<&CelestialBody>,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
+    mut tab_buttons_query: Query<
+        (
+            &UiButtonAction,
+            &QuickBarButtonBaseColor,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<Button>,
+    >,
 ) {
     update_panel_nodes(
         &mut panel_nodes.p0(),
@@ -60,6 +69,32 @@ pub fn update_hud_visibility(
         opt_lagrange.as_deref(),
         opt_hz.as_deref(),
     );
+    update_inspector_tab_highlights(&mut tab_buttons_query, hud_visibility.active_inspector_tab);
+}
+
+fn update_inspector_tab_highlights(
+    tab_query: &mut Query<
+        (
+            &UiButtonAction,
+            &QuickBarButtonBaseColor,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<Button>,
+    >,
+    active_tab: InspectorTab,
+) {
+    for (action, base, mut bg, mut border) in tab_query.iter_mut() {
+        if let UiButtonAction::SelectInspectorTab(tab) = action {
+            if *tab == active_tab {
+                *bg = BackgroundColor(Color::srgba(0.08, 0.28, 0.42, 0.95));
+                *border = BorderColor::all(Color::srgb(0.3, 1.0, 1.0));
+            } else {
+                *bg = BackgroundColor(base.bg);
+                *border = BorderColor::all(base.border);
+            }
+        }
+    }
 }
 
 fn update_panel_nodes(
@@ -230,6 +265,7 @@ fn flex_or_none(visible: bool) -> Display {
 pub fn update_scenario_contextual_ui(
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     player_state: Res<PlayerInteractionState>,
+    opt_visibility: Option<Res<HudVisibilityState>>,
     target_query: Query<(
         &CelestialBody,
         Option<&CentralStar>,
@@ -257,17 +293,36 @@ pub fn update_scenario_contextual_ui(
 
     // 1. Synchronize inspector section containers
     for (section, mut node) in section_nodes.iter_mut() {
+        let matches_tab =
+            opt_visibility
+                .as_ref()
+                .is_none_or(|vis| match vis.active_inspector_tab {
+                    InspectorTab::Overview => matches!(
+                        section,
+                        InspectorSection::OrbitTracking | InspectorSection::MassComposition
+                    ),
+                    InspectorTab::GeodynamicsBio => matches!(
+                        section,
+                        InspectorSection::TerraformingBombardment
+                            | InspectorSection::Astrophysics
+                            | InspectorSection::HydrosphereBathymetry
+                    ),
+                    InspectorTab::RelativityFields => {
+                        matches!(section, InspectorSection::ExoticExperiments)
+                    }
+                });
+
         node.display = match section {
             InspectorSection::TerraformingBombardment | InspectorSection::HydrosphereBathymetry => {
                 // Targeted bombardment (Comet, Chondrite Asteroid, Volatile Salvo, Core Impactor)
                 // and hydrosphere bathymetry are universally available across all scenarios
                 // for planets, moons, embryos, planetesimals, and minor bodies (any non-star, non-probe body).
-                flex_or_none(!is_star_like && !is_probe)
+                flex_or_none(!is_star_like && !is_probe && matches_tab)
             }
             InspectorSection::ExoticExperiments
             | InspectorSection::OrbitTracking
             | InspectorSection::MassComposition
-            | InspectorSection::Astrophysics => flex_or_none(!is_probe),
+            | InspectorSection::Astrophysics => flex_or_none(!is_probe && matches_tab),
         };
     }
 

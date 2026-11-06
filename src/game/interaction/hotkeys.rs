@@ -10,6 +10,99 @@ use crate::simulation::resources::{
 };
 use crate::utils::constants::EARTH_MASS_SOLAR;
 
+#[allow(clippy::too_many_arguments, reason = "Modal mutual exclusion helper")]
+fn close_other_modals(
+    keep_open: crate::game::ui::ActiveModalKind,
+    builder: &mut crate::game::ui::PlanetBuilderState,
+    telemetry: &mut crate::game::ui::TelemetryPanelState,
+    trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
+    tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
+    campaign: Option<&mut crate::game::ui::types::CampaignPanelState>,
+    hazards: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
+    scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
+    hr_diagram: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
+    visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+) -> bool {
+    let mut states = crate::game::ui::ModalPanelStates {
+        builder: Some(builder),
+        telemetry: Some(telemetry),
+        trophies,
+        tech_tree,
+        campaign,
+        hazards,
+        scrubber,
+        hr_diagram,
+        visibility,
+    };
+    states.close_conflicting_modals(keep_open)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Escape key priority stack helper"
+)]
+fn handle_escape_priority_stack(
+    camera_query: &mut Query<(&Transform, &mut PanOrbitCamera)>,
+    player_state: &mut PlayerInteractionState,
+    builder: &mut crate::game::ui::PlanetBuilderState,
+    telemetry: &mut crate::game::ui::TelemetryPanelState,
+    trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
+    tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
+    campaign: Option<&mut crate::game::ui::types::CampaignPanelState>,
+    hazards: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
+    scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
+    hr_diagram: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
+    visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    // Priority 1: If Surface Horizon Mode is active on any camera, exit surface mode back to orbital view
+    let mut surface_mode_exited = false;
+    for (_, mut cam) in camera_query.iter_mut() {
+        if cam.surface_horizon_mode {
+            cam.surface_horizon_mode = false;
+            surface_mode_exited = true;
+        }
+    }
+    if surface_mode_exited {
+        toast.message = "🛰️ Returned to 3D Orbital Camera View [Esc]".to_string();
+        toast.timer = 2.5;
+        return;
+    }
+
+    // Priority 2: If any floating modal or drawer is open, close them first without deselecting active body
+    if close_other_modals(
+        crate::game::ui::ActiveModalKind::None,
+        builder,
+        telemetry,
+        trophies,
+        tech_tree,
+        campaign,
+        hazards,
+        scrubber,
+        hr_diagram,
+        visibility,
+    ) {
+        toast.message = "✕ Closed Drawer / Modal Window [Esc]".to_string();
+        toast.timer = 2.5;
+        return;
+    }
+
+    // Priority 3: Only if no modals or surface views are active, deselect celestial body and clear camera focus target
+    if player_state.selected_entity.is_some() {
+        player_state.selected_entity = None;
+        for (_, mut cam) in camera_query.iter_mut() {
+            cam.target_entity = None;
+            cam.target_focus = Vec3::ZERO;
+        }
+        toast.message = "Target Deselected [Esc]".to_string();
+        toast.timer = 2.0;
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Hotkey dispatch system parameters"
+)]
 pub fn handle_viewport_and_tool_hotkeys(
     keyboard: &ButtonInput<KeyCode>,
     config: &mut SimulationConfig,
@@ -17,17 +110,19 @@ pub fn handle_viewport_and_tool_hotkeys(
     builder_state: &mut crate::game::ui::PlanetBuilderState,
     telemetry_state: &mut crate::game::ui::TelemetryPanelState,
     mut opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
-    opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
-    opt_campaign_panel: Option<&mut crate::game::ui::types::CampaignPanelState>,
-    opt_hazards_panel: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
+    mut opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
+    mut opt_campaign_panel: Option<&mut crate::game::ui::types::CampaignPanelState>,
+    mut opt_hazards_panel: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
     opt_hazard_mgr: Option<&mut crate::simulation::events::CosmicEventManager>,
-    opt_hr_state: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
+    mut opt_hr_state: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
     opt_lagrange: Option<&mut crate::simulation::resources::LagrangeOverlayConfig>,
     opt_hz: Option<&mut crate::simulation::resources::HabitableZoneConfig>,
     toast: &mut crate::game::ui::NotificationToast,
-    camera_query: &Query<(&Transform, &mut PanOrbitCamera)>,
+    camera_query: &mut Query<(&Transform, &mut PanOrbitCamera)>,
     mut opt_predictor: Option<&mut crate::simulation::predictor::TrajectoryPredictorState>,
     is_star_selected: bool,
+    mut opt_trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
+    mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyN) && !is_star_selected {
         if let Some(ref mut predictor) = opt_predictor {
@@ -40,8 +135,106 @@ pub fn handle_viewport_and_tool_hotkeys(
             toast.timer = 2.5;
         }
     }
+    handle_modal_toggle_hotkeys(
+        keyboard,
+        builder_state,
+        telemetry_state,
+        opt_scrubber.as_deref_mut(),
+        opt_trophies.as_deref_mut(),
+        opt_tech_tree.as_deref_mut(),
+        opt_campaign_panel.as_deref_mut(),
+        opt_hazards_panel.as_deref_mut(),
+        opt_hr_state.as_deref_mut(),
+        opt_visibility.as_deref_mut(),
+        toast,
+    );
+    if keyboard.just_pressed(KeyCode::Comma) {
+        config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
+        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
+    }
+    if keyboard.just_pressed(KeyCode::Period) {
+        config.size_exaggeration = (config.size_exaggeration * 1.4).min(20.0);
+        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
+    }
+    if keyboard.just_pressed(KeyCode::Escape) {
+        handle_escape_priority_stack(
+            camera_query,
+            player_state,
+            builder_state,
+            telemetry_state,
+            opt_trophies.as_deref_mut(),
+            opt_tech_tree.as_deref_mut(),
+            opt_campaign_panel.as_deref_mut(),
+            opt_hazards_panel.as_deref_mut(),
+            opt_scrubber.as_deref_mut(),
+            opt_hr_state.as_deref_mut(),
+            opt_visibility.as_deref_mut(),
+            toast,
+        );
+    }
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    if is_shift {
+        if keyboard.just_pressed(KeyCode::KeyX) {
+            player_state.cutaway_mode = !player_state.cutaway_mode;
+            toast.message = if player_state.cutaway_mode {
+                "🔬 3D Planetary Cutaway: ENABLED [Shift-X] (Core Cross-Section Active)".to_string()
+            } else {
+                "🔬 3D Planetary Cutaway: DISABLED [Shift-X] (Surface Restored)".to_string()
+            };
+            toast.timer = 2.5;
+        } else {
+            handle_shift_tool_hotkeys(
+                keyboard,
+                builder_state,
+                telemetry_state,
+                opt_scrubber,
+                opt_tech_tree,
+                opt_campaign_panel,
+                opt_hazards_panel,
+                opt_hazard_mgr,
+                opt_lagrange,
+                opt_hr_state,
+                opt_hz,
+                opt_trophies,
+                opt_visibility,
+                toast,
+            );
+        }
+    } else {
+        handle_overlay_and_tool_hotkeys(keyboard, player_state, camera_query, toast);
+    }
+}
+
+#[allow(clippy::too_many_arguments, reason = "Modal toggle hotkey helper")]
+fn handle_modal_toggle_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    builder_state: &mut crate::game::ui::PlanetBuilderState,
+    telemetry_state: &mut crate::game::ui::TelemetryPanelState,
+    mut opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
+    mut opt_trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
+    mut opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
+    mut opt_campaign_panel: Option<&mut crate::game::ui::types::CampaignPanelState>,
+    mut opt_hazards_panel: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
+    mut opt_hr_state: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
+    mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
     if keyboard.just_pressed(KeyCode::KeyP) {
         builder_state.is_open = !builder_state.is_open;
+        if builder_state.is_open {
+            close_other_modals(
+                crate::game::ui::ActiveModalKind::PlanetBuilder,
+                builder_state,
+                telemetry_state,
+                opt_trophies.as_deref_mut(),
+                opt_tech_tree.as_deref_mut(),
+                opt_campaign_panel.as_deref_mut(),
+                opt_hazards_panel.as_deref_mut(),
+                opt_scrubber.as_deref_mut(),
+                opt_hr_state.as_deref_mut(),
+                opt_visibility.as_deref_mut(),
+            );
+        }
         toast.message = if builder_state.is_open {
             "🛠️ Planet Builder & Spawner Opened [P]".to_string()
         } else {
@@ -52,6 +245,20 @@ pub fn handle_viewport_and_tool_hotkeys(
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if keyboard.just_pressed(KeyCode::F10) && !is_shift {
         telemetry_state.is_open = !telemetry_state.is_open;
+        if telemetry_state.is_open {
+            close_other_modals(
+                crate::game::ui::ActiveModalKind::Telemetry,
+                builder_state,
+                telemetry_state,
+                opt_trophies.as_deref_mut(),
+                opt_tech_tree.as_deref_mut(),
+                opt_campaign_panel.as_deref_mut(),
+                opt_hazards_panel.as_deref_mut(),
+                opt_scrubber.as_deref_mut(),
+                opt_hr_state.as_deref_mut(),
+                opt_visibility.as_deref_mut(),
+            );
+        }
         toast.message = if telemetry_state.is_open {
             "📈 Telemetry & Habitability Graph Opened [F10]".to_string()
         } else {
@@ -62,6 +269,20 @@ pub fn handle_viewport_and_tool_hotkeys(
     if keyboard.just_pressed(KeyCode::F11) && !is_shift {
         if let Some(ref mut scrubber) = opt_scrubber {
             scrubber.is_open = !scrubber.is_open;
+            if scrubber.is_open {
+                close_other_modals(
+                    crate::game::ui::ActiveModalKind::EpochScrubber,
+                    builder_state,
+                    telemetry_state,
+                    opt_trophies,
+                    opt_tech_tree,
+                    opt_campaign_panel,
+                    opt_hazards_panel,
+                    Some(scrubber),
+                    opt_hr_state,
+                    opt_visibility,
+                );
+            }
             toast.message = if scrubber.is_open {
                 "⏳ Geological Epoch Scrubber Opened [F11]".to_string()
             } else {
@@ -70,34 +291,19 @@ pub fn handle_viewport_and_tool_hotkeys(
             toast.timer = 2.5;
         }
     }
-    if keyboard.just_pressed(KeyCode::Comma) {
-        config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
-        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
-    }
-    if keyboard.just_pressed(KeyCode::Period) {
-        config.size_exaggeration = (config.size_exaggeration * 1.4).min(20.0);
-        info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
-    }
-    if keyboard.just_pressed(KeyCode::Escape) {
-        player_state.selected_entity = None;
-    }
-    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-    if !is_shift && keyboard.just_pressed(KeyCode::KeyV) {
+}
+
+fn handle_overlay_and_tool_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &Query<(&Transform, &mut PanOrbitCamera)>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyV) {
         player_state.overlay_mode = player_state.overlay_mode.cycle();
-    }
-    if is_shift && keyboard.just_pressed(KeyCode::KeyX) {
-        player_state.cutaway_mode = !player_state.cutaway_mode;
-        toast.message = if player_state.cutaway_mode {
-            "🔬 3D Planetary Cutaway: ENABLED [Shift-X] (Core Cross-Section Active)".to_string()
-        } else {
-            "🔬 3D Planetary Cutaway: DISABLED [Shift-X] (Surface Restored)".to_string()
-        };
-        toast.timer = 2.5;
     }
     if keyboard.just_pressed(KeyCode::KeyY) {
         player_state.orbit_mode = player_state.orbit_mode.cycle();
-        // If the player toggles to cinematic/Hidden orbit mode, also hide
-        // diagnostic overlays for a clean view.
         if player_state.orbit_mode == OrbitVisualizationMode::Off {
             player_state.overlay_mode = DiagnosticOverlayMode::Hidden;
         }
@@ -113,19 +319,7 @@ pub fn handle_viewport_and_tool_hotkeys(
         };
         toast.timer = 2.5;
     }
-    if is_shift {
-        handle_shift_tool_hotkeys(
-            keyboard,
-            opt_tech_tree,
-            opt_campaign_panel,
-            opt_hazards_panel,
-            opt_hazard_mgr,
-            opt_lagrange,
-            opt_hr_state,
-            opt_hz,
-            toast,
-        );
-    } else if keyboard.just_pressed(KeyCode::KeyT) {
+    if keyboard.just_pressed(KeyCode::KeyT) {
         if player_state.active_tool == PlayerTool::GravitationalTractor {
             player_state.active_tool = PlayerTool::Inspect;
             player_state.tractor_position = None;
@@ -148,6 +342,9 @@ pub fn handle_viewport_and_tool_hotkeys(
 #[allow(clippy::too_many_arguments, reason = "Shift-tool hotkey dispatch")]
 fn handle_shift_tool_hotkeys(
     keyboard: &ButtonInput<KeyCode>,
+    builder: &mut crate::game::ui::PlanetBuilderState,
+    telemetry: &mut crate::game::ui::TelemetryPanelState,
+    mut opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     mut opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
     mut opt_campaign_panel: Option<&mut crate::game::ui::types::CampaignPanelState>,
     mut opt_hazards_panel: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
@@ -155,11 +352,27 @@ fn handle_shift_tool_hotkeys(
     mut opt_lagrange: Option<&mut crate::simulation::resources::LagrangeOverlayConfig>,
     mut opt_hr_state: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
     mut opt_hz: Option<&mut crate::simulation::resources::HabitableZoneConfig>,
+    mut opt_trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
+    mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
     if keyboard.just_pressed(KeyCode::KeyT) {
         if let Some(ref mut tech_state) = opt_tech_tree {
             tech_state.is_open = !tech_state.is_open;
+            if tech_state.is_open {
+                close_other_modals(
+                    crate::game::ui::ActiveModalKind::TechTree,
+                    builder,
+                    telemetry,
+                    opt_trophies.as_deref_mut(),
+                    Some(tech_state),
+                    opt_campaign_panel.as_deref_mut(),
+                    opt_hazards_panel.as_deref_mut(),
+                    opt_scrubber.as_deref_mut(),
+                    opt_hr_state.as_deref_mut(),
+                    opt_visibility.as_deref_mut(),
+                );
+            }
             toast.message = if tech_state.is_open {
                 "🔬 Science & Technology Tree Opened [Shift-T]".to_string()
             } else {
@@ -170,6 +383,20 @@ fn handle_shift_tool_hotkeys(
     } else if keyboard.just_pressed(KeyCode::KeyM) {
         if let Some(ref mut campaign_panel) = opt_campaign_panel {
             campaign_panel.is_open = !campaign_panel.is_open;
+            if campaign_panel.is_open {
+                close_other_modals(
+                    crate::game::ui::ActiveModalKind::Campaign,
+                    builder,
+                    telemetry,
+                    opt_trophies.as_deref_mut(),
+                    opt_tech_tree.as_deref_mut(),
+                    Some(campaign_panel),
+                    opt_hazards_panel.as_deref_mut(),
+                    opt_scrubber.as_deref_mut(),
+                    opt_hr_state.as_deref_mut(),
+                    opt_visibility.as_deref_mut(),
+                );
+            }
             toast.message = if campaign_panel.is_open {
                 "🎯 Campaign & Scenario Challenges Opened [Shift-M]".to_string()
             } else {
@@ -180,6 +407,20 @@ fn handle_shift_tool_hotkeys(
     } else if keyboard.just_pressed(KeyCode::KeyH) {
         if let Some(ref mut hazards_panel) = opt_hazards_panel {
             hazards_panel.is_open = !hazards_panel.is_open;
+            if hazards_panel.is_open {
+                close_other_modals(
+                    crate::game::ui::ActiveModalKind::Hazards,
+                    builder,
+                    telemetry,
+                    opt_trophies.as_deref_mut(),
+                    opt_tech_tree.as_deref_mut(),
+                    opt_campaign_panel.as_deref_mut(),
+                    Some(hazards_panel),
+                    opt_scrubber.as_deref_mut(),
+                    opt_hr_state.as_deref_mut(),
+                    opt_visibility.as_deref_mut(),
+                );
+            }
             toast.message = if hazards_panel.is_open {
                 "⚡ Cosmic Hazards & Sensory Lab Opened [Shift-H]".to_string()
             } else {
@@ -209,6 +450,20 @@ fn handle_shift_tool_hotkeys(
     } else if keyboard.just_pressed(KeyCode::KeyR) {
         if let Some(ref mut hr) = opt_hr_state {
             hr.is_open = !hr.is_open;
+            if hr.is_open {
+                close_other_modals(
+                    crate::game::ui::ActiveModalKind::HrDiagram,
+                    builder,
+                    telemetry,
+                    opt_trophies,
+                    opt_tech_tree,
+                    opt_campaign_panel,
+                    opt_hazards_panel,
+                    opt_scrubber,
+                    Some(hr),
+                    opt_visibility,
+                );
+            }
             toast.message = if hr.is_open {
                 "🌟 Hertzsprung–Russell Stellar Diagram Opened [Shift-R]".to_string()
             } else {

@@ -3,76 +3,69 @@
 use super::super::types::*;
 use crate::simulation::resources::*;
 
+fn resolve_time_speed_preset(action: &UiButtonAction) -> Option<(f64, &'static str)> {
+    match action {
+        UiButtonAction::TimeSpeedRealtime => {
+            Some((TimeWarp::SPEED_REAL_TIME, "▶ Speed: Real-time (1s = 1.0s)"))
+        }
+        UiButtonAction::TimeSpeed1Min => Some((
+            TimeWarp::SPEED_1_MINUTE,
+            "▶ Speed: 1s = 1 min (60x Real-time)",
+        )),
+        UiButtonAction::TimeSpeed5Min => Some((
+            TimeWarp::SPEED_5_MINUTES,
+            "▶ Speed: 1s = 5 min (300x Real-time)",
+        )),
+        UiButtonAction::TimeSpeed6Hr => Some((
+            TimeWarp::SPEED_6_HOURS,
+            "▶ Speed: 1s = 6 hr (21,600x Real-time)",
+        )),
+        UiButtonAction::TimeSpeed12Hr => Some((
+            TimeWarp::SPEED_12_HOURS,
+            "▶ Speed: 1s = 12 hr (43,200x Real-time)",
+        )),
+        UiButtonAction::TimeSpeed24Hr => {
+            Some((TimeWarp::SPEED_24_HOURS, "▶ Speed: 1s = 24 hr (1 day/s)"))
+        }
+        UiButtonAction::TimeSpeed72Hr => {
+            Some((TimeWarp::SPEED_72_HOURS, "▶ Speed: 1s = 72 hr (3 days/s)"))
+        }
+        UiButtonAction::TimeSpeed1 => Some((1.0, "▶ Speed: 1.0x (1s = 11.0 days)")),
+        UiButtonAction::TimeSpeed100 => Some((100.0, "⏩ Speed: 100x (1s = 3.0 yr)")),
+        UiButtonAction::TimeSpeed10k => Some((10_000.0, "⚡ Speed: 10,000x (1s = 300 yr)")),
+        UiButtonAction::TimeSpeed1M => Some((1_000_000.0, "🚀 Speed: 1,000,000x (1s = 30.0k yr)")),
+        _ => None,
+    }
+}
+
 pub fn handle_time_action(
     action: &UiButtonAction,
     time_warp: &mut TimeWarp,
     toast: &mut NotificationToast,
 ) -> bool {
-    match action {
-        UiButtonAction::TimePause => {
-            time_warp.is_paused = !time_warp.is_paused;
-            toast.message = if time_warp.is_paused {
-                "⏸ Simulation Paused".to_string()
-            } else {
-                format!(
-                    "▶ Simulation Resumed ({})",
-                    time_warp.human_readable_speed()
-                )
-            };
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeedRealtime => {
-            time_warp.multiplier = TimeWarp::SPEED_REAL_TIME;
-            time_warp.is_paused = false;
-            toast.message = "▶ Speed: Real-time (1s = 1.0s)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeed1Min => {
-            time_warp.multiplier = TimeWarp::SPEED_1_MINUTE;
-            time_warp.is_paused = false;
-            toast.message = "▶ Speed: 1s = 1 min (60x Real-time)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeed5Min => {
-            time_warp.multiplier = TimeWarp::SPEED_5_MINUTES;
-            time_warp.is_paused = false;
-            toast.message = "▶ Speed: 1s = 5 min (300x Real-time)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeed1 => {
-            time_warp.multiplier = 1.0;
-            time_warp.is_paused = false;
-            toast.message = "▶ Speed: 1.0x (1s = 11.0 days)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeed100 => {
-            time_warp.multiplier = 100.0;
-            time_warp.is_paused = false;
-            toast.message = "⏩ Speed: 100x (1s = 3.0 yr)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeed10k => {
-            time_warp.multiplier = 10_000.0;
-            time_warp.is_paused = false;
-            toast.message = "⚡ Speed: 10,000x (1s = 300 yr)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        UiButtonAction::TimeSpeed1M => {
-            time_warp.multiplier = 1_000_000.0;
-            time_warp.is_paused = false;
-            toast.message = "🚀 Speed: 1,000,000x (1s = 30.0k yr)".to_string();
-            toast.timer = 3.5;
-            true
-        }
-        _ => false,
+    if *action == UiButtonAction::TimePause {
+        time_warp.is_paused = !time_warp.is_paused;
+        toast.message = if time_warp.is_paused {
+            "⏸ Simulation Paused".to_string()
+        } else {
+            format!(
+                "▶ Simulation Resumed ({})",
+                time_warp.human_readable_speed()
+            )
+        };
+        toast.timer = 3.5;
+        return true;
     }
+
+    if let Some((multiplier, msg)) = resolve_time_speed_preset(action) {
+        time_warp.multiplier = multiplier;
+        time_warp.is_paused = false;
+        toast.message = msg.to_string();
+        toast.timer = 3.5;
+        return true;
+    }
+
+    false
 }
 
 pub fn handle_panel_toggle_action(
@@ -129,6 +122,10 @@ pub fn handle_panel_toggle_action(
         }
         UiButtonAction::ToggleMinimizeTelemetryPanel => {
             hud_visibility.telemetry_minimized = !hud_visibility.telemetry_minimized;
+            true
+        }
+        UiButtonAction::SelectInspectorTab(tab) => {
+            hud_visibility.active_inspector_tab = *tab;
             true
         }
         _ => false,

@@ -8,9 +8,9 @@ use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::{DiskParameters, PlayerInteractionState};
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
 
 pub fn compute_builder_spawn_coords(
     builder_state: &PlanetBuilderState,
@@ -24,9 +24,9 @@ pub fn compute_builder_spawn_coords(
         let vel = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
         (custom_pos, vel)
     } else {
-        let mut rng = rand::rng();
+        let mut rng = fastrand::Rng::new();
         let a = builder_state.semi_major_axis_au.max(0.1);
-        let angle: f64 = rng.random_range(0.0..(2.0 * std::f64::consts::PI));
+        let angle: f64 = rng.f64_range(0.0, 2.0 * std::f64::consts::PI);
         let pos = DVec3::new(a * angle.cos(), 0.0, a * angle.sin());
         let v_circ = (G_ASTRO * star_mass / a).sqrt();
         let vel = DVec3::new(-v_circ * angle.sin(), 0.0, v_circ * angle.cos());

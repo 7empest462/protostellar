@@ -9,7 +9,6 @@ pub use stellar::*;
 pub use terraforming_actions::*;
 
 use bevy::prelude::*;
-use rand::prelude::*;
 
 use crate::game::ui::types::*;
 use crate::rendering::camera::PanOrbitCamera;
@@ -30,7 +29,6 @@ pub fn handle_body_editor_action(
     lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
-    _rng: &mut impl Rng,
 ) -> bool {
     if handle_mass_change(action, selected_query, player_state, toast) {
         return true;

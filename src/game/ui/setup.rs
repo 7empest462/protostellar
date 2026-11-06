@@ -714,12 +714,13 @@ fn spawn_bottom_center_pill(center_dock: &mut ChildSpawnerCommands) {
         ))
         .with_children(|pill| {
             pill.spawn((
-                Text::new("⏱️ Time Controls ▲"),
+                Text::new("⏱️ 0y 00m 00d | 00h 00m 00s  [Time Controls] ▲"),
                 TextFont {
-                    font_size: FontSize::Px(10.0),
+                    font_size: FontSize::Px(10.5),
                     ..default()
                 },
-                TextColor(Color::srgb(0.9, 0.85, 0.4)),
+                TextColor(Color::srgb(0.95, 0.88, 0.45)),
+                HudBottomTimerText(true),
                 Pickable::IGNORE,
             ));
         });
@@ -754,13 +755,13 @@ fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
                 })
                 .with_children(|hdr| {
                     hdr.spawn((
-                        Text::new("T+ 0.00 yr | PAUSED"),
+                        Text::new("⏱️ CLOCK: 0y 00m 00d | 00h 00m 00s | PAUSED"),
                         TextFont {
-                            font_size: FontSize::Px(12.5),
+                            font_size: FontSize::Px(12.0),
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.92, 0.4)),
-                        HudBottomTimerText,
+                        HudBottomTimerText(false),
                     ));
                     create_compact_button(
                         hdr,
@@ -774,66 +775,90 @@ fn spawn_time_controls_dock(center_dock: &mut ChildSpawnerCommands) {
             time_box
                 .spawn(Node {
                     flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    row_gap: Val::Px(2.0),
                     margin: UiRect::top(Val::Px(3.0)),
                     ..default()
                 })
                 .with_children(|speed_row| {
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimePause,
-                        "Pause [Space]",
-                        Color::srgba(0.24, 0.08, 0.08, 0.9),
-                        Color::srgb(1.0, 0.4, 0.4),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeedRealtime,
-                        "Real [1]",
-                        Color::srgba(0.08, 0.20, 0.16, 0.9),
-                        Color::srgb(0.4, 1.0, 0.7),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeed1Min,
-                        "1m [9]",
-                        Color::srgba(0.08, 0.20, 0.22, 0.9),
-                        Color::srgb(0.35, 0.95, 0.85),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeed5Min,
-                        "5m [0]",
-                        Color::srgba(0.08, 0.18, 0.24, 0.9),
-                        Color::srgb(0.4, 0.9, 0.95),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeed1,
-                        "11d [2]",
-                        Color::srgba(0.08, 0.16, 0.24, 0.9),
-                        Color::srgb(0.4, 0.8, 1.0),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeed100,
-                        "100x [4]",
-                        Color::srgba(0.08, 0.16, 0.24, 0.9),
-                        Color::srgb(0.4, 0.8, 1.0),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeed10k,
-                        "10k [6]",
-                        Color::srgba(0.12, 0.18, 0.28, 0.9),
-                        Color::srgb(0.5, 0.85, 1.0),
-                    );
-                    create_compact_button(
-                        speed_row,
-                        UiButtonAction::TimeSpeed1M,
-                        "1M [8]",
-                        Color::srgba(0.18, 0.14, 0.32, 0.9),
-                        Color::srgb(0.7, 0.6, 1.0),
-                    );
+                    let buttons = [
+                        (
+                            UiButtonAction::TimePause,
+                            "Pause [Space]",
+                            Color::srgba(0.24, 0.08, 0.08, 0.9),
+                            Color::srgb(1.0, 0.4, 0.4),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeedRealtime,
+                            "Real [1]",
+                            Color::srgba(0.08, 0.20, 0.16, 0.9),
+                            Color::srgb(0.4, 1.0, 0.7),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed1Min,
+                            "1m [9]",
+                            Color::srgba(0.08, 0.20, 0.22, 0.9),
+                            Color::srgb(0.35, 0.95, 0.85),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed5Min,
+                            "5m [0]",
+                            Color::srgba(0.08, 0.18, 0.24, 0.9),
+                            Color::srgb(0.4, 0.9, 0.95),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed6Hr,
+                            "6h [S-3]",
+                            Color::srgba(0.08, 0.18, 0.25, 0.9),
+                            Color::srgb(0.42, 0.88, 0.98),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed12Hr,
+                            "12h [S-4]",
+                            Color::srgba(0.08, 0.17, 0.25, 0.9),
+                            Color::srgb(0.44, 0.86, 0.98),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed24Hr,
+                            "24h [S-5]",
+                            Color::srgba(0.08, 0.17, 0.26, 0.9),
+                            Color::srgb(0.46, 0.84, 1.0),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed72Hr,
+                            "72h [S-6]",
+                            Color::srgba(0.08, 0.16, 0.26, 0.9),
+                            Color::srgb(0.48, 0.82, 1.0),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed1,
+                            "11d [2]",
+                            Color::srgba(0.08, 0.16, 0.24, 0.9),
+                            Color::srgb(0.4, 0.8, 1.0),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed100,
+                            "100x [4]",
+                            Color::srgba(0.08, 0.16, 0.24, 0.9),
+                            Color::srgb(0.4, 0.8, 1.0),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed10k,
+                            "10k [6]",
+                            Color::srgba(0.12, 0.18, 0.28, 0.9),
+                            Color::srgb(0.5, 0.85, 1.0),
+                        ),
+                        (
+                            UiButtonAction::TimeSpeed1M,
+                            "1M [8]",
+                            Color::srgba(0.18, 0.14, 0.32, 0.9),
+                            Color::srgb(0.7, 0.6, 1.0),
+                        ),
+                    ];
+                    for (action, label, bg, fg) in buttons {
+                        create_compact_button(speed_row, action, label, bg, fg);
+                    }
                 });
         });
 }

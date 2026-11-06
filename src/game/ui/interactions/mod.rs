@@ -89,6 +89,26 @@ fn handle_hover_interaction(
     }
 }
 
+fn enforce_modal_exclusion_for_action(
+    action: &UiButtonAction,
+    core: &mut UiCoreState,
+    optional: &mut UiOptionalState,
+    campaign: &mut UiCampaignParams,
+) {
+    let mut states = crate::game::ui::ModalPanelStates {
+        builder: Some(&mut core.builder_state),
+        telemetry: Some(&mut core.telemetry_panel_state),
+        trophies: Some(&mut core.trophies_panel_state),
+        tech_tree: optional.tech_tree.as_deref_mut(),
+        campaign: campaign.panel.as_deref_mut(),
+        hazards: optional.hazards_panel.as_deref_mut(),
+        scrubber: optional.scrubber.as_deref_mut(),
+        hr_diagram: optional.hr_diagram.as_deref_mut(),
+        visibility: Some(&mut core.hud_visibility),
+    };
+    states.enforce_mutual_exclusion_for_action(action);
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Dispatches pressed button action across subsystem handlers"
@@ -110,7 +130,6 @@ fn dispatch_pressed_button_action(
     lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
-    rng: &mut rand::rngs::ThreadRng,
 ) {
     if dispatch_system_and_tool_actions(
         action,
@@ -133,6 +152,7 @@ fn dispatch_pressed_button_action(
         optional.hz_config.as_deref_mut(),
         &mut core.toast,
     ) {
+        enforce_modal_exclusion_for_action(action, core, optional, campaign);
         return;
     }
     if handle_campaign_action(
@@ -143,6 +163,7 @@ fn dispatch_pressed_button_action(
         optional.science.as_deref_mut(),
         &mut core.toast,
     ) {
+        enforce_modal_exclusion_for_action(action, core, optional, campaign);
         return;
     }
     if handle_hazard_action(
@@ -151,6 +172,7 @@ fn dispatch_pressed_button_action(
         optional.hazard_mgr.as_deref_mut(),
         &mut core.toast,
     ) {
+        enforce_modal_exclusion_for_action(action, core, optional, campaign);
         return;
     }
     if handle_selection_action(
@@ -174,6 +196,7 @@ fn dispatch_pressed_button_action(
         selected_query,
         commands,
     ) {
+        enforce_modal_exclusion_for_action(action, core, optional, campaign);
         return;
     }
     if handle_scenario_action(
@@ -200,7 +223,6 @@ fn dispatch_pressed_button_action(
         lhb_state,
         theia_state,
         sim_time_years,
-        rng,
     );
 }
 
@@ -240,7 +262,6 @@ pub fn handle_ui_button_interactions(
     mut optional: UiOptionalState,
     mut campaign: UiCampaignParams,
 ) {
-    let mut rng = rand::rng();
     let star_mass = disk_params.central_star_mass;
 
     for (interaction, action, mut bg_color, mut border_color, opt_base) in
@@ -255,8 +276,16 @@ pub fn handle_ui_button_interactions(
         );
 
         if *interaction == Interaction::None {
-            if let Some(base) = opt_base {
-                *bg_color = BackgroundColor(base.bg);
+            let is_active_selectable = match action {
+                UiButtonAction::SelectInspectorTab(tab) => {
+                    *tab == core.hud_visibility.active_inspector_tab
+                }
+                _ => false,
+            };
+            if !is_active_selectable {
+                if let Some(base) = opt_base {
+                    *bg_color = BackgroundColor(base.bg);
+                }
             }
         }
 
@@ -281,7 +310,6 @@ pub fn handle_ui_button_interactions(
                 &mut lhb_state,
                 theia_state.as_deref_mut(),
                 sim_time.elapsed_years,
-                &mut rng,
             );
         }
     }

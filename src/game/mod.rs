@@ -39,7 +39,7 @@ impl Plugin for GamePlugin {
                 (
                     monitor_phase_transitions,
                     handle_time_control_input,
-                    handle_player_tools,
+                    handle_player_tools.before(crate::rendering::camera::update_pan_orbit_camera),
                     handle_planet_builder_click_spawn,
                     handle_slingshot_input,
                     handle_ui_button_interactions

@@ -12,6 +12,7 @@ pub mod hover_card;
 pub mod hr_diagram_panel;
 pub mod inspector_panel;
 pub mod interactions;
+pub mod modal_manager;
 pub mod navigation_panel;
 pub mod presets_panel;
 pub mod sci_fi_theme;
@@ -42,6 +43,7 @@ pub use hr_diagram_panel::{
 };
 pub use inspector_panel::{format_composition_water_ice, spawn_bottom_left_inspector_panel};
 pub use interactions::handle_ui_button_interactions;
+pub use modal_manager::{close_conflicting_modals, ActiveModalKind, ModalPanelStates};
 pub use navigation_panel::spawn_bottom_right_controls_panel;
 pub use presets_panel::{spawn_scenario_presets_panel, spawn_scenario_presets_pill};
 pub use sci_fi_theme::{SciFiPanelMaterial, SciFiUiThemePlugin};

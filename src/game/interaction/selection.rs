@@ -51,20 +51,51 @@ pub fn handle_tab_selection(
     let Some(target) = worlds.get(next_idx) else {
         return;
     };
+    let star_count = worlds
+        .iter()
+        .filter(|w| w.is_central_star || w.body_type.is_star_or_remnant())
+        .count();
+    let min_orbit_r = if star_count == 1 {
+        let min_d = worlds
+            .iter()
+            .map(|w| w.distance_au as f32)
+            .filter(|&d| d > 0.001)
+            .fold(f32::MAX, f32::min);
+        if min_d < f32::MAX {
+            min_d
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+
     player_state.selected_entity = Some(target.entity);
     if let Ok((_, mut cam)) = camera_query.single_mut() {
-        cam.surface_horizon_mode = false;
-        cam.target_entity = Some(target.entity);
-        let visual_r = config.calc_visual_radius_for_type(target.radius_au, target.body_type);
         let frame_r = if target.body_type == BodyType::BlackHole && target.mass_solar > 1_000_000.0
         {
             100_000.0 // Supermassive Black Holes (Galactic Centers) should zoom out to see the galaxy
         } else if target.name.starts_with("🚀") || target.radius_au <= 1e-6 {
+            let visual_r = config.calc_visual_radius_for_type(target.radius_au, target.body_type);
             0.015f32.max(config.calc_camera_framing_radius(visual_r))
         } else {
-            config.calc_camera_framing_radius(visual_r)
+            crate::rendering::bodies::transforms::compute_close_camera_framing_radius(
+                target.radius_au,
+                target.body_type,
+                target.distance_au as f32,
+                min_orbit_r,
+                config,
+            )
         };
-        cam.target_radius = frame_r;
+        if let Ok(item) = selected_query.get(target.entity) {
+            let p = item.4 .0;
+            let target_vec = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+            cam.initiate_target_transition(target.entity, target_vec, frame_r);
+        } else {
+            cam.surface_horizon_mode = false;
+            cam.target_entity = Some(target.entity);
+            cam.target_radius = frame_r;
+        }
     }
 
     let m_str = if target.mass_solar >= 0.01 {

@@ -25,6 +25,20 @@ pub fn handle_roche_disruption_toasts(
     }
 }
 
+#[inline]
+fn set_text_if_changed(text: &mut Text, next: String) {
+    if text.0 != next {
+        text.0 = next;
+    }
+}
+
+#[inline]
+fn set_text_str_if_changed(text: &mut Text, next: &str) {
+    if text.0 != next {
+        next.clone_into(&mut text.0);
+    }
+}
+
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn update_toast_text(
     toast_text: &mut Text,
@@ -35,16 +49,16 @@ fn update_toast_text(
 ) {
     if phase_mgr.milestone_toast_timer > 0.0 {
         if let Some(ref m_title) = phase_mgr.latest_unlocked_milestone {
-            toast_text.0 = format!("🎉 MILESTONE UNLOCKED: {m_title} 🎉");
+            set_text_if_changed(toast_text, format!("🎉 MILESTONE UNLOCKED: {m_title} 🎉"));
             return;
         } else if toast.timer > 0.0 {
-            toast_text.0.clone_from(&toast.message);
+            set_text_str_if_changed(toast_text, &toast.message);
             return;
         }
     }
 
     if toast.timer > 0.0 {
-        toast_text.0.clone_from(&toast.message);
+        set_text_str_if_changed(toast_text, &toast.message);
         return;
     }
 
@@ -79,21 +93,30 @@ fn update_toast_text(
             };
             let rad_str = format_body_radius_display(rad.0);
 
-            toast_text.0 = format!(
-                ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
-                body.name.to_uppercase(),
-                type_name,
-                mass_str,
-                rad_str,
-                dist_au,
-                speed_km_s,
-                temp.0,
+            set_text_if_changed(
+                toast_text,
+                format!(
+                    ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
+                    body.name.to_uppercase(),
+                    type_name,
+                    mass_str,
+                    rad_str,
+                    dist_au,
+                    speed_km_s,
+                    temp.0,
+                ),
             );
         } else {
-            toast_text.0 = ">> PROTOSTELLAR LIVE // Select any planet or the Sun".to_string();
+            set_text_str_if_changed(
+                toast_text,
+                ">> PROTOSTELLAR LIVE // Select any planet or the Sun",
+            );
         }
     } else {
-        toast_text.0 = ">> PROTOSTELLAR LIVE // Click any planet or the Sun".to_string();
+        set_text_str_if_changed(
+            toast_text,
+            ">> PROTOSTELLAR LIVE // Click any planet or the Sun",
+        );
     }
 }
 
@@ -170,23 +193,28 @@ fn update_header_stats(
     };
 
     let belt_line = phase_mgr.belt_census.format_summary_line();
+    let clock_str = sim_time.format_visual_clock();
 
-    text.0 = format!(
-        "Phase: {}\nTime: T + {} | Star: {:.2} M_sun\nSwarm: {} / {} particles [{}] | Gas: {}\nPlanets: {} | Embryos: {} | 🪨 Ast: {} | ☄️ Comets: {}\n{}\nGoal: {}{}",
-        phase_str,
-        time_formatted,
-        phase_mgr.star_mass,
-        config.active_particles,
-        config.target_particle_count,
-        compute_badge,
-        gas_status,
-        phase_mgr.planet_count,
-        phase_mgr.protoplanet_count,
-        phase_mgr.asteroid_count,
-        phase_mgr.comet_count,
-        belt_line,
-        active_goal,
-        lhb_info,
+    set_text_if_changed(
+        text,
+        format!(
+            "Phase: {}\nTime: T + {} ({})\nStar: {:.2} M_sun | Gas: {}\nSwarm: {} / {} particles [{}]\nPlanets: {} | Embryos: {} | 🪨 Ast: {} | ☄️ Comets: {}\n{}\nGoal: {}{}",
+            phase_str,
+            time_formatted,
+            clock_str,
+            phase_mgr.star_mass,
+            gas_status,
+            config.active_particles,
+            config.target_particle_count,
+            compute_badge,
+            phase_mgr.planet_count,
+            phase_mgr.protoplanet_count,
+            phase_mgr.asteroid_count,
+            phase_mgr.comet_count,
+            belt_line,
+            active_goal,
+            lhb_info,
+        ),
     );
 }
 
@@ -199,6 +227,7 @@ fn update_time_warp_diagnostics(
     sim_time: &SimTime,
 ) {
     let speed_str = time_warp.human_readable_speed();
+    let clock_str = sim_time.format_visual_clock();
     let tool_str = match player_state.active_tool {
         PlayerTool::Inspect => "INSPECT & LIVE-EDIT",
         PlayerTool::Slingshot => "ORBITAL SLINGSHOT [K]",
@@ -214,20 +243,36 @@ fn update_time_warp_diagnostics(
         0.0
     };
 
-    text.0 = format!(
-        "SPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
-        speed_str,
-        tool_str,
-        player_state.overlay_mode.display_name(),
-        config.size_exaggeration,
-        if config.enable_gpu_compute { "WGPU Compute (100k)" } else { "CPU Multithread" },
-        config.accretion_rate_multiplier,
-        drift_pct,
-        sim_time.step_count,
+    set_text_if_changed(
+        text,
+        format!(
+            "CLOCK: {}\nSPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
+            clock_str,
+            speed_str,
+            tool_str,
+            player_state.overlay_mode.display_name(),
+            config.size_exaggeration,
+            if config.enable_gpu_compute { "WGPU Compute (100k)" } else { "CPU Multithread" },
+            config.accretion_rate_multiplier,
+            drift_pct,
+            sim_time.step_count,
+        ),
     );
 }
 
-fn update_bottom_timer(text: &mut Text, sim_time: &SimTime, time_warp: &TimeWarp) {
+fn update_bottom_timer(
+    text: &mut Text,
+    is_compact_pill: bool,
+    sim_time: &SimTime,
+    time_warp: &TimeWarp,
+) {
+    let clock_str = sim_time.format_visual_clock();
+    let speed_str = time_warp.human_readable_speed();
+    if is_compact_pill {
+        set_text_if_changed(text, format!("⏱️ {clock_str}  [{speed_str}]  ▲"));
+        return;
+    }
+
     let yr = sim_time.elapsed_years;
     let time_formatted = if yr >= 1_000_000.0 {
         format!(
@@ -247,7 +292,7 @@ fn update_bottom_timer(text: &mut Text, sim_time: &SimTime, time_warp: &TimeWarp
             format!("{total_sec:.1} Seconds")
         } else if total_sec < 3600.0 {
             format!("{:.1} Minutes ({total_sec:.0}s)", total_sec / 60.0)
-        } else if total_sec < 86400.0 {
+        } else if total_sec < 86400.0 * 3.5 {
             let hours = total_sec / 3600.0;
             format!("{hours:.1} Hours ({hours:.1}h)")
         } else {
@@ -264,11 +309,11 @@ fn update_bottom_timer(text: &mut Text, sim_time: &SimTime, time_warp: &TimeWarp
         "FLOWING"
     };
 
-    text.0 = format!(
-        "SIMULATION ELAPSED TIME: {}\nSPEED: {} | STATUS: {}",
-        time_formatted,
-        time_warp.human_readable_speed(),
-        status_str,
+    set_text_if_changed(
+        text,
+        format!(
+            "⏱️ CLOCK: {clock_str}  ({time_formatted})\nSPEED: {speed_str} | STATUS: {status_str}"
+        ),
     );
 }
 
@@ -313,7 +358,7 @@ fn update_inspector_body_telemetry(
         ),
     )) = bodies_query.get(selected_entity)
     else {
-        text.0 = "Selected body was absorbed in an accretion merger.".to_string();
+        set_text_str_if_changed(text, "Selected body was absorbed in an accretion merger.");
         return;
     };
 
@@ -343,16 +388,16 @@ fn update_inspector_body_telemetry(
         body.body_type.is_star_or_remnant(),
     );
 
-    text.0 = format_primary_telemetry(
+    let mut next_telemetry = format_primary_telemetry(
         pos.0, vel.0, mass.0, rad.0, temp.0, comp, body, opt_spin, phase_mgr, &env_str, &comp_str,
     );
 
     if let Ok(qs) = quasi_hud_query.get(selected_entity) {
-        append_quasi_star_telemetry(&mut text.0, qs);
+        append_quasi_star_telemetry(&mut next_telemetry, qs);
     }
 
     if let Ok(jet) = jet_hud_query.get(selected_entity) {
-        super::inspector_panel::append_relativistic_jet_telemetry(&mut text.0, jet);
+        super::inspector_panel::append_relativistic_jet_telemetry(&mut next_telemetry, jet);
     }
 
     if let Ok((opt_aurora, opt_flare)) = space_weather_hud_query.get(selected_entity) {
@@ -360,7 +405,7 @@ fn update_inspector_body_telemetry(
             let is_giant =
                 body.body_type == BodyType::GasGiant || body.body_type == BodyType::IceGiant;
             super::inspector_panel::append_space_weather_telemetry(
-                &mut text.0,
+                &mut next_telemetry,
                 opt_aurora,
                 opt_flare,
                 is_giant,
@@ -369,12 +414,14 @@ fn update_inspector_body_telemetry(
     }
 
     if let Ok((probe, comp)) = probes_hud_query.get(selected_entity) {
-        append_probe_telemetry(&mut text.0, probe, comp);
+        append_probe_telemetry(&mut next_telemetry, probe, comp);
     }
 
     if let Ok(disk) = disk_hud_query.get(selected_entity) {
-        super::inspector_panel::append_circumstellar_disk_telemetry(&mut text.0, disk);
+        super::inspector_panel::append_circumstellar_disk_telemetry(&mut next_telemetry, disk);
     }
+
+    set_text_if_changed(text, next_telemetry);
 }
 
 fn append_probe_telemetry(
@@ -498,7 +545,7 @@ fn format_primary_telemetry(
     };
 
     format!(
-        ">> {} [{}]\nMass: {}\nRadius: {} ({:.4} AU)\nDensity: {} | Temp: {:.0} K{}{}\nDistance: {:.2} AU{} | Speed: {:.1} km/s\nComposition: {}{}",
+        ">> {} [{}]\n▸ Mass: {}\n▸ Radius: {} ({:.4} AU)\n▸ Density: {} | Temp: {:.0} K{}{}\n▸ Distance: {:.2} AU{} | Speed: {:.1} km/s\n▸ Composition: {}{}",
         body.name.to_uppercase(),
         format_body_inspector_type(body.body_type, mass).to_uppercase(),
         mass_str,
@@ -573,8 +620,8 @@ pub fn update_hud(
             &sim_time,
         );
     }
-    if let Ok(mut text) = text_queries.bottom_timer.single_mut() {
-        update_bottom_timer(&mut text, &sim_time, &time_warp);
+    for (mut text, marker) in &mut text_queries.bottom_timer {
+        update_bottom_timer(&mut text, marker.0, &sim_time, &time_warp);
     }
 
     if let Ok(mut text) = text_queries.inspector.single_mut() {
@@ -592,7 +639,10 @@ pub fn update_hud(
                 &config,
             );
         } else {
-            text.0 = "No celestial body selected.\nClick on the Star or Planets above (or in 3D) to inspect & live-edit.\n[Tab] Next Body | [F] Focus Target | [WASD] Free-Fly View".to_string();
+            set_text_str_if_changed(
+                &mut text,
+                "No celestial body selected.\nClick on the Star or Planets above (or in 3D) to inspect & live-edit.\n[Tab] Next Body | [F] Focus Target | [WASD] Free-Fly View",
+            );
         }
     }
 
@@ -611,31 +661,40 @@ fn update_encounter_forecast_text(
     has_selection: bool,
 ) {
     let Some(predictor) = opt_predictor else {
-        text.0 = "🎯 FORECAST: Initializing...".to_string();
+        set_text_str_if_changed(text, "🎯 FORECAST: Initializing...");
         return;
     };
 
     if !predictor.is_enabled {
-        text.0 =
-            "🎯 FORECAST: Disabled [N] to enable trajectory & encounter prediction.".to_string();
+        set_text_str_if_changed(
+            text,
+            "🎯 FORECAST: Disabled [N] to enable trajectory & encounter prediction.",
+        );
         return;
     }
 
     if let Some(enc) = &predictor.active_encounter {
-        text.0 = format!(
-            "🎯 FORECAST: {} with {}\nETA: {:.1} yr | Closest: {:.4} AU ({:.0} km)\nRel Speed: {:.2} km/s (v_inf)",
-            enc.encounter_type.display_label(),
-            enc.target_name,
-            enc.time_to_encounter_yr,
-            enc.min_distance_au,
-            enc.min_distance_km,
-            enc.relative_velocity_kms,
+        set_text_if_changed(
+            text,
+            format!(
+                "🎯 FORECAST: {} with {}\nETA: {:.1} yr | Closest: {:.4} AU ({:.0} km)\nRel Speed: {:.2} km/s (v_inf)",
+                enc.encounter_type.display_label(),
+                enc.target_name,
+                enc.time_to_encounter_yr,
+                enc.min_distance_au,
+                enc.min_distance_km,
+                enc.relative_velocity_kms,
+            ),
         );
     } else if has_selection {
-        text.0 = "🎯 FORECAST: Safe trajectory. No close encounters detected (Horizon: 30 yr)."
-            .to_string();
+        set_text_str_if_changed(
+            text,
+            "🎯 FORECAST: Safe trajectory. No close encounters detected (Horizon: 30 yr).",
+        );
     } else {
-        text.0 =
-            "🎯 FORECAST [N]: Select a body or drag Slingshot to preview encounters.".to_string();
+        set_text_str_if_changed(
+            text,
+            "🎯 FORECAST [N]: Select a body or drag Slingshot to preview encounters.",
+        );
     }
 }

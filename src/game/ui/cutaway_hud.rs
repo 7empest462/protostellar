@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use crate::rendering::camera::{IgnoreUiPicking, PanOrbitCamera};
-use crate::rendering::effects::planetary::{resolve_cutaway_strata, CutawayStrata};
+use crate::rendering::effects::planetary::CutawayStrata;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::AU_TO_KM;
@@ -258,6 +258,7 @@ pub fn update_cutaway_hud_ui(
         &CelestialBody,
         Option<&InternalDifferentiation>,
         Option<&Composition>,
+        Option<&Transform>,
     )>,
 ) {
     let Some(window) = windows.iter().next() else {
@@ -270,7 +271,7 @@ pub fn update_cutaway_hud_ui(
     let target_entity = resolve_active_cutaway_target(&player_state, opt_pan);
     let target_data = target_entity.and_then(|ent| bodies_query.get(ent).ok());
 
-    let Some((sim_pos, radius, body, opt_diff, _opt_comp)) = target_data else {
+    let Some((sim_pos, radius, body, opt_diff, _opt_comp, opt_tf)) = target_data else {
         // Hide all 4 callout cards
         for (_, _, mut node, _) in &mut pill_query {
             node.display = Display::None;
@@ -279,7 +280,18 @@ pub fn update_cutaway_hud_ui(
     };
 
     let body_vec = Vec3::new(sim_pos.x as f32, sim_pos.y as f32, sim_pos.z as f32);
-    let strata = resolve_cutaway_strata(body, radius.0, opt_diff, &config);
+    let cam_dist = cam_tf.translation.distance(body_vec);
+    let visual_r = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+        opt_tf,
+        radius.0,
+        body.body_type,
+        body_vec.length(),
+        cam_dist,
+        &config,
+    );
+    let strata = crate::rendering::effects::planetary::resolve_cutaway_strata_with_visual_radius(
+        body, radius.0, visual_r, opt_diff,
+    );
     let anchors = compute_cutaway_anchors(body_vec, cam_tf.rotation, &strata);
     let labels = resolve_cutaway_labels(body, radius.0, opt_diff);
 
