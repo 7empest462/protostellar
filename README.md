@@ -44,7 +44,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (447 Tests)](#-automated-test-suite-447-tests)
+6. [🧪 Automated Test Suite (491 Tests)](#-automated-test-suite-491-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -121,13 +121,28 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 ---
 
 ### Time Flow Engine
-Protostellar features a multi-tiered symplectic time integrator allowing you to watch rapid orbital passes or accelerate across million-year geological epochs:
-- **`Spacebar`**: Pause / Resume physics integration.
-- **`1`**: $1.0\times$ Real-time orbital speed.
-- **`2`**: $100\times$ Accelerated orbital flow.
-- **`3`**: $10,000\times$ High-speed planetary accretion flow (~$10\text{ kyr/s}$).
-- **`4`**: $1,000,000\times$ Deep astronomical time warp (~$1\text{ Myr/s}$).
-- **`←` / `→`**: Incrementally step simulation speed down or up.
+Protostellar uses a symplectic time integrator whose speed presets are scaled by real wall-clock frame time, so every label is accurate at any frame rate (`Real-Time` is truly 1 simulated second per real second). Pausing freezes physics, planetary rotation, cloud/atmosphere animation and the on-screen clock.
+- **`Spacebar`**: Pause / Resume.
+- **Direct presets** (no modifier): **`1`** Real-Time (1s = 1s) · **`9`** 1 min/s · **`0`** 5 min/s · **`2`** 1.0x (11 days/s) · **`3`** 10x (3.6 mo/s) · **`4`** 100x (3 yr/s) · **`5`** 1,000x (30 yr/s) · **`6`** 10,000x (300 yr/s) · **`7`** 100,000x (3k yr/s) · **`8`** 1,000,000x (30k yr/s).
+- **Short-interval presets** (hold **`Shift`**): **`Shift+1`** 1 min/s · **`Shift+2`** 5 min/s · **`Shift+3`** 6 h/s · **`Shift+4`** 12 h/s · **`Shift+5`** 24 h/s · **`Shift+6`** 72 h/s. The same presets are clickable in the Time Dock.
+- **`←` / `→`**: Step the speed down / up.
+- **Simulation Clock**: The Time Dock shows a live clock (years, months, days, hours, minutes, seconds of simulated time), the active speed label and a `FLOWING` / `PAUSED` status.
+
+---
+
+### Atmosphere, Clouds & Weather
+- **Atmospheric shell**: Any world with a real atmosphere (including water worlds) renders a Rayleigh/Mie limb shell. Water-bearing worlds are thermodynamically coupled to atmospheric pressure so they are never airless.
+- **Evolving 3D clouds**: Multi-layer cloud decks float above the surface with parallax, drift with differential zonal winds, form Coriolis cyclones and continuously evolve in 4D noise rather than being painted on the planet.
+- **Surface sky**: In Surface Horizon mode (**`Shift+V`**) the sky shows the atmosphere, Rayleigh aerial perspective and the cloud decks overhead.
+
+### Geochemical Ocean Origin (4-Stage Model)
+Rocky protoplanets acquire oceans organically instead of needing comet spam:
+1. **Enstatite-chondrite hydroxyls** bound in inner-disk silicates.
+2. **H₂ + FeO magma-ocean oxidation** in a gas-rich nebula.
+3. **647 K critical-point deluge**: above 647 K water stays as supercritical steam (the inspector shows `[Supercritical Steam Outgassing — Condenses < 647 K]`); below it the steam condenses into liquid oceans.
+4. **Late Veneer**: Chondrite, Comet and LHB (**`[G]`**) tools top up the water budget or re-vaporize oceans after a massive impact.
+
+In **Disk Genesis**, rocky embryos accrete water-bearing silicates and naturally rain out oceans as they cool.
 
 ---
 
@@ -546,7 +561,8 @@ Switch scenarios instantly via the top Scenarios Bar or hotkeys (`F1`–`F11`):
 | Key / Input | Action |
 | :--- | :--- |
 | **`Spacebar`** | Pause / Resume physics integration |
-| **`1`** / **`2`** / **`3`** / **`4`** | Time warp presets ($1\times$, $100\times$, $10,000\times$, $1,000,000\times$) |
+| **`1`**-**`9`**, **`0`** | Time presets: Real-Time, 1.0x (11 d/s), 10x, 100x, 1,000x, 10,000x, 100,000x, 1,000,000x, 1 min/s (`9`), 5 min/s (`0`) |
+| **`Shift + 1`**-**`6`** | Short-interval presets: 1 min, 5 min, 6 h, 12 h, 24 h, 72 h per second |
 | **`←`** / **`→`** | Step simulation speed down / up |
 
 ### Tools & Panels
@@ -647,14 +663,14 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 52 specialized test suites covering 447 automated tests
+    └── simulation_tests/         # 52 specialized test suites covering 491 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (447 Tests)
+## 🧪 Automated Test Suite (491 Tests)
 
-Protostellar enforces rigorous physical validity through **447 comprehensive integration tests** across 52 specialized test suites:
+Protostellar enforces rigorous physical validity through **491 comprehensive integration tests** across 52 specialized test suites:
 
 - **3D Internal Planetary Cutaway Views & Geodynamics**: Quadrant discard shader logic, archetype core/mantle/crust strata resolution for terrestrial, gas giant, ice giant, and stellar bodies, Theia LLSVP mantle plume structures, diagnostic overlay cycling, and universal button visibility.
 - **Surface Horizon Navigation, 3D Terrains & Rover Drive Mechanics**: Tangent horizon camera pose stabilization, surface altitude limits, collision avoidance, and terrain-skimming driving controls.
