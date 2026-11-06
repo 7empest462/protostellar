@@ -96,9 +96,15 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 - **Neutral Dielectric Specular Optics**: Blinn-Phong specular glints with neutral white reflection ($F_0$) eliminating subtractive chromatic inversions that previously created artificial purple/blue glints on warm terracotta and orange planets.
 - **Super-Puff / Sub-Neptune / Gas Dwarf Realism**: Physical composition overrides orbital labels: gas-rich worlds (`gas_frac > 0.20`, density $< 0.5\text{ g/cm}^3$) correctly simulate with deep, opaque `GasGiantEnvelope` cloud decks and atmospheric hazes rather than bare rocky continental relief, even when gravitationally captured as satellite companions.
 
-### 9. Symplectic Physics & Memory Optimizations
-- Fully allocation-free hot path: Eliminates thousands of `Vec` allocations per frame during symplectic N-body timestepping.
-- High-warp multi-threading with Rayon `par_iter` and $O(N)$ index lookups for enormous performance gains during fast-forwarded cosmological timescales.
+### 9. Symplectic Physics, SIMD & High-Performance Crate Stack
+- **Allocation-Free Hot Path**: Eliminates per-frame heap allocations during symplectic N-body timestepping via reusable buffers and stack-allocated vectors.
+- **High-Performance Crate Stack**:
+  - **`kiddo`** (`multi-threaded`): Spatial 3D KD-trees for fast nearest-neighbor queries, collision broadphases, and local density estimation.
+  - **`wide` & `glam` (`fast-math`)**: Portable SIMD vectorization and fast-math linear algebra for N-body gravity, relativistic corrections, and orbital mechanics.
+  - **`rustc-hash` (`FxHashMap` / `FxHashSet`)**: Non-cryptographic O(1) entity and spatial-grid hashing across physics and rendering sync systems.
+  - **`smallvec`**: Inline stack-allocated collections avoiding heap pressure in collision candidate lists, moon hierarchies, and UI layout passes.
+  - **`rayon` & `flume`**: Work-stealing data parallelism (`par_iter`) and low-latency MPMC channels for high-warp cosmological time steps.
+  - **`bytemuck`, `fastrand` & `postcard`**: Zero-copy GPU uniform/storage buffer casting, WyRand PRNG for procedural generation, and compact serialization.
 
 ### 10. 3D Internal Planetary Cutaway Views & Core Geodynamics
 - **Authentic Multi-Layer Geophysics**: Press **`[Shift + X]`** (or click **`[🔬 Cutaway [Shift-X]]`** in the Target Inspector) to peel open a $90^\circ$ quadrant slice through the outer crust, atmosphere, and cloud deck of any planet, moon, or star.
@@ -131,8 +137,8 @@ Protostellar uses a symplectic time integrator whose speed presets are scaled by
 ---
 
 ### Atmosphere, Clouds & Weather
-- **Atmospheric shell**: Any world with a real atmosphere (including water worlds) renders a Rayleigh/Mie limb shell. Water-bearing worlds are thermodynamically coupled to atmospheric pressure so they are never airless.
-- **Evolving 3D clouds**: Multi-layer cloud decks float above the surface with parallax, drift with differential zonal winds, form Coriolis cyclones and continuously evolve in 4D noise rather than being painted on the planet.
+- **Atmospheric shell**: Rocky, ocean, and super-Earth worlds with a real atmosphere render a 3D Rayleigh/Mie limb shell. Water-bearing worlds are thermodynamically coupled to atmospheric pressure so they are never airless, whereas Gas Giants and Ice Giants render their opaque 1-bar banded cloud tops and Chapman limb scattering directly on the planet surface without a detached outer shell.
+- **Evolving 3D clouds**: Multi-layer cloud decks float above terrestrial surfaces with parallax, drift with differential zonal winds, form Coriolis cyclones and continuously evolve in 4D noise rather than being painted on the ground.
 - **Surface sky**: In Surface Horizon mode (**`Shift+V`**) the sky shows the atmosphere, Rayleigh aerial perspective and the cloud decks overhead.
 
 ### Geochemical Ocean Origin (4-Stage Model)
