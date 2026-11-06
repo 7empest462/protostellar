@@ -1,14 +1,16 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
 use std::f64::consts::PI;
 
 use crate::simulation::components::*;
 use crate::simulation::disk::sample_disk_radius;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 use super::ParticleSwarmData;
+
+pub type PromotedBodyBatch = smallvec::SmallVec<[(DVec3, DVec3, f64, f64, Composition); 4]>;
 
 pub fn check_clump_promotions(
     data: &mut ParticleSwarmData,
@@ -16,7 +18,7 @@ pub fn check_clump_promotions(
     current_ecs_count: usize,
     is_massive_disk: bool,
     sim_time_years: f64,
-) -> (Vec<(DVec3, DVec3, f64, f64, Composition)>, u32) {
+) -> (PromotedBodyBatch, u32) {
     let n = data.count;
     let b_mass = data.base_mass;
     let max_ecs_bodies = if is_massive_disk { 32 } else { 1024 };
@@ -25,7 +27,7 @@ pub fn check_clump_promotions(
     } else {
         (16.0 * b_mass).max(0.003 * EARTH_MASS_SOLAR as f32)
     };
-    let mut promotions: Vec<(DVec3, DVec3, f64, f64, Composition)> = Vec::new();
+    let mut promotions: PromotedBodyBatch = smallvec::SmallVec::new();
     let mut active_count = 0u32;
 
     // Early disk settling: Dust grains require at least ~15 simulation years of aerodynamic drag
@@ -169,7 +171,7 @@ fn determine_promoted_body_type_and_name(
 
 pub fn spawn_promoted_bodies(
     commands: &mut Commands,
-    promotions: Vec<(DVec3, DVec3, f64, f64, Composition)>,
+    promotions: PromotedBodyBatch,
     disk_params: &DiskParameters,
     is_massive_disk: bool,
 ) {
@@ -187,8 +189,21 @@ pub fn spawn_promoted_bodies(
             (mass * radius * radius * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
         spin.update_from_spin(initial_spin, mass, radius);
 
+        let is_rocky_body = matches!(
+            body_type,
+            BodyType::Planetesimal
+                | BodyType::Protoplanet
+                | BodyType::TerrestrialPlanet
+                | BodyType::SuperEarth
+        );
+        let initial_water_m_earth = if is_rocky_body && r_dist > 0.35 {
+            compute_endogenous_water_m_earth(mass, &comp, r_dist, 1.0)
+        } else {
+            0.0
+        };
+
         let vol = VolatileInventory {
-            delivered_water_m_earth: 0.0,
+            delivered_water_m_earth: initial_water_m_earth,
             ocean_coverage_frac: 0.0,
             atmospheric_pressure_bar: if r_dist < 2.7 { 0.5 } else { 0.0 },
             cometary_impact_count: 0,
@@ -234,7 +249,7 @@ pub fn replenish_cleared_particles(
         && active_count < max_allowed_particles
     {
         let missing = max_allowed_particles.saturating_sub(active_count);
-        let mut rng = rand::rng();
+        let mut rng = fastrand::Rng::new();
         let mut replenished = 0u32;
         let star_mass_f64 = disk_params.central_star_mass;
         let replenish_scale = 1.0 + (speed_mult.log10().max(0.0) * 1.25);
@@ -248,15 +263,15 @@ pub fn replenish_cleared_particles(
             };
             if m <= 0.0 && replenished < max_replenish {
                 let (r_spawn, comp) = sample_disk_radius(&mut rng, disk_params);
-                let phi = rng.random_range(0.0..2.0 * PI);
+                let phi = rng.f64_range(0.0, 2.0 * PI);
                 let v_k = (G_ASTRO * star_mass_f64 / r_spawn).sqrt();
-                let v_disp = rng.random_range(-0.02..0.02) * v_k;
+                let v_disp = rng.f64_range(-0.02, 0.02) * v_k;
                 let v_tot = (v_k + v_disp) as f32;
 
                 if let Some(pos) = data.positions.get_mut(i) {
                     *pos = [
                         (r_spawn * phi.cos()) as f32,
-                        rng.random_range(-0.015..0.015) as f32,
+                        rng.f64_range(-0.015, 0.015) as f32,
                         (r_spawn * phi.sin()) as f32,
                     ];
                 }

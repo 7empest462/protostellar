@@ -68,11 +68,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let theta = atan2(local_uv.y, local_uv.x);
     let time = ring.shadow_params.w;
 
+    // View elevation & screen-space derivative LOD to eliminate grazing-angle Moiré speckles
+    let view_dir = normalize(view.world_position - in.world_position.xyz);
+    let n_world = normalize(in.world_normal);
+    let view_elev = dot(view_dir, n_world);
+    let graze_lod = smoothstep(0.06, 0.28, abs(view_elev));
+
     // Micro-ringlet density modulation (thousands of concentric fine tracks) with screen-space derivative LOD
     let r_deriv = fwidth(u * 280.0);
-    let micro_lod = 1.0 - smoothstep(0.6, 2.2, r_deriv) * 0.65;
+    let micro_lod = (1.0 - smoothstep(0.45, 1.65, r_deriv) * 0.85) * graze_lod;
     let fine_tracks = mix(0.5, fbm_ring(u * 280.0), micro_lod);
-    let broad_bands = fbm_ring(u * 35.0);
+    let broad_bands = mix(0.5, fbm_ring(u * 35.0), 0.35 + 0.65 * graze_lod);
 
     // Lindblad Resonance Spiral Density Waves (m=2 and m=5 tightly wound logarithmic spirals)
     let log_u = log(max(u + 0.15, 0.15));
@@ -98,12 +104,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             * (0.72 + fine_tracks * 0.30 + broad_bands * 0.14 + spiral_wave * 0.08);
         ring_tone = vec3<f32>(0.96, 0.92, 0.84); // brilliant reflective ice
 
-        // Keplerian Azimuthal Dusty Spokes (electrostatically levitated micron grains in outer B ring)
+        // Keplerian Azimuthal Dusty Spokes (periodic integer harmonics so no branch-cut seam at ±PI)
         if (u > 0.40 && u < 0.63) {
             let omega_k = 0.22 / pow(max(dist, 0.35), 1.5);
             let spoke_az = theta - time * omega_k;
-            let spoke_n = ring_noise(spoke_az * 5.5 + sin(u * 14.0) * 0.35) * ring_noise(spoke_az * 13.0 + 7.1);
-            let spoke_env = smoothstep(0.40, 0.48, u) * smoothstep(0.63, 0.54, u);
+            let spoke_h1 = sin(spoke_az * 6.0 + sin(u * 14.0) * 0.35) * 0.5 + 0.5;
+            let spoke_h2 = cos(spoke_az * 11.0 + 2.1) * 0.5 + 0.5;
+            let spoke_n = spoke_h1 * spoke_h2;
+            let spoke_env = smoothstep(0.40, 0.48, u) * smoothstep(0.63, 0.54, u) * graze_lod;
             let spoke_mask = smoothstep(0.32, 0.68, spoke_n) * spoke_env;
             fine_dust_fraction += spoke_mask * 0.55;
             ring_tone = mix(ring_tone, vec3<f32>(0.88, 0.92, 0.98), spoke_mask * 0.25);
@@ -128,7 +136,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             fine_dust_fraction = 0.55;
         }
         // Keeler Gap (Daphnis shepherd moon lane with sinusoidal edge wakes around u = 0.941 to 0.949)
-        let wake_ripple = sin(theta * 18.0 - time * 0.55) * 0.0014;
+        let wake_ripple = sin(theta * 18.0 - time * 0.55) * 0.0014 * micro_lod;
         let u_keeler = u + wake_ripple;
         if (u_keeler >= 0.941 && u_keeler <= 0.949) {
             let keeler_t = (u_keeler - 0.941) / (0.949 - 0.941);
@@ -141,7 +149,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // 5. F Ring / Braided Shepherd-Moon Outer Boundary (0.96 to 1.0)
     else {
         let t = (u - 0.96) / (1.0 - 0.96);
-        let braid = sin(theta * 9.0 - time * 0.4 + sin(theta * 3.0) * 1.5) * 0.25 + 0.75;
+        let braid = mix(0.85, sin(theta * 9.0 - time * 0.4 + sin(theta * 3.0) * 1.5) * 0.25 + 0.75, graze_lod);
         base_density = (1.0 - t) * 0.38 * (0.45 + fine_tracks * 0.55) * braid;
         ring_tone = vec3<f32>(0.78, 0.82, 0.90);
         fine_dust_fraction = 0.85;
@@ -173,7 +181,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if (s_closest > 0.0) {
         let p_closest = p_ring + s_closest * star_dir;
-        let d_closest = length(p_closest);
+        // Account for rotational oblateness of the casting planet (equatorial ~1.045, polar ~0.905)
+        let p_oblate_norm = vec3<f32>(p_closest.x / 1.045, p_closest.y / 0.905, p_closest.z / 1.045);
+        let d_closest = length(p_oblate_norm);
 
         let planet_rad = max(ring.star_dir_local.w, 0.15);
         let penumbra = max(ring.shadow_params.y, 0.022);
@@ -188,13 +198,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let lit_mult = mix(ambient_floor, 1.0, mix(1.0 - shadow_depth, 1.0, shadow_factor));
 
     // Camera view vector & phase angle optics (Cassini forward-scattering Mie halo + Seeliger opposition surge)
-    let view_dir = normalize(view.world_position - in.world_position.xyz);
     let sun_dir_world = select(
         normalize(-in.world_position.xyz),
         vec3<f32>(0.0, 1.0, 0.0),
         dot(in.world_position.xyz, in.world_position.xyz) < 1e-6
     );
-    let n_world = normalize(in.world_normal);
 
     // cos_phase -> +1 when looking through the rings toward the star (high-phase backlighting)
     // cos_phase -> -1 when star is directly behind the camera (zero-phase opposition)
@@ -214,7 +222,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let opposition_surge = 1.0 + 0.52 * pow(back_align, 7.0) + 0.22 * pow(back_align, 2.0);
 
     // 3. Lit-face vs Unlit-face Radiative Transfer
-    let view_elev = dot(view_dir, n_world);
     let same_side = (view_elev * star_dir.y) >= -0.02;
     let unlit_trans = mix(exp(-tau * 1.15) * 0.65 + 0.18, 1.0, select(0.0, 1.0, same_side));
 

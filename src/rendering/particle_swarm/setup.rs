@@ -2,14 +2,13 @@ use bevy::asset::RenderAssetUsages;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
-use rand::prelude::*;
-use rand_distr::Normal;
 use std::f64::consts::PI;
 
 use crate::simulation::components::*;
 use crate::simulation::disk::sample_disk_radius;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 use super::{ParticleSwarmData, ParticleSwarmMesh};
 
@@ -100,7 +99,7 @@ pub fn generate_initial_swarm_buffers(
     disk_params: &DiskParameters,
     config: &SimulationConfig,
 ) -> SwarmInitialBuffers {
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let mut positions = Vec::with_capacity(n_particles);
     let mut velocities = Vec::with_capacity(n_particles);
     let mut masses = Vec::with_capacity(n_particles);
@@ -118,13 +117,9 @@ pub fn generate_initial_swarm_buffers(
 
     for i in 0..n_particles {
         let (r, comp) = sample_disk_radius(&mut rng, disk_params);
-        let phi = rng.random_range(0.0..2.0 * PI);
+        let phi = rng.f64_range(0.0, 2.0 * PI);
         let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
-        let z_height: f64 = if let Ok(dist) = Normal::new(0.0, h_scale) {
-            rng.sample(dist)
-        } else {
-            0.0
-        };
+        let z_height: f64 = rng.normal_f64(0.0, h_scale);
 
         let pos = [
             (r * phi.cos()) as f32,
@@ -282,7 +277,7 @@ pub fn reseed_particle_swarm(
 
     if disk_params.outer_radius_au >= 10_000.0 {
         data.base_mass = 1.0;
-        let mut rng = rand::rng();
+        let mut rng = fastrand::Rng::new();
         let n_mw = n / 2;
         let rs = 50_000.0_f32;
 
@@ -308,9 +303,9 @@ pub fn reseed_particle_swarm(
                 )
             };
 
-            let r = rng.random_range(5000.0..max_radius);
-            let phi = rng.random_range(0.0..2.0 * PI as f32);
-            let z = rng.random_range(-500.0..500.0);
+            let r = rng.f32_range(5000.0, max_radius);
+            let phi = rng.f32_range(0.0, 2.0 * PI as f32);
+            let z = rng.f32_range(-500.0, 500.0);
             let pos = [
                 center_pos[0] + r * phi.cos(),
                 center_pos[1] + z,
@@ -326,7 +321,7 @@ pub fn reseed_particle_swarm(
                 center_vel[2] + v_circ * phi.cos(),
             ];
 
-            let col_var = rng.random_range(0.85..1.15_f32);
+            let col_var = rng.f32_range(0.85, 1.15_f32);
             let color = [
                 (base_col[0] * col_var).clamp(0.2, 1.5),
                 (base_col[1] * col_var).clamp(0.2, 1.5),
@@ -352,19 +347,15 @@ pub fn reseed_particle_swarm(
         return;
     }
 
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let individual_mass = (disk_params.disk_mass / (n as f64)) as f32;
     data.base_mass = individual_mass;
 
     for i in 0..n {
         let (r, comp) = sample_disk_radius(&mut rng, disk_params);
-        let phi = rng.random_range(0.0..2.0 * PI);
+        let phi = rng.f64_range(0.0, 2.0 * PI);
         let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
-        let z_height: f64 = if let Ok(dist) = Normal::new(0.0, h_scale) {
-            rng.sample(dist)
-        } else {
-            0.0
-        };
+        let z_height: f64 = rng.normal_f64(0.0, h_scale);
 
         let pos = [
             (r * phi.cos()) as f32,

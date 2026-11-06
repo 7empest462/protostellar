@@ -1,6 +1,6 @@
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
-use hashbrown::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::rendering::materials::{CometTailMaterial, CometTailUniforms};
 use crate::simulation::components::*;
@@ -202,9 +202,16 @@ pub type CometSourceQueryItem<'a> = (
     &'a CelestialBody,
     &'a Radius,
     Option<&'a AtmosphericEscapeTail>,
+    Option<&'a Transform>,
 );
 
-pub type CometSourceQuery<'w, 's> = Query<'w, 's, CometSourceQueryItem<'static>>;
+pub type CometSourceFilter = (
+    Without<CometTailRoot>,
+    Without<CometTailPart>,
+    Without<CometComaPart>,
+);
+
+pub type CometSourceQuery<'w, 's> = Query<'w, 's, CometSourceQueryItem<'static>, CometSourceFilter>;
 
 pub type CometTailPartQueryItem<'a> = (&'a mut Transform, &'a MeshMaterial3d<CometTailMaterial>);
 
@@ -240,11 +247,12 @@ fn collect_active_comets(
     star_pos: Vec3,
     config: &SimulationConfig,
 ) -> HashMap<Entity, ActiveCometCandidate> {
-    let mut map = HashMap::new();
+    let mut map = HashMap::default();
 
-    for (entity, pos, vel, comp, body, radius, opt_tail) in comet_query.iter() {
+    for (entity, pos, vel, comp, body, radius, opt_tail, opt_tf) in comet_query.iter() {
         let is_comet_type = body.body_type == BodyType::Comet;
-        let is_named_comet = body.name.to_lowercase().contains("comet");
+        let is_named_comet =
+            crate::utils::math::contains_ascii_case_insensitive(&body.name, "comet");
         let is_minor_body = matches!(
             body.body_type,
             BodyType::Asteroid | BodyType::Planetesimal | BodyType::DustGrain
@@ -271,7 +279,17 @@ fn collect_active_comets(
 
         if is_active {
             let r_km = (radius.0 * AU_TO_KM) as f32;
-            let nuc_visual_r = config.calc_visual_radius_for_type(radius.0, body.body_type);
+            let nuc_visual_r = opt_tf
+                .and_then(|tf| {
+                    let sx = tf.scale.x;
+                    let is_unsynced = (sx - 1.0).abs() < 1e-6 && radius.0 < 0.25;
+                    if sx.is_finite() && sx > 1e-6 && !is_unsynced {
+                        Some(sx)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| config.calc_visual_radius_for_type(radius.0, body.body_type));
             let opt_escape_len = opt_tail.and_then(|t| {
                 if t.is_active && t.tail_length_au > 0.01 {
                     Some(t.tail_length_au)
@@ -306,7 +324,7 @@ fn update_existing_comet_tails(
     tail_parts_query: &mut CometTailPartQuery,
     coma_parts_query: &mut CometComaPartQuery,
 ) -> HashSet<Entity> {
-    let mut updated_entities = HashSet::new();
+    let mut updated_entities = HashSet::default();
 
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
         if let Some(candidate) = active_comet_map.get(&root.comet_entity) {

@@ -186,6 +186,78 @@ fn render_star_layer(
     return accum;
 }
 
+// Evaluates a single real Hipparcos/Tycho catalog star with an Airy core + soft inverse-square corona
+fn eval_catalog_star(
+    dir: vec3<f32>,
+    star_pos: vec3<f32>,
+    color: vec3<f32>,
+    lum: f32,
+    core_r: f32,
+    phase: f32,
+    time: f32,
+    twinkle_str: f32,
+) -> vec3<f32> {
+    let d_vec = dir - star_pos;
+    let th2 = dot(d_vec, d_vec);
+    if (th2 > 0.00022) {
+        return vec3<f32>(0.0);
+    }
+    let r2 = core_r * core_r;
+    let core = exp(-th2 / r2) * 2.2;
+    let halo = exp(-th2 / (r2 * 10.5)) * 0.38 + (r2 * 0.09) / (th2 + r2 * 1.8);
+    let twinkle = 1.0 + sin(time * 2.6 + phase) * 0.09 * twinkle_str;
+    return color * ((core + halo) * lum * twinkle);
+}
+
+// Real Hipparcos/Tycho First-Magnitude Navigation Stars & Iconic Asterisms (Orion's Belt, Crux, Summer Triangle)
+fn render_hipparcos_landmark_catalog(dir: vec3<f32>, time: f32, twinkle_str: f32) -> vec3<f32> {
+    var c = vec3<f32>(0.0);
+
+    let col_o_blue   = vec3<f32>(0.32, 0.62, 1.85); // O/B0 Supergiant (Rigel, Spica, Orion's Belt, Acrux)
+    let col_a_white  = vec3<f32>(0.68, 0.86, 1.42); // A-type Diamond Blue-White (Sirius, Vega, Deneb, Altair)
+    let col_f_ivory  = vec3<f32>(0.98, 0.98, 1.08); // F-type Crisp Ivory (Canopus, Procyon)
+    let col_g_gold   = vec3<f32>(1.32, 1.05, 0.52); // G-type Solar Gold (Rigil Kentaurus, Capella)
+    let col_k_amber  = vec3<f32>(1.52, 0.68, 0.22); // K-type Rich Amber Giant (Arcturus, Aldebaran, Pollux)
+    let col_m_ruby   = vec3<f32>(1.68, 0.32, 0.12); // M-type Red Supergiant (Betelgeuse, Antares)
+
+    // 1. Sirius (Alpha Canis Majoris, V = -1.46, brightest star in the night sky)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.187, -0.287, 0.939)), col_a_white, 1.65, 0.00125, 1.1, time, twinkle_str);
+    // 2. Canopus (Alpha Carinae, V = -0.74)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.061, -0.795, 0.603)), col_f_ivory, 1.32, 0.00115, 2.3, time, twinkle_str);
+    // 3. Rigil Kentaurus / Alpha Centauri (V = -0.27) & Hadar / Beta Centauri (V = 0.61)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.395, -0.872, -0.289)), col_g_gold,  1.18, 0.00110, 3.7, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.422, -0.869, -0.258)), col_o_blue,  0.88, 0.00098, 4.2, time, twinkle_str);
+    // 4. Arcturus (Alpha Bootis, V = -0.05)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.766, 0.328, -0.553)), col_k_amber, 1.15, 0.00110, 5.1, time, twinkle_str);
+    // 5. Summer Triangle: Vega (Alpha Lyrae), Altair (Alpha Aquilae), Deneb (Alpha Cygni)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.106, 0.626, -0.772)),  col_a_white, 1.12, 0.00108, 6.4, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.459, 0.154, -0.875)),  col_a_white, 0.86, 0.00096, 7.8, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.483, 0.710, -0.513)),  col_a_white, 0.82, 0.00095, 8.9, time, twinkle_str);
+    // 6. Capella (Alpha Aurigae, V = 0.08)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.155, 0.719, 0.677)),   col_g_gold,  1.08, 0.00106, 9.5, time, twinkle_str);
+    // 7. Orion Complex: Rigel, Betelgeuse, Bellatrix, and Orion's Belt (Alnitak, Alnilam, Mintaka)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.214, -0.143, 0.966)),  col_o_blue,  1.10, 0.00108, 10.2, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.025, 0.129, 0.991)),   col_m_ruby,  1.04, 0.00106, 11.4, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.168, 0.110, 0.980)),   col_o_blue,  0.72, 0.00090, 12.1, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.082, -0.034, 0.996)),  col_o_blue,  0.78, 0.00092, 13.0, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.105, -0.021, 0.994)),  col_o_blue,  0.82, 0.00094, 13.6, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.128, -0.005, 0.992)),  col_o_blue,  0.74, 0.00090, 14.2, time, twinkle_str);
+    // 8. Procyon (Alpha Canis Minoris) & Achernar (Alpha Eridani)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.412, 0.092, 0.906)),  col_f_ivory, 0.98, 0.00102, 15.3, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.526, -0.839, 0.138)),  col_o_blue,  0.94, 0.00100, 16.7, time, twinkle_str);
+    // 9. Southern Cross: Acrux (Alpha Crucis) & Mimosa (Beta Crucis)
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.453, -0.891, -0.032)), col_o_blue, 0.88, 0.00098, 17.5, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.498, -0.863, -0.082)), col_o_blue, 0.80, 0.00094, 18.2, time, twinkle_str);
+    // 10. Aldebaran (Alpha Tauri), Antares (Alpha Scorpii), Spica (Alpha Virginis), Fomalhaut, Regulus
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.371, 0.285, 0.884)),   col_k_amber, 0.90, 0.00100, 19.1, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.341, -0.445, -0.828)), col_m_ruby, 0.92, 0.00102, 20.4, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.916, -0.194, -0.351)), col_o_blue, 0.88, 0.00098, 21.8, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(0.807, -0.494, -0.324)), col_a_white, 0.82, 0.00095, 22.9, time, twinkle_str);
+    c += eval_catalog_star(dir, normalize(vec3<f32>(-0.849, 0.207, 0.486)),  col_o_blue,  0.78, 0.00092, 24.0, time, twinkle_str);
+
+    return c;
+}
+
 fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     let g = to_galactic(dir);
     let b = g.y; // Galactic latitude sin(b)
@@ -197,26 +269,41 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     let halo_glow = exp(-abs_b / 0.45) * 0.16;
     let disk_profile = thin_disk + thick_disk + halo_glow;
 
-    // 2. Galactic Bulge (Sagittarius A* direction: g near (1.0, 0.0, 0.0))
+    // 2. Galactic Bulge & Sagittarius/Scutum Star Clouds (Sagittarius A* direction: g near (1.0, 0.0, 0.0))
     let sgr_a_dist = length(g - vec3<f32>(1.0, 0.0, 0.0));
     let bulge_core = exp(-sgr_a_dist * sgr_a_dist * 18.0) * 1.85;
     let bulge_halo = exp(-sgr_a_dist * sgr_a_dist * 4.5) * 0.75;
-    let bulge_total = bulge_core + bulge_halo;
+    let cloud_granulation = 0.78 + 0.44 * fbm3(g * 22.0 + vec3<f32>(2.4, -1.1, 0.8), 4);
+    let bulge_total = (bulge_core + bulge_halo) * cloud_granulation;
 
-    // Bulge warm golden-amber starlight tone
-    let bulge_color = vec3<f32>(1.0, 0.86, 0.65) * bulge_total;
+    // Longitudinal Spiral Arm Star Clouds (Scutum-Centaurus, Carina-Sagittarius, Cygnus-Orion)
+    let arm_cloud_noise = smoothstep(0.42, 0.82, fbm3(g * 11.5 + vec3<f32>(-1.7, 3.2, 2.5), 4));
+    let carina_cygnus_weight = smoothstep(0.35, 0.95, abs(g.z)) * exp(-abs_b / 0.055);
+    let spiral_star_clouds = vec3<f32>(0.76, 0.88, 1.18) * (arm_cloud_noise * carina_cygnus_weight * 0.52);
 
-    // 3. The Great Rift & Dark Molecular Absorption Nebulae
+    // 3. The Great Rift, Coalsack Nebula & Multi-Scale Dark Molecular Absorption Filaments
     // Obscures the galactic plane with realistic fractal dust lanes & Bok globules
     let dust_coord = g * 14.0 + vec3<f32>(1.2, -0.4, 3.7);
     let dust_noise = fbm3(dust_coord, 5);
-    let dust_fine = fbm3(dust_coord * 3.5, 3);
-    let dust_density = clamp(dust_noise * 1.6 + dust_fine * 0.45 - 0.45, 0.0, 2.5);
+    let dust_fine = fbm3(dust_coord * 3.8, 3);
+    let bok_filaments = smoothstep(0.62, 0.86, fbm3(dust_coord * 8.5, 3)) * 0.55;
+    let coalsack_dist2 = dot(g - vec3<f32>(0.52, -0.02, -0.85), g - vec3<f32>(0.52, -0.02, -0.85));
+    let coalsack_pocket = exp(-coalsack_dist2 * 140.0) * 1.15;
+    let dust_density = clamp(dust_noise * 1.6 + dust_fine * 0.45 + bok_filaments + coalsack_pocket - 0.45, 0.0, 2.8);
     let dust_optical_depth = dust_density * exp(-abs_b / 0.065) * 2.8;
     let dust_transmission = exp(-dust_optical_depth);
+    // Wavelength-dependent interstellar dust reddening along dark lane fringes
+    let dust_reddening = vec3<f32>(
+        exp(-dust_optical_depth * 0.72),
+        exp(-dust_optical_depth * 0.98),
+        exp(-dust_optical_depth * 1.28)
+    );
 
-    // Warm interstellar starlight wash
-    let disk_starlight = vec3<f32>(0.88, 0.92, 1.05) * disk_profile * dust_transmission;
+    // Bulge warm golden-amber Pop-II starlight attenuated and reddened by the Great Rift
+    let bulge_color = vec3<f32>(1.04, 0.86, 0.64) * bulge_total * mix(vec3<f32>(1.0), dust_reddening, 0.65);
+
+    // Warm-to-cool interstellar starlight wash + spiral arm star clouds
+    let disk_starlight = (vec3<f32>(0.88, 0.92, 1.05) * disk_profile + spiral_star_clouds) * dust_reddening;
 
     // 4. H-Alpha Emission & O-III Reflection Nebulae
     let neb_coord = g * 7.5 + vec3<f32>(5.4, 2.1, -1.8);
@@ -269,7 +356,8 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
         0.0,
     ) * (mw_equator_mask * 0.35); // Soft, subtle stardust wash
 
-    star_light += (l1 + l2 + l3) * skybox.tuning.x;
+    let hipparcos_landmarks = render_hipparcos_landmark_catalog(dir, time, skybox.params.w);
+    star_light += (l1 + l2 + l3 + hipparcos_landmarks) * skybox.tuning.x;
 
     // 6. Deep Space Star Clusters & Objects (100% Spherically Isotropic)
     // =========================================================================

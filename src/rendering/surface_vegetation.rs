@@ -108,9 +108,9 @@ pub fn generate_surface_vegetation_mesh(
                 continue;
             }
 
-            // Realistic low-profile boulder scale relative to rover and camera eye level
-            let boulder_r = vis_rad * (0.0006 + 0.0014 * hash);
-            let boulder_h = boulder_r * (0.38 + 0.32 * hash);
+            // Natural low-profile boulder scale (wider than tall, semi-embedded in regolith)
+            let boulder_r = vis_rad * (0.00035 + 0.00065 * hash);
+            let boulder_h = boulder_r * (0.22 + 0.18 * hash);
 
             append_3d_geological_outcrop(
                 &mut positions,
@@ -594,47 +594,50 @@ fn append_faceted_boulder(
     top_color: [f32; 4],
     seed: usize,
 ) {
-    let sides = 5 + (seed % 3); // 5, 6, or 7 sides
+    let sides = 6 + (seed % 3); // 6, 7, or 8 sides for smooth natural facets
     let mut base_pts = Vec::with_capacity(sides);
     let mut mid_pts = Vec::with_capacity(sides);
 
     let seed_f = seed as f32;
 
-    // 1. Base ring: irregular polygon slightly embedded below the ground surface
+    // Asymmetrical tumble tilt simulating impact ejecta resting on regolith
+    let tumble_tilt = (seed_f * 0.81).sin() * 0.28;
+    let tumble_axis =
+        (east * (seed_f * 1.33).cos() + north * (seed_f * 1.33).sin()).normalize_or_zero();
+
+    // 1. Base ring: irregular polygon embedded deeply in the regolith
     for i in 0..sides {
         let frac = i as f32 / sides as f32;
-        let theta = frac * 2.0 * PI + ((seed_f * 13.0 + i as f32 * 29.0).sin() * 0.20);
+        let theta = frac * 2.0 * PI + ((seed_f * 13.0 + i as f32 * 29.0).sin() * 0.22);
         let (st, ct) = theta.sin_cos();
         let radial = east * ct + north * st;
-        let r_b = radius * (0.75 + 0.30 * ((seed_f * 31.0 + i as f32 * 47.0).cos().abs()));
-        let p_b = base_pos + radial * r_b - up * (height * 0.20);
+        let r_b = radius * (0.85 + 0.28 * ((seed_f * 31.0 + i as f32 * 47.0).cos().abs()));
+        let p_b = base_pos + radial * r_b - up * (height * 0.35);
         base_pts.push(p_b);
 
-        // 2. Mid-level waist chamfer ring
-        let theta_m = theta + ((seed_f * 23.0 + i as f32 * 19.0).sin() * 0.15);
+        // 2. Mid-level waist chamfer ring (fractured impact cleavage)
+        let theta_m = theta + ((seed_f * 23.0 + i as f32 * 19.0).sin() * 0.18);
         let (st_m, ct_m) = theta_m.sin_cos();
         let radial_m = east * ct_m + north * st_m;
-        let r_m = radius * (0.85 + 0.32 * ((seed_f * 41.0 + i as f32 * 53.0).sin().abs()));
-        let h_m = height * (0.35 + 0.25 * ((seed_f * 17.0 + i as f32 * 67.0).cos().abs()));
-        let p_m = base_pos + radial_m * r_m + up * h_m;
+        let r_m = radius * (0.90 + 0.30 * ((seed_f * 41.0 + i as f32 * 53.0).sin().abs()));
+        let h_m = height * (0.25 + 0.20 * ((seed_f * 17.0 + i as f32 * 67.0).cos().abs()));
+        let tilt_m = tumble_axis * tumble_tilt * (r_m * 0.25);
+        let p_m = base_pos + radial_m * r_m + tilt_m + up * h_m;
         mid_pts.push(p_m);
     }
 
-    // 3. Top faceted cap ring (flat/sloping fractured plate, NOT a single cone apex!)
-    let top_sides = (sides - 2).max(3);
+    // 3. Top faceted plate ring (broad, sloping fractured rock crest, NOT a pointed steeple!)
+    let top_sides = (sides - 1).max(5);
     let mut top_pts = Vec::with_capacity(top_sides);
-    let tilt_angle = (seed_f * 0.73).sin() * 0.35;
-    let tilt_axis =
-        (east * (seed_f * 1.11).cos() + north * (seed_f * 1.11).sin()).normalize_or_zero();
 
     for j in 0..top_sides {
         let frac = j as f32 / top_sides as f32;
-        let phi = frac * 2.0 * PI + ((seed_f * 19.0 + j as f32 * 37.0).sin() * 0.18);
+        let phi = frac * 2.0 * PI + ((seed_f * 19.0 + j as f32 * 37.0).sin() * 0.20);
         let (sp, cp) = phi.sin_cos();
         let radial_t = east * cp + north * sp;
-        let r_t = radius * (0.30 + 0.22 * ((seed_f * 59.0 + j as f32 * 71.0).cos().abs()));
-        let h_t = height * (0.80 + 0.20 * ((seed_f * 73.0 + j as f32 * 89.0).sin().abs()));
-        let tilt_disp = tilt_axis * tilt_angle * radius * 0.25;
+        let r_t = radius * (0.62 + 0.24 * ((seed_f * 59.0 + j as f32 * 71.0).cos().abs()));
+        let h_t = height * (0.70 + 0.25 * ((seed_f * 73.0 + j as f32 * 89.0).sin().abs()));
+        let tilt_disp = tumble_axis * tumble_tilt * radius * 0.40;
         let p_t = base_pos + radial_t * r_t + tilt_disp + up * h_t;
         top_pts.push(p_t);
     }

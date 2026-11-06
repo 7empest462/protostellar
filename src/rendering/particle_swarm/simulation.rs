@@ -1,6 +1,5 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::Rng;
 use rayon::prelude::*;
 use std::f64::consts::PI;
 
@@ -375,16 +374,23 @@ pub fn integrate_particles_and_collect_accretions(
         .collect()
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Growing body physics updates mass, radius, composition, and endogenous water inventory"
+)]
 fn update_growing_body_physics(
     mass: &mut Mass,
     radius: &mut Radius,
     comp: &mut Composition,
     body: &mut CelestialBody,
+    mut opt_vol: Option<&mut VolatileInventory>,
     gain: f64,
     r_au: f64,
     star_mass: f64,
+    gas_scale: f32,
     disk_params: &DiskParameters,
 ) {
+    let old_mass = mass.0;
     if matches!(body.body_type, BodyType::Asteroid | BodyType::Comet) {
         mass.0 = (mass.0 + gain).min(0.0005 * EARTH_MASS_SOLAR);
         let avg_density = comp.average_density();
@@ -491,6 +497,28 @@ fn update_growing_body_physics(
     if !is_beyond_snowline && !is_massive_disk && (mass.0 >= 0.02 * EARTH_MASS_SOLAR) {
         comp.gas_frac = comp.gas_frac.min(0.035);
     }
+
+    let actual_delta_mass = (mass.0 - old_mass).max(0.0);
+    if actual_delta_mass > 0.0
+        && r_au > 0.30
+        && matches!(
+            body.body_type,
+            BodyType::Planetesimal
+                | BodyType::Protoplanet
+                | BodyType::TerrestrialPlanet
+                | BodyType::SuperEarth
+        )
+    {
+        if let Some(ref mut vol) = opt_vol {
+            let water_gain =
+                compute_endogenous_water_m_earth(actual_delta_mass, comp, r_au, gas_scale);
+            vol.delivered_water_m_earth += water_gain;
+            if water_gain > 0.0 && vol.atmospheric_pressure_bar < 1.0 {
+                vol.atmospheric_pressure_bar =
+                    (vol.atmospheric_pressure_bar + (water_gain / 0.0005) as f32 * 0.85).min(1.0);
+            }
+        }
+    }
 }
 
 fn update_growing_body_name(body: &mut CelestialBody, mass: f64, r_au: f64) {
@@ -560,6 +588,7 @@ pub fn apply_particle_accretion_to_bodies(
             &mut Radius,
             &mut Composition,
             &mut CelestialBody,
+            Option<&mut VolatileInventory>,
         ),
         Without<CentralStar>,
     >,
@@ -567,9 +596,10 @@ pub fn apply_particle_accretion_to_bodies(
     accreted_events: Vec<(Entity, f64)>,
     pending_gpu_accretions: &mut Vec<(usize, f32)>,
     star_mass: f64,
+    gas_scale: f32,
     disk_params: &DiskParameters,
 ) {
-    let mut mass_gains: hashbrown::HashMap<Entity, f64> = hashbrown::HashMap::new();
+    let mut mass_gains: rustc_hash::FxHashMap<Entity, f64> = rustc_hash::FxHashMap::default();
     for (ent, delta_m) in accreted_events {
         *mass_gains.entry(ent).or_insert(0.0) += delta_m;
     }
@@ -579,7 +609,9 @@ pub fn apply_particle_accretion_to_bodies(
         }
     }
 
-    for (ent, pos, mut mass, mut radius, mut comp, mut body) in massive_query.iter_mut() {
+    for (ent, pos, mut mass, mut radius, mut comp, mut body, mut opt_vol) in
+        massive_query.iter_mut()
+    {
         if let Some(&gain) = mass_gains.get(&ent) {
             let r_au = pos.0.length();
             update_growing_body_physics(
@@ -587,9 +619,11 @@ pub fn apply_particle_accretion_to_bodies(
                 &mut radius,
                 &mut comp,
                 &mut body,
+                opt_vol.as_deref_mut(),
                 gain,
                 r_au,
                 star_mass,
+                gas_scale,
                 disk_params,
             );
             update_growing_body_name(&mut body, mass.0, r_au);
@@ -778,9 +812,8 @@ fn try_merge_particles(
         return;
     }
 
-    let mut rng = rand::rng();
     let stick_prob = if is_beyond_snowline { 0.90 } else { 0.75 };
-    if rng.random_range(0.0..1.0f32) >= stick_prob {
+    if fastrand::f32() >= stick_prob {
         return;
     }
 

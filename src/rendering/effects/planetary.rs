@@ -13,8 +13,7 @@ pub fn draw_cometary_escape_tails(
     star_vec: Vec3,
     vel: &SimVelocity,
     opt_tail: Option<&AtmosphericEscapeTail>,
-    opt_rad: Option<&Radius>,
-    config: &SimulationConfig,
+    visual_radius: f32,
     elapsed: f32,
 ) {
     if let Some(tail) = opt_tail {
@@ -24,7 +23,7 @@ pub fn draw_cometary_escape_tails(
                 let v_orb = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
                 let tail_axis = (star_to_body - v_orb * 0.035).normalize();
                 let tail_len = tail.tail_length_au;
-                let base_r = opt_rad.map_or(0.04, |r| config.calc_visual_radius(r.0) * 1.15);
+                let base_r = (visual_radius * 1.15).max(0.0003);
 
                 let n_spine = 16;
                 let ds = tail_len / (n_spine as f32);
@@ -101,6 +100,7 @@ pub fn draw_planetary_magnetospheres(
     gizmos: &mut Gizmos,
     body_vec: Vec3,
     star_vec: Vec3,
+    visual_radius: f32,
     diff: &InternalDifferentiation,
     opt_spin: Option<&SpinState>,
 ) {
@@ -110,7 +110,7 @@ pub fn draw_planetary_magnetospheres(
     let tilt_deg = opt_spin.map_or(23.5, |s| s.axial_tilt_degrees as f32);
     let tilt_rot = Quat::from_rotation_z(tilt_deg.to_radians());
     let b_strength = (diff.magnetic_field_gauss as f32).min(3.0);
-    let shield_r = 0.35 + b_strength * 0.25;
+    let shield_r = (visual_radius * (3.8 + b_strength * 1.8)).max(0.0012);
 
     for quad in 0..4 {
         let quad_rot = Quat::from_rotation_y(quad as f32 * std::f32::consts::FRAC_PI_2);
@@ -118,10 +118,10 @@ pub fn draw_planetary_magnetospheres(
         let steps = 18;
         for step in 0..=steps {
             let theta = (step as f32 / steps as f32) * std::f32::consts::PI;
-            let sin_th = theta.sin();
-            let r = shield_r * sin_th.powi(2);
+            let (sin_th, cos_th) = theta.sin_cos();
+            let r = shield_r * sin_th * sin_th;
             let local_x = r * sin_th;
-            let local_y = r * theta.cos();
+            let local_y = r * cos_th;
             let local_pt = quad_rot * Vec3::new(local_x, local_y, 0.0);
             let world_pt = body_vec + tilt_rot * local_pt;
 
@@ -218,26 +218,32 @@ pub fn draw_body_selection_and_beacons(
     gizmos: &mut Gizmos,
     body_vec: Vec3,
     body: &CelestialBody,
-    opt_rad: Option<&Radius>,
-    config: &SimulationConfig,
+    visual_r: f32,
     cam_pos: Option<Vec3>,
 ) {
     let is_star = body.body_type.is_star_or_remnant();
-    let visual_r = opt_rad.map_or(0.005, |r| {
-        config.calc_visual_radius_for_type(r.0, body.body_type)
-    });
+    let safe_vis_r = visual_r.max(0.00005);
 
-    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec));
-    let reticle_r = (visual_r * 1.35).max(cam_dist * 0.038);
-    let beacon_h = (visual_r * 2.8).max(cam_dist * 0.09);
-    let pointer_r = (visual_r * 0.22).max(cam_dist * 0.009);
+    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec)).max(0.0002);
+    // Smoothly fade selection reticle & beacon when zoomed right up to a planet's surface
+    // so depth-biased gizmo rings and pins don't slice across the planet's disk.
+    let close_fade = ((cam_dist / safe_vis_r - 2.3) / 5.5).clamp(0.0, 1.0);
+    if close_fade < 0.02 {
+        return;
+    }
+
+    let reticle_r = (safe_vis_r * 1.38).max(cam_dist * 0.036);
+    let beacon_base_y = safe_vis_r * 1.22;
+    let beacon_h = (safe_vis_r * 2.8).max(cam_dist * 0.085);
+    let pointer_r = (safe_vis_r * 0.22).max(cam_dist * 0.008);
     let tick_len = reticle_r * 0.35;
 
-    let reticle_color = if is_star {
-        Color::srgb(1.0, 0.85, 0.2)
+    let base_rgb = if is_star {
+        Srgba::new(1.0, 0.85, 0.2, 0.85 * close_fade)
     } else {
-        Color::srgb(0.2, 0.95, 1.0)
+        Srgba::new(0.2, 0.95, 1.0, 0.80 * close_fade)
     };
+    let reticle_color = Color::from(base_rgb);
 
     gizmos.circle(
         Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
@@ -248,10 +254,10 @@ pub fn draw_body_selection_and_beacons(
         Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
         reticle_r * 1.25,
         Color::srgba(
-            reticle_color.to_srgba().red,
-            reticle_color.to_srgba().green,
-            reticle_color.to_srgba().blue,
-            0.35,
+            base_rgb.red,
+            base_rgb.green,
+            base_rgb.blue,
+            0.30 * close_fade,
         ),
     );
 
@@ -276,16 +282,18 @@ pub fn draw_body_selection_and_beacons(
         reticle_color,
     );
 
-    gizmos.line(
-        body_vec,
-        body_vec + Vec3::new(0.0, beacon_h, 0.0),
-        reticle_color,
-    );
-    gizmos.sphere(
-        Isometry3d::from_translation(body_vec + Vec3::new(0.0, beacon_h, 0.0)),
-        pointer_r,
-        reticle_color,
-    );
+    if beacon_h > beacon_base_y {
+        gizmos.line(
+            body_vec + Vec3::new(0.0, beacon_base_y, 0.0),
+            body_vec + Vec3::new(0.0, beacon_h, 0.0),
+            reticle_color,
+        );
+        gizmos.sphere(
+            Isometry3d::from_translation(body_vec + Vec3::new(0.0, beacon_h, 0.0)),
+            pointer_r,
+            reticle_color,
+        );
+    }
 }
 
 /// Draws a high-tech sci-fi holographic targeting reticle around a hovered celestial body,
@@ -294,20 +302,17 @@ pub fn draw_hover_targeting_reticle(
     gizmos: &mut Gizmos,
     body_vec: Vec3,
     body: &CelestialBody,
-    opt_rad: Option<&Radius>,
-    config: &SimulationConfig,
+    visual_r: f32,
     cam_tf: Option<&Transform>,
     elapsed: f32,
 ) {
     let is_star = body.body_type.is_star_or_remnant();
-    let visual_r = opt_rad.map_or(0.005, |r| {
-        config.calc_visual_radius_for_type(r.0, body.body_type)
-    });
+    let safe_vis_r = visual_r.max(0.00005);
 
     let cam_pos = cam_tf.map(|t| t.translation);
-    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec));
+    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec)).max(0.0002);
 
-    let box_half = (visual_r * 1.55).max(cam_dist * 0.042);
+    let box_half = (safe_vis_r * 1.55).max(cam_dist * 0.040);
     let corner_len = box_half * 0.35;
     let pulse = (elapsed * 6.0).sin().mul_add(0.15, 0.85);
 
@@ -336,22 +341,18 @@ pub fn draw_hover_targeting_reticle(
     );
 
     // Four corner brackets pointing inward toward the body
-    // Top-Right: (+box_half, +box_half)
     let tr = body_vec + right * box_half + up * box_half;
     gizmos.line(tr, tr - right * corner_len, reticle_color);
     gizmos.line(tr, tr - up * corner_len, reticle_color);
 
-    // Top-Left: (-box_half, +box_half)
     let tl = body_vec - right * box_half + up * box_half;
     gizmos.line(tl, tl + right * corner_len, reticle_color);
     gizmos.line(tl, tl - up * corner_len, reticle_color);
 
-    // Bottom-Right: (+box_half, -box_half)
     let br = body_vec + right * box_half - up * box_half;
     gizmos.line(br, br - right * corner_len, reticle_color);
     gizmos.line(br, br + up * corner_len, reticle_color);
 
-    // Bottom-Left: (-box_half, -box_half)
     let bl = body_vec - right * box_half - up * box_half;
     gizmos.line(bl, bl + right * corner_len, reticle_color);
     gizmos.line(bl, bl + up * corner_len, reticle_color);
@@ -378,7 +379,15 @@ pub fn resolve_cutaway_strata(
     config: &SimulationConfig,
 ) -> CutawayStrata {
     let visual_r = config.calc_visual_radius_for_type(rad_val, body.body_type);
+    resolve_cutaway_strata_with_visual_radius(body, rad_val, visual_r, opt_diff)
+}
 
+pub fn resolve_cutaway_strata_with_visual_radius(
+    body: &CelestialBody,
+    rad_val: f64,
+    visual_r: f32,
+    opt_diff: Option<&InternalDifferentiation>,
+) -> CutawayStrata {
     if body.body_type.is_star_or_remnant() {
         CutawayStrata {
             inner_core_r: visual_r * 0.12,
@@ -640,14 +649,14 @@ pub fn draw_internal_planetary_cutaway(
     body_vec: Vec3,
     body: &CelestialBody,
     opt_rad: Option<&Radius>,
+    visual_r: f32,
     opt_diff: Option<&InternalDifferentiation>,
     opt_spin: Option<&SpinState>,
-    config: &SimulationConfig,
     cam_tf: Option<&Transform>,
     elapsed: f32,
 ) {
     let rad_val = opt_rad.map_or(0.005, |r| r.0);
-    let strata = resolve_cutaway_strata(body, rad_val, opt_diff, config);
+    let strata = resolve_cutaway_strata_with_visual_radius(body, rad_val, visual_r, opt_diff);
 
     // Compute 3D spin-aligned orthonormal basis
     let s_axis = if let Some(spin) = opt_spin {
@@ -675,9 +684,9 @@ pub fn draw_internal_planetary_cutaway(
     draw_cutaway_callout_leaders(gizmos, body_vec, s_tangent_x, s_tangent_z, &strata, cam_tf);
 }
 
-/// Renders a SpaceEngine / Universe Sandbox style optical starlight glint (Airy disk)
-/// when a planet or star is viewed from far away, allowing 3D planet meshes to stay
-/// realistically small without disappearing against the background skybox.
+/// Renders a SpaceEngine / Universe Sandbox style optical starlight point-spread glint
+/// (billboarded concentric Airy disk + tapered diffraction cross) when a luminous star
+/// or sunlit planet/moon is unresolved at large viewing distances.
 #[allow(
     clippy::too_many_arguments,
     reason = "Optical point-spread glint rendering requires camera basis and body parameters"
@@ -692,63 +701,123 @@ pub fn draw_distant_optical_glint(
     body_color: Color,
     body_type: BodyType,
 ) {
-    if matches!(
-        body_type,
-        BodyType::Asteroid
-            | BodyType::Comet
-            | BodyType::Planetesimal
-            | BodyType::DustGrain
-            | BodyType::DebrisRing
+    if !crate::rendering::bodies::palettes::is_optically_luminous_or_reflective_glint_body(
+        body_type, false,
     ) {
         return;
     }
+    if !visual_radius.is_finite() || visual_radius <= 0.0 {
+        return;
+    }
 
-    let cam_dist = cam_pos.distance(body_vec).max(0.001);
+    let to_cam_raw = cam_pos - body_vec;
+    let cam_dist = to_cam_raw.length();
+    if !cam_dist.is_finite() || cam_dist <= 0.0005 {
+        return;
+    }
+
     let angular_size = visual_radius / cam_dist;
-
-    let glint_visibility = ((0.012 - angular_size) / 0.009).clamp(0.0, 1.0);
-    if glint_visibility <= 0.01 {
+    if angular_size >= 0.010 {
         return;
     }
 
     let rgba = body_color.to_srgba();
-    let glint_r = cam_dist * 0.0028;
-    let alpha = glint_visibility * 0.75;
+    let weight = rgba.alpha.clamp(0.0, 1.4);
+    if weight <= 0.01 {
+        return;
+    }
+
+    let glint_visibility = ((0.010 - angular_size) / 0.007).clamp(0.0, 1.0);
+    let smooth_vis = glint_visibility * glint_visibility * (3.0 - 2.0 * glint_visibility);
+    let alpha = (smooth_vis * 0.86 * weight).clamp(0.0, 0.98);
+    if alpha <= 0.008 {
+        return;
+    }
+
+    let to_cam = to_cam_raw / cam_dist;
+    let billboard_iso = Isometry3d::new(body_vec, Quat::from_rotation_arc(Vec3::Z, to_cam));
+    let size_scale = (0.72 + 0.28 * weight).clamp(0.60, 1.18);
+    let glint_r = cam_dist * 0.0025 * size_scale;
 
     let core_col = Color::srgba(
-        (rgba.red * 0.6 + 0.4).min(1.0),
-        (rgba.green * 0.6 + 0.4).min(1.0),
-        (rgba.blue * 0.6 + 0.4).min(1.0),
+        (rgba.red * 0.55 + 0.45).min(1.0),
+        (rgba.green * 0.55 + 0.45).min(1.0),
+        (rgba.blue * 0.55 + 0.45).min(1.0),
         alpha,
     );
-    let halo_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.35);
+    let coma_col = Color::srgba(
+        (rgba.red * 0.80 + 0.20).min(1.0),
+        (rgba.green * 0.80 + 0.20).min(1.0),
+        (rgba.blue * 0.80 + 0.20).min(1.0),
+        alpha * 0.62,
+    );
+    let airy_ring_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.26);
 
-    gizmos.sphere(
-        Isometry3d::from_translation(body_vec),
-        glint_r * 0.45,
-        core_col,
+    // Camera-plane billboarded concentric Airy PSF (no 3D wireframe sphere artifacts)
+    gizmos.circle(billboard_iso, glint_r * 0.22, core_col);
+    gizmos.circle(billboard_iso, glint_r * 0.52, coma_col);
+    gizmos.circle(billboard_iso, glint_r * 1.12, airy_ring_col);
+
+    // Multi-stage tapered 4-point optical diffraction spikes
+    let inner_spike = glint_r * 0.90;
+    let outer_spike = glint_r * 2.35;
+    let inner_spike_col = Color::srgba(
+        (rgba.red * 0.72 + 0.28).min(1.0),
+        (rgba.green * 0.72 + 0.28).min(1.0),
+        (rgba.blue * 0.72 + 0.28).min(1.0),
+        alpha * 0.56,
     );
-    gizmos.circle(
-        Isometry3d::new(
-            body_vec,
-            Quat::from_rotation_arc(Vec3::Z, (cam_pos - body_vec).normalize_or_zero()),
-        ),
-        glint_r * 1.4,
-        halo_col,
+    let outer_spike_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.22);
+
+    gizmos.line(
+        body_vec - cam_right * inner_spike,
+        body_vec + cam_right * inner_spike,
+        inner_spike_col,
+    );
+    gizmos.line(
+        body_vec + cam_right * inner_spike,
+        body_vec + cam_right * outer_spike,
+        outer_spike_col,
+    );
+    gizmos.line(
+        body_vec - cam_right * outer_spike,
+        body_vec - cam_right * inner_spike,
+        outer_spike_col,
     );
 
-    let spike_len = glint_r * 2.4;
-    let spike_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.45);
     gizmos.line(
-        body_vec - cam_right * spike_len,
-        body_vec + cam_right * spike_len,
-        spike_col,
+        body_vec - cam_up * inner_spike,
+        body_vec + cam_up * inner_spike,
+        inner_spike_col,
     );
     gizmos.line(
-        body_vec - cam_up * spike_len,
-        body_vec + cam_up * spike_len,
-        spike_col,
+        body_vec + cam_up * inner_spike,
+        body_vec + cam_up * outer_spike,
+        outer_spike_col,
     );
+    gizmos.line(
+        body_vec - cam_up * outer_spike,
+        body_vec - cam_up * inner_spike,
+        outer_spike_col,
+    );
+
+    // Self-luminous stars exhibit faint secondary 45° aperture micro-rays
+    if body_type.is_star_or_remnant() {
+        let diag1 = (cam_right + cam_up) * std::f32::consts::FRAC_1_SQRT_2;
+        let diag2 = (cam_right - cam_up) * std::f32::consts::FRAC_1_SQRT_2;
+        let diag_len = glint_r * 1.28;
+        let diag_col = Color::srgba(rgba.red, rgba.green, rgba.blue, alpha * 0.18);
+        gizmos.line(
+            body_vec - diag1 * diag_len,
+            body_vec + diag1 * diag_len,
+            diag_col,
+        );
+        gizmos.line(
+            body_vec - diag2 * diag_len,
+            body_vec + diag2 * diag_len,
+            diag_col,
+        );
+    }
 }
 
 pub use super::volcanism::draw_volcanic_and_cryo_plumes;

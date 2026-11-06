@@ -121,6 +121,8 @@ pub struct AtmosphereUniforms {
     pub ring_and_ozone_params: Vec4,
     /// xyz: unit 3D direction toward dominant tidal perturber in world space, w: roche_stretch (0.0..0.85)
     pub tidal_deformation: Vec4,
+    /// x: cloud_coverage (0.0..1.0), y: visual_time_secs, z: spin_angle, w: color_seed
+    pub cloud_and_time_params: Vec4,
 }
 
 impl Default for AtmosphereUniforms {
@@ -135,6 +137,7 @@ impl Default for AtmosphereUniforms {
             spin_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
             ring_and_ozone_params: Vec4::ZERO,
             tidal_deformation: Vec4::ZERO,
+            cloud_and_time_params: Vec4::ZERO,
         }
     }
 }

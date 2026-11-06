@@ -74,7 +74,7 @@ pub struct SupernovaExplosionInstance {
 #[derive(Resource, Default)]
 pub struct SupernovaDebrisPool {
     pub explosions: Vec<SupernovaExplosionInstance>,
-    pub handled_entities: hashbrown::HashSet<Entity>,
+    pub handled_entities: rustc_hash::FxHashSet<Entity>,
 }
 
 impl SupernovaDebrisPool {
@@ -660,7 +660,7 @@ fn upsert_supernova_visual_shell(
     commands: &mut Commands,
     assets: &VisualAssets,
     materials: &mut Assets<SupernovaMaterial>,
-    existing_shells: &mut hashbrown::HashMap<
+    existing_shells: &mut rustc_hash::FxHashMap<
         Entity,
         (Entity, Mut<'_, Transform>, Handle<SupernovaMaterial>),
     >,
@@ -709,16 +709,16 @@ pub fn sync_supernova_visuals(
         return;
     };
 
-    let mut existing_shells: hashbrown::HashMap<
+    let mut existing_shells: rustc_hash::FxHashMap<
         Entity,
         (Entity, Mut<'_, Transform>, Handle<SupernovaMaterial>),
-    > = hashbrown::HashMap::new();
+    > = rustc_hash::FxHashMap::default();
 
     for (e, shell, trans, mat) in shell_query.iter_mut() {
         existing_shells.insert(shell.star_entity, (e, trans, mat.0.clone()));
     }
 
-    let mut active_stars: hashbrown::HashSet<Entity> = hashbrown::HashSet::new();
+    let mut active_stars: rustc_hash::FxHashSet<Entity> = rustc_hash::FxHashSet::default();
 
     for exp in &pool.explosions {
         active_stars.insert(exp.star_entity);

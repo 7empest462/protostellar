@@ -106,46 +106,153 @@ pub fn compute_realistic_visual_radius(
     cam_dist: f32,
     config: &SimulationConfig,
 ) -> f32 {
-    let r_true = (physical_radius_au as f32).max(1e-6);
-    let r_exag =
-        (config.calc_visual_radius_with_orbit(physical_radius_au, body_type, r_orb, min_orbit_r)
-            * 0.65)
-            .max(r_true);
+    let safe_phys_r = if physical_radius_au.is_finite() {
+        physical_radius_au.max(1e-9)
+    } else {
+        1e-6
+    };
+    let safe_r_orb = if r_orb.is_finite() {
+        r_orb.max(0.0)
+    } else {
+        1.0
+    };
+    let safe_min_orbit = if min_orbit_r.is_finite() && min_orbit_r > 0.0 {
+        min_orbit_r
+    } else {
+        1.0
+    };
+    let safe_cam_dist = if cam_dist.is_finite() {
+        cam_dist.max(0.0)
+    } else {
+        25.0
+    };
 
-    let orbit_spacing_cap = if r_orb > 0.0005 && !body_type.is_star_or_remnant() {
-        (r_orb * 0.045).max(r_true * 1.25)
-    } else if body_type.is_star_or_remnant() && min_orbit_r < 0.05 {
-        (min_orbit_r * 0.32).max(r_true)
+    let r_true = (safe_phys_r as f32).max(1e-6);
+    let r_exag =
+        config.calc_visual_radius_with_orbit(safe_phys_r, body_type, safe_r_orb, safe_min_orbit);
+
+    let orbit_spacing_cap = if safe_r_orb > 0.0005 && !body_type.is_star_or_remnant() {
+        (safe_r_orb * 0.045).max(r_true * 1.25)
+    } else if body_type.is_star_or_remnant() && safe_min_orbit < 0.05 {
+        (safe_min_orbit * 0.32).max(r_true)
     } else {
         r_exag
     };
     let max_allowed_exag = r_exag.min(orbit_spacing_cap);
 
+    // In single-precision 32-bit float world coordinates, machine epsilon at distance R_orb
+    // is ~ R_orb * 5.96e-8 AU. To prevent GPU vertex snapping and polygonal faceting
+    // (where a distant body's sphere collapses to a handful of discrete float quanta),
+    // enforce a distance-dependent precision floor of ~ 1,500-2,500 ULPs across the radius.
+    let precision_mult = if safe_r_orb > 25.0 { 1.5e-4 } else { 3.6e-5 };
+    let float_precision_floor = (safe_r_orb * precision_mult).min(max_allowed_exag);
+
     let close_scale_floor = if body_type == BodyType::BlackHole {
-        (r_true * 8.0).max(0.002)
+        max_allowed_exag
     } else if body_type.is_star_or_remnant() {
-        (max_allowed_exag * 0.82).max(r_true)
+        (r_true * 1.2)
+            .max(float_precision_floor)
+            .min(max_allowed_exag)
+    } else if body_type == BodyType::Moon {
+        let moon_scale = ((r_true / 0.000_042_6_f32).powf(0.45) * 0.46).clamp(0.05, 1.0);
+        ((r_true * 2.5).max(0.00018 * moon_scale))
+            .max(float_precision_floor * moon_scale)
+            .min(max_allowed_exag)
+    } else if matches!(
+        body_type,
+        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+    ) {
+        let minor_precision_floor = (float_precision_floor * 0.35).min(max_allowed_exag);
+        (r_true * 2.5)
+            .max(0.00010)
+            .max(minor_precision_floor)
+            .min(max_allowed_exag)
+    } else if safe_r_orb > 25.0 {
+        // Deep outer system planets (Uranus, Neptune, Pluto, Planet 9):
+        // Retain an orbital-distance-proportional visual floor so the sphere has thousands
+        // of float quanta across its diameter, completely eliminating polygonal facet snapping.
+        (r_true * 2.5)
+            .max(max_allowed_exag * 0.65)
+            .max(float_precision_floor)
+            .min(max_allowed_exag)
     } else {
-        (max_allowed_exag * 0.78).max(r_true)
+        (r_true * 2.5)
+            .max(0.00018)
+            .max(float_precision_floor)
+            .min(max_allowed_exag)
     };
-    let effective_floor = close_scale_floor.min(max_allowed_exag);
 
-    // Use a shared world-space macro-zoom window (0.12..1.20 AU, well above planet-moon orbital
-    // separations like 0.012 AU) so a planet and its moons never distort their relative size
-    // ratio when viewing either body or zooming in and out.
-    let zoom_t = ((cam_dist - 0.12) / 1.08).clamp(0.0, 1.0);
-    let smooth_zoom = zoom_t * zoom_t * (3.0 - 2.0 * zoom_t);
+    // Sub-linear power-law zoom ramp (exponent 0.78 < 1.0) above `close_dist`:
+    // Apparent angular radius Theta(d) = R_vis(d) / d scales as d^(-0.22) in the transition
+    // zone and d^(-1.0) outside it, guaranteeing 100% strict monotonicity (dTheta/dd < 0
+    // everywhere) with zero mid-flight inflate-deflate-inflate oscillation.
+    let close_dist = (close_scale_floor * 8.0).max(0.015);
+    if safe_cam_dist <= close_dist || max_allowed_exag <= close_scale_floor {
+        close_scale_floor
+    } else {
+        let scaled = close_scale_floor * (safe_cam_dist / close_dist).powf(0.78);
+        scaled.min(max_allowed_exag)
+    }
+}
 
-    effective_floor + (max_allowed_exag - effective_floor) * smooth_zoom
+/// Resolves the exact rendered visual radius of a celestial body in `O(1)` by reading its synced
+/// `Transform.scale.x` when valid, or computing `compute_realistic_visual_radius` if unsynced.
+#[inline]
+pub fn resolve_synced_visual_radius(
+    opt_transform: Option<&Transform>,
+    physical_radius_au: f64,
+    body_type: BodyType,
+    r_orb: f32,
+    cam_dist: f32,
+    config: &SimulationConfig,
+) -> f32 {
+    if let Some(tf) = opt_transform {
+        let sx = tf.scale.x;
+        let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && physical_radius_au < 0.25;
+        if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
+            return sx;
+        }
+    }
+    compute_realistic_visual_radius(physical_radius_au, body_type, r_orb, 1.0, cam_dist, config)
+}
+
+/// Computes the self-consistent close-up camera framing distance (AU) for focusing on a body,
+/// accounting for the camera-adaptive visual radius reduction as the camera approaches.
+pub fn compute_close_camera_framing_radius(
+    physical_radius_au: f64,
+    body_type: BodyType,
+    r_orb: f32,
+    min_orbit_r: f32,
+    config: &SimulationConfig,
+) -> f32 {
+    let r0 = compute_realistic_visual_radius(
+        physical_radius_au,
+        body_type,
+        r_orb,
+        min_orbit_r,
+        0.002,
+        config,
+    );
+    let d1 = config.calc_camera_framing_radius(r0);
+    let r1 = compute_realistic_visual_radius(
+        physical_radius_au,
+        body_type,
+        r_orb,
+        min_orbit_r,
+        d1,
+        config,
+    );
+    config.calc_camera_framing_radius(r1)
 }
 
 fn find_star_position_and_min_orbit(
     query: &CelestialBodyQuery,
-) -> (Vec3, f64, Option<Entity>, f32, Vec<(Entity, Vec3)>) {
+    stars: &mut Vec<(Entity, Vec3)>,
+) -> (Vec3, f64, Option<Entity>, f32) {
+    stars.clear();
     let mut s_pos = Vec3::ZERO;
     let mut s_mass = 1.0;
     let mut s_ent = None;
-    let mut stars = Vec::with_capacity(8);
 
     for (e, p, m, _, _, _, b, ..) in query.iter() {
         if b.body_type.is_star_or_remnant() {
@@ -160,7 +267,7 @@ fn find_star_position_and_min_orbit(
     }
 
     if stars.len() != 1 {
-        return (s_pos, s_mass, s_ent, 1.0, stars);
+        return (s_pos, s_mass, s_ent, 1.0);
     }
 
     let mut min_r = f32::MAX;
@@ -173,7 +280,7 @@ fn find_star_position_and_min_orbit(
     }
 
     let min_orbit_r = if min_r < f32::MAX { min_r } else { 1.0 };
-    (s_pos, s_mass, s_ent, min_orbit_r, stars)
+    (s_pos, s_mass, s_ent, min_orbit_r)
 }
 
 fn resolve_star_direction(
@@ -205,8 +312,9 @@ fn collect_system_moons(
     star_pos: Vec3,
     min_orbit_r: f32,
     cam_pos: Option<Vec3>,
-) -> Vec<(Entity, Vec3, f32, Option<Entity>)> {
-    let mut all_moons = Vec::with_capacity(8);
+    all_moons: &mut Vec<(Entity, Vec3, f32, Option<Entity>)>,
+) {
+    all_moons.clear();
     for (m_ent, pos, _, radius, _, _, body, _, _, _, _, (_, _, _, _, _, opt_sat), _) in query.iter()
     {
         if opt_sat.is_some() || body.body_type == BodyType::Moon {
@@ -224,7 +332,6 @@ fn collect_system_moons(
             all_moons.push((m_ent, m_pos, m_vis_rad, opt_sat.map(|s| s.parent)));
         }
     }
-    all_moons
 }
 
 #[allow(
@@ -379,8 +486,75 @@ fn sync_body_uniforms(
     mat.extension.uniforms.eclipse_moons_data = moons_data;
 }
 
+fn resolve_expected_mesh(
+    body: &CelestialBody,
+    radius_au: f64,
+    entity: Entity,
+    visual_assets: &VisualAssets,
+    opt_player_state: Option<&PlayerInteractionState>,
+) -> Handle<Mesh> {
+    let target_mesh = select_body_mesh(body, radius_au, visual_assets);
+    let is_selected = opt_player_state.is_some_and(|ps| ps.selected_entity == Some(entity));
+    if is_selected {
+        if body.body_type.is_star_or_remnant() {
+            visual_assets.star_mesh_hires.clone()
+        } else if body.body_type.is_planet() || body.body_type == BodyType::Moon {
+            visual_assets.planet_mesh_hires.clone()
+        } else {
+            target_mesh
+        }
+    } else {
+        target_mesh
+    }
+}
+
+fn resolve_cutaway_uniform_params(
+    body: &CelestialBody,
+    radius_au: f64,
+    visual_radius: f32,
+    opt_diff: Option<&InternalDifferentiation>,
+    opt_player_state: Option<&PlayerInteractionState>,
+    entity: Entity,
+) -> Vec4 {
+    let is_cutaway = opt_player_state.is_some_and(|ps| {
+        ps.is_cutaway_active()
+            && ps.overlay_mode != DiagnosticOverlayMode::Hidden
+            && (ps.selected_entity == Some(entity)
+                || (ps.selected_entity.is_none() && ps.hovered_entity == Some(entity)))
+    });
+
+    if is_cutaway {
+        let strata =
+            crate::rendering::effects::planetary::resolve_cutaway_strata_with_visual_radius(
+                body,
+                radius_au,
+                visual_radius,
+                opt_diff,
+            );
+        let core_ratio = if visual_radius > 1e-6 {
+            (strata.core_r / visual_radius).clamp(0.05, 0.75)
+        } else {
+            0.55
+        };
+        let mantle_min = (core_ratio + 0.05).min(0.98);
+        let mantle_ratio = if visual_radius > 1e-6 {
+            (strata.mantle_r / visual_radius).clamp(mantle_min, 0.99)
+        } else {
+            0.95
+        };
+        let inner_core_ratio = if visual_radius > 1e-6 {
+            (strata.inner_core_r / visual_radius).clamp(0.02, (core_ratio - 0.02).max(0.03))
+        } else {
+            core_ratio * 0.38
+        };
+        Vec4::new(1.0, inner_core_ratio, core_ratio, mantle_ratio)
+    } else {
+        Vec4::ZERO
+    }
+}
+
 pub fn sync_celestial_transforms(
-    sim_time: Option<Res<SimTime>>,
+    (sim_time, time_warp): (Option<Res<SimTime>>, Option<Res<TimeWarp>>),
     config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut materials: ResMut<Assets<PlanetMaterial>>,
@@ -388,14 +562,30 @@ pub fn sync_celestial_transforms(
     camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialBody>)>,
     opt_player_state: Option<Res<PlayerInteractionState>>,
     mut query: CelestialBodyQuery,
+    mut stars_scratch: Local<Vec<(Entity, Vec3)>>,
+    mut moons_scratch: Local<Vec<(Entity, Vec3, f32, Option<Entity>)>>,
 ) {
     let cam_pos = camera_query.iter().next().map(|t| t.translation);
-    let (star_pos, star_mass, _star_entity, min_orbit_r, stars) =
-        find_star_position_and_min_orbit(&query);
-    let all_moons = collect_system_moons(&query, &config, star_pos, min_orbit_r, cam_pos);
+    let (star_pos, star_mass, _star_entity, min_orbit_r) =
+        find_star_position_and_min_orbit(&query, &mut stars_scratch);
+    collect_system_moons(
+        &query,
+        &config,
+        star_pos,
+        min_orbit_r,
+        cam_pos,
+        &mut moons_scratch,
+    );
+    let is_paused = time_warp
+        .as_deref()
+        .is_some_and(|tw| tw.is_paused && !tw.step_once);
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
-    let current_dt_yr = sim_time.as_deref().map_or(0.0, |st| st.current_dt_yr);
+    let current_dt_yr = if is_paused {
+        0.0
+    } else {
+        sim_time.as_deref().map_or(0.0, |st| st.current_dt_yr)
+    };
 
     for (
         entity,
@@ -415,7 +605,8 @@ pub fn sync_celestial_transforms(
     {
         transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
 
-        let star_dir = resolve_star_direction(entity, transform.translation, star_pos, &stars);
+        let star_dir =
+            resolve_star_direction(entity, transform.translation, star_pos, &stars_scratch);
 
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
         update_star_lights_and_strobes(
@@ -439,43 +630,26 @@ pub fn sync_celestial_transforms(
             opt_spin,
         );
 
-        let target_mesh = select_body_mesh(body, radius.0, &visual_assets);
-        if mesh.0 != target_mesh {
-            mesh.0 = target_mesh;
+        let expected_mesh = resolve_expected_mesh(
+            body,
+            radius.0,
+            entity,
+            &visual_assets,
+            opt_player_state.as_deref(),
+        );
+        if mesh.0 != expected_mesh {
+            mesh.0 = expected_mesh;
         }
 
         if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
-            let is_cutaway = opt_player_state.as_deref().is_some_and(|ps| {
-                ps.is_cutaway_active()
-                    && ps.overlay_mode != DiagnosticOverlayMode::Hidden
-                    && (ps.selected_entity == Some(entity)
-                        || (ps.selected_entity.is_none() && ps.hovered_entity == Some(entity)))
-            });
-
-            mat.extension.uniforms.cutaway_params = if is_cutaway {
-                let strata = crate::rendering::effects::planetary::resolve_cutaway_strata(
-                    body, radius.0, opt_diff, &config,
-                );
-                let core_ratio = if visual_radius > 1e-6 {
-                    (strata.core_r / visual_radius).clamp(0.05, 0.75)
-                } else {
-                    0.55
-                };
-                let mantle_min = (core_ratio + 0.05).min(0.98);
-                let mantle_ratio = if visual_radius > 1e-6 {
-                    (strata.mantle_r / visual_radius).clamp(mantle_min, 0.99)
-                } else {
-                    0.95
-                };
-                let inner_core_ratio = if visual_radius > 1e-6 {
-                    (strata.inner_core_r / visual_radius).clamp(0.02, (core_ratio - 0.02).max(0.03))
-                } else {
-                    core_ratio * 0.38
-                };
-                Vec4::new(1.0, inner_core_ratio, core_ratio, mantle_ratio)
-            } else {
-                Vec4::ZERO
-            };
+            mat.extension.uniforms.cutaway_params = resolve_cutaway_uniform_params(
+                body,
+                radius.0,
+                visual_radius,
+                opt_diff,
+                opt_player_state.as_deref(),
+                entity,
+            );
 
             sync_body_uniforms(
                 &mut mat,
@@ -493,7 +667,7 @@ pub fn sync_celestial_transforms(
                 star_pos,
                 star_mass,
                 star_dir,
-                &all_moons,
+                &moons_scratch,
                 opt_climate,
                 opt_bio,
                 opt_vol,
@@ -511,6 +685,103 @@ pub fn sync_celestial_transforms(
                 opt_storm,
                 opt_roche,
             );
+        }
+    }
+}
+
+/// Post-camera zero-allocation pass that resynchronizes camera-adaptive `Transform.scale`
+/// and `planet_center_and_radius.w` using the current frame's final camera world position,
+/// eliminating 1-frame visual scale lag during fast interplanetary camera flights.
+#[allow(
+    clippy::type_complexity,
+    reason = "Disjoint ECS queries for camera and celestial body scale sync"
+)]
+pub fn sync_camera_adaptive_body_scales(
+    config: Res<SimulationConfig>,
+    mut materials: Option<ResMut<Assets<PlanetMaterial>>>,
+    camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialBody>)>,
+    mut bodies_query: Query<
+        (
+            &Mass,
+            &Radius,
+            &CelestialBody,
+            &mut Transform,
+            Option<&MeshMaterial3d<PlanetMaterial>>,
+            Option<&BlackHoleStarState>,
+        ),
+        Without<Camera3d>,
+    >,
+) {
+    let Some(cam_pos) = camera_query.iter().next().map(|t| t.translation) else {
+        return;
+    };
+
+    let mut star_pos = Vec3::ZERO;
+    let mut star_mass = -1.0_f64;
+    let mut star_count = 0_usize;
+    for (mass, _, body, tf, _, _) in bodies_query.iter() {
+        if body.body_type.is_star_or_remnant() {
+            star_count += 1;
+            if mass.0 > star_mass {
+                star_mass = mass.0;
+                star_pos = tf.translation;
+            }
+        }
+    }
+
+    let min_orbit_r = if star_count == 1 {
+        let mut min_r = f32::MAX;
+        for (_, _, _, tf, _, _) in bodies_query.iter() {
+            let dist = (tf.translation - star_pos).length();
+            if dist > 0.001 && dist < min_r {
+                min_r = dist;
+            }
+        }
+        if min_r < f32::MAX {
+            min_r
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+
+    for (mass, radius, body, mut tf, opt_mat, opt_bhs) in bodies_query.iter_mut() {
+        // Skip entities that still hold an unsynced default Transform::IDENTITY (e.g. headless spawns)
+        if (tf.scale.x - 1.0).abs() < 1e-6 && radius.0 < 0.25 {
+            continue;
+        }
+        let r_orb = (tf.translation - star_pos).length();
+        let cam_dist = cam_pos.distance(tf.translation);
+        let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
+        let visual_radius = if body.body_type == BodyType::QuasiStar && is_blown_out {
+            let r_schwa = (1.974e-8 * mass.0).max(1e-4);
+            compute_realistic_visual_radius(
+                r_schwa,
+                BodyType::BlackHole,
+                r_orb,
+                min_orbit_r,
+                cam_dist,
+                &config,
+            )
+        } else {
+            compute_realistic_visual_radius(
+                radius.0,
+                body.body_type,
+                r_orb,
+                min_orbit_r,
+                cam_dist,
+                &config,
+            )
+        };
+
+        if (tf.scale.x - visual_radius).abs() > 1e-7 {
+            tf.scale = Vec3::splat(visual_radius);
+            if let (Some(mats), Some(mat_handle)) = (materials.as_deref_mut(), opt_mat) {
+                if let Some(mut mat) = mats.get_mut(&mat_handle.0) {
+                    mat.extension.uniforms.planet_center_and_radius.w = visual_radius;
+                }
+            }
         }
     }
 }

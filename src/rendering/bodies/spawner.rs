@@ -226,7 +226,14 @@ fn spawn_planet_visual(
     materials: &mut Assets<PlanetMaterial>,
 ) {
     let norm_comp = comp.normalized();
-    let (metallic, roughness) = if norm_comp.metal_frac > 0.4 {
+    let (planet_type, body_subtype) =
+        resolve_planet_type_and_subtype(body.body_type, &body.name, comp);
+    let mut color_seed = LinearRgba::from(base_color).to_vec4();
+    color_seed.w = body_subtype;
+
+    let (metallic, roughness) = if planet_type == 9 {
+        (0.04, 0.55)
+    } else if norm_comp.metal_frac > 0.4 {
         (0.85, 0.25)
     } else if norm_comp.ice_frac > 0.4 {
         (0.05, 0.18)
@@ -252,31 +259,7 @@ fn spawn_planet_visual(
         },
         extension: PlanetMaterialExtension {
             uniforms: PlanetUniforms {
-                planet_type: if norm_comp.gas_frac > 0.20 {
-                    if norm_comp.ice_frac > 0.20
-                        || body.body_type == BodyType::IceGiant
-                        || body.name.to_lowercase().contains("uranus")
-                        || body.name.to_lowercase().contains("neptune")
-                    {
-                        2
-                    } else {
-                        1
-                    }
-                } else {
-                    match body.body_type {
-                        BodyType::GasGiant => 1,
-                        BodyType::IceGiant => 2,
-                        BodyType::SuperEarth => 6,
-                        BodyType::TerrestrialPlanet | BodyType::Protoplanet => {
-                            if norm_comp.ice_frac > 0.40 {
-                                2
-                            } else {
-                                3
-                            }
-                        }
-                        _ => 4,
-                    }
-                },
+                planet_type,
                 temperature: temp.0 as f32,
                 time: 0.0,
                 spin_angle: 0.15,
@@ -286,7 +269,7 @@ fn spawn_planet_visual(
                     norm_comp.metal_frac as f32,
                     norm_comp.gas_frac as f32,
                 ),
-                color_seed: LinearRgba::from(base_color).to_vec4(),
+                color_seed,
                 climate_and_bio: Vec4::ZERO,
                 atmosphere_params: Vec4::new(
                     (norm_comp.gas_frac as f32 * 2.0).max(0.01),

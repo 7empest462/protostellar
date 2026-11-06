@@ -585,11 +585,23 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
             .ico(6)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(64, 48)),
     );
+    let star_mesh_hires = meshes.add(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(8)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(256, 192)),
+    );
     let planet_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
             .ico(7)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(128, 96)),
+    );
+    let planet_mesh_hires = meshes.add(
+        Sphere::new(1.0)
+            .mesh()
+            .ico(8)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(256, 192)),
     );
     let particle_mesh = meshes.add(
         Sphere::new(1.0)
@@ -666,7 +678,9 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
 
     commands.insert_resource(VisualAssets {
         star_mesh,
+        star_mesh_hires,
         planet_mesh,
+        planet_mesh_hires,
         atmosphere_mesh,
         asteroid_potato_mesh: asteroid_potato,
         asteroid_rubble_mesh: asteroid_rubble,
@@ -823,6 +837,39 @@ pub fn select_body_mesh(
             } else {
                 visual_assets.planet_mesh.clone()
             }
+        }
+    }
+}
+
+/// Dynamically upgrades the focused/selected celestial body to an ultra-dense `ico(8)`
+/// mesh (1,310,720 triangles) for razor-smooth silhouettes on close-up worlds, while
+/// preserving lightweight `ico(6)`/`ico(7)` meshes for all distant worlds.
+pub fn sync_selected_body_mesh_lod(
+    player_state: Option<Res<crate::simulation::resources::PlayerInteractionState>>,
+    visual_assets: Option<Res<VisualAssets>>,
+    mut bodies_query: Query<(Entity, &CelestialBody, &mut Mesh3d)>,
+) {
+    let (Some(player_state), Some(visual_assets)) = (player_state, visual_assets) else {
+        return;
+    };
+    let selected_entity = player_state.selected_entity;
+
+    for (entity, body, mut mesh) in bodies_query.iter_mut() {
+        let is_selected = selected_entity == Some(entity);
+        if is_selected {
+            if body.body_type.is_star_or_remnant() {
+                if mesh.0 != visual_assets.star_mesh_hires {
+                    mesh.0 = visual_assets.star_mesh_hires.clone();
+                }
+            } else if (body.body_type.is_planet() || body.body_type == BodyType::Moon)
+                && mesh.0 != visual_assets.planet_mesh_hires
+            {
+                mesh.0 = visual_assets.planet_mesh_hires.clone();
+            }
+        } else if mesh.0 == visual_assets.planet_mesh_hires {
+            mesh.0 = visual_assets.planet_mesh.clone();
+        } else if mesh.0 == visual_assets.star_mesh_hires {
+            mesh.0 = visual_assets.star_mesh.clone();
         }
     }
 }

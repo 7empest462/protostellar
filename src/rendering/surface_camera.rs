@@ -83,11 +83,14 @@ pub fn toggle_surface_horizon_mode(
         if cam.surface_altitude_scale <= 0.001 {
             cam.surface_altitude_scale = 0.022;
         }
+        cam.entry_transition_progress = 0.0;
+        cam.surface_entry_start_offset = Vec3::ZERO;
         toast.message =
             "🎥 SURFACE HORIZON CAM ACTIVE [Shift-V] // WASD: Drive | R-Drag: Look 360° | Scroll: Altitude | Esc/F: Orbital View"
                 .to_string();
         toast.timer = 5.0;
     } else {
+        cam.entry_transition_progress = 1.0;
         toast.message = "🛰️ Returned to 3D Orbital Camera View".to_string();
         toast.timer = 3.0;
     }
@@ -364,6 +367,16 @@ fn read_surface_mouse_and_scroll_deltas(
     (delta_yaw, delta_pitch, scroll)
 }
 
+#[inline]
+fn sync_orbital_near_plane(projection: &mut Projection, orbital_radius: f32) {
+    if let Projection::Perspective(ref mut p) = *projection {
+        let desired_near = (orbital_radius.max(1e-6) * 0.02).clamp(1e-7, 0.0001);
+        if (p.near - desired_near).abs() > desired_near * 0.05 {
+            p.near = desired_near;
+        }
+    }
+}
+
 /// Synchronizes the 3D camera transform, near clipping plane, and manual rover driving
 /// when First-Person Surface / Rover Horizon Mode (`Shift + V`) is active.
 #[allow(
@@ -378,6 +391,7 @@ pub fn update_surface_horizon_camera(
     player_state: Res<PlayerInteractionState>,
     config: Res<SimulationConfig>,
     sim_time: Option<Res<SimTime>>,
+    time: Option<Res<Time>>,
     mut toast: ResMut<NotificationToast>,
     mut camera_query: Query<
         (&mut PanOrbitCamera, &mut Transform, &mut Projection),
@@ -400,11 +414,7 @@ pub fn update_surface_horizon_camera(
     }
 
     if !camera.surface_horizon_mode {
-        if let Projection::Perspective(ref mut p) = *projection {
-            if (p.near - 0.0001).abs() > 1e-6 {
-                p.near = 0.0001;
-            }
-        }
+        sync_orbital_near_plane(&mut projection, camera.radius);
         return;
     }
 
@@ -448,37 +458,32 @@ pub fn update_surface_horizon_camera(
     let (spin_dir, spin_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
     let spin_rot_d = DQuat::from_axis_angle(spin_dir, spin_angle);
     let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
-    let vis_rad = opt_t.map_or_else(
-        || config.calc_visual_radius_for_type(radius.0, body.body_type),
-        |t| t.scale.x,
+    let vis_rad = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+        opt_t,
+        radius.0,
+        body.body_type,
+        pos.0.length() as f32,
+        0.001,
+        &config,
     );
 
     if let Some(rover_ent) = opt_rover_ent {
-        if let Ok((_, mut probe, _, mut probe_pos)) = probes_query.get_mut(rover_ent) {
-            // Undo duplicate azimuth turn because apply_manual_rover_drive rotates rover_heading_unspun
-            camera.surface_azimuth -= turn_drive;
-            apply_manual_rover_drive(&mut probe, forward_drive, turn_drive, radius.0);
-            let unspun_d = probe
-                .landed_unspun_pos
-                .unwrap_or(DVec3::Y)
-                .normalize_or_zero();
-            let h_d = probe
-                .rover_heading_unspun
-                .unwrap_or(DVec3::Z)
-                .normalize_or_zero();
-            unspun_norm = unspun_d.as_vec3();
-            heading_unspun = h_d.as_vec3();
-            let rover_h = super::surface_terrain::evaluate_surface_elevation(
-                unspun_norm,
-                comp,
-                temp.0 as f32,
-                body.body_type,
-                vis_rad,
-            );
-            let spun_d = spin_rot_d * unspun_d;
-            let rover_lift = (vis_rad + rover_h) + vis_rad * 0.00003;
-            probe_pos.0 = pos.0 + spun_d * f64::from(rover_lift);
-        }
+        sync_rover_surface_motion(
+            rover_ent,
+            &mut probes_query,
+            &mut camera,
+            forward_drive,
+            turn_drive,
+            radius.0,
+            vis_rad,
+            comp,
+            temp.0,
+            body.body_type,
+            spin_rot_d,
+            pos.0,
+            &mut unspun_norm,
+            &mut heading_unspun,
+        );
     }
 
     let effective_rad = compute_effective_surface_radius(
@@ -503,13 +508,102 @@ pub fn update_surface_horizon_camera(
         camera.surface_elevation,
     );
 
-    transform.translation = eye_pos;
-    transform.rotation = eye_rot;
-    camera.focus = eye_pos;
-    camera.target_focus = planet_pos;
+    let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
+    apply_surface_entry_descent(
+        &mut camera,
+        &mut transform,
+        eye_pos,
+        eye_rot,
+        planet_pos,
+        dt,
+    );
 
     if let Projection::Perspective(ref mut p) = *projection {
-        p.near = 0.00001;
+        p.near = (vis_rad * 0.0005).clamp(1e-8, 0.00001);
+    }
+}
+
+/// Smoothly descends from orbital vantage down to the surface horizon pose over ~1.0 second.
+fn apply_surface_entry_descent(
+    camera: &mut PanOrbitCamera,
+    transform: &mut Transform,
+    eye_pos: Vec3,
+    eye_rot: Quat,
+    planet_pos: Vec3,
+    dt: f32,
+) {
+    if camera.entry_transition_progress < 1.0 && dt > 0.0 {
+        if camera.surface_entry_start_offset == Vec3::ZERO {
+            camera.surface_entry_start_offset = transform.translation - planet_pos;
+            camera.surface_entry_start_rot = transform.rotation;
+        }
+        camera.entry_transition_progress = (camera.entry_transition_progress + dt * 1.0).min(1.0);
+        let t = camera.entry_transition_progress;
+        let smooth_t = t * t * (3.0 - 2.0 * t);
+        let current_start_pos = planet_pos + camera.surface_entry_start_offset;
+        transform.translation = current_start_pos.lerp(eye_pos, smooth_t);
+        transform.rotation = camera.surface_entry_start_rot.slerp(eye_rot, smooth_t);
+        if camera.entry_transition_progress >= 1.0 {
+            transform.translation = eye_pos;
+            transform.rotation = eye_rot;
+        }
+    } else {
+        camera.entry_transition_progress = 1.0;
+        transform.translation = eye_pos;
+        transform.rotation = eye_rot;
+    }
+
+    camera.focus = eye_pos;
+    camera.target_focus = planet_pos;
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Synchronizes rover probe physics, terrain elevation, and surface orientation"
+)]
+fn sync_rover_surface_motion(
+    rover_ent: Entity,
+    probes_query: &mut Query<
+        (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
+        Without<PanOrbitCamera>,
+    >,
+    camera: &mut PanOrbitCamera,
+    forward_drive: f32,
+    turn_drive: f32,
+    radius: f64,
+    vis_rad: f32,
+    comp: &Composition,
+    temp_k: f64,
+    body_type: crate::simulation::components::BodyType,
+    spin_rot_d: DQuat,
+    planet_pos: DVec3,
+    unspun_norm: &mut Vec3,
+    heading_unspun: &mut Vec3,
+) {
+    if let Ok((_, mut probe, _, mut probe_pos)) = probes_query.get_mut(rover_ent) {
+        // Undo duplicate azimuth turn because apply_manual_rover_drive rotates rover_heading_unspun
+        camera.surface_azimuth -= turn_drive;
+        apply_manual_rover_drive(&mut probe, forward_drive, turn_drive, radius);
+        let unspun_d = probe
+            .landed_unspun_pos
+            .unwrap_or(DVec3::Y)
+            .normalize_or_zero();
+        let h_d = probe
+            .rover_heading_unspun
+            .unwrap_or(DVec3::Z)
+            .normalize_or_zero();
+        *unspun_norm = unspun_d.as_vec3();
+        *heading_unspun = h_d.as_vec3();
+        let rover_h = super::surface_terrain::evaluate_surface_elevation(
+            *unspun_norm,
+            comp,
+            temp_k as f32,
+            body_type,
+            vis_rad,
+        );
+        let spun_d = spin_rot_d * unspun_d;
+        let rover_lift = (vis_rad + rover_h) + vis_rad * 0.00003;
+        probe_pos.0 = planet_pos + spun_d * f64::from(rover_lift);
     }
 }
 
@@ -552,9 +646,13 @@ pub fn draw_surface_horizon_environment_gizmos(
     };
 
     let planet_pos = pos.0.as_vec3();
-    let vis_rad = opt_t.map_or_else(
-        || config.calc_visual_radius_for_type(radius.0, body.body_type),
-        |t| t.scale.x,
+    let vis_rad = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+        opt_t,
+        radius.0,
+        body.body_type,
+        pos.0.length() as f32,
+        0.001,
+        &config,
     );
     let (spin_dir, spin_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
     let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);

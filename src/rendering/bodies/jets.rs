@@ -1,6 +1,6 @@
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
-use hashbrown::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::rendering::materials::{RelativisticJetMaterial, RelativisticJetUniforms};
 use crate::simulation::components::*;
@@ -365,7 +365,7 @@ pub fn sync_relativistic_jets(
         })
         .collect();
 
-    let mut updated_targets = HashSet::new();
+    let mut updated_targets = HashSet::default();
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
     // 3. Update existing roots or despawn orphans

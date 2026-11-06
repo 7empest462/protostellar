@@ -161,7 +161,7 @@ fn spawn_planetary_ring_child(
 #[allow(clippy::type_complexity, reason = "Planetary ring query")]
 pub fn sync_planetary_rings(
     mut commands: Commands,
-    time: Res<Time>,
+    (time, sim_time): (Res<Time>, Option<Res<SimTime>>),
     _config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut ring_materials: ResMut<Assets<RingMaterial>>,
@@ -183,7 +183,9 @@ pub fn sync_planetary_rings(
         (With<VisualRingChild>, Without<CelestialBody>),
     >,
 ) {
-    let elapsed_secs = time.elapsed_secs();
+    let elapsed_secs = sim_time
+        .as_deref()
+        .map_or_else(|| time.elapsed_secs(), |st| st.visual_time_secs);
     let star_world_pos = stars_query
         .iter()
         .find(|(_, b)| b.body_type.is_star_or_remnant())
@@ -379,6 +381,23 @@ fn spawn_quasar_beam_hierarchy(
         });
 }
 
+#[inline]
+fn resolve_beam_host_visual_radius(
+    opt_transform: Option<&Transform>,
+    physical_radius_au: f64,
+    body_type: BodyType,
+    config: &SimulationConfig,
+) -> f32 {
+    if let Some(tf) = opt_transform {
+        let sx = tf.scale.x;
+        let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && physical_radius_au < 0.25;
+        if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
+            return sx;
+        }
+    }
+    config.calc_visual_radius_for_type(physical_radius_au, body_type)
+}
+
 /// Synchronizes 3D volumetric laser beam columns for active Quasars / Black Hole Stars.
 #[allow(clippy::type_complexity, reason = "Quasar Beam Sync")]
 pub fn sync_quasar_beams(
@@ -393,8 +412,13 @@ pub fn sync_quasar_beams(
             &Mass,
             &Radius,
             Option<&BlackHoleStarState>,
+            Option<&Transform>,
         ),
-        Or<(With<CentralStar>, With<BlackHoleStarState>)>,
+        (
+            Or<(With<CentralStar>, With<BlackHoleStarState>)>,
+            Without<QuasarBeamRoot>,
+            Without<QuasarBeamPart>,
+        ),
     >,
     mut root_query: Query<(Entity, &mut Transform), With<QuasarBeamRoot>>,
     mut part_query: Query<(&mut Transform, &QuasarBeamPart), Without<QuasarBeamRoot>>,
@@ -403,14 +427,14 @@ pub fn sync_quasar_beams(
         return;
     };
 
-    let target = quasi_query.iter().find(|(_, body, mass, _, opt_qs)| {
+    let target = quasi_query.iter().find(|(_, body, mass, _, opt_qs, _)| {
         opt_qs.is_some()
             || body.body_type == BodyType::QuasiStar
             || body.name.contains("Quasar")
             || (body.body_type == BodyType::BlackHole && mass.0 > 500.0)
     });
 
-    let Some((pos, body, _mass, radius, opt_qs)) = target else {
+    let Some((pos, body, _mass, radius, opt_qs, opt_tf)) = target else {
         for (ent, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
                 cmd.try_despawn();
@@ -433,7 +457,8 @@ pub fn sync_quasar_beams(
     }
 
     let jet_len = light_dist;
-    let current_visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
+    let current_visual_radius =
+        resolve_beam_host_visual_radius(opt_tf, radius.0, body.body_type, &config);
     let pole_start = (current_visual_radius * 0.90).max(0.002);
     let beam_len = (jet_len - pole_start).max(0.1);
     let beam_center = pole_start + beam_len * 0.5;
@@ -490,8 +515,12 @@ pub fn sync_pulsar_beams(
     config: Res<SimulationConfig>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     pulsar_query: Query<
-        (&SimPosition, &CelestialBody, &Radius),
-        Or<(With<CentralStar>, With<CelestialBody>)>,
+        (&SimPosition, &CelestialBody, &Radius, Option<&Transform>),
+        (
+            Or<(With<CentralStar>, With<CelestialBody>)>,
+            Without<PulsarBeamRoot>,
+            Without<PulsarBeamPart>,
+        ),
     >,
     mut root_query: Query<(Entity, &mut Transform), With<PulsarBeamRoot>>,
     mut part_query: Query<(&mut Transform, &PulsarBeamPart), Without<PulsarBeamRoot>>,
@@ -502,9 +531,9 @@ pub fn sync_pulsar_beams(
 
     let target = pulsar_query
         .iter()
-        .find(|(_, body, _)| body.body_type == BodyType::Pulsar || body.name.contains("Pulsar"));
+        .find(|(_, body, _, _)| body.body_type == BodyType::Pulsar || body.name.contains("Pulsar"));
 
-    let Some((pos, body, radius)) = target else {
+    let Some((pos, body, radius, opt_tf)) = target else {
         for (ent, _) in root_query.iter() {
             if let Ok(mut cmd) = commands.get_entity(ent) {
                 cmd.try_despawn();
@@ -518,7 +547,8 @@ pub fn sync_pulsar_beams(
     let spin_rate = 24.0;
     let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.38);
 
-    let current_visual_radius = config.calc_visual_radius_for_type(radius.0, body.body_type);
+    let current_visual_radius =
+        resolve_beam_host_visual_radius(opt_tf, radius.0, body.body_type, &config);
     let pole_start = (current_visual_radius * 0.92).max(0.0005);
 
     if let Some((_, mut root_trans)) = root_query.iter_mut().next() {

@@ -38,37 +38,50 @@ pub fn compute_ring_shadow_on_planet(
     r_outer: f32,
     opt_depth: f32,
 ) -> f32 {
+    let n_dot_l = surf_norm.dot(star_dir);
+    if n_dot_l <= -0.35 {
+        return 1.0;
+    }
+    let p_sun_facing = if n_dot_l >= 0.0 {
+        surf_norm
+    } else {
+        (surf_norm - n_dot_l * star_dir).normalize_or_zero()
+    };
     let l_dot_s = star_dir.dot(spin_axis);
-    let p_dot_s = surf_norm.dot(spin_axis);
+    let p_dot_s = p_sun_facing.dot(spin_axis);
     if l_dot_s.abs() <= 1e-4 {
         return 1.0;
     }
     let t_ring = -p_dot_s / l_dot_s;
-    let n_dot_l = surf_norm.dot(star_dir);
     if t_ring <= 0.0 || n_dot_l <= 0.0 {
         return 1.0;
     }
-    let p_int = surf_norm + t_ring * star_dir;
+    let p_int = p_sun_facing + t_ring * star_dir;
     let r_int = p_int.length();
     if r_int < r_inner || r_int > r_outer {
         return 1.0;
     }
-    let u = (r_int - r_inner) / (r_outer - r_inner);
-    let ring_density = if u < 0.22 {
-        0.10 + 0.25 * (u / 0.22)
-    } else if u < 0.65 {
-        0.95 // B-Ring
-    } else if u < 0.72 {
-        let gap_t = (u - 0.65) / (0.72 - 0.65);
-        (1.0 - (gap_t * std::f32::consts::PI).sin()) * 0.12 // Cassini division
-    } else if u < 0.96 {
-        0.75 // A-Ring
-    } else {
-        (1.0 - (u - 0.96) / 0.04) * 0.35
+    let u = ((r_int - r_inner) / (r_outer - r_inner)).clamp(0.0, 1.0);
+    let smoothstep = |e0: f32, e1: f32, x: f32| -> f32 {
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
     };
-    let edge_feather =
-        ((r_int - r_inner) / 0.03).clamp(0.0, 1.0) * ((r_outer - r_int) / 0.03).clamp(0.0, 1.0);
-    let shadow_atten = (ring_density * opt_depth * edge_feather).clamp(0.0, 0.96);
+    let c_ring = (0.10 + 0.24 * (u / 0.22).clamp(0.0, 1.0))
+        * smoothstep(0.0, 0.035, u)
+        * (1.0 - smoothstep(0.195, 0.245, u));
+    let b_ring = (0.78 + 0.18 * smoothstep(0.22, 0.38, u))
+        * smoothstep(0.195, 0.245, u)
+        * (1.0 - smoothstep(0.625, 0.665, u));
+    let cassini_floor = 0.08 * smoothstep(0.625, 0.665, u) * (1.0 - smoothstep(0.705, 0.745, u));
+    let encke_dip = 1.0 - 0.78 * (-((u - 0.865) / 0.011).powi(2)).exp();
+    let a_ring =
+        0.74 * encke_dip * smoothstep(0.705, 0.745, u) * (1.0 - smoothstep(0.935, 0.975, u));
+    let f_ring = 0.28 * smoothstep(0.935, 0.968, u) * (1.0 - smoothstep(0.968, 1.0, u));
+    let ring_density = c_ring + b_ring + cassini_floor + a_ring + f_ring;
+
+    let edge_feather = smoothstep(r_inner, r_inner + 0.035, r_int)
+        * (1.0 - smoothstep(r_outer - 0.035, r_outer, r_int));
+    let shadow_atten = (ring_density * opt_depth * edge_feather).clamp(0.0, 0.95);
     1.0 - shadow_atten
 }
 
@@ -130,41 +143,68 @@ pub fn compute_eclipse_moons_data(
 ) -> ([Vec4; 4], [Vec4; 4]) {
     let mut moons_pos = [Vec4::ZERO; 4];
     let mut moons_data = [Vec4::ZERO; 4];
-    let mut candidates: Vec<(f32, Vec4)> = Vec::new();
+    let [mut s0, mut s1, mut s2, mut s3] = [(f32::INFINITY, Vec4::ZERO); 4];
+    let inv_vis_r = 1.0 / visual_radius.max(1e-5);
+    let max_unbound_moon_dist_sq = (visual_radius * 40.0).max(0.025).powi(2);
+
     for &(m_ent, m_pos, m_rad, opt_parent) in all_moons {
         if m_ent == entity {
             continue;
         }
+        let d_vec = m_pos - planet_pos;
+        let d_len_sq = d_vec.length_squared();
         let is_child_moon = opt_parent == Some(entity)
-            || (opt_parent.is_none() && (m_pos - planet_pos).length() < visual_radius * 40.0);
-        if is_child_moon {
-            let d_vec = m_pos - planet_pos;
-            let s = d_vec.dot(star_dir);
-            if s > 0.0 {
-                let d_perp_sq = (d_vec.length_squared() - s * s).max(0.0);
-                let max_touch_dist = visual_radius + m_rad * 1.6;
-                if d_perp_sq < max_touch_dist * max_touch_dist {
-                    let mut norm_pos = d_vec / visual_radius.max(1e-5);
-                    let s_norm = norm_pos.dot(star_dir);
-                    if s_norm < 1.30 {
-                        norm_pos += star_dir * (1.30 - s_norm);
-                    }
-                    let norm_rad = (m_rad / visual_radius.max(1e-5)).clamp(0.08, 0.65);
-                    candidates.push((
-                        d_perp_sq,
-                        Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad),
-                    ));
-                }
-            }
+            || (opt_parent.is_none() && d_len_sq < max_unbound_moon_dist_sq);
+        if !is_child_moon {
+            continue;
+        }
+        let s = d_vec.dot(star_dir);
+        if s <= 0.0 {
+            continue;
+        }
+        let d_perp_sq = (d_len_sq - s * s).max(0.0);
+        let max_touch_dist = visual_radius + m_rad * 1.6;
+        if d_perp_sq >= max_touch_dist * max_touch_dist || d_perp_sq >= s3.0 {
+            continue;
+        }
+
+        let mut norm_pos = d_vec * inv_vis_r;
+        let s_norm = norm_pos.dot(star_dir);
+        if s_norm < 1.30 {
+            norm_pos += star_dir * (1.30 - s_norm);
+        }
+        let norm_rad = (m_rad * inv_vis_r).clamp(0.08, 0.65);
+        let entry = (
+            d_perp_sq,
+            Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad),
+        );
+
+        if d_perp_sq < s0.0 {
+            s3 = s2;
+            s2 = s1;
+            s1 = s0;
+            s0 = entry;
+        } else if d_perp_sq < s1.0 {
+            s3 = s2;
+            s2 = s1;
+            s1 = entry;
+        } else if d_perp_sq < s2.0 {
+            s3 = s2;
+            s2 = entry;
+        } else {
+            s3 = entry;
         }
     }
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (slot, (_, pos_vec)) in candidates.into_iter().take(4).enumerate() {
-        if let (Some(pos_slot), Some(data_slot)) =
-            (moons_pos.get_mut(slot), moons_data.get_mut(slot))
-        {
-            *pos_slot = pos_vec;
-            *data_slot = Vec4::new(1.0, 0.25, 0.96, 0.0);
+
+    let active_data = Vec4::new(1.0, 0.25, 0.96, 0.0);
+    for ((dst_pos, dst_data), &(dist_sq, pos)) in moons_pos
+        .iter_mut()
+        .zip(moons_data.iter_mut())
+        .zip([s0, s1, s2, s3].iter())
+    {
+        if dist_sq.is_finite() {
+            *dst_pos = pos;
+            *dst_data = active_data;
         }
     }
     (moons_pos, moons_data)

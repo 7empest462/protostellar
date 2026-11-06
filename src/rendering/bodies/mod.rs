@@ -28,7 +28,7 @@ pub use magnetospheres::{
 pub use meshes::{
     generate_irregular_asteroid_mesh, generate_magnetar_field_loops_mesh,
     generate_magnetar_ring_mesh, generate_pulsar_beam_mesh, recompute_mesh_normals,
-    setup_visual_assets,
+    setup_visual_assets, sync_selected_body_mesh_lod,
 };
 pub use palettes::{
     calc_ring_color, compute_gas_giant_palette, compute_ice_giant_palette, compute_stellar_palette,
@@ -46,7 +46,8 @@ pub use structures::{
     VisualRingChild,
 };
 pub use transforms::{
-    compute_magma_incandescence, compute_magma_ocean_crust_fraction, sync_celestial_transforms,
+    compute_magma_incandescence, compute_magma_ocean_crust_fraction,
+    sync_camera_adaptive_body_scales, sync_celestial_transforms,
 };
 
 /// Marker for an entity that has its visual mesh and material spawned.
@@ -57,7 +58,9 @@ pub struct VisualBody;
 #[derive(Resource)]
 pub struct VisualAssets {
     pub star_mesh: Handle<Mesh>,
+    pub star_mesh_hires: Handle<Mesh>,
     pub planet_mesh: Handle<Mesh>,
+    pub planet_mesh_hires: Handle<Mesh>,
     pub atmosphere_mesh: Handle<Mesh>,
     pub asteroid_potato_mesh: Handle<Mesh>,
     pub asteroid_rubble_mesh: Handle<Mesh>,
@@ -87,7 +90,9 @@ impl VisualAssets {
     pub fn dummy(fallback: Handle<Mesh>) -> Self {
         Self {
             star_mesh: fallback.clone(),
+            star_mesh_hires: fallback.clone(),
             planet_mesh: fallback.clone(),
+            planet_mesh_hires: fallback.clone(),
             atmosphere_mesh: fallback.clone(),
             asteroid_potato_mesh: fallback.clone(),
             asteroid_rubble_mesh: fallback.clone(),

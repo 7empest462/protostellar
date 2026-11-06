@@ -1,8 +1,59 @@
 use bevy::prelude::*;
 
+use crate::rendering::effects::impact_debris::p_surf_to_world_normal;
+use crate::rendering::materials::PlanetMaterial;
 use crate::simulation::accretion::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+
+type ShockwaveBodyQueryItem<'w> = (
+    Entity,
+    &'static SimPosition,
+    Option<&'static Radius>,
+    Option<&'static Transform>,
+    Option<&'static PlanetaryBasins>,
+    Option<&'static MeshMaterial3d<PlanetMaterial>>,
+);
+
+fn resolve_shockwave_surface_pos_and_radius(
+    p_pos: &SimPosition,
+    p_rad: Option<&Radius>,
+    p_tf: Option<&Transform>,
+    opt_basins: Option<&PlanetaryBasins>,
+    opt_mat_handle: Option<&MeshMaterial3d<PlanetMaterial>>,
+    opt_materials: Option<&Assets<PlanetMaterial>>,
+    fallback_dir: Vec3,
+) -> (Vec3, f32) {
+    let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
+    let r_surf = p_tf
+        .map(|tf| tf.scale.x)
+        .filter(|&vis_r| vis_r > phys_r && (vis_r - 1.0).abs() > 1e-4)
+        .unwrap_or(0.035);
+
+    let local_dir = opt_basins
+        .and_then(|pb| pb.basins.last())
+        .map(|b| b.surface_normal.normalize_or_zero())
+        .filter(|v| *v != Vec3::ZERO)
+        .unwrap_or_else(|| fallback_dir.normalize_or_zero());
+
+    let world_dir = if local_dir == Vec3::ZERO {
+        Vec3::Y
+    } else if let Some(mat) = opt_mat_handle
+        .zip(opt_materials)
+        .and_then(|(handle, materials)| materials.get(&handle.0))
+    {
+        p_surf_to_world_normal(
+            local_dir,
+            mat.extension.uniforms.spin_axis,
+            mat.extension.uniforms.spin_angle,
+        )
+    } else {
+        local_dir
+    };
+
+    (p_center + world_dir * (r_surf * 0.98), r_surf)
+}
 
 /// Evaluates blackbody-cooling RGB color for an expanding impact fireball and ejecta plume.
 pub fn compute_impact_blackbody_color(base: Srgba, progress: f32, alpha_scale: f32) -> Color {
@@ -33,21 +84,41 @@ pub fn compute_impact_blackbody_color(base: Srgba, progress: f32, alpha_scale: f
 /// Collects collision merger and engulfment events and spawns expanding physical shockwaves.
 pub fn update_impact_shockwaves(
     time: Res<Time>,
+    opt_materials: Option<Res<Assets<PlanetMaterial>>>,
     mut shockwave_pool: ResMut<ImpactShockwavePool>,
     mut merge_reader: MessageReader<AccretionMergeEvent>,
     mut bounce_reader: MessageReader<CollisionBounceEvent>,
     mut engulf_reader: MessageReader<PlanetaryEngulfmentEvent>,
-    bodies_query: Query<&SimPosition>,
+    bodies_query: Query<ShockwaveBodyQueryItem>,
 ) {
     let dt = time.delta_secs();
+    let materials_ref = opt_materials.as_deref();
 
     for ev in merge_reader.read() {
-        let pos = Vec3::new(
+        let ev_pos = Vec3::new(
             ev.merged_position.x as f32,
             ev.merged_position.y as f32,
             ev.merged_position.z as f32,
         );
-        let max_r = (0.4 + (ev.merged_mass * 100.0).cbrt() as f32 * 0.35).clamp(0.5, 3.0);
+        let (pos, r_surf) = if let Ok((_, p_pos, p_rad, p_tf, opt_basins, opt_mat)) =
+            bodies_query.get(ev.primary_entity)
+        {
+            let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+            resolve_shockwave_surface_pos_and_radius(
+                p_pos,
+                p_rad,
+                p_tf,
+                opt_basins,
+                opt_mat,
+                materials_ref,
+                ev_pos - p_center,
+            )
+        } else {
+            (ev_pos, 0.04)
+        };
+
+        let max_r = (r_surf * (0.45 + (ev.merged_mass * 400.0).cbrt() as f32 * 0.40))
+            .clamp(r_surf * 0.35, r_surf * 1.15);
         let color = if ev.new_body_type == BodyType::GasGiant {
             Color::srgba(1.0, 0.6, 0.1, 0.9)
         } else {
@@ -56,23 +127,28 @@ pub fn update_impact_shockwaves(
 
         shockwave_pool.shockwaves.push(ImpactShockwave {
             position: pos,
-            radius: 0.05,
+            radius: r_surf * 0.08,
             max_radius: max_r,
             timer: 0.0,
-            max_timer: 1.8,
+            max_timer: 1.4,
             color,
         });
     }
 
     for ev in bounce_reader.read() {
-        if let Ok(pos1) = bodies_query.get(ev.entity1) {
+        if let Ok((_, pos1, p_rad, p_tf, _, _)) = bodies_query.get(ev.entity1) {
             let pos = Vec3::new(pos1.x as f32, pos1.y as f32, pos1.z as f32);
+            let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
+            let r_surf = p_tf
+                .map(|tf| tf.scale.x)
+                .filter(|&vis_r| vis_r > phys_r && (vis_r - 1.0).abs() > 1e-4)
+                .unwrap_or(0.035);
             shockwave_pool.shockwaves.push(ImpactShockwave {
                 position: pos,
-                radius: 0.05,
-                max_radius: 0.6,
+                radius: r_surf * 0.08,
+                max_radius: r_surf * 0.75,
                 timer: 0.0,
-                max_timer: 1.2,
+                max_timer: 1.0,
                 color: Color::srgba(0.4, 0.8, 1.0, 0.7),
             });
         }
@@ -159,41 +235,17 @@ pub fn update_roche_debris_streams(
     });
 }
 
-/// Renders 3D expanding incandescent vapor domes, Mach shock rings, and ballistic ejecta plume arcs.
+/// Renders 3D parabolic ballistic ejecta plume arcs without wireframe sphere/circle cages.
 pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockwavePool) {
-    let eq_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for sw in &shockwave_pool.shockwaves {
         let progress = (sw.timer / sw.max_timer).clamp(0.0, 1.0);
         let base_srgba = sw.color.to_srgba();
 
-        let shock_col = compute_impact_blackbody_color(base_srgba, progress, 0.88);
         let core_col = compute_impact_blackbody_color(base_srgba, (progress * 0.6).min(1.0), 0.72);
         let plume_col =
             compute_impact_blackbody_color(base_srgba, (progress + 0.15).min(1.0), 0.65);
 
-        // 1. Primary & Secondary Expanding Mach Shockwave Rings
-        gizmos.circle(Isometry3d::new(sw.position, eq_rot), sw.radius, shock_col);
-        gizmos.circle(
-            Isometry3d::new(sw.position, eq_rot),
-            sw.radius * 0.74,
-            plume_col,
-        );
-
-        // 2. 3D Incandescent Fireball Core & Expanding Vapor Dome
-        gizmos.sphere(
-            Isometry3d::from_translation(sw.position),
-            sw.radius * 0.42,
-            plume_col,
-        );
-        if progress < 0.75 {
-            gizmos.sphere(
-                Isometry3d::from_translation(sw.position),
-                sw.radius * 0.20 * (1.0 - progress * 0.5),
-                core_col,
-            );
-        }
-
-        // 3. 3D Parabolic Ballistic Ejecta Plume Trajectories & Molten Droplet Tips
+        // 3D Parabolic Ballistic Ejecta Plume Trajectories
         let ray_count = 10;
         let plume_reach = sw.radius * 0.88;
         let plume_apex = sw.max_radius * 0.34 * (progress * (1.2 - progress * 0.5)).max(0.05);
@@ -211,11 +263,6 @@ pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockw
 
             gizmos.line(p0, p_mid, plume_col);
             gizmos.line(p_mid, p_tip, core_col);
-            gizmos.sphere(
-                Isometry3d::from_translation(p_tip),
-                (0.008 + sw.max_radius * 0.008) * (1.0 - progress * 0.65),
-                core_col,
-            );
         }
     }
 }
@@ -243,15 +290,19 @@ pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebri
                 Color::srgba(1.0, 0.48 + heat * 0.42, 0.18 + heat * 0.35, 0.90 * alpha)
             };
 
-            gizmos.sphere(
-                Isometry3d::from_translation(pos1),
-                (0.012 + 0.012 * (1.0 - p)) * (1.0 - frac * 0.35),
+            let tangent = Vec3::new(-phi1.sin(), 0.0, phi1.cos());
+            let arc_half = (r1 * 0.14).clamp(0.00008, 0.004) * (1.0 - frac * 0.35);
+            gizmos.line(
+                pos1 - tangent * arc_half,
+                pos1 + tangent * arc_half,
                 node_col,
             );
 
             if let Some(&(r2, phi2, _, z2)) = stream.fragments.get(i + 1) {
                 let pos2 = stream.primary_pos + Vec3::new(r2 * phi2.cos(), z2, r2 * phi2.sin());
-                gizmos.line(pos1, pos2, node_col);
+                if pos1.distance(pos2) <= r1 * 0.65 {
+                    gizmos.line(pos1, pos2, node_col);
+                }
             }
         }
     }

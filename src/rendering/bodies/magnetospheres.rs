@@ -8,7 +8,7 @@
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
-use hashbrown::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::rendering::bodies::VisualAssets;
 use crate::simulation::components::*;
@@ -50,9 +50,16 @@ pub type MagnetosphereBodyQueryItem<'a> = (
     Option<&'a ElectromagneticFieldState>,
     Option<&'a SpinState>,
     Option<&'a super::MagnetarStructureRoot>,
+    Option<&'a Transform>,
 );
 
-pub type MagnetosphereBodyQuery<'w, 's> = Query<'w, 's, MagnetosphereBodyQueryItem<'static>>;
+pub type MagnetosphereBodyFilter = (
+    Without<MagneticFieldOverlayRoot>,
+    Without<MagneticFieldLoopsPart>,
+);
+
+pub type MagnetosphereBodyQuery<'w, 's> =
+    Query<'w, 's, MagnetosphereBodyQueryItem<'static>, MagnetosphereBodyFilter>;
 
 pub type MagnetosphereRootQueryItem<'a> = (
     Entity,
@@ -76,15 +83,15 @@ pub type MagnetospherePartQuery<'w, 's> =
 fn find_magnetar_source(body_query: &MagnetosphereBodyQuery) -> Option<MagnetarSource> {
     body_query
         .iter()
-        .find(|(_, _, _, body, _, _, _, opt_em, _, opt_mag_root)| {
+        .find(|(_, _, _, body, _, _, _, opt_em, _, opt_mag_root, _)| {
             body.body_type == BodyType::Magnetar
                 || opt_mag_root.is_some()
                 || opt_em.is_some_and(|em| em.magnetic_field_gauss >= 1.0e14)
-                || (body.name.to_lowercase().contains("magnetar")
+                || (crate::utils::math::contains_ascii_case_insensitive(&body.name, "magnetar")
                     && !body.name.contains("Clump")
                     && !body.name.contains("Ejecta"))
         })
-        .map(|(_, pos, vel, _, _, _, _, opt_em, _, _)| {
+        .map(|(_, pos, vel, _, _, _, _, opt_em, _, _, _)| {
             let p = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let v = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
             let b_field = opt_em.map_or(1.0e15, |em| em.magnetic_field_gauss);
@@ -187,14 +194,14 @@ fn collect_magnetosphere_candidates(
     config: &SimulationConfig,
     elapsed: f32,
 ) -> HashMap<Entity, MagnetosphereParams> {
-    let mut candidate_map = HashMap::new();
+    let mut candidate_map = HashMap::default();
 
-    for (entity, pos, vel, body, radius, comp, opt_diff, opt_em, opt_spin, opt_mag_root) in
+    for (entity, pos, vel, body, radius, comp, opt_diff, opt_em, opt_spin, opt_mag_root, opt_tf) in
         body_query.iter()
     {
         if body.body_type == BodyType::Magnetar
             || opt_mag_root.is_some()
-            || (body.name.to_lowercase().contains("magnetar")
+            || (crate::utils::math::contains_ascii_case_insensitive(&body.name, "magnetar")
                 && !body.name.contains("Clump")
                 && !body.name.contains("Ejecta"))
         {
@@ -247,7 +254,14 @@ fn collect_magnetosphere_candidates(
             spin_axis
         };
 
-        let vis_r = config.calc_visual_radius_for_type(radius.0, body.body_type);
+        let vis_r = super::transforms::resolve_synced_visual_radius(
+            opt_tf,
+            radius.0,
+            body.body_type,
+            world_pos.length(),
+            25.0,
+            config,
+        );
         let (scale, rotation, emissive_color) = compute_magnetosphere_params_for_body(
             world_pos,
             world_vel,
@@ -280,7 +294,7 @@ fn update_existing_magnetospheres(
     root_query: &mut MagnetosphereRootQuery,
     part_query: &mut MagnetospherePartQuery,
 ) -> HashSet<Entity> {
-    let mut updated_entities = HashSet::new();
+    let mut updated_entities = HashSet::default();
 
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
         if let Some(&params) = candidate_map.get(&root.target_entity) {

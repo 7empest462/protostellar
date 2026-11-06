@@ -137,6 +137,7 @@ fn step_protoplanetary_disk_mechanics(
             &mut Radius,
             &mut Composition,
             &mut CelestialBody,
+            Option<&mut VolatileInventory>,
         ),
         Without<CentralStar>,
     >,
@@ -154,6 +155,7 @@ fn step_protoplanetary_disk_mechanics(
         accreted_events,
         &mut pending_accretions,
         f64::from(params.star_m),
+        params.gas_scale,
         disk_params,
     );
     data.pending_gpu_accretions = pending_accretions;
@@ -209,6 +211,7 @@ pub fn update_particle_swarm(
             &mut Radius,
             &mut Composition,
             &mut CelestialBody,
+            Option<&mut VolatileInventory>,
         ),
         Without<CentralStar>,
     >,
@@ -266,7 +269,7 @@ pub fn update_particle_swarm(
 
     let massive_bodies: Vec<(Entity, DVec3, f64, BodyType)> = massive_query
         .iter()
-        .map(|(e, p, m, _, _, body)| (e, p.0, m.0, body.body_type))
+        .map(|(e, p, m, _, _, body, _)| (e, p.0, m.0, body.body_type))
         .collect();
 
     let quasar_blown_out =

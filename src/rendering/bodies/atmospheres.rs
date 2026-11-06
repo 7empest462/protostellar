@@ -293,6 +293,7 @@ pub fn compute_stellar_corona_uniforms(
         spin_axis,
         ring_and_ozone_params: Vec4::ZERO,
         tidal_deformation,
+        cloud_and_time_params: Vec4::ZERO,
     };
     (uniforms, shell_scale)
 }
@@ -313,6 +314,7 @@ fn create_atmosphere_uniforms(
     spin_axis: Vec4,
     ring_and_ozone_params: Vec4,
     tidal_deformation: Vec4,
+    cloud_and_time_params: Vec4,
 ) -> AtmosphereUniforms {
     AtmosphereUniforms {
         rayleigh_params: Vec4::new(
@@ -339,6 +341,7 @@ fn create_atmosphere_uniforms(
         spin_axis,
         ring_and_ozone_params,
         tidal_deformation,
+        cloud_and_time_params,
     }
 }
 
@@ -487,7 +490,13 @@ fn build_planet_atmosphere_uniforms(
     let pressure_bar = opt_vol.map_or((norm.gas_frac as f32 * 2.0).max(0.0), |v| {
         v.atmospheric_pressure_bar
     });
-    let cloud_coverage = opt_climate.map_or(norm.gas_frac as f32, |c| c.cloud_coverage_frac);
+    let raw_cloud = opt_climate.map_or(0.0, |c| c.cloud_coverage_frac);
+    let gas_cloud = if pressure_bar >= 0.02 || norm.gas_frac > 0.005 {
+        (norm.gas_frac as f32 * 10.0).clamp(0.0, 0.68)
+    } else {
+        0.0
+    };
+    let cloud_coverage = raw_cloud.max(gas_cloud);
 
     let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.30;
     let is_ice_giant = body.body_type == BodyType::IceGiant;
@@ -514,6 +523,7 @@ fn build_planet_atmosphere_uniforms(
     let mut spin_axis = compute_spin_axis(opt_spin);
     let mut tidal_deformation = Vec4::ZERO;
     let mut ring_and_ozone = Vec4::ZERO;
+    let mut cloud_and_time_params = Vec4::new(cloud_coverage, 0.0, 0.0, 0.0);
 
     let is_habitable_ozone = matches!(
         body.body_type,
@@ -524,6 +534,8 @@ fn build_planet_atmosphere_uniforms(
 
     if let Some(p_mat) = opt_planet_mat {
         let u = &p_mat.extension.uniforms;
+        let mat_clouds = u.climate_and_bio.w.max(cloud_coverage);
+        cloud_and_time_params = Vec4::new(mat_clouds, u.time, u.spin_angle, u.color_seed.x);
         spin_axis = u.spin_axis;
         let raw_w = u.tidal_deformation.w;
         let roche_stretch = if raw_w >= 1.5 { raw_w - 2.0 } else { raw_w };
@@ -570,6 +582,7 @@ fn build_planet_atmosphere_uniforms(
         spin_axis,
         ring_and_ozone,
         tidal_deformation,
+        cloud_and_time_params,
     );
 
     (uniforms, has_atmosphere, effective_shell_scale)
@@ -639,11 +652,16 @@ fn sync_single_atmosphere_entity(
     >,
     atmo_materials: &mut Assets<AtmosphereMaterial>,
 ) {
+    let mesh_shell_scale = if has_atmosphere {
+        shell_outer_scale * 1.35
+    } else {
+        0.0
+    };
     let found_child = opt_children.is_some_and(|children| {
         update_atmosphere_child_mesh(
             children,
             has_atmosphere,
-            shell_outer_scale,
+            mesh_shell_scale,
             uniforms,
             atmo_children_query,
             atmo_materials,
@@ -654,7 +672,7 @@ fn sync_single_atmosphere_entity(
         let material = atmo_materials.add(AtmosphereMaterial {
             uniforms: uniforms.clone(),
         });
-        spawn_atmosphere_child(commands, planet_ent, mesh, material, shell_outer_scale);
+        spawn_atmosphere_child(commands, planet_ent, mesh, material, mesh_shell_scale);
     }
 }
 
@@ -666,7 +684,10 @@ fn sync_single_atmosphere_entity(
 )]
 pub fn sync_planetary_atmospheres(
     mut commands: Commands,
-    time: Res<Time>,
+    (time, sim_time): (
+        Res<Time>,
+        Option<Res<crate::simulation::resources::SimTime>>,
+    ),
     visual_assets: Option<Res<VisualAssets>>,
     planet_materials: Option<Res<Assets<PlanetMaterial>>>,
     mut atmo_materials: ResMut<Assets<AtmosphereMaterial>>,
@@ -707,7 +728,9 @@ pub fn sync_planetary_atmospheres(
     };
 
     let (star_pos, star_lum) = extract_primary_star_lighting(&primary_star_query);
-    let elapsed_secs = time.elapsed_secs();
+    let elapsed_secs = sim_time
+        .as_deref()
+        .map_or_else(|| time.elapsed_secs(), |st| st.visual_time_secs);
 
     for (
         planet_ent,

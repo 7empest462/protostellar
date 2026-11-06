@@ -44,6 +44,7 @@ pub struct SurfaceTerrainState {
     pub active_host: Option<Entity>,
     pub last_unspun_center: Vec3,
     pub root_entity: Option<Entity>,
+    pub baked_vis_rad: f32,
 }
 
 /// Normalized sea/river water level in `[0.0, 1.0]` relief units.
@@ -766,6 +767,15 @@ pub fn sync_surface_terrain_system(
         (Entity, &SpaceProbe, &FlightComputer, &SimPosition),
         Without<PanOrbitCamera>,
     >,
+    mut root_transform_query: Query<
+        &mut Transform,
+        (
+            With<PlanetarySurfaceTerrainRoot>,
+            Without<CelestialBody>,
+            Without<SpaceProbe>,
+            Without<PanOrbitCamera>,
+        ),
+    >,
     children_query: Query<&Children>,
     mut terrain_state: ResMut<SurfaceTerrainState>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -782,6 +792,7 @@ pub fn sync_surface_terrain_system(
             despawn_terrain_root(&mut commands, root_ent, &children_query);
         }
         terrain_state.active_host = None;
+        terrain_state.baked_vis_rad = 0.0;
         return;
     }
 
@@ -804,9 +815,13 @@ pub fn sync_surface_terrain_system(
         return;
     };
 
-    let vis_rad = opt_t.map_or_else(
-        || config.calc_visual_radius_for_type(radius.0, body.body_type),
-        |t| t.scale.x,
+    let vis_rad = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+        opt_t,
+        radius.0,
+        body.body_type,
+        pos.0.length() as f32,
+        0.001,
+        &config,
     );
     let patch_radius = vis_rad * 0.24;
 
@@ -848,10 +863,18 @@ pub fn sync_surface_terrain_system(
         terrain_state.root_entity = Some(root);
         terrain_state.active_host = Some(host_ent);
         terrain_state.last_unspun_center = unspun_norm;
+        terrain_state.baked_vis_rad = vis_rad.max(1e-8);
     } else if let Some(root_ent) = terrain_state.root_entity {
-        commands
-            .entity(root_ent)
-            .insert(Transform::from_translation(planet_pos).with_rotation(spin_rot));
+        let scale_ratio = if terrain_state.baked_vis_rad > 1e-8 {
+            (vis_rad / terrain_state.baked_vis_rad).clamp(1e-4, 1e4)
+        } else {
+            1.0
+        };
+        if let Ok(mut root_tf) = root_transform_query.get_mut(root_ent) {
+            root_tf.translation = planet_pos;
+            root_tf.rotation = spin_rot;
+            root_tf.scale = Vec3::splat(scale_ratio);
+        }
     }
 }
 

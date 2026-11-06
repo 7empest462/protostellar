@@ -234,33 +234,16 @@ fn update_planet_material(
         norm_comp.metal_frac as f32,
         norm_comp.gas_frac as f32,
     );
-    let lower = name.to_lowercase();
-    let effective_type = if norm_comp.gas_frac > 0.20 {
-        if norm_comp.ice_frac > 0.20 || lower.contains("uranus") || lower.contains("neptune") {
-            BodyType::IceGiant
-        } else {
-            BodyType::GasGiant
-        }
-    } else if lower.contains("uranus") || lower.contains("neptune") {
-        BodyType::IceGiant
-    } else {
-        body_type
-    };
-    mat.extension.uniforms.planet_type = match effective_type {
-        BodyType::GasGiant => 1,
-        BodyType::IceGiant => 2,
-        BodyType::SuperEarth => 6,
-        BodyType::TerrestrialPlanet | BodyType::Protoplanet | BodyType::Moon => {
-            if norm_comp.ice_frac > 0.40 {
-                2
-            } else {
-                3
-            }
-        }
-        _ => 4,
-    };
 
-    if comp.metal_frac > 0.4 {
+    let (planet_type, body_subtype) = resolve_planet_type_and_subtype(body_type, name, comp);
+    mat.extension.uniforms.planet_type = planet_type;
+    mat.extension.uniforms.color_seed.w = body_subtype;
+
+    if planet_type == 9 {
+        // Solid cryogenic ice crust: realistic dielectric reflectivity and crystalline powder roughness
+        mat.base.metallic = 0.04;
+        mat.base.perceptual_roughness = 0.55;
+    } else if comp.metal_frac > 0.4 {
         mat.base.metallic = 0.85;
         mat.base.perceptual_roughness = 0.25;
     } else if comp.ice_frac > 0.4 {
@@ -374,9 +357,28 @@ fn compute_body_material_parameters(
     } else {
         0.0
     };
-    let cloud_density = if !is_minor_body && (has_water_volatiles || norm_comp.gas_frac > 0.02) {
-        let base_clouds = opt_climate.map_or(norm_comp.gas_frac as f32, |c| c.cloud_coverage_frac);
-        if temp_k > 340.0 && ocean_frac > 0.02 {
+    let pressure_bar = if is_minor_body {
+        0.0
+    } else {
+        opt_vol.map_or((norm_comp.gas_frac as f32 * 2.0).max(0.01), |v| {
+            v.atmospheric_pressure_bar
+        })
+    };
+    let is_airless = opt_climate.is_some_and(|c| c.climate_regime == ClimateRegime::AirlessVacuum)
+        || (pressure_bar < 0.02 && norm_comp.gas_frac <= 0.005);
+    let cloud_density = if !is_minor_body
+        && !is_airless
+        && (has_water_volatiles || norm_comp.gas_frac > 0.005 || pressure_bar >= 0.05)
+    {
+        let base_clouds = opt_climate.map_or(
+            if has_water_volatiles {
+                norm_comp.gas_frac as f32
+            } else {
+                (0.24 + norm_comp.gas_frac as f32 * 6.5).clamp(0.22, 0.68)
+            },
+            |c| c.cloud_coverage_frac,
+        );
+        if temp_k > 340.0 && (ocean_frac > 0.01 || has_water_volatiles) {
             let steam_factor = ((temp_k as f32 - 340.0) / 40.0).clamp(0.0, 1.0);
             (base_clouds + steam_factor * 0.70).clamp(0.0, 0.98)
         } else {
@@ -385,16 +387,8 @@ fn compute_body_material_parameters(
     } else {
         0.0
     };
-
-    let pressure_bar = if is_minor_body {
-        0.0
-    } else {
-        opt_vol.map_or((norm_comp.gas_frac as f32 * 2.0).max(0.01), |v| {
-            v.atmospheric_pressure_bar
-        })
-    };
     let scale_height = (0.08f32 * (temp_k as f32 / 288.0f32).sqrt()).clamp(0.02f32, 0.25f32);
-    let base_haze = if is_minor_body {
+    let base_haze = if is_minor_body || is_airless {
         0.0
     } else {
         opt_climate.map_or((norm_comp.gas_frac as f32 * 1.5).clamp(0.0, 1.0), |c| {

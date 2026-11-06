@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy_shader::ShaderRef;
-use hashbrown::HashSet;
+use rustc_hash::FxHashSet as HashSet;
 use std::f32::consts::TAU;
 
 #[derive(Clone, Copy, Debug, ShaderType)]
@@ -266,7 +266,7 @@ pub fn update_roche_streams(
         handle
     };
 
-    let mut active_streams = HashSet::new();
+    let mut active_streams = HashSet::default();
 
     for (donor_ent, overflow, donor_pos, donor_vel, donor_radius, donor_temp, donor_body) in
         query_overflows.iter()

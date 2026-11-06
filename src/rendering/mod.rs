@@ -79,34 +79,29 @@ impl Plugin for RenderingPlugin {
                         .after(crate::simulation::thermodynamics::update_thermodynamics)
                         .after(crate::simulation::geology::sync_geological_evolution_system)
                         .before(crate::simulation::probes::navigation::probe_navigation_system),
+                    sync_selected_body_mesh_lod.after(sync_celestial_transforms),
                     update_pan_orbit_camera
                         .after(sync_celestial_transforms)
                         .after(crate::simulation::probes::sync_probe_transforms),
                     surface_camera::update_surface_horizon_camera.after(update_pan_orbit_camera),
-                    surface_terrain::sync_surface_terrain_system
-                        .after(surface_camera::update_surface_horizon_camera),
-                    (sync_skybox_to_camera, update_skybox_uniforms)
-                        .after(surface_camera::update_surface_horizon_camera),
                     spawn_missing_visuals,
-                    sync_planetary_atmospheres
-                        .after(sync_celestial_transforms)
-                        .after(spawn_missing_visuals),
-                    sync_circumstellar_environments
-                        .after(sync_celestial_transforms)
-                        .after(spawn_missing_visuals),
-                    sync_planetary_rings
-                        .after(sync_celestial_transforms)
-                        .after(spawn_missing_visuals),
-                    sync_black_hole_accretion_disks
-                        .after(sync_celestial_transforms)
+                    sync_camera_adaptive_body_scales
                         .after(surface_camera::update_surface_horizon_camera)
                         .after(spawn_missing_visuals),
-                    sync_cometary_tails.after(sync_celestial_transforms),
-                    sync_quasar_beams.after(sync_celestial_transforms),
-                    sync_pulsar_beams.after(sync_celestial_transforms),
-                    sync_magnetar_structures.after(sync_celestial_transforms),
-                    sync_magnetic_field_overlays.after(sync_celestial_transforms),
-                    sync_relativistic_jets.after(sync_celestial_transforms),
+                    surface_terrain::sync_surface_terrain_system
+                        .after(sync_camera_adaptive_body_scales),
+                    (sync_skybox_to_camera, update_skybox_uniforms)
+                        .after(surface_camera::update_surface_horizon_camera),
+                    sync_planetary_atmospheres.after(sync_camera_adaptive_body_scales),
+                    sync_circumstellar_environments.after(sync_camera_adaptive_body_scales),
+                    sync_planetary_rings.after(sync_camera_adaptive_body_scales),
+                    sync_black_hole_accretion_disks.after(sync_camera_adaptive_body_scales),
+                    sync_cometary_tails.after(sync_camera_adaptive_body_scales),
+                    sync_quasar_beams.after(sync_camera_adaptive_body_scales),
+                    sync_pulsar_beams.after(sync_camera_adaptive_body_scales),
+                    sync_magnetar_structures.after(sync_camera_adaptive_body_scales),
+                    sync_magnetic_field_overlays.after(sync_camera_adaptive_body_scales),
+                    sync_relativistic_jets.after(sync_camera_adaptive_body_scales),
                     sync_supernova_visuals
                         .after(update_supernova_explosions)
                         .after(update_persistent_remnants),
@@ -116,7 +111,7 @@ impl Plugin for RenderingPlugin {
             .add_systems(
                 Update,
                 (
-                    draw_orbital_effects_and_gizmos.after(update_pan_orbit_camera),
+                    draw_orbital_effects_and_gizmos.after(sync_camera_adaptive_body_scales),
                     draw_habitable_zone_gizmos.after(update_pan_orbit_camera),
                     draw_lagrange_points_gizmos.after(update_pan_orbit_camera),
                     draw_dark_matter_halos.after(update_pan_orbit_camera),
@@ -142,7 +137,9 @@ impl Plugin for RenderingPlugin {
                         .after(crate::simulation::physics::step_physics_simulation),
                     update_roche_debris_streams
                         .after(crate::simulation::physics::step_physics_simulation),
-                    update_roche_streams.after(crate::simulation::physics::step_physics_simulation),
+                    update_roche_streams
+                        .after(crate::simulation::physics::step_physics_simulation)
+                        .after(sync_celestial_transforms),
                     update_tidal_disruption_streams
                         .after(crate::simulation::accretion::process_accretion_and_collisions),
                     update_supernova_explosions
