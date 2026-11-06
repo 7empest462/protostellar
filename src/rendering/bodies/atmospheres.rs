@@ -498,10 +498,11 @@ fn build_planet_atmosphere_uniforms(
     };
     let cloud_coverage = raw_cloud.max(gas_cloud);
 
-    let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.30;
-    let is_ice_giant = body.body_type == BodyType::IceGiant;
+    let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.25;
+    let is_ice_giant = body.body_type == BodyType::IceGiant
+        || (norm.gas_frac > 0.20 && norm.ice_frac > 0.20);
     let has_atmosphere =
-        is_gas_giant || is_ice_giant || pressure_bar >= 0.005 || norm.gas_frac > 0.02;
+        !is_gas_giant && !is_ice_giant && (pressure_bar >= 0.005 || norm.gas_frac > 0.02);
 
     let planet_world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
     let star_vector = (star_pos - planet_world_pos).normalize_or_zero();
@@ -622,16 +623,27 @@ fn build_stellar_corona_state(
     (corona_u, true, corona_scale)
 }
 
-fn should_skip_atmosphere_shell(body_type: BodyType, opt_bhs: Option<&BlackHoleStarState>) -> bool {
+fn should_skip_atmosphere_shell(
+    body: &CelestialBody,
+    comp: &Composition,
+    opt_bhs: Option<&BlackHoleStarState>,
+) -> bool {
     let is_blown_out_quasi =
-        body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
-    body_type == BodyType::BlackHole
-        || is_blown_out_quasi
+        body.body_type == BodyType::QuasiStar && opt_bhs.is_some_and(|s| s.is_blown_out);
+    if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
+        return body.body_type == BodyType::BlackHole
+            || is_blown_out_quasi
+            || matches!(body.body_type, BodyType::BlackDwarf | BodyType::IronStar);
+    }
+    let (planet_type, _) =
+        super::palettes::resolve_planet_type_and_subtype(body.body_type, &body.name, comp);
+    let is_giant_planet = matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant)
+        || matches!(planet_type, 1 | 2)
+        || comp.normalized().gas_frac > 0.25;
+    is_giant_planet
         || matches!(
-            body_type,
-            BodyType::BlackDwarf
-                | BodyType::IronStar
-                | BodyType::Asteroid
+            body.body_type,
+            BodyType::Asteroid
                 | BodyType::Comet
                 | BodyType::DustGrain
                 | BodyType::Planetesimal
@@ -747,7 +759,7 @@ pub fn sync_planetary_atmospheres(
         (opt_aurora, opt_diff, opt_spin, opt_flare, opt_bhs),
     ) in planets_query.iter()
     {
-        if should_skip_atmosphere_shell(body.body_type, opt_bhs) {
+        if should_skip_atmosphere_shell(body, comp, opt_bhs) {
             if let Some(children) = opt_children {
                 despawn_atmosphere_children(&mut commands, children, &atmo_children_query);
             }

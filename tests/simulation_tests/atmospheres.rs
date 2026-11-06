@@ -440,10 +440,55 @@ fn test_minor_bodies_do_not_spawn_atmosphere_shells() {
         ))
         .id();
 
+    // Spawn Gas Giant (Jupiter) and Ice Giant (Neptune) — their opaque 1-bar cloud deck
+    // and Chapman limb scattering are rendered natively on the planet mesh in planet.wgsl,
+    // so they must never spawn a detached outer VisualAtmosphereChild envelope.
+    let jupiter_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Jupiter".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            SimPosition(bevy::math::DVec3::new(5.2, 0.0, 0.0)),
+            Mass(317.8 * EARTH_MASS_SOLAR),
+            Radius(0.000477),
+            Temperature(165.0),
+            Composition::solar_gas(),
+            Transform::from_translation(Vec3::new(5.2, 0.0, 0.0)),
+            VisualBody,
+            Visibility::default(),
+        ))
+        .id();
+
+    let neptune_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Neptune".to_string(),
+                body_type: BodyType::IceGiant,
+            },
+            SimPosition(bevy::math::DVec3::new(30.1, 0.0, 0.0)),
+            Mass(17.15 * EARTH_MASS_SOLAR),
+            Radius(0.000165),
+            Temperature(72.0),
+            Composition {
+                gas_frac: 0.30,
+                ice_frac: 0.55,
+                silicate_frac: 0.10,
+                metal_frac: 0.05,
+                organics_frac: 0.0,
+            },
+            Transform::from_translation(Vec3::new(30.1, 0.0, 0.0)),
+            VisualBody,
+            Visibility::default(),
+        ))
+        .id();
+
     app.add_systems(Update, sync_planetary_atmospheres);
     app.update();
 
-    // Verify neither Comet nor Asteroid spawned an atmosphere shell child
+    // Verify neither Comet, Asteroid, GasGiant, nor IceGiant spawned an atmosphere shell child
     let comet_children = app.world().get::<Children>(comet_ent);
     assert!(
         comet_children.is_none() || comet_children.unwrap().is_empty(),
@@ -454,6 +499,18 @@ fn test_minor_bodies_do_not_spawn_atmosphere_shells() {
     assert!(
         asteroid_children.is_none() || asteroid_children.unwrap().is_empty(),
         "Asteroid must never spawn an atmospheric shell child"
+    );
+
+    let jupiter_children = app.world().get::<Children>(jupiter_ent);
+    assert!(
+        jupiter_children.is_none() || jupiter_children.unwrap().is_empty(),
+        "GasGiant must never spawn a detached outer atmospheric shell child"
+    );
+
+    let neptune_children = app.world().get::<Children>(neptune_ent);
+    assert!(
+        neptune_children.is_none() || neptune_children.unwrap().is_empty(),
+        "IceGiant must never spawn a detached outer atmospheric shell child"
     );
 }
 
