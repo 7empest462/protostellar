@@ -45,7 +45,7 @@ pub fn habitability_tracking_system(
     let dt = sim_time.as_ref().map_or(1.0, |st| st.current_dt_yr);
     let elapsed_years = sim_time.as_ref().map_or(0.0, |st| st.elapsed_years);
 
-    let stars_data: Vec<(Entity, f64, bevy::math::DVec3, bool)> = stars
+    let stars_data: smallvec::SmallVec<[(Entity, f64, bevy::math::DVec3, bool); 4]> = stars
         .iter()
         .filter(|(_, _, _, body, _)| body.body_type.is_star_or_remnant())
         .map(|(e, t, opt_p, _, opt_c)| {

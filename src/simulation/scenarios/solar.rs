@@ -426,7 +426,18 @@ pub fn spawn_solar_nebula_mmsn(
 
         let (period_hours, tilt_degrees) = get_mmsn_rotation_and_tilt(name);
         let tilt_rad = tilt_degrees.to_radians();
-        let spin_dir = DVec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0);
+        let spin_dir = if name.contains("Saturn") {
+            // Orient Saturn's northern summer solstice toward the Sun and default camera
+            // so the sunlit north face of the rings, North Polar Hexagon, and southern-hemisphere
+            // ring shadows are all showcased in their canonical Cassini geometry.
+            DVec3::new(
+                -tilt_rad.sin() * 0.80,
+                tilt_rad.cos(),
+                tilt_rad.sin() * 0.60,
+            )
+        } else {
+            DVec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0)
+        };
         let period_yr = period_hours * 3600.0 / YEAR_SECONDS;
         let omega = 2.0 * PI / period_yr.max(1e-8);
         let i_moment = 0.33 * mass_s * rad_au * rad_au;
@@ -434,10 +445,23 @@ pub fn spawn_solar_nebula_mmsn(
         let mut spin = SpinState::default();
         spin.update_from_spin(initial_spin, mass_s, rad_au);
 
+        let initial_water_m_earth = if r_au > 0.45
+            && matches!(b_type, BodyType::TerrestrialPlanet | BodyType::Protoplanet)
+        {
+            compute_endogenous_water_m_earth(mass_s, &comp, r_au, 1.0)
+        } else {
+            0.0
+        };
         let vol = VolatileInventory {
-            delivered_water_m_earth: 0.0,
+            delivered_water_m_earth: initial_water_m_earth,
             ocean_coverage_frac: 0.0,
-            atmospheric_pressure_bar: if r_au < 2.7 { 0.10 } else { 0.0 },
+            atmospheric_pressure_bar: if name == "Earth" {
+                1.0
+            } else if r_au < 2.7 {
+                0.25
+            } else {
+                0.0
+            },
             cometary_impact_count: 0,
         };
 

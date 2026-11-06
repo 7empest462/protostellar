@@ -80,7 +80,7 @@ pub struct LateHeavyBombardmentState {
     pub migration_progress: f64, // 0.0 to 1.0
     pub water_delivered_earth_masses: f64,
     pub comets_scattered: usize,
-    pub scattered_bodies: hashbrown::HashSet<Entity>,
+    pub scattered_bodies: rustc_hash::FxHashSet<Entity>,
     pub time_active_years: f64,
     pub manual_trigger_requested: bool,
 }
@@ -94,7 +94,7 @@ impl Default for LateHeavyBombardmentState {
             migration_progress: 0.0,
             water_delivered_earth_masses: 0.0,
             comets_scattered: 0,
-            scattered_bodies: hashbrown::HashSet::new(),
+            scattered_bodies: rustc_hash::FxHashSet::default(),
             time_active_years: 0.0,
             manual_trigger_requested: false,
         }
@@ -105,7 +105,7 @@ impl Default for LateHeavyBombardmentState {
 /// Resource tracking globally unlocked trophies.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct GlobalTrophies {
-    pub unlocked: hashbrown::HashSet<MilestoneId>,
+    pub unlocked: rustc_hash::FxHashSet<MilestoneId>,
 }
 
 #[derive(Resource, Debug, Clone)]

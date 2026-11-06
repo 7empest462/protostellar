@@ -10,7 +10,7 @@ pub use types::*;
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use hashbrown::HashSet;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::simulation::components::*;
@@ -62,10 +62,11 @@ pub fn process_accretion_and_collisions(
         });
     }
 
-    let mut merged_away: HashSet<Entity> = HashSet::default();
-    let mut newly_formed_moons: HashSet<Entity> = HashSet::default();
+    let mut merged_away: FxHashSet<Entity> = FxHashSet::default();
+    let mut newly_formed_moons: FxHashSet<Entity> = FxHashSet::default();
     let mut pending_despawns: SmallVec<[Entity; 32]> = SmallVec::new();
 
+    let candidate_pairs = build_kdtree_broadphase_candidates(&snapshots);
     let n = snapshots.len();
     for i in 0..n {
         let Some(e1) = snapshots.get(i).map(|s| s.entity) else {
@@ -75,7 +76,10 @@ pub fn process_accretion_and_collisions(
             continue;
         }
 
-        for j in (i + 1)..n {
+        let Some(js) = candidate_pairs.get(i) else {
+            continue;
+        };
+        for &j in js {
             let Some(e2) = snapshots.get(j).map(|s| s.entity) else {
                 continue;
             };
@@ -87,18 +91,8 @@ pub fn process_accretion_and_collisions(
                 continue;
             }
 
-            // High-performance spatial broadphase: eliminate >98% of distant pairs before cloning
             if let (Some(s1), Some(s2)) = (snapshots.get(i), snapshots.get(j)) {
-                let max_reach = if (s1.body_type == BodyType::BlackHole && s1.mass > 1_000_000.0)
-                    || (s2.body_type == BodyType::BlackHole && s2.mass > 1_000_000.0)
-                {
-                    5000.0
-                } else if s1.body_type == BodyType::BlackHole || s2.body_type == BodyType::BlackHole
-                {
-                    50.0
-                } else {
-                    6.0
-                };
+                let max_reach = pair_broadphase_reach(s1, s2);
                 let dx = (s1.pos.x - s2.pos.x).abs();
                 let dz = (s1.pos.z - s2.pos.z).abs();
                 let dy = (s1.pos.y - s2.pos.y).abs();
@@ -139,6 +133,113 @@ pub fn process_accretion_and_collisions(
             entity_cmd.try_despawn();
         }
     }
+}
+
+#[inline]
+fn pair_broadphase_reach(s1: &BodySnapshot, s2: &BodySnapshot) -> f64 {
+    if (s1.body_type == BodyType::BlackHole && s1.mass > 1_000_000.0)
+        || (s2.body_type == BodyType::BlackHole && s2.mass > 1_000_000.0)
+    {
+        5000.0
+    } else if s1.body_type == BodyType::BlackHole || s2.body_type == BodyType::BlackHole {
+        50.0
+    } else {
+        6.0
+    }
+}
+
+#[inline]
+fn within_box_reach(p1: DVec3, p2: DVec3, reach: f64) -> bool {
+    p2.is_finite()
+        && (p1.x - p2.x).abs() <= reach
+        && (p1.y - p2.y).abs() <= reach
+        && (p1.z - p2.z).abs() <= reach
+}
+
+fn collect_single_body_candidates(
+    i: usize,
+    s1: &BodySnapshot,
+    snapshots: &[BodySnapshot],
+    tree: &kiddo::ImmutableKdTree<f64, 3>,
+    bh_indices: &[usize],
+) -> SmallVec<[usize; 8]> {
+    const STANDARD_REACH: f64 = 6.0;
+    const STANDARD_SQ_RADIUS: f64 = 3.0 * STANDARD_REACH * STANDARD_REACH;
+
+    let mut cand_i = SmallVec::new();
+    if !s1.pos.is_finite() {
+        return cand_i;
+    }
+    if s1.body_type == BodyType::BlackHole {
+        for (j, s2) in snapshots.iter().enumerate().skip(i + 1) {
+            if within_box_reach(s1.pos, s2.pos, pair_broadphase_reach(s1, s2)) {
+                cand_i.push(j);
+            }
+        }
+        return cand_i;
+    }
+
+    let neighbors = tree
+        .query(&[s1.pos.x, s1.pos.y, s1.pos.z])
+        .within::<kiddo::SquaredEuclidean<f64>>(STANDARD_SQ_RADIUS)
+        .unsorted()
+        .execute();
+    for nb in neighbors {
+        let j = nb.item as usize;
+        if j > i
+            && snapshots
+                .get(j)
+                .is_some_and(|s2| within_box_reach(s1.pos, s2.pos, STANDARD_REACH))
+        {
+            cand_i.push(j);
+        }
+    }
+
+    for &bh_j in bh_indices {
+        if bh_j > i
+            && !cand_i.contains(&bh_j)
+            && snapshots
+                .get(bh_j)
+                .is_some_and(|s2| within_box_reach(s1.pos, s2.pos, pair_broadphase_reach(s1, s2)))
+        {
+            cand_i.push(bh_j);
+        }
+    }
+
+    cand_i.sort_unstable();
+    cand_i
+}
+
+/// Builds a 3D KD-tree (`kiddo::ImmutableKdTree<f64, 3>`) over `snapshots` and returns, for each body `i`,
+/// the sorted list of candidate indices `j > i` within its 3D spatial interaction reach.
+pub fn build_kdtree_broadphase_candidates(snapshots: &[BodySnapshot]) -> Vec<SmallVec<[usize; 8]>> {
+    let n = snapshots.len();
+    if n < 2 {
+        return vec![SmallVec::new(); n];
+    }
+
+    let mut points: Vec<[f64; 3]> = Vec::with_capacity(n);
+    let mut bh_indices: SmallVec<[usize; 4]> = SmallVec::new();
+    for (idx, s) in snapshots.iter().enumerate() {
+        let pt = if s.pos.is_finite() {
+            [s.pos.x, s.pos.y, s.pos.z]
+        } else {
+            [0.0, 0.0, 0.0]
+        };
+        points.push(pt);
+        if s.body_type == BodyType::BlackHole {
+            bh_indices.push(idx);
+        }
+    }
+    let Ok(tree) = kiddo::ImmutableKdTree::<f64, 3>::new_from_slice(&points) else {
+        return vec![SmallVec::new(); n];
+    };
+
+    snapshots
+        .iter()
+        .enumerate()
+        .map(|(i, s1)| collect_single_body_candidates(i, s1, snapshots, &tree, &bh_indices))
+        .collect()
 }
 
 pub fn is_physically_interpenetrating(

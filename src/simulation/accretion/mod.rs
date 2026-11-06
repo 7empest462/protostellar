@@ -4,6 +4,7 @@ pub mod basins;
 pub mod collisions;
 pub mod events;
 pub mod gas;
+pub mod gmc;
 pub mod impact_regimes;
 pub mod roche;
 pub mod theia;

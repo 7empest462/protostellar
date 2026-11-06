@@ -188,6 +188,7 @@ pub fn update_tidal_evolution(
         ),
         Without<CentralStar>,
     >,
+    mut living_entities: Local<rustc_hash::FxHashSet<Entity>>,
 ) {
     if (time_warp.is_paused && !time_warp.step_once) || !tidal_config.is_enabled {
         return;
@@ -209,6 +210,10 @@ pub fn update_tidal_evolution(
         .next()
         .map(|(e, p, v, m)| (e, p.0, v.0, m.0));
 
+    living_entities.clear();
+    living_entities.extend(bodies_query.iter().map(|(e, ..)| e));
+    living_entities.extend(star_query.iter().map(|(e, ..)| e));
+
     for (
         entity,
         pos,
@@ -225,6 +230,17 @@ pub fn update_tidal_evolution(
         mut opt_volc,
     ) in bodies_query.iter_mut()
     {
+        let valid_sat = match opt_sat {
+            Some(sat) if living_entities.contains(&sat.parent) => Some(sat),
+            Some(_) => {
+                if let Ok(mut cmd) = commands.get_entity(entity) {
+                    cmd.remove::<SatelliteOf>();
+                }
+                None
+            }
+            None => None,
+        };
+
         step_body_tidal_evolution(
             &mut commands,
             entity,
@@ -235,7 +251,7 @@ pub fn update_tidal_evolution(
             body,
             comp,
             &mut spin,
-            opt_sat,
+            valid_sat,
             &mut opt_diff,
             &mut opt_climate,
             &mut opt_tide,

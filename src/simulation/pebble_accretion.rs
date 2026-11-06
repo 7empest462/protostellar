@@ -7,7 +7,6 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
 use std::f64::consts::PI;
 
 use crate::simulation::components::*;
@@ -15,6 +14,7 @@ use crate::simulation::disk::planetesimals::PlanetesimalSpawner;
 use crate::simulation::resources::*;
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 /// Metallicity-like solid-to-gas ratio for the ambient pebble reservoir.
 const PEBBLE_Z: f64 = 0.015;
@@ -331,13 +331,13 @@ fn spawn_single_filament_minor_body(
     commands: &mut Commands,
     disk_params: &DiskParameters,
     spawner: &mut PlanetesimalSpawner,
-    rng: &mut impl Rng,
+    rng: &mut fastrand::Rng,
 ) {
     let snow = disk_params.snow_line_au;
-    let niche_roll: f64 = rng.random_range(0.0..1.0);
+    let niche_roll: f64 = rng.f64_range(0.0, 1.0);
     let (r, comp, body_type, log_mass) = if niche_roll < 0.60 {
-        let r_ast = rng.random_range(2.10..3.45);
-        let comp_ast = if rng.random_bool(0.75) {
+        let r_ast = rng.f64_range(2.10, 3.45);
+        let comp_ast = if rng.chance(0.75) {
             Composition::carbonaceous()
         } else {
             Composition::rocky()
@@ -346,19 +346,19 @@ fn spawn_single_filament_minor_body(
             r_ast,
             comp_ast,
             BodyType::Asteroid,
-            rng.random_range(-5.5..-3.8),
+            rng.f64_range(-5.5, -3.8),
         )
     } else if niche_roll < 0.95 {
-        let r_comet = rng.random_range(16.0..45.0);
+        let r_comet = rng.f64_range(16.0, 45.0);
         let comp_comet = Composition::icy();
         (
             r_comet,
             comp_comet,
             BodyType::Comet,
-            rng.random_range(-6.0..-4.2),
+            rng.f64_range(-6.0, -4.2),
         )
     } else {
-        let r_trap = rng.random_range(snow - 0.2..snow + 0.3);
+        let r_trap = rng.f64_range(snow - 0.2, snow + 0.3);
         let comp_trap = Composition {
             silicate_frac: 0.45,
             ice_frac: 0.45,
@@ -370,7 +370,7 @@ fn spawn_single_filament_minor_body(
             r_trap,
             comp_trap,
             BodyType::Planetesimal,
-            rng.random_range(-3.8..-2.8),
+            rng.f64_range(-3.8, -2.8),
         )
     };
 
@@ -381,12 +381,12 @@ fn spawn_single_filament_minor_body(
         .cbrt()
         .max(EARTH_RADIUS_AU * 0.04);
 
-    let phi: f64 = rng.random_range(0.0..2.0 * PI);
-    let inc: f64 = rng.random_range(-0.04..0.04);
+    let phi: f64 = rng.f64_range(0.0, 2.0 * PI);
+    let inc: f64 = rng.f64_range(-0.04, 0.04);
     let pos = DVec3::new(r * phi.cos(), r * inc, r * phi.sin());
 
     let v_k = (G_ASTRO * disk_params.central_star_mass / r).sqrt();
-    let ecc_kick: f64 = rng.random_range(0.985..1.015);
+    let ecc_kick: f64 = rng.f64_range(0.985, 1.015);
     let v_mag = v_k * ecc_kick;
     let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
 
@@ -403,7 +403,7 @@ fn spawn_single_filament_minor_body(
     diff.recalculate(mass, phys_radius, &comp);
 
     let mut spin = SpinState::default();
-    let spin_period_hrs: f64 = rng.random_range(6.0..36.0);
+    let spin_period_hrs: f64 = rng.f64_range(6.0, 36.0);
     let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
     let initial_spin = 0.33 * mass * phys_radius * phys_radius * DVec3::new(0.0, omega, 0.0);
     spin.update_from_spin(initial_spin, mass, phys_radius);
@@ -475,11 +475,11 @@ pub fn spawn_streaming_instability_minor_bodies(
     }
 
     let num_bursts = ((dt / spawn_interval).floor() as usize).clamp(1, max_bursts);
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let mut spawned_total = 0u32;
 
     for _ in 0..num_bursts {
-        let burst_count = rng.random_range(min_burst..=max_burst);
+        let burst_count = rng.usize(min_burst..=max_burst);
         for _ in 0..burst_count {
             if current_bodies + spawned_total >= spawner.max_ecs_bodies {
                 break;

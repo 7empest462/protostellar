@@ -2,7 +2,7 @@ use crate::simulation::accretion::events::{AccretionMergeEvent, TidalDisruptionE
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use bevy::prelude::*;
-use hashbrown::HashSet;
+use rustc_hash::FxHashSet;
 
 pub fn update_black_hole_accretion_jets(
     mut query: Query<&mut RelativisticJetState>,
@@ -24,7 +24,7 @@ pub fn update_black_hole_accretion_jets(
     }
 
     // Set timers on events
-    let mut accreting_entities = HashSet::new();
+    let mut accreting_entities = FxHashSet::default();
     for ev in merge_reader.read() {
         if ev.new_body_type == BodyType::BlackHole {
             accreting_entities.insert(ev.primary_entity);

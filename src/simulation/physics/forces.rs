@@ -2,6 +2,9 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
+use wide::f64x4;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
@@ -16,11 +19,11 @@ pub struct GmcNearField<'a> {
     /// Squared near radius; pairs closer than this are integrated exactly on the CPU.
     pub near_sq: f64,
     /// Indices into `massive_data`, bucketed by cell (central star excluded).
-    pub grid: &'a hashbrown::HashMap<(i32, i32, i32), Vec<usize>>,
+    pub grid: &'a FxHashMap<(i32, i32, i32), SmallVec<[usize; 8]>>,
     /// Index of the central star inside `massive_data`, always evaluated exactly.
     pub star_slot: Option<usize>,
     /// Latest GPU far-field acceleration per body.
-    pub far_acc: &'a hashbrown::HashMap<Entity, DVec3>,
+    pub far_acc: &'a FxHashMap<Entity, DVec3>,
 }
 
 /// Grid cell containing `pos` for the given reciprocal cell size.
@@ -144,6 +147,51 @@ fn compute_smbh_halo_and_friction_pull(
     pull
 }
 
+/// Evaluates 4-wide SIMD (`wide::f64x4`) gravitational pulls and indirect frame terms
+/// for a 4-body chunk of `massive_data` (excluding `m_idx == i` and `Some(m_idx) == star_index`).
+#[inline]
+fn accumulate_massive_chunk_simd(
+    pos: DVec3,
+    i: usize,
+    star_index: Option<usize>,
+    eff_softening_sq: f64,
+    chunk: &[(DVec3, DVec3, f64, f64, usize); 4],
+) -> DVec3 {
+    let mut gm_lanes = [0.0_f64; 4];
+    for (lane, &(_, _, m_mass, _, m_idx)) in gm_lanes.iter_mut().zip(chunk.iter()) {
+        if m_idx != i && Some(m_idx) != star_index {
+            *lane = G_ASTRO * m_mass;
+        }
+    }
+    let gm = f64x4::new(gm_lanes);
+    let mx = f64x4::new([chunk[0].0.x, chunk[1].0.x, chunk[2].0.x, chunk[3].0.x]);
+    let my = f64x4::new([chunk[0].0.y, chunk[1].0.y, chunk[2].0.y, chunk[3].0.y]);
+    let mz = f64x4::new([chunk[0].0.z, chunk[1].0.z, chunk[2].0.z, chunk[3].0.z]);
+    let soft = f64x4::splat(eff_softening_sq);
+
+    let dx = f64x4::splat(pos.x) - mx;
+    let dy = f64x4::splat(pos.y) - my;
+    let dz = f64x4::splat(pos.z) - mz;
+    let dist_sq = dx * dx + dy * dy + dz * dz + soft;
+    let dist = dist_sq.sqrt();
+    let dir_scale = -gm / (dist_sq * dist);
+
+    let mut ax = (dir_scale * dx).reduce_add();
+    let mut ay = (dir_scale * dy).reduce_add();
+    let mut az = (dir_scale * dz).reduce_add();
+
+    if star_index.is_some_and(|s_idx| i != s_idx) {
+        let m_r_sq = mx * mx + my * my + mz * mz + soft;
+        let m_dist = m_r_sq.sqrt();
+        let ind_scale = -gm / (m_r_sq * m_dist);
+        ax += (ind_scale * mx).reduce_add();
+        ay += (ind_scale * my).reduce_add();
+        az += (ind_scale * mz).reduce_add();
+    }
+
+    DVec3::new(ax, ay, az)
+}
+
 fn accumulate_massive_body_pulls(
     i: usize,
     body: &PhysicsBodyEntry,
@@ -218,6 +266,27 @@ fn accumulate_massive_body_pulls(
             }
         }
         pert_acc += far_acc;
+    } else if b_mass <= 1_000_000.0 && massive_data.len() >= 4 {
+        // 4-wide SIMD evaluation across `massive_data` chunks of 4
+        if let Some(s_idx) = star_index {
+            if let Some(star_entry) = massive_data.iter().find(|&&(.., m_idx)| m_idx == s_idx) {
+                accumulate_pair(star_entry);
+            }
+        }
+        let mut chunks = massive_data.chunks_exact(4);
+        let mut simd_acc = DVec3::ZERO;
+        for slice in &mut chunks {
+            if let Ok(chunk) = slice.try_into() {
+                simd_acc +=
+                    accumulate_massive_chunk_simd(pos, i, star_index, eff_softening_sq, chunk);
+            }
+        }
+        for m in chunks.remainder() {
+            if Some(m.4) != star_index {
+                accumulate_pair(m);
+            }
+        }
+        pert_acc += simd_acc;
     } else {
         for m in massive_data {
             accumulate_pair(m);
@@ -328,7 +397,7 @@ pub fn apply_planetary_migration_and_lhb(
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     jupiter_entity: Option<Entity>,
     saturn_entity: Option<Entity>,
-    ice_giant_entities: &hashbrown::HashSet<Entity>,
+    ice_giant_entities: &FxHashSet<Entity>,
     sub_dt: f64,
     step_idx: usize,
     is_compact_system: bool,

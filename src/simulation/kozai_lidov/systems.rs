@@ -396,10 +396,14 @@ fn apply_secular_evolution_and_tides(
             if new_e > 0.4 {
                 // Hut (1981) tidal energy dissipation boost factor
                 let one_minus_e2 = (1.0 - new_e * new_e).max(0.01);
-                let tidal_boost = (1.0 + 3.75 * new_e * new_e) / one_minus_e2.powf(7.5);
-                tide.tidal_heating_power_watts *= tidal_boost.min(1e5);
-                tide.circularization_rate_per_myr =
-                    (tide.circularization_rate_per_myr * tidal_boost.min(1e4)).max(1e-2);
+                let tidal_boost =
+                    ((1.0 + 3.75 * new_e * new_e) / one_minus_e2.powf(7.5)).clamp(1.0, 1e5);
+                tide.tidal_heating_power_watts =
+                    (tide.tidal_heating_power_watts * tidal_boost).min(1e24);
+                let boosted_decay = (tide.circularization_rate_per_myr.abs()
+                    * tidal_boost.min(1e4))
+                .clamp(1e-2, 1e4);
+                tide.circularization_rate_per_myr = -boosted_decay;
             }
         }
     }

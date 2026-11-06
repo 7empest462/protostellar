@@ -71,40 +71,74 @@ fn compute_surface_temperature(
     }
 }
 
+fn compute_steam_condensation_fraction(surface_temp: f64) -> f32 {
+    // 647.0 K is the thermodynamic critical point of water:
+    // - T >= 647.0 K: Supercritical steam regime; water resides entirely in the atmosphere.
+    // - 450.0 K .. 647.0 K: Initial Great Deluge onset as the magma ocean crust cools below critical point.
+    // - 340.0 K ..= 450.0 K: Main Hadean/Archean deluge condensation into liquid surface oceans.
+    // - T <= 340.0 K: Fully condensed into surface oceans (freezing handled via ice_coverage_frac below 255 K).
+    if surface_temp >= 647.0 {
+        0.0
+    } else if surface_temp > 450.0 {
+        ((647.0 - surface_temp as f32) / (647.0 - 450.0) * 0.35).clamp(0.0, 0.35)
+    } else if surface_temp > 340.0 {
+        let t_frac = ((450.0 - surface_temp as f32) / (450.0 - 340.0)).clamp(0.0, 1.0);
+        0.35 + t_frac * 0.65
+    } else {
+        1.0
+    }
+}
+
 fn update_volatile_condensation(
     opt_vol: &mut Option<&mut VolatileInventory>,
+    body_type: BodyType,
+    b_mass_solar: f64,
     has_water_volatiles: bool,
     current_ice: f32,
     surface_temp: f64,
 ) -> (f32, f32) {
-    let mut ocean_frac = 0.0;
-    let mut atm_pressure = 0.0;
-    if let Some(ref mut vol) = opt_vol {
-        if has_water_volatiles {
-            let max_ocean = if vol.delivered_water_m_earth > 1e-6 {
-                ((vol.delivered_water_m_earth / 0.0006) * 0.71).clamp(0.0, 0.85) as f32
-            } else {
-                vol.ocean_coverage_frac
-                    .max((current_ice * 3.0).clamp(0.0, 0.85))
-            };
-
-            let condensation_frac = if surface_temp > 380.0 {
-                0.0
-            } else if surface_temp < 340.0 {
-                1.0
-            } else {
-                ((380.0 - surface_temp as f32) / 40.0).clamp(0.0, 1.0)
-            };
-
-            vol.ocean_coverage_frac = max_ocean * condensation_frac;
-            ocean_frac = vol.ocean_coverage_frac;
-
-            let steam_pressure = max_ocean * (1.0 - condensation_frac) * 12.0;
-            atm_pressure = vol.atmospheric_pressure_bar.max(steam_pressure);
-        } else {
-            vol.ocean_coverage_frac = 0.0;
-        }
+    let Some(ref mut vol) = opt_vol else {
+        return (0.0, 0.0);
+    };
+    if !has_water_volatiles {
+        vol.ocean_coverage_frac = 0.0;
+        return (0.0, vol.atmospheric_pressure_bar);
     }
+
+    let max_ocean = if vol.delivered_water_m_earth > 1e-6 {
+        (vol.delivered_water_m_earth / 0.0005).clamp(0.0, 0.85) as f32
+    } else {
+        let ice_ocean = vol
+            .ocean_coverage_frac
+            .max((current_ice * 3.0).clamp(0.0, 0.85));
+        if ice_ocean > 0.0 {
+            vol.delivered_water_m_earth = f64::from(ice_ocean) * 0.0005;
+        }
+        ice_ocean
+    };
+
+    let condensation_frac = compute_steam_condensation_fraction(surface_temp);
+    let can_retain_secondary_atm = matches!(
+        body_type,
+        BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
+    ) || b_mass_solar
+        >= 0.015 * crate::utils::constants::EARTH_MASS_SOLAR;
+    if can_retain_secondary_atm && max_ocean > 0.005 {
+        let outgassed_n2_co2_h2o_bar = (0.08 + max_ocean * 1.15).clamp(0.08, 1.50);
+        vol.atmospheric_pressure_bar = vol.atmospheric_pressure_bar.max(outgassed_n2_co2_h2o_bar);
+    }
+
+    let steam_mult = if surface_temp >= 647.0 { 25.0 } else { 12.0 };
+    let steam_pressure = max_ocean * (1.0 - condensation_frac) * steam_mult;
+    let atm_pressure = vol.atmospheric_pressure_bar.max(steam_pressure);
+
+    // Liquid water requires atmospheric pressure above the 0.0061 bar triple point of H2O
+    let ocean_frac = if atm_pressure >= 0.0061 {
+        max_ocean * condensation_frac
+    } else {
+        0.0
+    };
+    vol.ocean_coverage_frac = ocean_frac;
     (ocean_frac, atm_pressure)
 }
 
@@ -117,10 +151,18 @@ fn determine_climate_coverage(
     current_ice: f32,
     comp_gas_frac: f32,
 ) -> (ClimateRegime, f32, f32, f32) {
+    let effective_pressure = if atm_pressure >= 0.02 {
+        atm_pressure
+    } else if comp_gas_frac > 0.005 {
+        (comp_gas_frac * 2.0).max(atm_pressure)
+    } else {
+        atm_pressure
+    };
+
     let climate_regime =
         if comp_gas_frac > 0.20 || matches!(body_type, BodyType::GasGiant | BodyType::IceGiant) {
             ClimateRegime::GasGiantEnvelope
-        } else if atm_pressure < 0.02 {
+        } else if effective_pressure < 0.02 {
             ClimateRegime::AirlessVacuum
         } else if surface_temp < 250.0 {
             ClimateRegime::SnowballIceAge
@@ -154,8 +196,27 @@ fn determine_climate_coverage(
 
     let polar_ice_lat = (90.0 * (1.0 - ice_coverage)).clamp(0.0, 90.0);
 
-    let cloud_coverage = if atm_pressure > 0.05 && (has_water_volatiles || comp_gas_frac > 0.02) {
-        (0.35 + ocean_frac * 0.40).clamp(0.1, 0.95)
+    let cloud_coverage = if effective_pressure < 0.02 && comp_gas_frac <= 0.005 {
+        0.0
+    } else if has_water_volatiles {
+        let base_water_clouds = (0.35 + ocean_frac * 0.40).clamp(0.10, 0.95);
+        if surface_temp >= 647.0 {
+            // Supercritical steam + CO2 envelope above the critical point of water
+            0.95
+        } else if surface_temp > 340.0 {
+            let boil_frac = ((surface_temp as f32 - 340.0) / 40.0).clamp(0.0, 1.0);
+            (base_water_clouds + boil_frac * 0.60).clamp(0.10, 0.98)
+        } else {
+            base_water_clouds
+        }
+    } else if effective_pressure > 15.0 {
+        // Crushing dry Venus-like atmosphere with dense sulfuric/aerosol cloud decks
+        ((effective_pressure - 15.0) / 60.0).clamp(0.45, 0.95)
+    } else if comp_gas_frac > 0.005 || effective_pressure >= 0.05 {
+        // Volatile gas envelope on a desiccated surface: visible dynamic cloud bands & fronts (25%..68%),
+        // without turning into a 100% opaque boiling-ocean whiteout
+        (0.24 + comp_gas_frac * 6.5 + (effective_pressure / 12.0).clamp(0.0, 0.20))
+            .clamp(0.22, 0.68)
     } else {
         0.0
     };
@@ -216,6 +277,8 @@ pub fn update_body_climate_and_biosphere(
 
     let (ocean_frac, atm_pressure) = update_volatile_condensation(
         &mut opt_vol,
+        b_body.body_type,
+        b_mass_solar,
         has_water_volatiles,
         current_ice,
         thermal.surface_temp,

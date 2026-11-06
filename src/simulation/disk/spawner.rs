@@ -2,12 +2,12 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
 use std::f64::consts::PI;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 type SeedTuple = (f64, f64, f64, &'static str, Composition, BodyType, f64);
 
@@ -373,13 +373,13 @@ fn spawn_seed_body(
     seed: SeedTuple,
     protostar_mass: f64,
     ref_temp_1au: f64,
-    rng: &mut impl Rng,
+    rng: &mut fastrand::Rng,
 ) {
     let (a, mass, radius, name, comp, body_type, ecc) = seed;
     let a_f64: f64 = a;
     let ecc_f64: f64 = ecc;
-    let phi: f64 = rng.random_range(0.0..2.0 * PI);
-    let inc_rad: f64 = rng.random_range(-0.04..0.04);
+    let phi: f64 = rng.f64_range(0.0, 2.0 * PI);
+    let inc_rad: f64 = rng.f64_range(-0.04, 0.04);
 
     let r_p = a_f64 * (1.0f64 - ecc_f64).max(0.1f64);
     let pos = DVec3::new(
@@ -400,9 +400,9 @@ fn spawn_seed_body(
 
     let mut spin = SpinState::default();
     let spin_period_hrs: f64 = match body_type {
-        BodyType::GasGiant => rng.random_range(9.0..11.0),
-        BodyType::IceGiant => rng.random_range(14.0..18.0),
-        _ => rng.random_range(6.0..36.0),
+        BodyType::GasGiant => rng.f64_range(9.0, 11.0),
+        BodyType::IceGiant => rng.f64_range(14.0, 18.0),
+        _ => rng.f64_range(6.0, 36.0),
     };
     let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
     let initial_spin = 0.33 * mass * radius * radius * DVec3::new(0.0, omega, 0.0);
@@ -491,7 +491,7 @@ pub fn spawn_protoplanetary_disk(
         ))
         .id();
 
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let all_seeds = get_major_seeds()
         .into_iter()
         .chain(get_outer_and_asteroid_seeds())
@@ -511,8 +511,8 @@ pub fn spawn_protoplanetary_disk(
 }
 
 /// Helper function to sample initial radial position according to standard MMSN power-law.
-pub fn sample_disk_radius<R: rand::Rng + ?Sized>(
-    rng: &mut R,
+pub fn sample_disk_radius(
+    rng: &mut fastrand::Rng,
     disk_params: &DiskParameters,
 ) -> (f64, Composition) {
     let is_massive = disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
@@ -525,13 +525,13 @@ pub fn sample_disk_radius<R: rand::Rng + ?Sized>(
     }
 }
 
-fn sample_massive_disk_radius<R: rand::Rng + ?Sized>(
-    rng: &mut R,
+fn sample_massive_disk_radius(
+    rng: &mut fastrand::Rng,
     disk_params: &DiskParameters,
 ) -> (f64, Composition) {
     let r_in = disk_params.inner_radius_au.clamp(1.0, 10.0);
     let r_out = disk_params.outer_radius_au.max(r_in + 20.0);
-    let roll: f64 = rng.random_range(0.0..1.0);
+    let roll: f64 = rng.f64_range(0.0, 1.0);
     if roll < 0.45 {
         let u = roll / 0.45;
         let r = (r_in * r_in + u * (30.0 * 30.0 - r_in * r_in)).sqrt();
@@ -547,13 +547,13 @@ fn sample_massive_disk_radius<R: rand::Rng + ?Sized>(
     }
 }
 
-fn sample_compact_disk_radius<R: rand::Rng + ?Sized>(
-    rng: &mut R,
+fn sample_compact_disk_radius(
+    rng: &mut fastrand::Rng,
     disk_params: &DiskParameters,
 ) -> (f64, Composition) {
     let r_in = disk_params.inner_radius_au.max(0.002);
     let r_out = disk_params.outer_radius_au.max(r_in * 2.0);
-    let roll: f64 = rng.random_range(0.0..1.0);
+    let roll: f64 = rng.f64_range(0.0, 1.0);
     if roll < 0.50 {
         let u = roll / 0.50;
         let r_sub_out = r_in + (r_out - r_in) * 0.45;
@@ -578,11 +578,11 @@ fn sample_compact_disk_radius<R: rand::Rng + ?Sized>(
     }
 }
 
-fn sample_standard_disk_radius<R: rand::Rng + ?Sized>(
-    rng: &mut R,
+fn sample_standard_disk_radius(
+    rng: &mut fastrand::Rng,
     disk_params: &DiskParameters,
 ) -> (f64, Composition) {
-    let roll: f64 = rng.random_range(0.0..1.0);
+    let roll: f64 = rng.f64_range(0.0, 1.0);
     if roll < 0.25 {
         let u = roll / 0.25;
         let r_in_sqrt = disk_params.inner_radius_au.sqrt();

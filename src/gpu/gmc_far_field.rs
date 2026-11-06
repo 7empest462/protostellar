@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp};
 use bytemuck::{Pod, Zeroable};
-use hashbrown::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -48,7 +48,7 @@ pub struct GmcFarFieldSender {
 /// Latest far-field acceleration per body, consumed by the CPU physics step.
 #[derive(Resource, Default)]
 pub struct GmcFarField {
-    pub acc: HashMap<Entity, DVec3>,
+    pub acc: FxHashMap<Entity, DVec3>,
 }
 
 /// Render-world flag that is set while a GPU job is in flight.

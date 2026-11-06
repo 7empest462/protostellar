@@ -319,6 +319,14 @@ impl TimeWarp {
     pub const SPEED_1_MINUTE: f64 = 60.0 * Self::SPEED_REAL_TIME;
     /// Multiplier corresponding to 1 wall-clock second = 5 simulation minutes (300x real-time).
     pub const SPEED_5_MINUTES: f64 = 300.0 * Self::SPEED_REAL_TIME;
+    /// Multiplier corresponding to 1 wall-clock second = 6 simulation hours (21,600x real-time).
+    pub const SPEED_6_HOURS: f64 = 21_600.0 * Self::SPEED_REAL_TIME;
+    /// Multiplier corresponding to 1 wall-clock second = 12 simulation hours (43,200x real-time).
+    pub const SPEED_12_HOURS: f64 = 43_200.0 * Self::SPEED_REAL_TIME;
+    /// Multiplier corresponding to 1 wall-clock second = 24 simulation hours / 1 day (86,400x real-time).
+    pub const SPEED_24_HOURS: f64 = 86_400.0 * Self::SPEED_REAL_TIME;
+    /// Multiplier corresponding to 1 wall-clock second = 72 simulation hours / 3 days (259,200x real-time).
+    pub const SPEED_72_HOURS: f64 = 259_200.0 * Self::SPEED_REAL_TIME;
 
     /// Minimum allowable time multiplier (allows real-time and sub-second slow motion).
     pub const MIN_SPEED: f64 = 1.0e-7;
@@ -359,8 +367,13 @@ impl TimeWarp {
             } else {
                 format!("1s = {minutes:.1} min")
             }
-        } else if sec_per_sec < 86400.0 {
-            format!("1s = {:.1} hr", sec_per_sec / 3600.0)
+        } else if sec_per_sec <= 260_000.0 {
+            let hours = sec_per_sec / 3600.0;
+            if (hours - hours.round()).abs() < 0.05 {
+                format!("1s = {:.0} hr", hours.round())
+            } else {
+                format!("1s = {hours:.1} hr")
+            }
         } else if years_per_sec < 0.0833 {
             let days = years_per_sec * 365.25;
             format!("{:.1}x (1s = {:.1} days)", self.multiplier, days)
@@ -400,6 +413,37 @@ pub struct SimTime {
     pub visual_time_secs: f32,
 }
 
+impl SimTime {
+    /// Decomposes `elapsed_years` into calendar components: `(years, months, days, hours, minutes, seconds)`.
+    /// Uses the standard Julian year (`31,557,600` seconds = `12` months of `2,629,800` seconds).
+    pub fn decompose_calendar_clock(&self) -> (u64, u32, u32, u32, u32, u32) {
+        let total_secs = if self.elapsed_years.is_finite() && self.elapsed_years > 0.0 {
+            (self.elapsed_years * TimeWarp::SECONDS_PER_YEAR).floor() as u128
+        } else {
+            0
+        };
+        let sec_per_year: u128 = 31_557_600;
+        let sec_per_month: u128 = 2_629_800; // 31,557,600 / 12 (30.4375 days)
+        let years = (total_secs / sec_per_year).min(u128::from(u64::MAX)) as u64;
+        let rem_yr = total_secs % sec_per_year;
+        let months = (rem_yr / sec_per_month) as u32;
+        let rem_mo = rem_yr % sec_per_month;
+        let days = (rem_mo / 86_400) as u32;
+        let rem_day = rem_mo % 86_400;
+        let hours = (rem_day / 3_600) as u32;
+        let rem_hr = rem_day % 3_600;
+        let minutes = (rem_hr / 60) as u32;
+        let seconds = (rem_hr % 60) as u32;
+        (years, months, days, hours, minutes, seconds)
+    }
+
+    /// Formats the live visual chronometer showing years, months, days, hours, minutes, and seconds.
+    pub fn format_visual_clock(&self) -> String {
+        let (years, months, days, hours, minutes, seconds) = self.decompose_calendar_clock();
+        format!("{years}y {months:02}m {days:02}d | {hours:02}h {minutes:02}m {seconds:02}s")
+    }
+}
+
 /// Real-time diagnostic monitor for total energy conservation ($E = K + U$).
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EnergyMonitor {
@@ -415,6 +459,29 @@ pub struct EnergyMonitor {
     pub relative_energy_drift: f64,
     /// Has initial energy been recorded.
     pub initialized: bool,
+    /// Number of active celestial bodies in the previous step.
+    pub last_body_count: usize,
+    /// Sum of masses across all bodies in the previous step.
+    pub last_total_mass: f64,
+    /// Flag requesting immediate re-baselining of $E_0$ (e.g. from editor or player actions).
+    pub needs_rebaseline: bool,
+}
+
+impl EnergyMonitor {
+    /// Re-baselines initial total energy to `current_total_energy` and resets relative drift.
+    pub fn rebaseline(&mut self, current_total_energy: f64, body_count: usize, total_mass: f64) {
+        self.initial_total_energy = current_total_energy;
+        self.last_body_count = body_count;
+        self.last_total_mass = total_mass;
+        self.relative_energy_drift = 0.0;
+        self.needs_rebaseline = false;
+        self.initialized = true;
+    }
+
+    /// Requests that the next physics step re-baselines initial energy.
+    pub fn request_rebaseline(&mut self) {
+        self.needs_rebaseline = true;
+    }
 }
 
 /// Astrophysical parameters defining the initial Hayashi Minimum Mass Solar Nebula (MMSN).

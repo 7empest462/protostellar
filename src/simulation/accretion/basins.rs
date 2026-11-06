@@ -113,7 +113,7 @@ pub fn deliver_volatiles_and_crater(
         let norm = (s_pos - p_pos).normalize_or_zero();
         let surface_normal = Vec3::new(norm.x as f32, norm.y as f32, norm.z as f32);
         let mass_ratio = if p_m > 0.0 { s_m / p_m } else { 1.0 };
-        let angular_radius = ((mass_ratio).cbrt() as f32).clamp(0.05, 0.55);
+        let angular_radius = ((mass_ratio).cbrt() as f32 * 0.55).clamp(0.045, 0.34);
 
         record_impact_crater_basin(
             commands,

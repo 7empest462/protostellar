@@ -2,13 +2,13 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use rand::prelude::*;
 use std::f64::consts::PI;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 use super::spawner::sample_disk_radius;
 
@@ -42,52 +42,55 @@ impl Default for PlanetesimalSpawner {
     }
 }
 
-fn sample_early_massive_disk_niche(spawned_count: u32, rng: &mut impl Rng) -> (f64, Composition) {
+fn sample_early_massive_disk_niche(
+    spawned_count: u32,
+    rng: &mut fastrand::Rng,
+) -> (f64, Composition) {
     match spawned_count {
-        0 => (rng.random_range(72.0..88.0), Composition::solar_gas()),
-        1 => (rng.random_range(92.0..112.0), Composition::pure_hydrogen()),
-        2 => (rng.random_range(118.0..142.0), Composition::solar_gas()),
-        3 => (rng.random_range(148.0..178.0), Composition::pure_hydrogen()),
-        4 => (rng.random_range(185.0..215.0), Composition::solar_gas()),
-        5 => (rng.random_range(220.0..245.0), Composition::pure_hydrogen()),
-        6 => (rng.random_range(80.0..130.0), Composition::icy()),
-        _ => (rng.random_range(140.0..220.0), Composition::solar_gas()),
+        0 => (rng.f64_range(72.0, 88.0), Composition::solar_gas()),
+        1 => (rng.f64_range(92.0, 112.0), Composition::pure_hydrogen()),
+        2 => (rng.f64_range(118.0, 142.0), Composition::solar_gas()),
+        3 => (rng.f64_range(148.0, 178.0), Composition::pure_hydrogen()),
+        4 => (rng.f64_range(185.0, 215.0), Composition::solar_gas()),
+        5 => (rng.f64_range(220.0, 245.0), Composition::pure_hydrogen()),
+        6 => (rng.f64_range(80.0, 130.0), Composition::icy()),
+        _ => (rng.f64_range(140.0, 220.0), Composition::solar_gas()),
     }
 }
 
-fn sample_early_solar_niche(spawned_count: u32, rng: &mut impl Rng) -> (f64, Composition) {
+fn sample_early_solar_niche(spawned_count: u32, rng: &mut fastrand::Rng) -> (f64, Composition) {
     match spawned_count {
-        0 => (rng.random_range(0.38..0.72), Composition::rocky()),
-        1 => (rng.random_range(0.95..1.52), Composition::rocky()),
-        2 => (rng.random_range(2.4..3.6), Composition::carbonaceous()),
-        3 => (rng.random_range(5.0..6.2), Composition::icy()),
-        4 => (rng.random_range(8.8..10.5), Composition::icy()),
-        5 => (rng.random_range(18.0..22.0), Composition::icy()),
-        6 => (rng.random_range(28.0..32.0), Composition::icy()),
-        _ => (rng.random_range(36.0..45.0), Composition::icy()),
+        0 => (rng.f64_range(0.38, 0.72), Composition::rocky()),
+        1 => (rng.f64_range(0.95, 1.52), Composition::rocky()),
+        2 => (rng.f64_range(2.4, 3.6), Composition::carbonaceous()),
+        3 => (rng.f64_range(5.0, 6.2), Composition::icy()),
+        4 => (rng.f64_range(8.8, 10.5), Composition::icy()),
+        5 => (rng.f64_range(18.0, 22.0), Composition::icy()),
+        6 => (rng.f64_range(28.0, 32.0), Composition::icy()),
+        _ => (rng.f64_range(36.0, 45.0), Composition::icy()),
     }
 }
 
 fn sample_standard_belt_or_feeding_zone(
     disk_params: &DiskParameters,
-    rng: &mut impl Rng,
+    rng: &mut fastrand::Rng,
 ) -> (f64, Composition, bool) {
-    let roll: f64 = rng.random_range(0.0..1.0);
+    let roll: f64 = rng.f64_range(0.0, 1.0);
     if roll < 0.08 {
         // Outer giant core feeding zones only (Jupiter/Saturn/Ice Giants)
-        let zone_roll: f64 = rng.random_range(0.0..1.0);
+        let zone_roll: f64 = rng.f64_range(0.0, 1.0);
         let (r_zone, comp_zone) = if zone_roll < 0.45 {
-            (rng.random_range(4.5..6.5), Composition::icy())
+            (rng.f64_range(4.5, 6.5), Composition::icy())
         } else if zone_roll < 0.75 {
-            (rng.random_range(8.5..11.5), Composition::icy())
+            (rng.f64_range(8.5, 11.5), Composition::icy())
         } else {
-            (rng.random_range(18.0..32.0), Composition::icy())
+            (rng.f64_range(18.0, 32.0), Composition::icy())
         };
         (r_zone, comp_zone, true)
     } else if roll < 0.62 {
         // Main Asteroid Belt (2.15 - 3.45 AU)
-        let r_belt = rng.random_range(2.15..3.45);
-        let comp_belt = if rng.random_bool(0.75) {
+        let r_belt = rng.f64_range(2.15, 3.45);
+        let comp_belt = if rng.chance(0.75) {
             Composition::carbonaceous()
         } else {
             Composition::rocky()
@@ -95,7 +98,7 @@ fn sample_standard_belt_or_feeding_zone(
         (r_belt, comp_belt, false)
     } else if roll < 0.95 {
         // Kuiper Belt / Scattered Disk (16.0 - 45.0 AU)
-        let r_kuiper = rng.random_range(16.0..45.0);
+        let r_kuiper = rng.f64_range(16.0, 45.0);
         (r_kuiper, Composition::icy(), false)
     } else {
         let (r_samp, comp_samp) = sample_disk_radius(rng, disk_params);
@@ -107,7 +110,7 @@ fn sample_planetesimal_location(
     spawner_count: u32,
     is_massive_disk: bool,
     disk_params: &DiskParameters,
-    rng: &mut impl Rng,
+    rng: &mut fastrand::Rng,
 ) -> (f64, Composition, bool) {
     if (spawner_count as usize) < 8 {
         if is_massive_disk {
@@ -133,30 +136,30 @@ fn spawn_single_planetesimal(
     comp: Composition,
     is_feeding_zone: bool,
     is_massive_disk: bool,
-    rng: &mut impl Rng,
+    rng: &mut fastrand::Rng,
 ) {
-    let phi: f64 = rng.random_range(0.0..2.0 * PI);
-    let inclination: f64 = rng.random_range(-0.03..0.03);
+    let phi: f64 = rng.f64_range(0.0, 2.0 * PI);
+    let inclination: f64 = rng.f64_range(-0.03, 0.03);
     let y_offset = r * inclination;
     let pos = DVec3::new(r * phi.cos(), y_offset, r * phi.sin());
 
     let v_k = (G_ASTRO * disk_params.central_star_mass / r).sqrt();
-    let ecc_kick: f64 = rng.random_range(0.98..1.02);
+    let ecc_kick: f64 = rng.f64_range(0.98, 1.02);
     let v_mag = v_k * ecc_kick;
     let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
 
     let is_protoplanet: bool = (spawner.total_spawned as usize) < 8 && is_feeding_zone;
     let log_mass_earth: f64 = if is_protoplanet {
         if is_massive_disk {
-            rng.random_range(0.0..1.7)
+            rng.f64_range(0.0, 1.7)
         } else if r > disk_params.snow_line_au {
-            rng.random_range(-1.2..-0.6)
+            rng.f64_range(-1.2, -0.6)
         } else {
-            rng.random_range(-1.7..-1.0)
+            rng.f64_range(-1.7, -1.0)
         }
     } else {
         // True minor bodies in belts have asteroid/comet masses
-        rng.random_range(-5.5..-3.8)
+        rng.f64_range(-5.5, -3.8)
     };
     let mass = EARTH_MASS_SOLAR * 10.0_f64.powf(log_mass_earth);
 
@@ -190,7 +193,7 @@ fn spawn_single_planetesimal(
     diff.recalculate(mass, phys_radius, &comp);
 
     let mut spin = SpinState::default();
-    let spin_period_hrs: f64 = rng.random_range(4.0..48.0);
+    let spin_period_hrs: f64 = rng.f64_range(4.0, 48.0);
     let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
     let initial_spin = 0.33 * mass * phys_radius * phys_radius * DVec3::new(0.0, omega, 0.0);
     spin.update_from_spin(initial_spin, mass, phys_radius);
@@ -264,7 +267,7 @@ pub fn auto_spawn_planetesimals(
 
     let intervals = (time_since_last / spawn_interval).floor() as usize;
     let num_spawns = (intervals * cluster_size).clamp(1, max_batch.min(deficit as usize));
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let is_massive_disk =
         disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
 
@@ -417,7 +420,9 @@ pub fn auto_spawn_delayed_proto_earth(
             body_type: BodyType::Protoplanet,
         },
         VolatileInventory {
-            delivered_water_m_earth: 0.0,
+            delivered_water_m_earth: VolatileInventory::compute_endogenous_water_m_earth(
+                mass_s, &comp, r_au, 1.0,
+            ),
             cometary_impact_count: 0,
             ocean_coverage_frac: 0.0,
             atmospheric_pressure_bar: 0.20,

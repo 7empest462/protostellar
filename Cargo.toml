@@ -50,6 +50,7 @@ doc_markdown            = "allow"
 many_single_char_names  = "allow"
 needless_pass_by_value  = "allow"
 return_self_not_must_use = "allow"
+implicit_hasher          = "allow"
 
 # Formerly crate-level allows (Cargo-scoped, not file-wide)
 trivially_copy_pass_by_ref = "allow"
@@ -80,6 +81,9 @@ bevy = { version = "0.19.1", default-features = false, features = [
     "bevy_mesh",
     "bevy_camera",
     "bevy_post_process",
+    "bevy_anti_alias",
+    "smaa_luts",
+    "ktx2",
     "tonemapping_luts",
     "default_font",
     "zstd_rust",
@@ -90,18 +94,20 @@ bevy = { version = "0.19.1", default-features = false, features = [
 # Direct WGPU & Math Pipelines
 wgpu = "29.0"
 glam = { version = "0.33", features = ["fast-math"] }
+wide = "1.7"
 bytemuck = { version = "1.21", features = ["derive"] }
 
 # High-Performance Data Structures (aligned with Bevy where possible)
-hashbrown = "0.17"
+rustc-hash = "2.1"
 flume = "0.12"
 smallvec = "1.16"
+kiddo = { version = "6.3", default-features = false, features = ["multi-threaded"] }
 
 # Parallelism & Random Utilities
 rayon = "1.12"
-rand = "0.9"
-rand_distr = "0.5"
+fastrand = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+postcard = { version = "1.1", features = ["alloc"] }
 bevy_shader = "0.19.1"
 bevy_light = "0.19.1"

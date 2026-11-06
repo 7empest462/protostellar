@@ -1,7 +1,7 @@
 //! Data structures and resources for the Science Economy and Technology Tree.
 
 use bevy::prelude::*;
-use hashbrown::HashSet;
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 
 /// A historic scientific breakthrough or cosmic milestone recorded by the player.
@@ -115,7 +115,7 @@ pub struct TechNode {
 /// Global resource tracking all unlocked technologies and capabilities.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct UnlockedTechs {
-    pub unlocked: HashSet<TechnologyId>,
+    pub unlocked: FxHashSet<TechnologyId>,
 }
 
 impl UnlockedTechs {

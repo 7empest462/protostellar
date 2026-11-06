@@ -129,12 +129,17 @@ pub fn sync_probe_transforms(
                 let target_vis_rad = opt_computer
                     .and_then(|comp| targets.get(comp.target_entity).ok())
                     .and_then(|(opt_t, opt_r, body)| {
-                        opt_t.map(|t| t.scale.x).filter(|&s| s > 1e-6).or_else(|| {
-                            let r = opt_r.map_or(0.001, |rad| rad.0);
-                            config
-                                .as_ref()
-                                .map(|c| c.calc_visual_radius_for_type(r, body.body_type))
-                        })
+                        let r = opt_r.map_or(0.001, |rad| rad.0);
+                        opt_t
+                            .map(|t| t.scale.x)
+                            .filter(|&s| {
+                                s.is_finite() && s > 1e-6 && !((s - 1.0).abs() < 1e-6 && r < 0.25)
+                            })
+                            .or_else(|| {
+                                config
+                                    .as_ref()
+                                    .map(|c| c.calc_visual_radius_for_type(r, body.body_type))
+                            })
                     })
                     .unwrap_or(0.001);
 
@@ -220,7 +225,7 @@ fn process_launch_requests(
         probe_counter.0 += 1;
         let probe_id = probe_counter.0;
 
-        let is_orbiter = is_gas_giant_or_star || rand::random::<bool>();
+        let is_orbiter = is_gas_giant_or_star || fastrand::bool();
         let (probe_type, probe_label) = if is_orbiter {
             (ProbeType::Orbiter, "Orbiter")
         } else {

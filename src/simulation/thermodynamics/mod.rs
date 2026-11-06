@@ -64,8 +64,8 @@ fn process_stars_thermodynamics(
     config: &mut SimulationConfig,
     ignition_events: &mut MessageWriter<StarIgnitionEvent>,
     supernova_events: &mut MessageWriter<SupernovaEvent>,
-) -> Vec<StarThermoInfo> {
-    let mut stars_info = Vec::new();
+) -> smallvec::SmallVec<[StarThermoInfo; 4]> {
+    let mut stars_info = smallvec::SmallVec::new();
     for (
         entity,
         mut mass,
@@ -334,64 +334,52 @@ fn update_disk_bodies_thermodynamics(
     }
 }
 
-fn update_body_thermodynamics(
+fn apply_stellar_envelope_drag_and_engulfment(
     commands: &mut Commands,
     body_ent: Entity,
     b_mass_solar: f64,
-    pos: DVec3,
+    r: f64,
     vel: &mut SimVelocity,
-    p_temp: &mut Temperature,
-    comp: &mut Composition,
     b_body: &CelestialBody,
-    opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
-    opt_spin: Option<&SpinState>,
-    opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
-    opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
-    opt_bio: &mut Option<Mut<'_, BiosphereState>>,
-    star_lum: f64,
     star_temp: f64,
     star_r: f64,
-    shockwave_r: f64,
-    star_is_ignited: bool,
     dt_yr: f64,
-    elapsed_years: f64,
     engulfment_events: &mut MessageWriter<PlanetaryEngulfmentEvent>,
-) {
-    // Stars and stellar remnants are governed by stellar thermodynamics, not planetary engulfment or climate.
-    if b_body.body_type.is_star_or_remnant() {
-        return;
+) -> bool {
+    if b_body.body_type.is_star_or_remnant() || star_temp <= 100.0 || r >= star_r * 2.0 {
+        return false;
     }
 
-    let r = pos.length().max(1e-4);
-    let period_hrs = opt_spin.map_or(24.0, |s| s.rotation_period_hours);
+    let drag_coeff = if r < star_r { 0.25 } else { 0.08 };
+    vel.0 *= 1.0 - (drag_coeff * dt_yr).min(0.8);
 
-    // Stellar envelope drag and engulfment for stars with gaseous photospheres (Main Sequence, Giants, etc.)
-    if !b_body.body_type.is_star_or_remnant() && star_temp > 100.0 && r < star_r * 2.0 {
-        let drag_coeff = if r < star_r { 0.25 } else { 0.08 };
-        vel.0 *= 1.0 - (drag_coeff * dt_yr).min(0.8);
+    let is_deep_engulfment = if star_r > 0.15 {
+        r < 0.18 || r < star_r * 0.20
+    } else {
+        r <= star_r || r < 0.005
+    };
 
-        let is_deep_engulfment = if star_r > 0.15 {
-            // For giant envelopes, deep plunge or inner core boundary
-            r < 0.18 || r < star_r * 0.20
-        } else {
-            // For main-sequence / compact stars, penetration into or inside the stellar body
-            r <= star_r || r < 0.005
-        };
-
-        if is_deep_engulfment {
-            engulfment_events.write(PlanetaryEngulfmentEvent {
-                planet_entity: body_ent,
-                planet_name: b_body.name.clone(),
-                distance_au: r,
-                planet_mass_earth: b_mass_solar / EARTH_MASS_SOLAR,
-            });
-            if let Ok(mut cmd) = commands.get_entity(body_ent) {
-                cmd.try_despawn();
-            }
-            return;
+    if is_deep_engulfment {
+        engulfment_events.write(PlanetaryEngulfmentEvent {
+            planet_entity: body_ent,
+            planet_name: b_body.name.clone(),
+            distance_au: r,
+            planet_mass_earth: b_mass_solar / EARTH_MASS_SOLAR,
+        });
+        if let Ok(mut cmd) = commands.get_entity(body_ent) {
+            cmd.try_despawn();
         }
+        return true;
     }
+    false
+}
 
+fn update_planetary_core_dynamo(
+    opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
+    b_mass_solar: f64,
+    period_hrs: f64,
+    dt_yr: f64,
+) -> f32 {
     let mut magnetic_field_gauss = 0.0f32;
     if let Some(ref mut diff) = opt_diff {
         if diff.is_differentiated {
@@ -418,7 +406,18 @@ fn update_body_thermodynamics(
             diff.core_temp_k = (diff.core_temp_k - (1.5e-3 * dt_yr)).max(300.0);
         }
     }
+    magnetic_field_gauss
+}
 
+fn apply_stellar_wind_and_outer_thaw(
+    opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
+    comp: &mut Composition,
+    r: f64,
+    star_is_ignited: bool,
+    star_lum: f64,
+    magnetic_field_gauss: f32,
+    dt_yr: f64,
+) {
     if star_is_ignited && r < 3.5 {
         if let Some(ref mut vol) = opt_vol {
             if magnetic_field_gauss < 0.12 {
@@ -426,7 +425,13 @@ fn update_body_thermodynamics(
                 let strip_rate =
                     (0.00015 * (1.0 / (r * r)) * f64::from(unshielded_factor) * dt_yr) as f32;
                 vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - strip_rate).max(0.0);
-                if vol.atmospheric_pressure_bar <= 0.001 {
+                if comp.gas_frac > 0.0 && comp.gas_frac <= 0.10 {
+                    comp.gas_frac = (comp.gas_frac - f64::from(strip_rate) * 0.01).max(0.0);
+                    if vol.atmospheric_pressure_bar <= 0.001 {
+                        comp.gas_frac = 0.0;
+                    }
+                    *comp = comp.normalized();
+                } else if vol.atmospheric_pressure_bar <= 0.001 {
                     comp.gas_frac = (comp.gas_frac - f64::from(strip_rate * 0.0001)).max(0.0);
                 }
             }
@@ -440,6 +445,87 @@ fn update_body_thermodynamics(
                 (vol.atmospheric_pressure_bar + 0.03 * dt_yr as f32).min(1.2);
         }
     }
+}
+
+fn apply_shockwave_ice_sublimation(comp: &mut Composition, r: f64, shockwave_r: f64, dt_yr: f64) {
+    if shockwave_r > r && r < 2.7 && comp.ice_frac > 0.001 {
+        let sublimated = (comp.ice_frac * 0.15 * dt_yr).min(comp.ice_frac);
+        comp.ice_frac -= sublimated;
+        comp.silicate_frac += sublimated * 0.7;
+        comp.metal_frac += sublimated * 0.3;
+
+        let sum = comp.silicate_frac
+            + comp.metal_frac
+            + comp.ice_frac
+            + comp.organics_frac
+            + comp.gas_frac;
+        if sum > 0.0 {
+            comp.silicate_frac /= sum;
+            comp.metal_frac /= sum;
+            comp.ice_frac /= sum;
+            comp.organics_frac /= sum;
+            comp.gas_frac /= sum;
+        }
+    }
+}
+
+fn update_body_thermodynamics(
+    commands: &mut Commands,
+    body_ent: Entity,
+    b_mass_solar: f64,
+    pos: DVec3,
+    vel: &mut SimVelocity,
+    p_temp: &mut Temperature,
+    comp: &mut Composition,
+    b_body: &CelestialBody,
+    opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
+    opt_spin: Option<&SpinState>,
+    opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
+    opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
+    opt_bio: &mut Option<Mut<'_, BiosphereState>>,
+    star_lum: f64,
+    star_temp: f64,
+    star_r: f64,
+    shockwave_r: f64,
+    star_is_ignited: bool,
+    dt_yr: f64,
+    elapsed_years: f64,
+    engulfment_events: &mut MessageWriter<PlanetaryEngulfmentEvent>,
+) {
+    if b_body.body_type.is_star_or_remnant() {
+        return;
+    }
+
+    let r = pos.length().max(1e-4);
+    let period_hrs = opt_spin.map_or(24.0, |s| s.rotation_period_hours);
+
+    if apply_stellar_envelope_drag_and_engulfment(
+        commands,
+        body_ent,
+        b_mass_solar,
+        r,
+        vel,
+        b_body,
+        star_temp,
+        star_r,
+        dt_yr,
+        engulfment_events,
+    ) {
+        return;
+    }
+
+    let magnetic_field_gauss =
+        update_planetary_core_dynamo(opt_diff, b_mass_solar, period_hrs, dt_yr);
+
+    apply_stellar_wind_and_outer_thaw(
+        opt_vol,
+        comp,
+        r,
+        star_is_ignited,
+        star_lum,
+        magnetic_field_gauss,
+        dt_yr,
+    );
 
     update_body_climate_and_biosphere(
         commands,
@@ -461,23 +547,5 @@ fn update_body_thermodynamics(
         elapsed_years,
     );
 
-    if shockwave_r > r && r < 2.7 && comp.ice_frac > 0.001 {
-        let sublimated = (comp.ice_frac * 0.15 * dt_yr).min(comp.ice_frac);
-        comp.ice_frac -= sublimated;
-        comp.silicate_frac += sublimated * 0.7;
-        comp.metal_frac += sublimated * 0.3;
-
-        let sum = comp.silicate_frac
-            + comp.metal_frac
-            + comp.ice_frac
-            + comp.organics_frac
-            + comp.gas_frac;
-        if sum > 0.0 {
-            comp.silicate_frac /= sum;
-            comp.metal_frac /= sum;
-            comp.ice_frac /= sum;
-            comp.organics_frac /= sum;
-            comp.gas_frac /= sum;
-        }
-    }
+    apply_shockwave_ice_sublimation(comp, r, shockwave_r, dt_yr);
 }

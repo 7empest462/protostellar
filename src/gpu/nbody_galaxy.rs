@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::Extract;
 use bytemuck::{Pod, Zeroable};
-use rand::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -11,6 +10,7 @@ use crate::gpu::buffers::{GpuParticle, MassiveBodyGpu};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 pub const STAGING_STATE_IDLE: u8 = 0;
 pub const STAGING_STATE_MAPPING: u8 = 1;
@@ -185,12 +185,12 @@ struct GalaxyDiskConfig {
 }
 
 fn generate_galaxy_particles(cfg: &GalaxyDiskConfig, initial_particles: &mut Vec<GpuParticle>) {
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let rs = 50_000.0_f32;
     for _ in 0..cfg.count {
-        let r = rng.random_range(5000.0..cfg.max_radius);
-        let phi = rng.random_range(0.0..std::f32::consts::TAU);
-        let z = rng.random_range(-500.0..500.0);
+        let r = rng.f32_range(5000.0, cfg.max_radius);
+        let phi = rng.f32_range(0.0, std::f32::consts::TAU);
+        let z = rng.f32_range(-500.0, 500.0);
         let pos = [
             cfg.center_pos[0] + r * phi.cos(),
             cfg.center_pos[1] + z,

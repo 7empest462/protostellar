@@ -62,7 +62,9 @@ pub fn probe_navigation_system(
             let radius = target_radius.map_or(0.001, |r| r.0);
             let vis_rad = opt_transform
                 .map(|t| f64::from(t.scale.x))
-                .filter(|&s| s > 1e-6)
+                .filter(|&s| {
+                    s.is_finite() && s > 1e-6 && !((s - 1.0).abs() < 1e-6 && radius < 0.25)
+                })
                 .unwrap_or_else(|| {
                     config.as_ref().map_or(radius, |c| {
                         f64::from(c.calc_visual_radius_for_type(radius, target_body.body_type))

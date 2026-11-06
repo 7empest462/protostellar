@@ -121,8 +121,8 @@ pub fn process_roche_lobe_overflow(
             .max(0.0)
     };
 
-    let mut active_donors = hashbrown::HashSet::new();
-    let mut previously_overflowing = Vec::new();
+    let mut active_donors = rustc_hash::FxHashSet::default();
+    let mut previously_overflowing: smallvec::SmallVec<[Entity; 8]> = smallvec::SmallVec::new();
     for (ent, _, _, _, _, _, opt_roche) in star_query.iter() {
         if opt_roche.is_some() {
             previously_overflowing.push(ent);

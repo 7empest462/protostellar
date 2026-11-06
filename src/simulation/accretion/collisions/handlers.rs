@@ -726,11 +726,12 @@ pub fn handle_inelastic_merger(
         ctx.pending_despawns.push(pair.secondary_entity);
     }
 
+    let impact_dir = (pair.s_pos - pair.p_pos).normalize_or_zero();
     ctx.merge_events.write(AccretionMergeEvent {
         primary_entity: pair.primary_entity,
         secondary_entity: pair.secondary_entity,
         merged_mass: physics.total_mass,
-        merged_position: physics.merged_pos,
+        merged_position: physics.merged_pos + impact_dir * physics.new_radius.max(1e-5),
         merged_velocity: physics.merged_vel,
         new_body_type: physics.updated_type,
         energy_released: physics.kinetic_loss,

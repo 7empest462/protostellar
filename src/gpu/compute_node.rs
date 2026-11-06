@@ -3,8 +3,6 @@
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::Extract;
-use rand::prelude::*;
-use rand_distr::Normal;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -14,6 +12,7 @@ use crate::gpu::buffers::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
+use crate::utils::math::FastRngExt;
 
 pub const STAGING_STATE_IDLE: u8 = 0;
 pub const STAGING_STATE_MAPPING: u8 = 1;
@@ -188,19 +187,15 @@ fn generate_initial_gpu_particles(
     default_params: &DiskParameters,
 ) -> Vec<GpuParticle> {
     let individual_mass = (default_params.disk_mass / f64::from(n_particles)) as f32;
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let mut initial_particles = Vec::with_capacity(n_particles as usize);
 
     for _ in 0..n_particles {
         let (r, comp_struct) =
             crate::simulation::disk::sample_disk_radius(&mut rng, default_params);
-        let phi = rng.random_range(0.0..2.0 * PI);
+        let phi = rng.f64_range(0.0, 2.0 * PI);
         let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
-        let z_height: f64 = if let Ok(dist) = Normal::new(0.0, h_scale) {
-            rng.sample(dist)
-        } else {
-            0.0
-        };
+        let z_height: f64 = rng.normal_f64(0.0, h_scale);
 
         let pos = [
             (r * phi.cos()) as f32,
@@ -394,7 +389,7 @@ fn check_and_reseed_scenario(
         return;
     }
 
-    let mut rng = rand::rng();
+    let mut rng = fastrand::Rng::new();
     let mut reseed_particles = Vec::with_capacity(engine.num_particles as usize);
     let is_empty_disk = params.disk_mass <= 0.0;
     let disk_mass = if is_empty_disk {
@@ -426,13 +421,9 @@ fn check_and_reseed_scenario(
         for _ in 0..engine.num_particles {
             let (r, comp_struct) =
                 crate::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
-            let phi = rng.random_range(0.0..2.0 * PI);
+            let phi = rng.f64_range(0.0, 2.0 * PI);
             let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
-            let z_height: f64 = if let Ok(dist) = Normal::new(0.0, h_scale) {
-                rng.sample(dist)
-            } else {
-                0.0
-            };
+            let z_height: f64 = rng.normal_f64(0.0, h_scale);
             let pos = [
                 (r * phi.cos()) as f32,
                 z_height as f32,

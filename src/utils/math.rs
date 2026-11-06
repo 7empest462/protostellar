@@ -189,33 +189,61 @@ pub fn state_vectors_to_orbital_elements(
     })
 }
 
-/// Computes the 3D position in AU in Bevy coordinates for a given true anomaly.
-/// Returns None if the true anomaly is beyond asymptotes or results in infinite radius.
-pub fn position_at_true_anomaly(elements: &OrbitalElements, nu: f64) -> Option<Vec3> {
+/// Zero-allocation ASCII case-insensitive substring check for per-frame rendering hot loops.
+#[inline]
+pub fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() {
+        return true;
+    }
+    if h.len() < n.len() {
+        return false;
+    }
+    h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+}
+
+/// Precomputes the conic semi-latus rectum $p$ in AU so hot orbit-sampling loops
+/// do not recompute invariant branches at every true anomaly step.
+#[inline]
+pub fn conic_semilatus_rectum(elements: &OrbitalElements) -> Option<f64> {
     let e = elements.eccentricity;
-    let denom = 1.0 + e * nu.cos();
+    if (e - 1.0).abs() < 1e-6 {
+        Some(2.0 * elements.periapsis)
+    } else if e > 1.0 {
+        Some(elements.semi_major_axis.abs() * (e * e - 1.0))
+    } else if elements.semi_major_axis > 0.0 {
+        Some(elements.semi_major_axis * (1.0 - e * e))
+    } else {
+        None
+    }
+}
+
+/// Fast-path 3D position evaluation at true anomaly $\nu$ using a precomputed semi-latus rectum $p$.
+#[inline]
+pub fn position_at_true_anomaly_with_p(
+    elements: &OrbitalElements,
+    p: f64,
+    nu: f64,
+) -> Option<Vec3> {
+    let (sin_nu, cos_nu) = nu.sin_cos();
+    let denom = 1.0 + elements.eccentricity * cos_nu;
     if denom <= 1e-5 {
         return None;
     }
-
-    let p = if (e - 1.0).abs() < 1e-6 {
-        2.0 * elements.periapsis
-    } else if e > 1.0 {
-        elements.semi_major_axis.abs() * (e * e - 1.0)
-    } else {
-        if elements.semi_major_axis <= 0.0 {
-            return None;
-        }
-        elements.semi_major_axis * (1.0 - e * e)
-    };
-
     let r = p / denom;
-    if r > 2000.0 || r <= 0.0 {
+    if !(0.0..=2000.0).contains(&r) || r == 0.0 {
         return None;
     }
-
-    let pos_3d = elements.periapsis_dir * (r * nu.cos()) + elements.semilatus_dir * (r * nu.sin());
+    let pos_3d = elements.periapsis_dir * (r * cos_nu) + elements.semilatus_dir * (r * sin_nu);
     Some(Vec3::new(pos_3d.x as f32, pos_3d.y as f32, pos_3d.z as f32))
+}
+
+/// Computes the 3D position in AU in Bevy coordinates for a given true anomaly.
+/// Returns None if the true anomaly is beyond asymptotes or results in infinite radius.
+pub fn position_at_true_anomaly(elements: &OrbitalElements, nu: f64) -> Option<Vec3> {
+    let p = conic_semilatus_rectum(elements)?;
+    position_at_true_anomaly_with_p(elements, p, nu)
 }
 
 /// Generates a series of 3D orbital curve points in AU for visualization of bound orbits ($e < 1.0$).
@@ -328,4 +356,41 @@ pub fn nodal_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3
         None
     };
     (asc, desc)
+}
+
+/// Ergonomic floating-point range and Box-Muller Gaussian sampling helpers for `fastrand::Rng`.
+pub trait FastRngExt {
+    /// Samples a uniform `f64` in `[low, high)`.
+    fn f64_range(&mut self, low: f64, high: f64) -> f64;
+    /// Samples a uniform `f32` in `[low, high)`.
+    fn f32_range(&mut self, low: f32, high: f32) -> f32;
+    /// Returns `true` with probability `p` in `[0.0, 1.0]`.
+    fn chance(&mut self, p: f64) -> bool;
+    /// Samples a 1D Gaussian (Normal) distribution $\mathcal{N}(\text{mean}, \text{std\_dev}^2)$ via Box-Muller transform.
+    fn normal_f64(&mut self, mean: f64, std_dev: f64) -> f64;
+}
+
+impl FastRngExt for fastrand::Rng {
+    #[inline]
+    fn f64_range(&mut self, low: f64, high: f64) -> f64 {
+        low + self.f64() * (high - low)
+    }
+
+    #[inline]
+    fn f32_range(&mut self, low: f32, high: f32) -> f32 {
+        low + self.f32() * (high - low)
+    }
+
+    #[inline]
+    fn chance(&mut self, p: f64) -> bool {
+        self.f64() < p
+    }
+
+    #[inline]
+    fn normal_f64(&mut self, mean: f64, std_dev: f64) -> f64 {
+        let u1 = self.f64().max(1e-15);
+        let u2 = self.f64();
+        let z0 = (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos();
+        mean + std_dev * z0
+    }
 }

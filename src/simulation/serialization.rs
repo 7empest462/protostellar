@@ -6,7 +6,7 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use hashbrown::HashMap;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -167,24 +167,53 @@ pub fn normalize_save_path(filename: &str) -> String {
     }
 }
 
-/// Saves a `SystemSaveData` snapshot to the specified JSON file path.
+#[inline]
+fn is_binary_save_path(path_str: &str) -> bool {
+    Path::new(path_str)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("bin") || ext.eq_ignore_ascii_case("postcard"))
+}
+
+/// Serializes a `SystemSaveData` snapshot into compact, bit-exact `postcard` binary bytes.
+pub fn serialize_system_postcard(data: &SystemSaveData) -> Result<Vec<u8>, std::io::Error> {
+    postcard::to_allocvec(data)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+}
+
+/// Deserializes a `SystemSaveData` snapshot from compact, bit-exact `postcard` binary bytes.
+pub fn deserialize_system_postcard(bytes: &[u8]) -> Result<SystemSaveData, std::io::Error> {
+    postcard::from_bytes(bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+}
+
+/// Saves a `SystemSaveData` snapshot to the specified JSON (`.json`) or binary (`.bin`/`.postcard`) file path.
 pub fn save_system_to_file(data: &SystemSaveData, path_str: &str) -> Result<(), std::io::Error> {
     let path = Path::new(path_str);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(data)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(path, json)?;
+    if is_binary_save_path(path_str) {
+        let bytes = serialize_system_postcard(data)?;
+        std::fs::write(path, bytes)?;
+    } else {
+        let json = serde_json::to_string_pretty(data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, json)?;
+    }
     Ok(())
 }
 
-/// Loads a `SystemSaveData` snapshot from the specified JSON file path.
+/// Loads a `SystemSaveData` snapshot from the specified JSON (`.json`) or binary (`.bin`/`.postcard`) file path.
 pub fn load_system_from_file(path_str: &str) -> Result<SystemSaveData, std::io::Error> {
-    let content = std::fs::read_to_string(path_str)?;
-    let data: SystemSaveData = serde_json::from_str(&content)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    Ok(data)
+    if is_binary_save_path(path_str) {
+        let bytes = std::fs::read(path_str)?;
+        deserialize_system_postcard(&bytes)
+    } else {
+        let content = std::fs::read_to_string(path_str)?;
+        let data: SystemSaveData = serde_json::from_str(&content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(data)
+    }
 }
 
 /// Infers the intended scenario preset from the contents of a saved celestial body list
@@ -284,7 +313,7 @@ type BodySerializeQuery<'w, 's> = Query<
 
 /// Extracts celestial bodies into serializable records.
 fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySave> {
-    let mut entity_to_name = HashMap::new();
+    let mut entity_to_name = FxHashMap::default();
     for (ent, body, ..) in bodies_query.iter() {
         entity_to_name.insert(ent, body.name.clone());
     }
@@ -552,8 +581,9 @@ fn spawn_and_link_saved_bodies(
     commands: &mut Commands,
     bodies: &[CelestialBodySave],
 ) -> (Option<Entity>, Option<Entity>) {
-    let mut name_to_entity = HashMap::new();
-    let mut pending_satellites = Vec::new();
+    let mut name_to_entity = FxHashMap::default();
+    let mut pending_satellites: smallvec::SmallVec<[(Entity, SatelliteSave); 8]> =
+        smallvec::SmallVec::new();
     let mut central_star_ent = None;
     let mut first_body_ent = None;
 

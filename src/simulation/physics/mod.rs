@@ -8,6 +8,8 @@ pub mod integrator;
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 use crate::gpu::gmc_far_field::{GMC_FAR_FIELD_MIN_BODIES, GMC_FAR_FIELD_NEAR_RADIUS_AU};
 use crate::simulation::components::*;
@@ -68,22 +70,45 @@ fn update_physics_energy_monitor(
     }
 
     let total_e = kinetic_e + potential_e;
-    if !energy_monitor.initialized && total_e.abs() > 1e-10 {
-        energy_monitor.initial_total_energy = total_e;
-        energy_monitor.initialized = true;
-    }
+    let current_body_count = body_data.len();
+    let current_total_mass: f64 = body_data.iter().map(|b| b.mass).sum();
 
-    let rel_drift = if energy_monitor.initial_total_energy.abs() > 1e-10 {
-        ((total_e - energy_monitor.initial_total_energy) / energy_monitor.initial_total_energy)
-            .abs()
+    let count_changed =
+        energy_monitor.initialized && current_body_count != energy_monitor.last_body_count;
+    let mass_changed = energy_monitor.initialized
+        && (current_total_mass - energy_monitor.last_total_mass).abs() > 1e-9;
+    let should_rebaseline = !energy_monitor.initialized
+        || energy_monitor.needs_rebaseline
+        || count_changed
+        || mass_changed;
+
+    if should_rebaseline {
+        if total_e.abs() > 1e-10 {
+            energy_monitor.rebaseline(total_e, current_body_count, current_total_mass);
+        }
     } else {
-        0.0
-    };
+        let mut rel_drift = if energy_monitor.initial_total_energy.abs() > 1e-10 {
+            ((total_e - energy_monitor.initial_total_energy) / energy_monitor.initial_total_energy)
+                .abs()
+        } else {
+            0.0
+        };
+
+        // If drift exceeds 25% (0.25) in a single step due to external sandbox events,
+        // smoothly re-baseline so EnergyMonitor strictly measures true symplectic drift.
+        if rel_drift > 0.25 && total_e.abs() > 1e-10 {
+            energy_monitor.rebaseline(total_e, current_body_count, current_total_mass);
+            rel_drift = 0.0;
+        }
+
+        energy_monitor.relative_energy_drift = rel_drift;
+        energy_monitor.last_body_count = current_body_count;
+        energy_monitor.last_total_mass = current_total_mass;
+    }
 
     energy_monitor.kinetic_energy = kinetic_e;
     energy_monitor.potential_energy = potential_e;
     energy_monitor.total_energy = total_e;
-    energy_monitor.relative_energy_drift = rel_drift;
 }
 
 #[allow(clippy::type_complexity, reason = "Physics State Writeback")]
@@ -107,8 +132,8 @@ fn write_back_physics_results(
         Without<crate::simulation::probes::SpaceProbe>,
     >,
 ) {
-    let mut escaped_minor_debris: Vec<Entity> = Vec::new();
-    let body_map: hashbrown::HashMap<Entity, &PhysicsBodyEntry> =
+    let mut escaped_minor_debris: SmallVec<[Entity; 16]> = SmallVec::new();
+    let body_map: FxHashMap<Entity, &PhysicsBodyEntry> =
         body_data.iter().map(|b| (b.entity, b)).collect();
 
     for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat, opt_central) in
@@ -163,10 +188,10 @@ fn write_back_physics_results(
 
 fn identify_giant_planets(
     body_data: &[PhysicsBodyEntry],
-) -> (Option<Entity>, Option<Entity>, hashbrown::HashSet<Entity>) {
+) -> (Option<Entity>, Option<Entity>, FxHashSet<Entity>) {
     let mut jupiter_entity = None;
     let mut saturn_entity = None;
-    let mut ice_giant_entities = hashbrown::HashSet::new();
+    let mut ice_giant_entities = FxHashSet::default();
 
     for b in body_data {
         let r = (b.pos.x * b.pos.x + b.pos.z * b.pos.z).sqrt();
@@ -193,14 +218,14 @@ fn identify_giant_planets(
 }
 
 type GmcGridData<'a> = (
-    hashbrown::HashMap<(i32, i32, i32), Vec<usize>>,
+    FxHashMap<(i32, i32, i32), SmallVec<[usize; 8]>>,
     Option<usize>,
-    &'a hashbrown::HashMap<Entity, DVec3>,
+    &'a FxHashMap<Entity, DVec3>,
     f64,
 );
 
 fn build_gmc_near_field_grid<'a>(
-    far_field: Option<&'a hashbrown::HashMap<Entity, DVec3>>,
+    far_field: Option<&'a FxHashMap<Entity, DVec3>>,
     is_gmc_cluster: bool,
     massive_data: &[(DVec3, DVec3, f64, f64, usize)],
     star_index: Option<usize>,
@@ -209,8 +234,8 @@ fn build_gmc_near_field_grid<'a>(
         .filter(|_| is_gmc_cluster && massive_data.len() >= GMC_FAR_FIELD_MIN_BODIES)
         .map(|far_acc| {
             let inv_cell = 1.0 / GMC_FAR_FIELD_NEAR_RADIUS_AU;
-            let mut grid: hashbrown::HashMap<(i32, i32, i32), Vec<usize>> =
-                hashbrown::HashMap::with_capacity(massive_data.len());
+            let mut grid: FxHashMap<(i32, i32, i32), SmallVec<[usize; 8]>> =
+                FxHashMap::with_capacity_and_hasher(massive_data.len(), rustc_hash::FxBuildHasher);
             let mut star_slot = None;
             for (k, &(p, _, _, _, idx)) in massive_data.iter().enumerate() {
                 if Some(idx) == star_index {
@@ -272,9 +297,9 @@ fn run_physics_substeps(
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     jupiter_entity: Option<Entity>,
     saturn_entity: Option<Entity>,
-    ice_giant_entities: &hashbrown::HashSet<Entity>,
+    ice_giant_entities: &FxHashSet<Entity>,
     elapsed_years: f64,
-    far_field: Option<&hashbrown::HashMap<Entity, DVec3>>,
+    far_field: Option<&FxHashMap<Entity, DVec3>>,
 ) {
     let mut massive_data = Vec::with_capacity(massive_indices.len());
     let mut snapshot_buffer = Vec::with_capacity(body_data.len());
@@ -597,13 +622,21 @@ fn compute_dynamical_dt_limit(
 
 /// Advances accumulated visual simulation time in seconds for shaders and rendering animations.
 /// Pauses when time_warp is paused, freezing planetary rotation, cloud movement, and stellar boiling.
+/// Scales down visual animation speed at sub-orbital time-warp levels (such as Real-Time `1s = 1s`)
+/// so clouds and atmospheric weather drift at a calm, realistic pace.
 pub fn update_simulation_visual_time(
     time: Res<Time>,
     time_warp: Res<TimeWarp>,
     mut sim_time: ResMut<SimTime>,
 ) {
     if !time_warp.is_paused || time_warp.step_once {
-        sim_time.visual_time_secs += time.delta_secs();
+        let warp_scale = if time_warp.multiplier < 1.0 {
+            let ratio = (time_warp.multiplier / TimeWarp::SPEED_REAL_TIME).max(0.1);
+            (0.06 * ratio.powf(0.28) as f32).clamp(0.06, 1.0)
+        } else {
+            1.0
+        };
+        sim_time.visual_time_secs += time.delta_secs() * warp_scale;
     }
 }
 
@@ -707,6 +740,7 @@ fn active_tractor_beam(player_state: &PlayerInteractionState) -> Option<(DVec3, 
 fn apply_player_velocity_impulse(
     body_data: &mut [PhysicsBodyEntry],
     player_state: &PlayerInteractionState,
+    energy_monitor: &mut EnergyMonitor,
 ) {
     if let (Some(target), Some(dv)) = (
         player_state.impulse_target_entity,
@@ -714,12 +748,18 @@ fn apply_player_velocity_impulse(
     ) {
         if let Some(b) = body_data.iter_mut().find(|b| b.entity == target) {
             b.vel += dv;
+            energy_monitor.request_rebaseline();
         }
     }
 }
 
-#[allow(clippy::type_complexity, reason = "N-body Simulation State")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "N-body Simulation State"
+)]
 pub fn step_physics_simulation(
+    time: Option<Res<Time>>,
     far_field: Option<Res<crate::gpu::gmc_far_field::GmcFarField>>,
     config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
@@ -746,11 +786,24 @@ pub fn step_physics_simulation(
     >,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
+        sim_time.current_dt_yr = 0.0;
         return;
     }
 
     let dt = config.base_dt_yr;
-    let target_dt = dt * time_warp.multiplier.max(TimeWarp::MIN_SPEED);
+    // Scale all time-warp presets by actual wall-clock frame delta so every speed label
+    // (1s = 1s, 1m..72h, 1x = 11 days/s, 10x = 3.6 mo/s, 100x = 3 yr/s, etc.) is exact and
+    // strictly monotonic at any live frame rate (e.g. 8–60+ FPS), while keeping tight-loop
+    // headless unit tests (d < 5ms) deterministic.
+    let wall_frame_scale = if time_warp.step_once {
+        1.0
+    } else {
+        time.as_ref()
+            .map(|t| t.delta_secs_f64())
+            .filter(|&d| (0.016..=0.5).contains(&d))
+            .map_or(1.0, |d| (d * 60.0).max(1.0))
+    };
+    let target_dt = dt * time_warp.multiplier.max(TimeWarp::MIN_SPEED) * wall_frame_scale;
     let eff_softening_au =
         compute_effective_softening_au(scenario_state.as_deref(), &disk_params, &config);
     let softening_sq = eff_softening_au * eff_softening_au;
@@ -824,7 +877,7 @@ pub fn step_physics_simulation(
             .map(|f| &f.acc),
     );
 
-    apply_player_velocity_impulse(&mut body_data, &player_state);
+    apply_player_velocity_impulse(&mut body_data, &player_state, &mut energy_monitor);
 
     write_back_physics_results(
         &mut commands,

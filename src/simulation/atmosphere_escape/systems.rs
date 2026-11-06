@@ -175,13 +175,20 @@ fn evaluate_body_escape_rates(
     let has_atm = opt_vol.is_some_and(|v| v.atmospheric_pressure_bar > 0.001);
 
     let photo_rate = if escape_config.enable_photoevaporation && (has_gas || has_atm) {
-        calculate_photoevaporation_rate(
+        let base_photo = calculate_photoevaporation_rate(
             p_mass.0,
             p_rad_au,
             xuv_flux_w_m2,
             escape_config.photo_efficiency_eta,
             r_hill_au,
-        )
+        );
+        // Secondary N2/CO2 atmospheres (without primordial H2/He gas envelopes) outside 0.25 AU
+        // radiatively cool via infrared emission and are protected by the magnetosphere.
+        if !has_gas && dist_au >= 0.25 {
+            base_photo * (1.0 - f64::from(shielding) * 0.95) * 0.02
+        } else {
+            base_photo
+        }
     } else {
         0.0
     };
@@ -196,7 +203,9 @@ fn evaluate_body_escape_rates(
     let jeans_rate = if escape_config.enable_jeans_escape && (has_gas || has_atm) {
         let t_exo = opt_climate.map_or(300.0, |c| f64::from(c.surface_temperature_k) * 1.5);
         let p_bar = opt_vol.map_or(0.0, |v| f64::from(v.atmospheric_pressure_bar));
-        let (_, j_rate) = calculate_jeans_escape(p_mass.0, p_rad_au, t_exo, 2.0, p_bar);
+        // Primordial H2 envelopes have mu ~ 2.0 amu; secondary outgassed N2/CO2/H2O atmospheres have mu ~ 28.0 amu.
+        let mol_mass_amu = if has_gas { 2.0 } else { 28.0 };
+        let (_, j_rate) = calculate_jeans_escape(p_mass.0, p_rad_au, t_exo, mol_mass_amu, p_bar);
         j_rate
     } else {
         0.0
@@ -351,11 +360,11 @@ fn apply_escape_mass_loss(
     }
 
     if let Some(ref mut vol) = opt_vol {
-        let pressure_loss =
-            ((total_loss_rate * 0.02 * dt_yr) as f32).min(vol.atmospheric_pressure_bar);
+        // delta_m_earth is already normalized by (dt_yr / 1.0e6) for M_earth/Myr rates
+        let pressure_loss = ((delta_m_earth * 2.0) as f32).min(vol.atmospheric_pressure_bar);
         vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - pressure_loss).max(0.0);
 
-        let water_loss = delta_m_earth * 0.10;
+        let water_loss = delta_m_earth * 0.02;
         vol.delivered_water_m_earth = (vol.delivered_water_m_earth - water_loss).max(0.0);
     }
 }

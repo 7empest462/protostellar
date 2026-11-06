@@ -2,7 +2,7 @@
 
 use bevy::math::DVec3;
 use bevy::prelude::*;
-use hashbrown::HashSet;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::simulation::components::*;
@@ -81,8 +81,8 @@ pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4, 'm5> {
     pub bounce_events: &'a mut MessageWriter<'m3, CollisionBounceEvent>,
     pub roche_events: &'a mut MessageWriter<'m4, RocheDisruptionEvent>,
     pub tde_events: Option<&'a mut MessageWriter<'m5, TidalDisruptionEvent>>,
-    pub merged_away: &'a mut HashSet<Entity>,
-    pub newly_formed_moons: &'a mut HashSet<Entity>,
+    pub merged_away: &'a mut FxHashSet<Entity>,
+    pub newly_formed_moons: &'a mut FxHashSet<Entity>,
     pub pending_despawns: &'a mut SmallVec<[Entity; 32]>,
     pub star_mass: f64,
     pub sim_time_years: f64,

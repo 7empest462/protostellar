@@ -166,7 +166,9 @@ impl Plugin for SimulationPlugin {
                     cryovolcanic_ring_feeding_system.after(update_tidal_evolution),
                     update_relativity_evolution.after(process_accretion_and_collisions),
                     detect_hierarchical_triples.after(step_physics_simulation),
-                    update_kozai_lidov_evolution.after(detect_hierarchical_triples),
+                    update_kozai_lidov_evolution
+                        .after(detect_hierarchical_triples)
+                        .after(update_tidal_evolution),
                     sync_geological_evolution_system.after(update_thermodynamics),
                     update_stellar_flares_system.after(step_physics_simulation),
                     update_planetary_auroral_ovals_system.after(update_stellar_flares_system),

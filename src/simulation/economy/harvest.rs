@@ -1,7 +1,7 @@
 //! Telemetry and Science Data harvesting from probes, biospheres, Dyson swarms, and discoveries.
 
 use bevy::prelude::*;
-use hashbrown::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::types::{ScienceData, TechnologyId, UnlockedTechs};
 use crate::game::phases::PhaseManager;
@@ -14,8 +14,8 @@ use crate::simulation::resources::SimTime;
 /// Local tracker to reward science points when probes collect new regolith samples or drive distance.
 #[derive(Default)]
 pub struct ProbeTelemetryState {
-    pub last_samples: HashMap<usize, u32>,
-    pub last_driven_km: HashMap<usize, f64>,
+    pub last_samples: FxHashMap<usize, u32>,
+    pub last_driven_km: FxHashMap<usize, f64>,
 }
 
 /// Continuous harvesting system collecting science data from probes, civilizations, and Dyson swarms.
@@ -106,7 +106,7 @@ pub fn sync_milestone_discoveries_system(
     phase_manager: Option<Res<PhaseManager>>,
     sim_time: Option<Res<SimTime>>,
     mut toast: Option<ResMut<NotificationToast>>,
-    mut recorded_milestone_ids: Local<hashbrown::HashSet<crate::game::phases::MilestoneId>>,
+    mut recorded_milestone_ids: Local<FxHashSet<crate::game::phases::MilestoneId>>,
 ) {
     let Some(phase) = phase_manager else {
         return;

@@ -25,7 +25,9 @@ impl Default for IgnitionState {
     }
 }
 
-/// Tracks delivered volatiles (water, nitrogen, organics) delivered via cometary impacts.
+/// Tracks delivered volatiles (water, nitrogen, organics) delivered via cometary impacts
+/// as well as endogenous mantle water outgassed from enstatite chondrite hydroxyls and
+/// primordial nebular H2 + FeO magma-ocean oxidation.
 #[derive(Component, Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct VolatileInventory {
     /// Total water ice mass delivered in Earth masses (M_earth)
@@ -36,6 +38,53 @@ pub struct VolatileInventory {
     pub atmospheric_pressure_bar: f32,
     /// Number of major cometary impacts absorbed
     pub cometary_impact_count: u32,
+}
+
+impl VolatileInventory {
+    /// Computes endogenous mantle and magma-ocean water (in Earth masses, `M_earth`)
+    /// synthesized during rocky planet accretion.
+    pub fn compute_endogenous_water_m_earth(
+        mass_solar: f64,
+        comp: &Composition,
+        r_au: f64,
+        gas_density_scale: f32,
+    ) -> f64 {
+        compute_endogenous_water_m_earth(mass_solar, comp, r_au, gas_density_scale)
+    }
+}
+
+/// Computes endogenous mantle and magma-ocean water (in Earth masses, `M_earth`)
+/// synthesized during rocky planet accretion via:
+/// 1. Enstatite Chondrite bound structural hydroxyls (`-OH`) in inner-disk silicates, and
+/// 2. Primordial nebular `H2 + FeO -> H2O + Fe` magma-ocean oxidation.
+pub fn compute_endogenous_water_m_earth(
+    mass_solar: f64,
+    comp: &Composition,
+    r_au: f64,
+    gas_density_scale: f32,
+) -> f64 {
+    if mass_solar <= 0.0 || r_au <= 0.30 {
+        return 0.0;
+    }
+    let mass_earth = mass_solar / crate::utils::constants::EARTH_MASS_SOLAR;
+    let mut endogenous_water = 0.0;
+
+    // 1. Enstatite Chondrite Bound Hydroxyls (-OH):
+    // For rocky bodies (silicate_frac > 0.35, r_au > 0.30), inner-disk silicate minerals
+    // carry ~0.035% to 0.08% extractable H2O by mass.
+    if comp.silicate_frac > 0.35 {
+        endogenous_water += mass_earth * comp.silicate_frac * 0.00045;
+    }
+
+    // 2. Primordial H2 + FeO Magma Ocean Oxidation:
+    // When accreting in a gas-rich nebula (gas_density_scale > 0.10) with an iron-bearing
+    // core/mantle (metal_frac > 0.10), nebular H2 reacts with FeO in the magma ocean.
+    if gas_density_scale > 0.10 && comp.metal_frac > 0.10 {
+        let gas_scale = f64::from(gas_density_scale.clamp(0.0, 1.0));
+        endogenous_water += mass_earth * comp.metal_frac * 0.00035 * gas_scale;
+    }
+
+    endogenous_water.max(0.0)
 }
 
 /// Tracks a Late Heavy Bombardment impactor targeting a terrestrial body for volatile delivery.
