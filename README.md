@@ -1,6 +1,6 @@
 # PROTOSTELLAR 🪐✨
 
-**Protostellar** is a high-performance, visually stunning Solar System and Exoplanet Formation Simulator built in Rust using the [Bevy Engine](https://bevyengine.org/). It combines rigorous astrophysical equations of motion with real-time procedural GPU shaders, allowing you to witness 100,000+ particles organically coalesce into stars, rocky worlds, ringed gas giants, relativistic remnants, and intricate moon systems over millions of simulated years.
+**Protostellar** is a high-performance, visually stunning Solar System and Exoplanet Formation Simulator built in Rust using [Bevy 0.20.1](https://bevyengine.org/) and `wgpu 30`. It combines rigorous astrophysical equations of motion with real-time procedural GPU shaders (15 WESL material pipelines + 5 raw `wgpu` compute/instanced WGSL pipelines), allowing you to witness 100,000+ particles organically coalesce into stars, rocky worlds, ringed gas giants, relativistic remnants, and intricate moon systems over millions of simulated years.
 
 ---
 
@@ -99,6 +99,7 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 ### 9. Symplectic Physics, SIMD & High-Performance Crate Stack
 - **Allocation-Free Hot Path**: Eliminates per-frame heap allocations during symplectic N-body timestepping via reusable buffers and stack-allocated vectors.
 - **High-Performance Crate Stack**:
+  - **`bevy 0.20.1` & `wgpu 30`**: Modern ECS rendering architecture powered by WebGPU-Extended Shading Language (**WESL** `.wesl` material shaders with compile-time `@if(...)` specialization) alongside direct raw `wgpu 30` compute pipelines.
   - **`kiddo`** (`multi-threaded`): Spatial 3D KD-trees for fast nearest-neighbor queries, collision broadphases, and local density estimation.
   - **`wide` & `glam` (`fast-math`)**: Portable SIMD vectorization and fast-math linear algebra for N-body gravity, relativistic corrections, and orbital mechanics.
   - **`rustc-hash` (`FxHashMap` / `FxHashSet`)**: Non-cryptographic O(1) entity and spatial-grid hashing across physics and rendering sync systems.
@@ -235,7 +236,7 @@ Following prompt stellar core collapse, explosions smoothly transition into pers
 - **Pulsar Wind Nebula (PWN) Synchrotron Core**:
   - When a Type II core collapse leaves behind a newborn Pulsar or Magnetar, relativistic electron-positron winds continuously inject energy into the inner cavity.
   - Generates a vibrant, persistent Crab-like synchrotron core emitting non-thermal sapphire glow energized by the central engine's spin-down luminosity.
-- **Volumetric WGSL Supernova Shader (`supernova.wgsl`)**:
+- **Volumetric WESL Supernova Shader (`supernova.wesl`)**:
   - Custom ray-marched shader pass calculating real-time optical depth, inner photosphere absorption, forward blast ionization rims, and high-energy limb brightening.
 
 ---
@@ -340,7 +341,7 @@ Actively transform dry or hostile worlds into thriving biospheres:
 ### Relativistic Polar Jets & Synchrotron Light Cones
 Experience cutting-edge high-energy relativistic astrophysics:
 1. Load **`[F7]`** (PSR B1257+12 Pulsar), **`[F9]`** (SGR 1806-20 Magnetar), or **`[F6]`** (JWST Little Red Dot Quasi-Star).
-2. Observe dual polar relativistic jets rendered via a procedural volumetric WGSL shader:
+2. Observe dual polar relativistic jets rendered via a procedural volumetric WESL shader (`relativistic_jet.wesl`):
    - **Kinematic Doppler Boosting**: Orbit your camera around the jet axis. As your view aligns with the jet direction ($\cos\theta \to 1.0$), the forward beam flares in an intense blazar/pulsar flash ($12\times - 20\times$ amplification), while the counter-jet dims down to $\le 0.08\times$.
    - **Braided Helical Flux Ropes**: Procedural double-helix magnetic flux ropes wrapping around the jet column.
    - **Supersonic Shock Knots (Mach Disks)**: Outward-traveling periodic shock wave packets moving at $v \approx 0.94 - 0.98c$.
@@ -508,7 +509,7 @@ Seamless, tactile visual feedback and fast body inspection right in the 3D viewp
 ### 3D Internal Planetary Cutaway Views & Core Layer Inspection
 Inspect the interior geological cross-section and thermal structure of any celestial body in real time:
 - **Instant 1-Key Activation**: Press **`[Shift + X]`** (or click **`[🔬 Cutaway [Shift-X]]`** in the Target Inspector header/action list) to activate cutaway mode on the selected world (or hovered world if none is selected). You can also cycle diagnostic overlays with **`[V]`** until reaching `Internal Cutaway & Core Geodynamics`.
-- **GPU Fragment Discard**: `planet.wgsl` and `atmosphere.wgsl` discard fragments in the $+X/+Z$ axial quadrant, peeling back the surface terrain, ocean hydrosphere, clouds, and atmospheric limb haze.
+- **GPU Fragment Discard**: `planet.wesl` and `atmosphere.wesl` discard fragments in the $+X/+Z$ axial quadrant, peeling back the surface terrain, ocean hydrosphere, clouds, and atmospheric limb haze.
 - **Concentric Geological Strata**:
   - **Terrestrial Worlds**:
     - **Solid Inner Core**: Incandescent crystalline Fe-Ni sphere ($T \approx 5,500\text{ K}$, golden incandescence).
@@ -623,18 +624,26 @@ Protostellar is designed around Bevy's data-driven **Entity Component System (EC
 protostellar/
 ├── assets/
 │   └── shaders/
-│       ├── supernova.wgsl        # Ray-marched volumetric supernova fireball, shock fronts & ionization shells
-│       ├── skybox.wgsl           # Milky Way & Cosmic Web procedural skybox with gravitational lensing
-│       ├── planet.wgsl           # PBR crusts, spectral exoplanet flora, bioluminescence, ring shadows & eclipses
-│       ├── black_hole_disk.wgsl  # Relativistic MHD accretion disk with Doppler beaming & Kerr photon ring
-│       ├── nbody_galaxy.wgsl     # WGPU N-body spiral galaxy & NFW dark matter halo compute shader
-│       ├── gmc_far_field.wgsl    # Tile-shared GPU far-field gravity compute shader for GMC star clusters
-│       ├── atmosphere.wgsl       # Multi-layer Rayleigh/Mie atmospheric scattering & twilight ring
-│       ├── relativistic_jet.wgsl # Relativistic polar jet beaming, Doppler flaring & shock knots
-│       ├── gas_cloud.wgsl        # 15-layer flared 3D protoplanetary gas disk
-│       ├── planetary_rings.wgsl  # Optical depth and micro-ringlets shader
-│       ├── particle_orbit.wgsl   # WebGPU compute shader for 100k particles
-│       └── particle_render.wgsl  # GPU instanced particle swarm rendering
+│       ├── planet.wesl           # WESL PBR crusts, spectral flora, bioluminescence, ring shadows & eclipses
+│       ├── atmosphere.wesl       # Multi-layer Rayleigh/Mie atmospheric scattering & Chapman twilight shell
+│       ├── supernova.wesl        # Ray-marched volumetric supernova fireball, shock fronts & ionization shells
+│       ├── skybox.wesl           # Milky Way & Cosmic Web procedural skybox with gravitational lensing
+│       ├── black_hole_disk.wesl  # Relativistic MHD accretion disk with Doppler beaming & Kerr photon ring
+│       ├── relativistic_jet.wesl # Relativistic polar jet beaming, Doppler flaring & shock knots
+│       ├── circumstellar.wesl    # LBV Homunculus, WR pinwheels, Boson/Quark star halos & Pop-III bubbles
+│       ├── volumetric_nebula.wesl# 3D raymarched GMC dust absorption & HII ionization cavities
+│       ├── gas_cloud.wesl        # Flared 3D protoplanetary & circum-nuclear gas disk
+│       ├── planetary_rings.wesl  # Optical depth, Cassini divisions & micro-ringlets shader
+│       ├── comet_tail.wesl       # Anti-solar ion & curved dust tail shader
+│       ├── roche_stream.wesl     # 3D curved Roche-lobe overflow & TDE plasma stream shader
+│       ├── post_processing.wesl  # ACES/AgX tonemapping, relativistic lensing & hazard flash pass
+│       ├── sci_fi_panel.wesl     # Chamfered SDF glassmorphic HUD UI material shader
+│       ├── soft_particle.wesl    # Soft billboarded particle falloff material shader
+│       ├── nbody_galaxy.wgsl     # Raw wgpu 30 N-body spiral galaxy & NFW dark matter halo compute shader
+│       ├── gmc_fluid.wgsl        # Raw wgpu 30 Eulerian 3D GMC hydrodynamics compute shader
+│       ├── gmc_far_field.wgsl    # Raw wgpu 30 tile-shared far-field gravity compute shader
+│       ├── particle_orbit.wgsl   # Raw wgpu 30 compute shader for 100k protoplanetary particles
+│       └── particle_render.wgsl  # Raw wgpu 30 instanced particle swarm render shader
 ├── src/
 │   ├── gpu/                      # WebGPU compute nodes (SPH gas, N-body galaxy, GMC far-field, collapse)
 │   ├── simulation/
@@ -710,7 +719,7 @@ cargo test --test simulation_tests
 ## ⚡ Getting Started
 
 ### Prerequisites
-- **Rust Toolchain**: Stable Rust 1.80+ installed via [rustup.rs](https://rustup.rs/).
+- **Rust Toolchain**: Stable Rust 1.85+ installed via [rustup.rs](https://rustup.rs/) (Bevy 0.20.1 & `wgpu 30`).
 - **GPU**: Hardware support for Metal (macOS Apple Silicon / Intel), Vulkan (Linux / Windows), or DirectX 12.
 
 ### Building & Running
