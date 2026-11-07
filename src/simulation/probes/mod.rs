@@ -777,7 +777,11 @@ fn resolve_destination_target(
             if score > best_target_score {
                 best_target_score = score;
                 let is_gas_or_star =
-                    matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant);
+                    matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant)
+                        || lower.contains("jupiter")
+                        || lower.contains("saturn")
+                        || lower.contains("uranus")
+                        || lower.contains("neptune");
                 chosen_target = Some((ent, body.name.clone(), pos.0, vel.0, rad, is_gas_or_star));
             }
         }
@@ -807,8 +811,13 @@ fn resolve_destination_target(
                 false,
             );
         };
+        let lower_t = t_body.name.to_lowercase();
         let is_gas_or_star = matches!(t_body.body_type, BodyType::GasGiant | BodyType::IceGiant)
-            || t_body.body_type.is_star_or_remnant();
+            || t_body.body_type.is_star_or_remnant()
+            || lower_t.contains("jupiter")
+            || lower_t.contains("saturn")
+            || lower_t.contains("uranus")
+            || lower_t.contains("neptune");
         (
             req_target,
             t_body.name.clone(),

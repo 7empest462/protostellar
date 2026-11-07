@@ -382,6 +382,20 @@ fn test_3d_planetary_surface_ecs_lifecycle() {
         app.world().get_entity(spawned_root).is_ok(),
         "Spawned root entity must exist in the world"
     );
+    assert!(
+        app.world().get::<Children>(spawned_root).is_none(),
+        "Surface horizon mode must use the planet's native planet.wgsl surface without spawning an overlaid terrain patch mesh"
+    );
+    assert!(
+        !planet_has_surface_liquids(
+            BodyType::IceGiant,
+            &Composition::icy(),
+            120.0,
+            None,
+            None
+        ),
+        "Ice giants must never be flagged as having a solid surface liquid plane"
+    );
 
     // Turn surface horizon mode OFF -> Must cleanly despawn
     if let Some(mut cam_comp) = app.world_mut().get_mut::<PanOrbitCamera>(camera_ent) {

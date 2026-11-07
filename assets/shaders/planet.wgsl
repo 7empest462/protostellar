@@ -406,13 +406,18 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let local_n = normalize(vertex.normal);
     let p_surf = get_spun_p_surf(local_n, vertex.instance_index);
     let elev = get_vertex_displacement(p_surf);
-    
+
+    let cam_alt_ratio = length(view.world_position - planet.planet_center_and_radius.xyz)
+        / max(planet.planet_center_and_radius.w, 1e-6);
+    let surface_mode_blend = smoothstep(1.06, 1.38, cam_alt_ratio);
+
     let displacement_factor = 0.02; // Reduced to 2% to fix jagged shadows and extreme spikes
     var scale = displacement_factor;
     if (planet.planet_type == 4u || planet.planet_type == 9u) { scale = 0.035; }
-    
+    scale *= surface_mode_blend;
+
     var displaced_local_pos = vertex.position + local_n * (elev * scale);
-    
+
     var world_from_local = get_world_from_local(vertex.instance_index);
     let base_world_n = normalize(mesh_normal_local_to_world(local_n, vertex.instance_index));
 
@@ -424,7 +429,11 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let has_saturn_rings = planet.ring_shadow_params.w > 0.5 || planet.storm_features.x > 0.001;
     let oblateness_amount = select(0.065, 0.098, has_saturn_rings);
     let oblateness = select(0.0, oblateness_amount, is_giant);
-    let oblate_factor = 1.0 - oblateness * (1.5 * sin_lat * sin_lat - 0.5);
+    let oblate_factor = mix(
+        1.0,
+        1.0 - oblateness * (1.5 * sin_lat * sin_lat - 0.5),
+        surface_mode_blend
+    );
     displaced_local_pos *= oblate_factor;
 
     // Haumea: rapid 3.9-hour rotation flattens it into a scalene triaxial ellipsoid

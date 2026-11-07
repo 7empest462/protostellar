@@ -18,7 +18,6 @@ use crate::simulation::components::{
 use crate::simulation::probes::navigation::compute_planet_spin_frame;
 use crate::simulation::probes::{FlightComputer, ProbeStatus, ProbeType, SpaceProbe};
 use crate::simulation::resources::{PlayerInteractionState, SimTime, SimulationConfig};
-use crate::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU};
 
 use super::surface_camera::{compute_surface_tangent_basis, lat_lon_to_unspun_normal};
 
@@ -225,7 +224,9 @@ pub fn planet_has_surface_liquids(
     opt_bio: Option<&BiosphereState>,
     opt_vol: Option<&VolatileInventory>,
 ) -> bool {
-    if matches!(body_type, BodyType::GasGiant) {
+    if matches!(body_type, BodyType::GasGiant | BodyType::IceGiant)
+        || comp.normalized().gas_frac > 0.20
+    {
         return false;
     }
     let has_water_ocean = (250.0..=395.0).contains(&temp_k)
@@ -617,146 +618,28 @@ fn despawn_terrain_root(commands: &mut Commands, root: Entity, children_query: &
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Spawns terrain, vegetation, and ocean child meshes"
-)]
 fn spawn_surface_terrain_patch(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    std_materials: &mut Assets<StandardMaterial>,
-    unspun_norm: Vec3,
-    vis_rad: f32,
-    patch_radius: f32,
-    comp: &Composition,
-    temp_k: f32,
-    body_type: BodyType,
-    opt_bio: Option<&BiosphereState>,
-    opt_vol: Option<&VolatileInventory>,
-    surface_g: f32,
     planet_pos: Vec3,
     spin_rot: Quat,
 ) -> Entity {
-    let terrain_mesh = generate_surface_terrain_mesh(
-        unspun_norm,
-        vis_rad,
-        comp,
-        temp_k,
-        body_type,
-        opt_bio,
-        patch_radius,
-    );
-    let terrain_mat = std_materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        emissive: LinearRgba::new(0.18, 0.18, 0.20, 1.0),
-        perceptual_roughness: 0.86,
-        reflectance: 0.24,
-        cull_mode: None,
-        ..default()
-    });
-
-    let veg_mesh = generate_surface_vegetation_mesh(
-        unspun_norm,
-        vis_rad,
-        comp,
-        temp_k,
-        body_type,
-        opt_bio,
-        surface_g,
-        patch_radius,
-    );
-    let has_bio =
-        opt_bio.is_some_and(|b| b.biomass_coverage_frac > 0.01 || b.habitability_score > 0.10);
-    let (veg_emissive, veg_roughness, veg_reflectance) = if has_bio {
-        let biolum = opt_bio.map_or(0.0, |b| b.bioluminescence_intensity);
-        if biolum > 0.05 {
-            (LinearRgba::new(0.25, 0.45, 0.35, 1.0) * biolum, 0.65, 0.40)
-        } else {
-            (LinearRgba::new(0.04, 0.05, 0.04, 1.0), 0.75, 0.30)
-        }
-    } else {
-        // Barren planetary bodies (Moon, Mercury, Mars, etc.): natural rocky regolith
-        // Zero emissive self-illumination, high roughness, low reflectance
-        (LinearRgba::BLACK, 0.92, 0.16)
-    };
-
-    let veg_mat = std_materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        emissive: veg_emissive,
-        perceptual_roughness: veg_roughness,
-        reflectance: veg_reflectance,
-        cull_mode: None,
-        ..default()
-    });
-
-    let has_water = planet_has_surface_liquids(body_type, comp, temp_k, opt_bio, opt_vol);
-    let sea_offset = evaluate_sea_level_offset(body_type, temp_k, comp, vis_rad);
-    let opt_water_mesh = if has_water {
-        Some(generate_surface_water_mesh_at_offset(
-            unspun_norm,
-            vis_rad,
-            sea_offset,
-            patch_radius,
-        ))
-    } else {
-        None
-    };
-
+    // Use the planet's own native `planet.wgsl` surface (continents, oceans, craters,
+    // or swirling gas/ice giant cloud envelopes) directly rather than covering it with
+    // a separate heightfield patch mesh.
     commands
         .spawn((
             PlanetarySurfaceTerrainRoot,
             Transform::from_translation(planet_pos).with_rotation(spin_rot),
             Visibility::default(),
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                PlanetarySurfaceTerrainMesh,
-                Mesh3d(meshes.add(terrain_mesh)),
-                MeshMaterial3d(terrain_mat),
-                Transform::default(),
-            ));
-
-            parent.spawn((
-                PlanetarySurfaceVegetationMesh,
-                Mesh3d(meshes.add(veg_mesh)),
-                MeshMaterial3d(veg_mat),
-                Transform::default(),
-            ));
-
-            if let Some(water_m) = opt_water_mesh {
-                let is_methane = comp.organics_frac > 0.10 && temp_k < 180.0;
-                let base_color = if is_methane {
-                    Color::srgba(0.65, 0.42, 0.14, 0.86)
-                } else {
-                    Color::srgba(0.08, 0.46, 0.70, 0.84)
-                };
-                let water_mat = std_materials.add(StandardMaterial {
-                    base_color,
-                    emissive: LinearRgba::new(0.04, 0.14, 0.22, 1.0),
-                    perceptual_roughness: 0.06,
-                    metallic: 0.18,
-                    reflectance: 0.58,
-                    alpha_mode: AlphaMode::Blend,
-                    cull_mode: None,
-                    ..default()
-                });
-
-                parent.spawn((
-                    PlanetarySurfaceWaterMesh,
-                    Mesh3d(meshes.add(water_m)),
-                    MeshMaterial3d(water_mat),
-                    Transform::default(),
-                ));
-            }
-        })
         .id()
 }
 
-/// Synchronizes the 3D high-detail terrain, vegetation, and ocean meshes when the player
+/// Synchronizes the surface horizon root entity and homogeneous scale when the player
 /// enters or moves in First-Person Surface & Rover Horizon mode.
 #[allow(
     clippy::too_many_arguments,
-    reason = "Coordinates 3D terrain assets, materials, mesh generation, and camera lifecycle"
+    reason = "Coordinates 3D terrain state, camera lifecycle, and descent scale sync"
 )]
 pub fn sync_surface_terrain_system(
     mut commands: Commands,
@@ -778,8 +661,8 @@ pub fn sync_surface_terrain_system(
     >,
     children_query: Query<&Children>,
     mut terrain_state: ResMut<SurfaceTerrainState>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut std_materials: ResMut<Assets<StandardMaterial>>,
+    _meshes: ResMut<Assets<Mesh>>,
+    _std_materials: ResMut<Assets<StandardMaterial>>,
     sim_time: Option<Res<SimTime>>,
     config: Res<SimulationConfig>,
 ) {
@@ -809,7 +692,7 @@ pub fn sync_surface_terrain_system(
         return;
     };
 
-    let Ok((_, pos, radius, mass, temp, comp, body, opt_spin, opt_bio, opt_vol, opt_t)) =
+    let Ok((_, pos, radius, _mass, _temp, _comp, body, opt_spin, _opt_bio, _opt_vol, opt_t)) =
         worlds_query.get(host_ent)
     else {
         return;
@@ -823,11 +706,9 @@ pub fn sync_surface_terrain_system(
         0.001,
         &config,
     );
-    let patch_radius = vis_rad * 0.24;
 
-    let needs_rebuild = terrain_state.root_entity.is_none()
-        || terrain_state.active_host != Some(host_ent)
-        || terrain_state.last_unspun_center.angle_between(unspun_norm) > 0.035;
+    let needs_rebuild =
+        terrain_state.root_entity.is_none() || terrain_state.active_host != Some(host_ent);
 
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
     let (spin_dir, spin_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
@@ -839,32 +720,14 @@ pub fn sync_surface_terrain_system(
             despawn_terrain_root(&mut commands, old_root, &children_query);
         }
 
-        let m_earth = (mass.0 / EARTH_MASS_SOLAR).max(0.01);
-        let r_earth = (radius.0 / EARTH_RADIUS_AU).max(0.1);
-        let surface_g = (m_earth / (r_earth * r_earth)).clamp(0.15, 3.5) as f32;
-
-        let root = spawn_surface_terrain_patch(
-            &mut commands,
-            &mut meshes,
-            &mut std_materials,
-            unspun_norm,
-            vis_rad,
-            patch_radius,
-            comp,
-            temp.0 as f32,
-            body.body_type,
-            opt_bio,
-            opt_vol,
-            surface_g,
-            planet_pos,
-            spin_rot,
-        );
+        let root = spawn_surface_terrain_patch(&mut commands, planet_pos, spin_rot);
 
         terrain_state.root_entity = Some(root);
         terrain_state.active_host = Some(host_ent);
         terrain_state.last_unspun_center = unspun_norm;
         terrain_state.baked_vis_rad = vis_rad.max(1e-8);
     } else if let Some(root_ent) = terrain_state.root_entity {
+        terrain_state.last_unspun_center = unspun_norm;
         let scale_ratio = if terrain_state.baked_vis_rad > 1e-8 {
             (vis_rad / terrain_state.baked_vis_rad).clamp(1e-4, 1e4)
         } else {

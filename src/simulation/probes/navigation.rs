@@ -95,6 +95,14 @@ pub fn probe_navigation_system(
             }
 
             if arrived {
+                let is_giant_world = matches!(
+                    target_body.body_type,
+                    crate::simulation::components::BodyType::GasGiant
+                        | crate::simulation::components::BodyType::IceGiant
+                ) || opt_comp.is_some_and(|c| c.normalized().gas_frac > 0.20);
+                if is_giant_world && probe.probe_type == ProbeType::Rover {
+                    probe.probe_type = ProbeType::Orbiter;
+                }
                 handle_probe_arrival(
                     &mut probe,
                     &computer,

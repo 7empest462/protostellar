@@ -15,13 +15,12 @@ use crate::game::ui::NotificationToast;
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::celestial::SpinState;
 use crate::simulation::components::{
-    BiosphereState, BodyType, CelestialBody, Composition, FloraPigmentClass, Mass, Radius,
-    SimPosition, Temperature,
+    BiosphereState, BodyType, CelestialBody, Composition, Mass, Radius, SimPosition, Temperature,
 };
 use crate::simulation::probes::navigation::compute_planet_spin_frame;
 use crate::simulation::probes::{FlightComputer, ProbeStatus, ProbeType, SpaceProbe};
 use crate::simulation::resources::{PlayerInteractionState, SimTime, SimulationConfig};
-use crate::utils::constants::{AU_TO_KM, EARTH_MASS_SOLAR, EARTH_RADIUS_AU};
+use crate::utils::constants::AU_TO_KM;
 
 /// Computes an orthonormal right-handed surface tangent frame `(east, up, north)`
 /// where `up` is the unit planetary zenith normal and `north` is the forward
@@ -209,27 +208,6 @@ pub fn apply_manual_rover_drive(
     }
 }
 
-fn pigment_colors(pigment: FloraPigmentClass) -> (Color, Color) {
-    match pigment {
-        FloraPigmentClass::SolarChlorophyll => (
-            Color::srgba(0.18, 0.92, 0.42, 0.90),
-            Color::srgba(0.45, 1.0, 0.68, 0.75),
-        ),
-        FloraPigmentClass::RedDwarfCrimson => (
-            Color::srgba(0.95, 0.16, 0.38, 0.92),
-            Color::srgba(1.0, 0.48, 0.65, 0.78),
-        ),
-        FloraPigmentClass::OrangeDwarfCarotenoid => (
-            Color::srgba(1.0, 0.68, 0.16, 0.92),
-            Color::srgba(1.0, 0.88, 0.38, 0.78),
-        ),
-        FloraPigmentClass::HighUvIndigo => (
-            Color::srgba(0.22, 0.85, 1.0, 0.92),
-            Color::srgba(0.62, 0.42, 1.0, 0.82),
-        ),
-    }
-}
-
 type SurfaceWorldQueryItem<'a> = (
     Entity,
     &'a SimPosition,
@@ -316,28 +294,14 @@ fn resolve_surface_vantage_point(
 }
 
 fn compute_effective_surface_radius(
-    unspun_norm: Vec3,
-    comp: &Composition,
-    temp_k: f32,
-    body_type: BodyType,
-    opt_bio: Option<&BiosphereState>,
+    _unspun_norm: Vec3,
+    _comp: &Composition,
+    _temp_k: f32,
+    _body_type: BodyType,
+    _opt_bio: Option<&BiosphereState>,
     vis_rad: f32,
 ) -> f32 {
-    let terrain_h = super::surface_terrain::evaluate_surface_elevation(
-        unspun_norm,
-        comp,
-        temp_k,
-        body_type,
-        vis_rad,
-    );
-    let sea_h = if super::surface_terrain::planet_has_surface_liquids(
-        body_type, comp, temp_k, opt_bio, None,
-    ) {
-        super::surface_terrain::evaluate_sea_level_offset(body_type, temp_k, comp, vis_rad)
-    } else {
-        0.0
-    };
-    vis_rad + terrain_h.max(sea_h)
+    vis_rad
 }
 
 fn read_surface_mouse_and_scroll_deltas(
@@ -594,22 +558,15 @@ fn sync_rover_surface_motion(
             .normalize_or_zero();
         *unspun_norm = unspun_d.as_vec3();
         *heading_unspun = h_d.as_vec3();
-        let rover_h = super::surface_terrain::evaluate_surface_elevation(
-            *unspun_norm,
-            comp,
-            temp_k as f32,
-            body_type,
-            vis_rad,
-        );
         let spun_d = spin_rot_d * unspun_d;
-        let rover_lift = (vis_rad + rover_h) + vis_rad * 0.00003;
+        let _ = (comp, temp_k, body_type);
+        let rover_lift = vis_rad * 1.008;
         probe_pos.0 = planet_pos + spun_d * f64::from(rover_lift);
     }
 }
 
-/// Renders 3D procedural surface horizon features (alien flora canopies adapted to stellar
-/// spectrum and surface gravity, civilization biodomes, volcanic vents, ice penitentes, and
-/// a holographic rover compass ring) when the camera is in Surface Horizon Mode.
+/// Renders the holographic surface compass and heading clinometer ring when the camera
+/// is in Surface Horizon Mode.
 pub fn draw_surface_horizon_environment_gizmos(
     mut gizmos: Gizmos,
     camera_query: Query<&PanOrbitCamera>,
@@ -628,7 +585,6 @@ pub fn draw_surface_horizon_environment_gizmos(
         return;
     }
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
-    let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
     let Some((host_ent, _, unspun_norm, heading_unspun)) = resolve_surface_vantage_point(
         camera.target_entity,
@@ -639,7 +595,7 @@ pub fn draw_surface_horizon_environment_gizmos(
         return;
     };
 
-    let Ok((_, pos, radius, mass, temp, comp, body, opt_spin, opt_bio, opt_t)) =
+    let Ok((_, pos, radius, _mass, _temp, _comp, body, opt_spin, _opt_bio, opt_t)) =
         worlds_query.get(host_ent)
     else {
         return;
@@ -661,15 +617,8 @@ pub fn draw_surface_horizon_environment_gizmos(
     let world_heading = (spin_rot * heading_unspun).normalize_or_zero();
     let (east, up, north) = compute_surface_tangent_basis(world_up, world_heading);
 
-    // 1. Draw Holographic Surface Compass & Horizon Clinometer Ring
-    let terrain_h = super::surface_terrain::evaluate_surface_elevation(
-        unspun_norm,
-        comp,
-        temp.0 as f32,
-        body.body_type,
-        vis_rad,
-    );
-    let effective_rad = vis_rad + terrain_h;
+    // Draw Holographic Surface Compass & Horizon Clinometer Ring on the planet's surface
+    let effective_rad = vis_rad;
     let ground_center = planet_pos + up * (effective_rad * 1.002);
     let compass_r = vis_rad * 0.045;
     let ring_rot = Quat::from_rotation_arc(Vec3::Z, up);
@@ -691,99 +640,4 @@ pub fn draw_surface_horizon_environment_gizmos(
         ground_center + look_dir * (compass_r * 1.25),
         Color::srgba(0.35, 1.0, 0.75, 0.85),
     );
-
-    // 2. Render 3D Procedural Flora, Biodomes, or Geological Outcrops on the local spherical patch
-    let m_earth = (mass.0 / EARTH_MASS_SOLAR).max(0.01);
-    let r_earth = (radius.0 / EARTH_RADIUS_AU).max(0.1);
-    let surface_g = (m_earth / (r_earth * r_earth)).clamp(0.15, 3.5) as f32;
-
-    draw_local_surface_features(
-        &mut gizmos,
-        planet_pos,
-        vis_rad,
-        body.body_type,
-        spin_rot,
-        unspun_norm,
-        surface_g,
-        temp.0,
-        comp,
-        opt_bio,
-        visual_time,
-    );
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Renders civilization biodomes, bioluminescent spores, and thermal plumes on the 3D terrain"
-)]
-fn draw_local_surface_features(
-    gizmos: &mut Gizmos,
-    planet_pos: Vec3,
-    vis_rad: f32,
-    body_type: crate::simulation::components::BodyType,
-    spin_rot: Quat,
-    unspun_center: Vec3,
-    surface_g: f32,
-    temp_k: f64,
-    comp: &Composition,
-    opt_bio: Option<&BiosphereState>,
-    visual_time: f32,
-) {
-    let (u_east, u_up, u_north) = compute_surface_tangent_basis(unspun_center, Vec3::Y);
-    let active_bio =
-        opt_bio.filter(|b| b.biomass_coverage_frac > 0.01 || b.habitability_score > 0.10);
-    let technosig = opt_bio.map_or(0.0, |b| b.technosignature);
-
-    for idx in 0..24u32 {
-        let f_idx = idx as f32;
-        let r_angle = 0.035 + 0.18 * ((f_idx + 0.5) / 24.0).sqrt();
-        let theta = f_idx * 2.399_963_1;
-        let (sin_t, cos_t) = theta.sin_cos();
-
-        let tangent_dir = (u_north * cos_t + u_east * sin_t).normalize_or_zero();
-        let site_unspun = (u_up * r_angle.cos() + tangent_dir * r_angle.sin()).normalize_or_zero();
-        let site_norm = (spin_rot * site_unspun).normalize_or_zero();
-        let site_h = super::surface_terrain::evaluate_surface_elevation(
-            site_unspun,
-            comp,
-            temp_k as f32,
-            body_type,
-            vis_rad,
-        );
-        let base_pos = planet_pos + site_norm * (vis_rad + site_h);
-        let site_rot = Quat::from_rotation_arc(Vec3::Z, site_norm);
-        let hash = ((f_idx * 127.1).sin() * 43758.547).fract().abs();
-
-        if let Some(bio) = active_bio {
-            if bio.bioluminescence_intensity > 0.05 && idx.is_multiple_of(3) {
-                let (_, canopy_col) = pigment_colors(bio.flora_pigment);
-                let spore_h = vis_rad * (0.010 + 0.008 * hash) / surface_g.sqrt();
-                gizmos.circle(
-                    Isometry3d::new(base_pos + site_norm * spore_h, site_rot),
-                    vis_rad * 0.0045,
-                    canopy_col,
-                );
-            }
-
-            if technosig > 0.20 && idx.is_multiple_of(4) {
-                let spire_h = vis_rad * (0.028 + 0.016 * technosig);
-                let spire_top = base_pos + site_norm * spire_h;
-                let civ_col = Color::srgba(0.35, 0.92, 1.0, 0.90);
-                gizmos.line(base_pos, spire_top, civ_col);
-                gizmos.sphere(
-                    Isometry3d::from_translation(base_pos),
-                    vis_rad * 0.012,
-                    Color::srgba(0.25, 0.82, 1.0, 0.55),
-                );
-            }
-        } else if temp_k >= 500.0 && idx.is_multiple_of(2) {
-            let vent_h =
-                vis_rad * (0.012 + 0.012 * ((visual_time * 3.0 + f_idx).sin() * 0.5 + 0.5));
-            gizmos.line(
-                base_pos,
-                base_pos + site_norm * vent_h,
-                Color::srgba(1.0, 0.38, 0.08, 0.85),
-            );
-        }
-    }
 }
