@@ -243,15 +243,38 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
         return 0.0;
     }
     var elev = 0.0;
+    var is_ocean_surface = false;
+    var active_sea_level = 0.0;
+    var clamp_to_sea_level = false;
     let ocean_frac = planet.climate_and_bio.x;
+    let has_volatiles = planet.composition.y > 0.001 || ocean_frac > 0.001;
+    let pressure_bar = planet.atmosphere_params.x;
     if (p_type == 3u || p_type == 6u) {
         let t_sub = select(0.0, round(planet.color_seed.w), p_type == 3u);
+        let is_snowball = p_type == 3u
+            && has_volatiles
+            && (planet.climate_and_bio.y >= 0.60 || (planet.temperature < 255.0 && ocean_frac > 0.05));
         if (t_sub >= 1.0 && t_sub != 4.0) {
             elev = evaluate_canonical_terrestrial_elevation(p_surf, t_sub);
-            let has_oceans = ocean_frac > 0.01 && planet.temperature <= 380.0;
+            let has_oceans = has_volatiles
+                && ocean_frac > 0.01
+                && planet.temperature >= 200.0
+                && planet.temperature <= 380.0
+                && pressure_bar >= 0.006
+                && !is_snowball;
             let sea_level = clamp(0.18 + ocean_frac * 0.40, 0.18, 0.76);
-            if (has_oceans && elev < sea_level) {
-                elev = sea_level;
+            if (t_sub == 8.0 && ocean_frac < 0.04 && elev < 0.0) {
+                elev = 0.0;
+                is_ocean_surface = true;
+                active_sea_level = 0.0;
+                clamp_to_sea_level = true;
+            } else if (has_oceans) {
+                active_sea_level = sea_level;
+                clamp_to_sea_level = true;
+                if (elev < sea_level) {
+                    elev = sea_level;
+                    is_ocean_surface = true;
+                }
             }
         } else {
             let drift_phase = planet.spin_axis.w;
@@ -289,7 +312,12 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
             let trench_zone = smoothstep(0.04, 0.0, abs(continent_mask - 0.36) - 0.015);
             let trench_depth = trench_zone * 0.09;
 
-            let has_oceans = ocean_frac > 0.01 && planet.temperature <= 380.0;
+            let has_oceans = has_volatiles
+                && ocean_frac > 0.01
+                && planet.temperature <= 380.0
+                && (p_type == 6u || planet.temperature >= 200.0)
+                && pressure_bar >= 0.006
+                && !is_snowball;
             let sea_level = select(
                 clamp(0.18 + ocean_frac * 0.45, 0.20, 0.80),
                 clamp(0.18 + ocean_frac * 0.40, 0.18, 0.76),
@@ -306,8 +334,13 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
                 has_oceans
             );
 
-            if (has_oceans && elev < sea_level) {
-                elev = sea_level;
+            if (has_oceans) {
+                active_sea_level = sea_level;
+                clamp_to_sea_level = true;
+                if (elev < sea_level) {
+                    elev = sea_level;
+                    is_ocean_surface = true;
+                }
             }
         }
     } else if (p_type == 4u) {
@@ -350,27 +383,33 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
             elev = (fbm(p_surf * 16.0) - 0.5) * 0.016 + ridge_noise(p_surf * 24.0) * 0.010;
         }
     }
-    // Evaluate Impact Basins
-    for (var i = 0u; i < 4u; i = i + 1u) {
-        let b_pos = planet.impact_basins_pos[i];
-        let b_data = planet.impact_basins_data[i];
-        if (b_data.w > 0.5) {
-            let center_n = b_pos.xyz;
+    // Evaluate Impact Basins (only on solid land/ice crust; liquid oceans stay at sea-level equipotential)
+    if (!is_ocean_surface) {
+        for (var i = 0u; i < 4u; i = i + 1u) {
+            let b_pos = planet.impact_basins_pos[i];
+            let b_data = planet.impact_basins_data[i];
+            let scar = clamp(b_data.w, 0.0, 1.0);
             let r_ang = b_pos.w;
-            let dot_p = dot(p_surf, center_n);
-            let dist_ang = acos(clamp(dot_p, -1.0, 1.0));
-            if (dist_ang < r_ang * 1.6) {
-                let norm_dist = dist_ang / r_ang;
-                let basin_depth = b_data.z;
-                if (norm_dist < 1.0) {
-                    let floor = -basin_depth * (1.0 - smoothstep(0.7, 1.0, norm_dist));
-                    let rim = basin_depth * 0.5 * smoothstep(0.8, 1.0, norm_dist);
-                    elev += floor + rim;
-                } else {
-                    let ejecta = basin_depth * 0.3 * (1.0 - smoothstep(1.0, 1.6, norm_dist));
-                    elev += ejecta;
+            if (scar > 0.02 && r_ang > 0.005) {
+                let center_n = normalize(b_pos.xyz);
+                let dot_p = dot(p_surf, center_n);
+                let dist_ang = acos(clamp(dot_p, -1.0, 1.0));
+                if (dist_ang < r_ang * 1.6) {
+                    let norm_dist = dist_ang / r_ang;
+                    let basin_depth = clamp(r_ang * 1.35, 0.06, 0.28) * scar;
+                    if (norm_dist < 1.0) {
+                        let floor = -basin_depth * (1.0 - smoothstep(0.7, 1.0, norm_dist));
+                        let rim = basin_depth * 0.5 * smoothstep(0.8, 1.0, norm_dist);
+                        elev += floor + rim;
+                    } else {
+                        let ejecta = basin_depth * 0.3 * (1.0 - smoothstep(1.0, 1.6, norm_dist));
+                        elev += ejecta;
+                    }
                 }
             }
+        }
+        if (clamp_to_sea_level && elev < active_sea_level) {
+            elev = active_sea_level;
         }
     }
     return elev;
@@ -1946,11 +1985,10 @@ fn apply_rocky_world_impact_basin(
         let ray_h2 = sin(ray_angle * 21.0 - warp_n2 * 6.4) * 0.5 + 0.5;
         let ray_noise = pow(ray_h1 * 0.62 + ray_h2 * 0.38, 1.75) * radial_fade;
 
-        // Fresh hypervelocity impacts flash-vaporize ocean water and excavate the seabed
-        let crater_excavation = smoothstep(1.18, 0.74, u_w) * smoothstep(0.08, 0.42, melt_glow);
-        let dry_factor = max(1.0 - water_mask, crater_excavation);
+        // Cut off crater depression, rim, ejecta, and melt cleanly where liquid ocean begins
+        let dry_factor = select(1.0, 0.0, water_mask > 0.0);
 
-        let ejecta_blanket = smoothstep(2.35, 0.96, u_w) * smoothstep(0.75, 1.06, u_w) * ray_noise * 0.54 * effective_scar * (1.0 - water_mask * 0.75);
+        let ejecta_blanket = smoothstep(2.35, 0.96, u_w) * smoothstep(0.75, 1.06, u_w) * ray_noise * 0.54 * effective_scar * dry_factor;
         let ejecta_dust = vec3<f32>(0.50, 0.46, 0.42) * (0.85 + warp_n2 * 0.30);
 
         let rim_factor = smoothstep(0.74, 0.98, u_w) * smoothstep(1.22, 0.98, u_w) * effective_scar * dry_factor;
@@ -1969,13 +2007,6 @@ fn apply_rocky_world_impact_basin(
         crater_col = mix(crater_col, basalt_mare, floor_factor);
         crater_col = mix(crater_col, rim_rock, central_peak);
 
-        // Oceanic impact boiling steam & shock-tsunami collar around excavated marine craters
-        if (water_mask > 0.25 && melt_glow > 0.12 && u_w > 0.90 && u_w < 1.55) {
-            let tsunami_ring = smoothstep(0.90, 1.15, u_w) * smoothstep(1.55, 1.15, u_w) * water_mask * smoothstep(0.12, 0.65, melt_glow);
-            let foam_noise = smoothstep(0.35, 0.78, fbm(p_surf * 36.0 + vec3<f32>(time * 0.15, 0.0, 0.0)));
-            crater_col = mix(crater_col, vec3<f32>(0.88, 0.94, 0.98), tsunami_ring * (0.45 + foam_noise * 0.45));
-        }
-
         out_res.color = crater_col;
         out_res.roughness = mix(out_res.roughness, 0.92, (floor_factor * 0.8 + rim_factor * 0.5) * dry_factor);
         out_res.metallic = mix(out_res.metallic, 0.08, floor_factor * 0.7 * dry_factor);
@@ -1984,7 +2015,7 @@ fn apply_rocky_world_impact_basin(
         let terrace_ripple = (ridge_noise(p_surf * 34.0) - 0.5) * rim_factor * 0.35;
         out_res.normal_delta += radial_dir * ((slope + terrace_ripple) * effective_scar * dry_factor * 0.72);
 
-        let active_melt = melt_glow * effective_scar;
+        let active_melt = melt_glow * effective_scar * dry_factor;
 
         // Zone 4: Incandescent ballistic ejecta rays & molten splatter droplets outside the rim
         if (active_melt > 0.12 && u_w >= 0.84 && u_w < 2.40) {
@@ -2070,7 +2101,8 @@ fn apply_impact_craters_and_basins(
         let melt_glow = b_data.x;
         let seismic_phase = clamp(b_data.z, 0.0, 1.0);
 
-        let effective_scar = scar_intensity * (1.0 - water_mask * (1.0 - smoothstep(0.08, 0.45, melt_glow) * 0.92));
+        let land_mask = select(1.0, 0.0, water_mask > 0.0);
+        let effective_scar = scar_intensity * land_mask;
         if (radius <= 0.005 || effective_scar <= 0.005) {
             continue;
         }
@@ -3717,7 +3749,7 @@ fn fragment(
         }
         // Vast Sapphire Oceans & Coastal Turquoise Continental Shelves (ONLY if world has oceans!)
         else if (has_oceans && combined_elev < sea_level) {
-            water_mask = clamp((sea_level - combined_elev) / 0.03, 0.0, 1.0);
+            water_mask = clamp((sea_level - combined_elev) / 0.03, 0.002, 1.0);
             let depth = clamp((sea_level - combined_elev) / max(sea_level, 0.08), 0.0, 1.0);
             let abyssal_trench = vec3<f32>(0.005, 0.015, 0.10);
             let deep_sapphire = vec3<f32>(0.015, 0.06, 0.24);
@@ -4294,7 +4326,7 @@ fn fragment(
             }
             // Oceans with Multi-Tier Bathymetry & Boiling Froth
             else if (has_oceans && elev < sea_level) {
-                water_mask = clamp((sea_level - elev) / 0.025, 0.0, 1.0);
+                water_mask = clamp((sea_level - elev) / 0.025, 0.002, 1.0);
                 let depth = clamp((sea_level - elev) / max(sea_level, 0.08), 0.0, 1.0);
 
                 let lagoon = vec3<f32>(0.12, 0.74, 0.82);      // Ultra-shallow turquoise coastal lagoon / reef

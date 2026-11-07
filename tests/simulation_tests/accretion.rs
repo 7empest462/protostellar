@@ -766,3 +766,32 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
         save.bodies[0].velocity.z.to_bits()
     );
 }
+
+#[test]
+fn test_impact_crater_ocean_shoreline_cutoff_in_planet_shader() {
+    let planet_src =
+        std::fs::read_to_string("assets/shaders/planet.wgsl").expect("planet.wgsl must exist");
+
+    assert!(
+        !planet_src.contains("crater_excavation"),
+        "planet.wgsl must not excavate persistent crater depressions onto liquid ocean pixels"
+    );
+    assert!(
+        !planet_src.contains("tsunami_ring"),
+        "planet.wgsl must not paint persistent static rings onto liquid ocean pixels"
+    );
+    assert!(
+        planet_src.contains("let land_mask = select(1.0, 0.0, water_mask > 0.0);")
+            && planet_src.contains("let effective_scar = scar_intensity * land_mask;"),
+        "apply_impact_craters_and_basins must cut off crater depressions where water_mask > 0.0"
+    );
+    assert!(
+        planet_src.contains("water_mask = clamp((sea_level - combined_elev) / 0.03, 0.002, 1.0);")
+            && planet_src.contains("water_mask = clamp((sea_level - elev) / 0.025, 0.002, 1.0);"),
+        "All liquid ocean pixels (elev < sea_level) must have water_mask >= 0.002 for an exact shoreline cutoff"
+    );
+    assert!(
+        planet_src.contains("if (!is_ocean_surface)"),
+        "get_vertex_displacement must skip impact basin vertex carving on liquid ocean surfaces"
+    );
+}
