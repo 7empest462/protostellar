@@ -772,21 +772,21 @@ fn setup_gmc_fluid_pipeline(commands: &mut Commands, device: &wgpu::Device) {
 fn drain_mapped_gmc_staging_buffer(engine: &GpuGmcFluidEngine, sender: &GmcCollapseEventSender) {
     if engine.staging_state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
         let slice = engine.staging_buffer.slice(..);
-        let view = slice.get_mapped_range();
-        let num_events = view
-            .get(..4)
-            .map_or(0u32, |bytes| *bytemuck::from_bytes::<u32>(bytes));
-        let count = (num_events as usize).min(32);
+        if let Ok(view) = slice.get_mapped_range() {
+            let num_events = view
+                .get(..4)
+                .map_or(0u32, |bytes| *bytemuck::from_bytes::<u32>(bytes));
+            let count = (num_events as usize).min(32);
 
-        if count > 0 {
-            let bytes_len = count * std::mem::size_of::<GpuJeansCollapseEvent>();
-            if let Some(event_bytes) = view.get(16..16 + bytes_len) {
-                let events: &[GpuJeansCollapseEvent] = bytemuck::cast_slice(event_bytes);
-                let _ = sender.tx.try_send(events.to_vec());
+            if count > 0 {
+                let bytes_len = count * std::mem::size_of::<GpuJeansCollapseEvent>();
+                if let Some(event_bytes) = view.get(16..16 + bytes_len) {
+                    let events: &[GpuJeansCollapseEvent] = bytemuck::cast_slice(event_bytes);
+                    let _ = sender.tx.try_send(events.to_vec());
+                }
             }
         }
 
-        drop(view);
         engine.staging_buffer.unmap();
         engine
             .staging_state

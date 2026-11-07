@@ -590,8 +590,8 @@ fn test_little_red_dot_scenario_initial_orbit_stability() {
 
 #[test]
 fn test_stellar_photosphere_shader_coverage() {
-    let shader_src = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("planet.wgsl should be readable");
+    let shader_src = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("planet.wesl should be readable");
 
     // 1. Cellular noise engine
     assert!(

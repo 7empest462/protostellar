@@ -143,6 +143,10 @@ pub fn handle_player_tools(
 }
 
 /// System that handles direct 3D plane click-to-place spawning when builder click mode is active.
+#[allow(
+    deprecated,
+    reason = "Queries classic Bevy Button/Interaction HUD widgets"
+)]
 pub fn handle_planet_builder_click_spawn(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -153,7 +157,7 @@ pub fn handle_planet_builder_click_spawn(
     disk_params: Res<DiskParameters>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut toast: ResMut<crate::game::ui::NotificationToast>,
-    ui_interaction_query: Query<&Interaction, With<Button>>,
+    ui_interaction_query: Query<&Interaction, With<crate::game::ui::HudButton>>,
 ) {
     if !builder_state.is_open || !builder_state.click_to_spawn_mode {
         return;

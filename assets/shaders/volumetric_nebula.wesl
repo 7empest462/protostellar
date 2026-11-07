@@ -2,10 +2,10 @@
 // Evaluates ray-box intersection, Beer-Lambert absorption, Henyey-Greenstein scattering,
 // and dynamic HII ionization bubbles carved by protostellar radiation pressure.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct VolumetricNebulaUniforms {
     box_min: vec3<f32>,
@@ -20,7 +20,7 @@ struct VolumetricNebulaUniforms {
     star_colors_and_lum: array<vec4<f32>, 16>,        // rgb: emission color, w: luminosity_solar
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> neb: VolumetricNebulaUniforms;
 
 const PI: f32 = 3.14159265359;

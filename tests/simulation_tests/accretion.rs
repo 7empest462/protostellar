@@ -770,7 +770,7 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
 #[test]
 fn test_impact_crater_ocean_shoreline_cutoff_in_planet_shader() {
     let planet_src =
-        std::fs::read_to_string("assets/shaders/planet.wgsl").expect("planet.wgsl must exist");
+        std::fs::read_to_string("assets/shaders/planet.wesl").expect("planet.wesl must exist");
 
     assert!(
         !planet_src.contains("crater_excavation"),

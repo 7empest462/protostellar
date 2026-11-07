@@ -625,6 +625,10 @@ fn verify_selector_bar_buttons(app: &App, bar_ent: Entity, jupiter_ent: Entity) 
     jupiter_btn_ent.expect("Must have spawned Jupiter selector button")
 }
 
+#[allow(
+    deprecated,
+    reason = "HUD selector click test exercises Interaction::Pressed in Bevy 0.20"
+)]
 fn verify_selector_button_click(
     app: &mut App,
     jupiter_btn: Entity,

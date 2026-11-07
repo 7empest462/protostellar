@@ -27,7 +27,7 @@ pub struct GasCloudExtension {
 
 impl MaterialExtension for GasCloudExtension {
     fn fragment_shader() -> ShaderRef {
-        "shaders/gas_cloud.wgsl".into()
+        "shaders/gas_cloud.wesl".into()
     }
 }
 

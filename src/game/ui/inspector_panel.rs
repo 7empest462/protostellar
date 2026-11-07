@@ -192,7 +192,7 @@ fn spawn_inspector_scrollable_body(panel: &mut ChildSpawnerCommands) {
 
 fn spawn_inspector_chip(col: &mut ChildSpawnerCommands) {
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleInspectorPanel,
         HudPanelElement::InspectorChip,
         Node {

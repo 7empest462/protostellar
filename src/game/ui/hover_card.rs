@@ -41,10 +41,10 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
             max_width: Val::Px(320.0),
             border: UiRect::all(Val::Px(1.5)),
             border_radius: BorderRadius {
-                top_left: Val::Px(2.0),
-                top_right: Val::Px(6.0),
-                bottom_right: Val::Px(2.0),
-                bottom_left: Val::Px(6.0),
+                top_left: Val::Px(2.0).into(),
+                top_right: Val::Px(6.0).into(),
+                bottom_right: Val::Px(2.0).into(),
+                bottom_left: Val::Px(6.0).into(),
             },
             row_gap: Val::Px(3.0),
             ..default()

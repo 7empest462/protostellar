@@ -1,7 +1,7 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::VertexOutput,
-}
+};
 
 struct RingUniforms {
     inner_radius: f32,
@@ -13,7 +13,7 @@ struct RingUniforms {
     shadow_params: vec4<f32>, // x = ambient_floor, y = penumbra_width, z = shadow_depth, w = elapsed_secs
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> ring: RingUniforms;
 
 const PI: f32 = 3.14159265359;

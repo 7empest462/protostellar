@@ -125,8 +125,8 @@ fn test_builder_presets_and_palettes_for_io_and_enceladus() {
 
 #[test]
 fn test_planet_wgsl_shader_contains_volcanic_and_cryotectonic_features() {
-    let shader = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("planet.wgsl must be readable");
+    let shader = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("planet.wesl must be readable");
 
     let required_features = [
         "fn evaluate_volcanic_calderas",

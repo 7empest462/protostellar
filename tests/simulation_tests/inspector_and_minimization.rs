@@ -14,6 +14,10 @@ use protostellar::game::ui::visibility::update_hud_visibility;
 use protostellar::simulation::resources::PlayerInteractionState;
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "Inspector scroll test exercises Interaction::Hovered in Bevy 0.20"
+)]
 fn test_inspector_scrolling_clamping_and_reset() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);

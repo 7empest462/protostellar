@@ -66,7 +66,7 @@ fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
 
             left_col
                 .spawn((
-                    Button,
+                    HudButton,
                     UiButtonAction::ToggleTopLeftPanel,
                     HudPanelElement::TopLeftPill,
                     Node {
@@ -148,7 +148,7 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
         })
         .with_children(|col| {
             col.spawn((
-                Button,
+                HudButton,
                 UiButtonAction::ToggleTopControlsPanel,
                 HudPanelElement::TopControlsPill,
                 Node {
@@ -376,7 +376,7 @@ fn spawn_view_mode_badges(col: &mut ChildSpawnerCommands) {
 fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
     // Orbits badge
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleOrbitMode,
         HudPanelElement::OrbitModeBadge,
         Node {
@@ -405,7 +405,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
 
     // Overlay badge
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::CycleOverlayMode,
         HudPanelElement::OverlayModeBadge,
         Node {
@@ -434,7 +434,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
 
     // Fullscreen badge
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleFullScreenHud,
         Node {
             padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
@@ -462,7 +462,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
 
     // Trajectory Predictor / Forecast badge
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleTrajectoryPredictor,
         HudPanelElement::TrajectoryPredictorBadge,
         Node {
@@ -493,7 +493,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
 fn spawn_astrodynamic_view_badges(col: &mut ChildSpawnerCommands) {
     // Lagrange Points badge
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleLagrangePoints,
         HudPanelElement::LagrangePointsBadge,
         Node {
@@ -522,7 +522,7 @@ fn spawn_astrodynamic_view_badges(col: &mut ChildSpawnerCommands) {
 
     // Habitable Zone badge
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleHabitableZone,
         HudPanelElement::HabitableZoneBadge,
         Node {
@@ -565,7 +565,7 @@ fn spawn_simulation_metrics_column(right_row: &mut ChildSpawnerCommands) {
 
 fn spawn_top_right_pill(col: &mut ChildSpawnerCommands) {
     col.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleTopRightPanel,
         HudPanelElement::TopRightPill,
         Node {
@@ -697,7 +697,7 @@ fn spawn_toast_banner(center_dock: &mut ChildSpawnerCommands) {
 fn spawn_bottom_center_pill(center_dock: &mut ChildSpawnerCommands) {
     center_dock
         .spawn((
-            Button,
+            HudButton,
             UiButtonAction::ToggleBottomCenterPanel,
             HudPanelElement::BottomCenterPill,
             Node {

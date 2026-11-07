@@ -9,6 +9,13 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::BTreeSet;
 
+/// Marker component for interactive HUD buttons, replacing Bevy's deprecated/private `Button`
+/// while automatically requiring `Node`, `FocusPolicy::Block`, and `Interaction`.
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq, Reflect)]
+#[reflect(Component, Default, Debug, PartialEq, Clone)]
+#[require(Node, bevy::ui::FocusPolicy::Block, Interaction)]
+pub struct HudButton;
+
 pub type SelectedWorldQuery<'w, 's> = Query<
     'w,
     's,

@@ -301,19 +301,19 @@ fn test_atmosphere_shell_ecs_lifecycle() {
 
 #[test]
 fn test_atmosphere_and_planet_shader_sources_validity() {
-    let atmo_src = std::fs::read_to_string("assets/shaders/atmosphere.wgsl")
-        .expect("atmosphere.wgsl must be readable");
+    let atmo_src = std::fs::read_to_string("assets/shaders/atmosphere.wesl")
+        .expect("atmosphere.wesl must be readable");
     assert!(
-        atmo_src.contains("@group(#{MATERIAL_BIND_GROUP}) @binding(0)"),
-        "atmosphere.wgsl must bind to MATERIAL_BIND_GROUP, not hardcoded group(2)"
+        atmo_src.contains("@group(constants::MATERIAL_BIND_GROUP) @binding(0)"),
+        "atmosphere.wesl must bind to constants::MATERIAL_BIND_GROUP, not hardcoded group(2)"
     );
     assert!(
         atmo_src.contains("struct AtmosphereUniforms"),
-        "atmosphere.wgsl must declare AtmosphereUniforms"
+        "atmosphere.wesl must declare AtmosphereUniforms"
     );
 
-    let planet_src = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("planet.wgsl must be readable");
+    let planet_src = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("planet.wesl must be readable");
     assert!(
         planet_src.contains("star_dir_and_lum: vec4<f32>"),
         "planet.wgsl must declare star_dir_and_lum"
@@ -566,17 +566,17 @@ fn test_stellar_corona_uniforms_and_impact_blackbody_cooling() {
 
 #[test]
 fn test_surface_sky_dome_clouds_and_realtime_cloud_pacing() {
-    let atmo_src = std::fs::read_to_string("assets/shaders/atmosphere.wgsl")
-        .expect("atmosphere.wgsl must be readable");
+    let atmo_src = std::fs::read_to_string("assets/shaders/atmosphere.wesl")
+        .expect("atmosphere.wesl must be readable");
     assert!(
         atmo_src.contains("cloud_and_time_params: vec4<f32>")
             && atmo_src.contains("fn evaluate_surface_sky_clouds(")
             && atmo_src.contains("let is_surface_view = cam_alt_ratio < 1.42;"),
-        "atmosphere.wgsl must support scale-invariant surface sky dome and 3D overhead clouds"
+        "atmosphere.wesl must support scale-invariant surface sky dome and 3D overhead clouds"
     );
 
-    let planet_src = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("planet.wgsl must be readable");
+    let planet_src = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("planet.wesl must be readable");
     assert!(
         planet_src.contains("let orbital_cloud_vis = smoothstep(1.15, 1.42, cam_alt_ratio);"),
         "planet.wgsl must fade out painted ground cloud albedo when in Surface Horizon Mode"

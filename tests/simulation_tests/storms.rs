@@ -208,138 +208,13 @@ fn test_planet_uniforms_storm_defaults_and_alignment() {
 
 #[test]
 fn test_planet_wgsl_shader_naga_validation() {
-    let shader_source = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("assets/shaders/planet.wgsl must exist");
-
-    let mock_header = r#"
-struct View { world_position: vec3<f32> };
-@group(0) @binding(0) var<uniform> view: View;
-
-struct StandardMaterial {
-    base_color: vec4<f32>,
-    perceptual_roughness: f32,
-    metallic: f32,
-    emissive: vec4<f32>,
-    reflectance: f32,
-    ior: f32,
-    attenuation_color: vec4<f32>,
-    attenuation_distance: f32,
-};
-
-struct PbrInput {
-    material: StandardMaterial,
-    diffuse_transmission: f32,
-    specular_transmission: f32,
-    thickness: f32,
-    N: vec3<f32>,
-    V: vec3<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) world_position: vec4<f32>,
-    @location(1) world_normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-    @location(3) color: vec4<f32>,
-};
-
-struct FragmentOutput {
-    @location(0) color: vec4<f32>,
-};
-
-fn pbr_input_from_standard_material(in: VertexOutput, is_front: bool) -> PbrInput {
-    var res: PbrInput;
-    return res;
-}
-
-fn alpha_discard(mat: StandardMaterial, color: vec4<f32>) -> vec4<f32> {
-    return color;
-}
-
-fn main_pass_post_lighting_processing(pbr: PbrInput, color: vec4<f32>) -> vec4<f32> {
-    return color;
-}
-
-fn apply_pbr_lighting(pbr: PbrInput) -> vec4<f32> {
-    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
-}
-
-fn mesh_normal_local_to_world(normal: vec3<f32>, instance_index: u32) -> vec3<f32> {
-    return normal;
-}
-
-fn get_world_from_local(instance_index: u32) -> mat4x4<f32> {
-    return mat4x4<f32>(
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        0.0, 0.0, 0.0, 1.0,
+    let compiled = super::shader_guardrails::compile_and_validate_wesl_shader(
+        "assets/shaders/planet.wesl",
+        &[],
     );
-}
-
-fn mesh_position_local_to_world(world_from_local: mat4x4<f32>, local_position: vec4<f32>) -> vec4<f32> {
-    return local_position;
-}
-
-fn mesh_position_local_to_clip(world_from_local: mat4x4<f32>, local_position: vec4<f32>) -> vec4<f32> {
-    return local_position;
-}
-"#;
-
-    // Filter out preprocessor lines and prepass branch for forward pass validation
-    let mut cleaned_lines = Vec::new();
-    let mut skip_prepass = false;
-    for line in shader_source.lines().skip(18) {
-        let trimmed = line.trim();
-        if trimmed.starts_with("#ifdef PREPASS_PIPELINE") {
-            skip_prepass = true;
-            continue;
-        }
-        if trimmed.starts_with("#else") {
-            if skip_prepass {
-                skip_prepass = false;
-                continue;
-            }
-        }
-        if trimmed.starts_with("#endif") {
-            continue;
-        }
-        if skip_prepass {
-            continue;
-        }
-        if trimmed.starts_with("#") {
-            // Strip remaining #ifdefs like VERTEX_TANGENTS
-            continue;
-        }
-        cleaned_lines.push(line);
-    }
-
-    let full_source = format!("{mock_header}\n{}", cleaned_lines.join("\n"))
-        .replace("#{MATERIAL_BIND_GROUP}", "2u");
-
-    let res = wgpu::naga::front::wgsl::parse_str(&full_source);
-    if let Err(ref err) = res {
-        eprintln!("WGSL Parse Error: {:?}", err);
-    }
     assert!(
-        res.is_ok(),
-        "planet.wgsl must parse cleanly with naga without reserved keyword or syntax errors: {:?}",
-        res.err()
-    );
-
-    let module = res.unwrap();
-    let mut validator = wgpu::naga::valid::Validator::new(
-        wgpu::naga::valid::ValidationFlags::all(),
-        wgpu::naga::valid::Capabilities::all(),
-    );
-    let valid_res = validator.validate(&module);
-    if let Err(ref err) = valid_res {
-        eprintln!("WGSL Validation Error: {:?}", err);
-    }
-    assert!(
-        valid_res.is_ok(),
-        "planet.wgsl must validate cleanly with naga validator: {:?}",
-        valid_res.err()
+        compiled.contains("fn vertex") && compiled.contains("fn fragment"),
+        "Compiled planet.wesl must emit both vertex and fragment entry points"
     );
 }
 
@@ -501,9 +376,9 @@ fn test_saturn_hd_stratigraphy_and_storm_state() {
         "Proto-Saturn and Saturn must both receive canonical butterscotch palette"
     );
 
-    // 2. Verify WGSL shader contains HD gas giant features and aurora pole fade
-    let shader_source = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("assets/shaders/planet.wgsl must exist");
+    // 2. Verify WESL shader contains HD gas giant features and aurora pole fade
+    let shader_source = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("assets/shaders/planet.wesl must exist");
 
     assert!(
         shader_source.contains("let is_saturn = (hex_amp > 0.001)"),
@@ -526,9 +401,9 @@ fn test_saturn_hd_stratigraphy_and_storm_state() {
         "Shader must blend out zonal banding into circumpolar cyclonic swirls at high latitudes"
     );
 
-    // 3. Verify planetary_rings.wgsl parses cleanly and guards against planet clipping
-    let ring_shader_src = std::fs::read_to_string("assets/shaders/planetary_rings.wgsl")
-        .expect("assets/shaders/planetary_rings.wgsl must exist");
+    // 3. Verify planetary_rings.wesl compiles cleanly via Bevy ShaderCache + Naga and guards against planet clipping
+    let ring_shader_src = std::fs::read_to_string("assets/shaders/planetary_rings.wesl")
+        .expect("assets/shaders/planetary_rings.wesl must exist");
     assert!(
         ring_shader_src.contains("let inner_dist = clamp(max(ring.inner_radius, planet_surface_dist)"),
         "Ring shader must clamp inner radius to planet surface to prevent rings clipping through the planet"
@@ -538,52 +413,9 @@ fn test_saturn_hd_stratigraphy_and_storm_state() {
         "Ring shader must normalize radial coordinates from inner to outer edge"
     );
 
-    // Naga parse validation for planetary_rings.wgsl
-    let mock_ring_header = r#"
-struct View { world_position: vec3<f32> };
-struct VertexOutput {
-    @location(0) world_position: vec4<f32>,
-    @location(1) world_normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-};
-@group(0) @binding(0) var<uniform> view: View;
-"#;
-    let mut cleaned_ring_lines = Vec::new();
-    let mut in_import = false;
-    for line in ring_shader_src.lines() {
-        if line.starts_with("#import") {
-            if line.contains('{') && !line.contains('}') {
-                in_import = true;
-            }
-            continue;
-        }
-        if in_import {
-            if line.contains('}') {
-                in_import = false;
-            }
-            continue;
-        }
-        cleaned_ring_lines.push(line);
-    }
-    let full_ring_source = format!("{mock_ring_header}\n{}", cleaned_ring_lines.join("\n"))
-        .replace("#{MATERIAL_BIND_GROUP}", "1u");
-    let ring_naga_res = wgpu::naga::front::wgsl::parse_str(&full_ring_source);
-    assert!(
-        ring_naga_res.is_ok(),
-        "planetary_rings.wgsl must parse cleanly with naga: {:?}",
-        ring_naga_res.err()
-    );
-
-    let ring_module = ring_naga_res.unwrap();
-    let mut ring_validator = wgpu::naga::valid::Validator::new(
-        wgpu::naga::valid::ValidationFlags::all(),
-        wgpu::naga::valid::Capabilities::all(),
-    );
-    let ring_valid_res = ring_validator.validate(&ring_module);
-    assert!(
-        ring_valid_res.is_ok(),
-        "planetary_rings.wgsl must validate cleanly with naga validator: {:?}",
-        ring_valid_res.err()
+    super::shader_guardrails::compile_and_validate_wesl_shader(
+        "assets/shaders/planetary_rings.wesl",
+        &[],
     );
 }
 

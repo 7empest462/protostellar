@@ -392,9 +392,14 @@ fn test_inner_planet_nebular_gas_and_atmosphere_accretion() {
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "HUD tests use Interaction alongside HudButton in Bevy 0.20"
+)]
 fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
+    use protostellar::game::ui::HudButton;
     use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
     use protostellar::simulation::resources::*;
 
@@ -443,7 +448,7 @@ fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
         .id();
 
     // Spawn UI button that is currently clicked (Interaction::Pressed)
-    app.world_mut().spawn((Button, Interaction::Pressed));
+    app.world_mut().spawn((HudButton, Interaction::Pressed));
 
     // Spawn Camera looking at the scene, currently targeting Earth
     let camera_ent = app

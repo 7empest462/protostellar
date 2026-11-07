@@ -241,7 +241,7 @@ pub fn handle_ui_button_interactions(
             &mut BorderColor,
             Option<&QuickBarButtonBaseColor>,
         ),
-        (Changed<Interaction>, With<Button>),
+        (Changed<Interaction>, With<HudButton>),
     >,
     mut tooltip_query: Query<&mut Text, With<HudActionTooltipText>>,
     mut core: UiCoreState,

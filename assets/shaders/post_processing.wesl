@@ -1,4 +1,4 @@
-#import bevy_sprite::mesh2d_vertex_output::VertexOutput
+import bevy_sprite_render::mesh2d::vertex_output::VertexOutput;
 
 struct PostProcessingSettings {
     exposure: f32,
@@ -10,9 +10,9 @@ struct PostProcessingSettings {
     pad: f32,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var source_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var source_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> settings: PostProcessingSettings;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var source_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var source_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> settings: PostProcessingSettings;
 
 // ACES Filmic Tonemapping Curve (Narkowicz 2015)
 fn tonemap_aces(color: vec3<f32>) -> vec3<f32> {

@@ -26,7 +26,7 @@ pub struct SciFiPanelUniforms {
 
 impl UiMaterial for SciFiPanelMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/sci_fi_panel.wgsl".into()
+        "shaders/sci_fi_panel.wesl".into()
     }
 }
 

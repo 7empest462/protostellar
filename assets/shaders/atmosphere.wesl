@@ -1,7 +1,7 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct AtmosphereUniforms {
     rayleigh_params: vec4<f32>, // rgb = beta_R (or coronal RGB in Corona Mode), w = H_R (scale height)
@@ -16,7 +16,7 @@ struct AtmosphereUniforms {
     cloud_and_time_params: vec4<f32>, // x = cloud_coverage (0..1), y = visual_time_secs, z = spin_angle, w = color_seed
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> atmo: AtmosphereUniforms;
 
 const PI: f32 = 3.14159265359;

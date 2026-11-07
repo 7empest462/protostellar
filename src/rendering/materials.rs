@@ -92,10 +92,10 @@ pub struct PlanetMaterialExtension {
 
 impl MaterialExtension for PlanetMaterialExtension {
     fn vertex_shader() -> ShaderRef {
-        "shaders/planet.wgsl".into()
+        "shaders/planet.wesl".into()
     }
     fn fragment_shader() -> ShaderRef {
-        "shaders/planet.wgsl".into()
+        "shaders/planet.wesl".into()
     }
 }
 
@@ -150,7 +150,7 @@ pub struct AtmosphereMaterial {
 
 impl Material for AtmosphereMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/atmosphere.wgsl".into()
+        "shaders/atmosphere.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -203,7 +203,7 @@ pub struct RingMaterial {
 
 impl Material for RingMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/planetary_rings.wgsl".into()
+        "shaders/planetary_rings.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -244,7 +244,7 @@ pub struct BlackHoleDiskMaterial {
 
 impl Material for BlackHoleDiskMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/black_hole_disk.wgsl".into()
+        "shaders/black_hole_disk.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -298,7 +298,7 @@ impl Default for SkyboxMaterial {
 
 impl Material for SkyboxMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/skybox.wgsl".into()
+        "shaders/skybox.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -356,7 +356,7 @@ pub struct RelativisticJetMaterial {
 
 impl Material for RelativisticJetMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/relativistic_jet.wgsl".into()
+        "shaders/relativistic_jet.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -413,7 +413,7 @@ pub struct CometTailMaterial {
 
 impl Material for CometTailMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/comet_tail.wgsl".into()
+        "shaders/comet_tail.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -473,7 +473,7 @@ pub struct SupernovaMaterial {
 
 impl Material for SupernovaMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/supernova.wgsl".into()
+        "shaders/supernova.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -531,7 +531,7 @@ pub struct VolumetricNebulaMaterial {
 
 impl Material for VolumetricNebulaMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/volumetric_nebula.wgsl".into()
+        "shaders/volumetric_nebula.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -590,7 +590,7 @@ pub struct CircumstellarMaterial {
 
 impl Material for CircumstellarMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/circumstellar.wgsl".into()
+        "shaders/circumstellar.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {

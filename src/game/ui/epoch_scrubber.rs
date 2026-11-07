@@ -15,7 +15,7 @@ use crate::simulation::resources::PlayerInteractionState;
 use super::types::{
     create_compact_button, EpochPlanetButtonGroup, EpochPlanetTabButton, EpochQuickButton,
     EpochScrubberBodyTitleText, EpochScrubberMetricsText, EpochScrubberPanel,
-    EpochScrubberStatusText, NotificationToast, UiButtonAction,
+    EpochScrubberStatusText, HudButton, NotificationToast, UiButtonAction,
 };
 
 /// Spawns the glassmorphic Deep-Time Geological Epoch Scrubber drawer in the HUD root.
@@ -69,7 +69,7 @@ fn spawn_scrubber_header(panel: &mut ChildSpawnerCommands) {
             ));
 
             hdr.spawn((
-                Button,
+                HudButton,
                 UiButtonAction::ToggleEpochScrubberPanel,
                 Node {
                     padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
@@ -181,7 +181,7 @@ fn spawn_scrubber_target_row(panel: &mut ChildSpawnerCommands) {
                 for (planet, label, bg, border) in tabs {
                     tab_row
                         .spawn((
-                            Button,
+                            HudButton,
                             UiButtonAction::SelectEpochTargetPlanet(planet),
                             EpochPlanetTabButton(planet),
                             Node {
@@ -219,7 +219,7 @@ fn spawn_epoch_pill(
 ) {
     parent
         .spawn((
-            Button,
+            HudButton,
             UiButtonAction::ScrubToEpoch(epoch),
             EpochQuickButton(epoch),
             Node {

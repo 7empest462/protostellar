@@ -692,6 +692,10 @@ fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
 }
 
 #[test]
+#[allow(
+    deprecated,
+    reason = "Camera UI suppression test checks Interaction::Hovered in Bevy 0.20"
+)]
 fn test_camera_zoom_ui_interaction_suppression() {
     use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
     use bevy::prelude::*;

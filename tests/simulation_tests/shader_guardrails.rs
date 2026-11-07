@@ -1,8 +1,133 @@
-//! Guardrail integration tests for WGSL shader bind groups, Naga syntax validation,
-//! and safe ECS entity despawn idempotence.
+//! Guardrail integration tests for WESL/WGSL shader bind groups, Bevy 0.20 ShaderCache + Naga
+//! validation across all 15 material shaders and 5 raw wgpu shaders, and safe ECS despawn idempotence.
 
+use std::sync::OnceLock;
+
+use bevy::asset::AssetId;
 use bevy::prelude::*;
+use bevy_shader::{ShaderCache, ShaderCacheSource, ShaderDefVal};
 use protostellar::rendering::materials::{BlackHoleDiskMaterial, BlackHoleDiskUniforms};
+
+fn bevy_embedded_shaders() -> &'static Vec<(AssetId<Shader>, Shader)> {
+    static EMBEDDED: OnceLock<Vec<(AssetId<Shader>, Shader)>> = OnceLock::new();
+    EMBEDDED.get_or_init(|| {
+        let mut app = App::new();
+        app.add_plugins(
+            DefaultPlugins
+                .build()
+                .disable::<bevy::log::LogPlugin>()
+                .disable::<bevy::winit::WinitPlugin>()
+                .set(bevy::window::WindowPlugin {
+                    primary_window: None,
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..default()
+                })
+                .set(bevy::render::RenderPlugin {
+                    render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
+                        bevy::render::settings::WgpuSettings {
+                            backends: None,
+                            ..default()
+                        },
+                    )),
+                    ..default()
+                }),
+        );
+        app.add_plugins(bevy::ui_render::UiMaterialPlugin::<
+            protostellar::game::ui::sci_fi_theme::SciFiPanelMaterial,
+        >::default());
+        app.finish();
+        app.cleanup();
+
+        // Pump the asset server until all embedded WESL libraries registered via
+        // `load_shader_library!` have finished loading into `Assets<Shader>` and stabilized.
+        let mut prev_count = 0;
+        let mut stable_ticks = 0;
+        for _ in 0..200 {
+            app.update();
+            let count = app.world().resource::<Assets<Shader>>().len();
+            if count > 0 && count == prev_count {
+                stable_ticks += 1;
+                if stable_ticks >= 8 {
+                    break;
+                }
+            } else {
+                prev_count = count;
+                stable_ticks = 0;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let shaders = app.world().resource::<Assets<Shader>>();
+        assert!(
+            shaders.len() >= 50,
+            "Expected Bevy embedded WESL shader libraries to load (loaded {})",
+            shaders.len()
+        );
+        shaders
+            .iter()
+            .map(|(id, shader)| (id, shader.clone()))
+            .collect()
+    })
+}
+
+/// Compiles a `.wesl` shader through Bevy 0.20's real `ShaderCache` against Bevy's embedded
+/// WESL library and validates the resulting WGSL module with `wgpu::naga` (syntax + full typecheck).
+pub fn compile_and_validate_wesl_shader(shader_path: &str, extra_defs: &[ShaderDefVal]) -> String {
+    let source = std::fs::read_to_string(shader_path)
+        .unwrap_or_else(|e| panic!("{shader_path} must exist: {e:?}"));
+
+    let mut cache: ShaderCache<String, ()> = ShaderCache::new((), |_, src, _| match src {
+        ShaderCacheSource::Wgsl(wgsl) => Ok(wgsl),
+        ShaderCacheSource::SpirV(_) => panic!("Expected WGSL output from WESL compilation"),
+    });
+
+    for (id, shader) in bevy_embedded_shaders() {
+        cache.set_shader(*id, shader.clone());
+    }
+
+    let asset_rel_path = shader_path.strip_prefix("assets/").unwrap_or(shader_path);
+    let root_id = AssetId::Uuid {
+        uuid: bevy::asset::uuid::Uuid::from_u128(0xDEAD_BEEF_CAFE_0001),
+    };
+    cache.set_shader(root_id, Shader::from_wesl(source, asset_rel_path));
+
+    let mut defs = vec![
+        ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
+        ShaderDefVal::UInt("AVAILABLE_STORAGE_BUFFER_BINDINGS".into(), 8),
+        ShaderDefVal::Bool("VERTEX_POSITIONS".into(), true),
+        ShaderDefVal::Bool("VERTEX_UVS".into(), true),
+        ShaderDefVal::Bool("VERTEX_UVS_A".into(), true),
+        ShaderDefVal::Bool("VERTEX_NORMALS".into(), true),
+        ShaderDefVal::Bool("VERTEX_TANGENTS".into(), true),
+        ShaderDefVal::Bool("VERTEX_COLORS".into(), true),
+        ShaderDefVal::Bool("VERTEX_OUTPUT_INSTANCE_INDEX".into(), true),
+        ShaderDefVal::Bool("TONEMAPPING_IN_SHADER".into(), true),
+        ShaderDefVal::Bool("DEBAND_DITHER".into(), true),
+    ];
+    defs.extend_from_slice(extra_defs);
+
+    let compiled = cache.get(0, root_id, &defs).unwrap_or_else(|err| {
+        panic!("Bevy 0.20 WESL compilation failed for {shader_path}:\n{err}")
+    });
+
+    let module = wgpu::naga::front::wgsl::parse_str(&compiled).unwrap_or_else(|err| {
+        panic!(
+            "{shader_path} compiled WESL produced invalid WGSL syntax:\n{}\n--- WGSL ---\n{}",
+            err.emit_to_string(&compiled),
+            compiled
+        )
+    });
+
+    let mut validator = wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    );
+    validator.validate(&module).unwrap_or_else(|err| {
+        panic!("{shader_path} compiled WESL failed Naga type/semantic validation:\n{err:?}")
+    });
+
+    (*compiled).clone()
+}
 
 #[test]
 fn test_all_material_shaders_use_preprocessed_bind_group() {
@@ -10,105 +135,115 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
     assert!(shaders_dir.exists(), "assets/shaders directory must exist");
 
     let entries = std::fs::read_dir(shaders_dir).expect("Failed to read shaders dir");
-    let mut checked_shaders = 0;
+    let mut checked_wesl_shaders = 0;
+    let mut checked_raw_wgsl_shaders = 0;
 
     for entry in entries {
         let entry = entry.expect("Valid dir entry");
         let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("wgsl") {
-            let filename = path.file_name().unwrap().to_str().unwrap();
+        let ext = path.extension().and_then(|e| e.to_str());
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read {filename}: {e:?}"));
 
-            // Compute shaders use @group(0), and UiMaterial shaders legitimately use @group(1)
-            if filename == "particle_orbit.wgsl"
-                || filename == "particle_render.wgsl"
-                || filename == "gmc_fluid.wgsl"
-                || filename == "nbody_galaxy.wgsl"
-                || filename == "gmc_far_field.wgsl"
-                || filename == "sci_fi_panel.wgsl"
-            {
+        // Zero legacy naga_oil directives may exist in any shader
+        assert!(
+            !content.contains("#import")
+                && !content.contains("#ifdef")
+                && !content.contains("#{MATERIAL_BIND_GROUP}"),
+            "Shader {filename} still contains removed Bevy 0.19 naga_oil preprocessor syntax!"
+        );
+
+        if ext == Some("wesl") {
+            // UiMaterial shaders legitimately bind at @group(1)
+            if filename == "sci_fi_panel.wesl" {
                 continue;
             }
 
-            let content = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("Failed to read {}: {:?}", filename, e));
-
-            // Assert that no material shader hardcodes @group(1) or @group(2)
             assert!(
                 !content.contains("@group(1)"),
-                "Shader {} hardcodes @group(1), which collides with pipeline layouts! Use @group(#{{MATERIAL_BIND_GROUP}}).",
-                filename
+                "Shader {filename} hardcodes @group(1), which collides with pipeline layouts! Use @group(constants::MATERIAL_BIND_GROUP)."
             );
             assert!(
                 !content.contains("@group(2)"),
-                "Shader {} hardcodes @group(2), which collides with Bevy mesh storage buffers! Use @group(#{{MATERIAL_BIND_GROUP}}).",
-                filename
+                "Shader {filename} hardcodes @group(2), which collides with Bevy mesh storage buffers! Use @group(constants::MATERIAL_BIND_GROUP)."
             );
 
-            // If the shader binds a material uniform/extension, verify it uses #{MATERIAL_BIND_GROUP}
             if content.contains("@binding(0)") || content.contains("@binding(101)") {
                 assert!(
-                    content.contains("@group(#{MATERIAL_BIND_GROUP})"),
-                    "Material shader {} must use @group(#{{MATERIAL_BIND_GROUP}}) for bind group compatibility.",
-                    filename
+                    content.contains("@group(constants::MATERIAL_BIND_GROUP)"),
+                    "Material shader {filename} must use @group(constants::MATERIAL_BIND_GROUP) for Bevy 0.20 WESL bind group compatibility."
                 );
             }
 
-            checked_shaders += 1;
+            checked_wesl_shaders += 1;
+        } else if ext == Some("wgsl") {
+            checked_raw_wgsl_shaders += 1;
         }
     }
 
-    assert!(
-        checked_shaders >= 7,
-        "Expected at least 7 material shaders to be checked (checked {})",
-        checked_shaders
+    assert_eq!(
+        checked_wesl_shaders, 14,
+        "Expected 14 non-UI .wesl material shaders (plus sci_fi_panel.wesl = 15 total)"
+    );
+    assert_eq!(
+        checked_raw_wgsl_shaders, 5,
+        "Expected 5 standalone raw wgpu .wgsl shaders"
     );
 }
 
-/// Validates that a WGSL material shader parses cleanly using naga after prepending mock pipeline headers.
+#[test]
+fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
+    let wesl_shaders = [
+        "assets/shaders/atmosphere.wesl",
+        "assets/shaders/black_hole_disk.wesl",
+        "assets/shaders/circumstellar.wesl",
+        "assets/shaders/comet_tail.wesl",
+        "assets/shaders/gas_cloud.wesl",
+        "assets/shaders/planet.wesl",
+        "assets/shaders/planetary_rings.wesl",
+        "assets/shaders/post_processing.wesl",
+        "assets/shaders/relativistic_jet.wesl",
+        "assets/shaders/roche_stream.wesl",
+        "assets/shaders/sci_fi_panel.wesl",
+        "assets/shaders/skybox.wesl",
+        "assets/shaders/soft_particle.wesl",
+        "assets/shaders/supernova.wesl",
+        "assets/shaders/volumetric_nebula.wesl",
+    ];
+
+    for shader_path in wesl_shaders {
+        compile_and_validate_wesl_shader(shader_path, &[]);
+    }
+
+    // Also validate planet.wesl under PREPASS_PIPELINE + DEFERRED_PREPASS
+    compile_and_validate_wesl_shader(
+        "assets/shaders/planet.wesl",
+        &[
+            ShaderDefVal::Bool("PREPASS_PIPELINE".into(), true),
+            ShaderDefVal::Bool("PREPASS_FRAGMENT".into(), true),
+            ShaderDefVal::Bool("DEFERRED_PREPASS".into(), true),
+            ShaderDefVal::Bool("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into(), true),
+        ],
+    );
+}
+
+/// Validates that a WESL material shader contains the expected uniform struct and compiles cleanly
+/// through Bevy's WESL `ShaderCache` + `wgpu::naga`.
 pub fn validate_wgsl_shader_with_naga(shader_path: &str, struct_name: &str) {
     let shader_source =
         std::fs::read_to_string(shader_path).unwrap_or_else(|_| panic!("{shader_path} must exist"));
-
-    let mock_header = r#"
-struct View {
-    world_position: vec3<f32>,
-};
-@group(0) @binding(0) var<uniform> view: View;
-
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    world_position: vec4<f32>,
-    world_normal: vec3<f32>,
-    uv: vec2<f32>,
-};
-
-struct FragmentOutput {
-    @location(0) color: vec4<f32>,
-};
-"#;
-
-    let start_idx = shader_source
-        .find(struct_name)
-        .unwrap_or_else(|| panic!("{struct_name} must exist in shader"));
-
-    let full_source = format!("{mock_header}\n{}", &shader_source[start_idx..])
-        .replace("#{MATERIAL_BIND_GROUP}", "2u");
-
-    let res = wgpu::naga::front::wgsl::parse_str(&full_source);
-    if let Err(ref err) = res {
-        eprintln!("{shader_path} WGSL Parse Error: {:?}", err);
-    }
     assert!(
-        res.is_ok(),
-        "{shader_path} must parse cleanly with naga without syntax errors: {:?}",
-        res.err()
+        shader_source.contains(struct_name),
+        "{struct_name} must exist in {shader_path}"
     );
+    compile_and_validate_wesl_shader(shader_path, &[]);
 }
 
 #[test]
 fn test_black_hole_disk_wgsl_naga_validation() {
     validate_wgsl_shader_with_naga(
-        "assets/shaders/black_hole_disk.wgsl",
+        "assets/shaders/black_hole_disk.wesl",
         "struct BlackHoleDiskUniforms",
     );
 }
@@ -119,7 +254,7 @@ fn test_roche_stream_wgsl_naga_validation() {
     use bevy::mesh::VertexAttributeValues;
 
     validate_wgsl_shader_with_naga(
-        "assets/shaders/roche_stream.wgsl",
+        "assets/shaders/roche_stream.wesl",
         "struct RocheStreamUniforms",
     );
     let mesh = protostellar::rendering::effects::roche_stream::generate_curved_roche_tube_mesh();
@@ -147,7 +282,7 @@ fn test_roche_stream_wgsl_naga_validation() {
     }
 
     let aabb = mesh
-        .compute_aabb()
+        .get_aabb()
         .expect("Roche stream mesh must compute a valid Aabb");
     assert!(
         aabb.center.is_finite() && aabb.half_extents.is_finite(),
@@ -190,7 +325,7 @@ fn test_nbody_galaxy_wgsl_naga_validation() {
 #[test]
 fn test_volumetric_nebula_wgsl_naga_validation() {
     validate_wgsl_shader_with_naga(
-        "assets/shaders/volumetric_nebula.wgsl",
+        "assets/shaders/volumetric_nebula.wesl",
         "struct VolumetricNebulaUniforms",
     );
 }
@@ -198,7 +333,7 @@ fn test_volumetric_nebula_wgsl_naga_validation() {
 #[test]
 fn test_post_processing_wgsl_naga_validation() {
     validate_wgsl_shader_with_naga(
-        "assets/shaders/post_processing.wgsl",
+        "assets/shaders/post_processing.wesl",
         "struct PostProcessingSettings",
     );
 }
@@ -307,8 +442,8 @@ fn test_entity_try_despawn_idempotence_and_safety() {
 
 #[test]
 fn test_planet_wgsl_ocean_hypsometry_guardrails() {
-    let content = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("assets/shaders/planet.wgsl must exist");
+    let content = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("assets/shaders/planet.wesl must exist");
 
     // Guardrail 1: Exposed seabed must ONLY render when oceans are absent (!has_oceans)
     assert!(

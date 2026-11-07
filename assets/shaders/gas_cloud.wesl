@@ -1,29 +1,16 @@
 // WGSL Volumetric Nebular Gas Cloud & Turbulent Flow Shader
 
-#import bevy_pbr::{
-    mesh_view_bindings::view,
-    pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::alpha_discard,
-}
-
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
-#else
-#import bevy_pbr::{
-    forward_io::{VertexOutput, FragmentOutput},
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-}
-#endif
+@if(PREPASS_PIPELINE)
+import bevy_pbr::prepass::io::{VertexOutput, FragmentOutput};
+@else
+import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
 
 struct GasUniforms {
     time_data: vec4<f32>,   // x: time, y: inner_r, z: outer_r, w: gas_scale
     star_params: vec4<f32>, // x: radius, y: temp, z: lum, w: shockwave_r
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(101)
+@group(constants::MATERIAL_BIND_GROUP) @binding(101)
 var<uniform> gas: GasUniforms;
 
 // Hash & Noise Functions for Procedural Volumetric Turbulence

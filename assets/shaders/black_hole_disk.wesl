@@ -8,8 +8,8 @@
 // 6. Near-side accretion disk wrapping seamlessly in front of the black hole shadow
 // 7. Razor-sharp asymptotic photon ring tracing the event horizon boundary
 
-#import bevy_pbr::mesh_view_bindings::view
-#import bevy_pbr::forward_io::VertexOutput
+import bevy_pbr::render::mesh_view_bindings::view;
+import bevy_pbr::render::forward_io::VertexOutput;
 
 struct BlackHoleDiskUniforms {
     inner_radius: f32,     // ISCO radius (normalized, ~0.16)
@@ -22,7 +22,7 @@ struct BlackHoleDiskUniforms {
     cam_up_local: vec4<f32>,  // xyz: true screen-up vector in local BH space, w: unused
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> disk: BlackHoleDiskUniforms;
 
 fn hash12(p: vec2<f32>) -> f32 {

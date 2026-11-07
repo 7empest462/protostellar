@@ -176,7 +176,7 @@ pub fn spawn_scenario_presets_panel(root: &mut ChildSpawnerCommands) {
             .with_children(|grid| {
                 for (action, title, desc, bg, border) in SCENARIOS {
                     grid.spawn((
-                        Button,
+                        HudButton,
                         action,
                         Node {
                             flex_direction: FlexDirection::Column,
@@ -189,10 +189,10 @@ pub fn spawn_scenario_presets_panel(root: &mut ChildSpawnerCommands) {
                                 Val::Px(0.5),
                             ),
                             border_radius: BorderRadius {
-                                top_left: Val::Px(1.5),
-                                top_right: Val::Px(6.0),
-                                bottom_right: Val::Px(1.5),
-                                bottom_left: Val::Px(6.0),
+                                top_left: Val::Px(1.5).into(),
+                                top_right: Val::Px(6.0).into(),
+                                bottom_right: Val::Px(1.5).into(),
+                                bottom_left: Val::Px(6.0).into(),
                             },
                             row_gap: Val::Px(2.0),
                             ..default()
@@ -228,7 +228,7 @@ pub fn spawn_scenario_presets_panel(root: &mut ChildSpawnerCommands) {
 pub fn spawn_scenario_presets_pill(center_col: &mut ChildSpawnerCommands) {
     center_col
         .spawn((
-            Button,
+            HudButton,
             UiButtonAction::ToggleScenariosPanel,
             HudPanelElement::ScenarioPresetsPill,
             Node {

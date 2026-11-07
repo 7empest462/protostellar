@@ -377,6 +377,10 @@ fn update_camera_min_zoom_bounds(
     camera.radius = camera.radius.clamp(camera.min_radius, camera.max_radius);
 }
 
+#[allow(
+    deprecated,
+    reason = "Queries classic Bevy UI Interaction state for HUD pointer blocking"
+)]
 fn is_cursor_over_active_ui(
     window: &Window,
     cursor_pos: Vec2,
@@ -433,6 +437,7 @@ fn is_cursor_over_active_ui(
 }
 
 #[allow(
+    deprecated,
     clippy::too_many_arguments,
     reason = "3D raycast picking and screen-space fallback helper"
 )]
@@ -837,6 +842,7 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
 
 /// Handles user mouse, keyboard camera control, and 3D raycast click selection of celestial bodies.
 #[allow(
+    deprecated,
     clippy::too_many_arguments,
     clippy::type_complexity,
     reason = "Camera and target picking queries"

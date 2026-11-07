@@ -387,13 +387,7 @@ fn test_3d_planetary_surface_ecs_lifecycle() {
         "Surface horizon mode must use the planet's native planet.wgsl surface without spawning an overlaid terrain patch mesh"
     );
     assert!(
-        !planet_has_surface_liquids(
-            BodyType::IceGiant,
-            &Composition::icy(),
-            120.0,
-            None,
-            None
-        ),
+        !planet_has_surface_liquids(BodyType::IceGiant, &Composition::icy(), 120.0, None, None),
         "Ice giants must never be flagged as having a solid surface liquid plane"
     );
 

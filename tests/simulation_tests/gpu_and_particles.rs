@@ -423,8 +423,8 @@ fn test_skybox_spherical_isotropy_and_flaring_elimination() {
     use bevy::math::Vec3;
 
     // 1. Verify shader source code guarantees: flaring formulas removed, spherical isotropic layer present
-    let shader_src = std::fs::read_to_string("assets/shaders/skybox.wgsl")
-        .expect("skybox.wgsl should be readable");
+    let shader_src = std::fs::read_to_string("assets/shaders/skybox.wesl")
+        .expect("skybox.wesl should be readable");
 
     // Must contain the new isotropic spherical layer
     assert!(

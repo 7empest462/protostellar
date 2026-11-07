@@ -1,7 +1,7 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct CometTailUniforms {
     // x: elapsed time (s), y: tail length (AU), z: coma radius (AU), w: activity scale
@@ -18,7 +18,7 @@ struct CometTailUniforms {
     dust_color: vec4<f32>,
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> comet: CometTailUniforms;
 
 const PI: f32 = 3.14159265359;

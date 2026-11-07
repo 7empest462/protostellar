@@ -1,9 +1,9 @@
 // WGSL Volumetric Supernova Blast Wave, Expanding Rayleigh-Taylor Shock Shell, and Core Breakout Shader
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct SupernovaUniforms {
     params: vec4<f32>,                 // x: elapsed_s, y: max_timer_s, z: current_radius_au, w: blast_speed_au_s
@@ -15,7 +15,7 @@ struct SupernovaUniforms {
     jet_color: vec4<f32>,              // Relativistic polar jet breakout (sapphire/violet)
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> sn: SupernovaUniforms;
 
 const PI: f32 = 3.14159265359;

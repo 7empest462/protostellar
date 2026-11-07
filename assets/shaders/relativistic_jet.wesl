@@ -1,7 +1,7 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct RelativisticJetUniforms {
     jet_params: vec4<f32>,              // x: elapsed_s, y: lorentz_factor, z: opening_angle_rad, w: jet_length_au
@@ -12,7 +12,7 @@ struct RelativisticJetUniforms {
     jet_origin_and_doppler: vec4<f32>,  // xyz: jet origin in world space, w: doppler_enabled (1.0 = on)
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> jet: RelativisticJetUniforms;
 
 const PI: f32 = 3.14159265359;

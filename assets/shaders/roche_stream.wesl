@@ -2,17 +2,17 @@
 // Uses 3D view-angle Fresnel (N·V) and seamless cylindrical polar coordinates
 // so the stream has zero hard edges, zero end-caps, and twists into the accretion disk.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct RocheStreamUniforms {
     color_and_intensity: vec4<f32>,
     stream_params: vec4<f32>, // x: time, y: turb_scale, z: cross_scale, w: unused
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> material: RocheStreamUniforms;
 
 const TAU: f32 = 6.28318530718;

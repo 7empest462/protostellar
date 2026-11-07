@@ -1,22 +1,21 @@
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
-    mesh_functions::{get_world_from_local, mesh_position_local_to_clip, mesh_position_local_to_world, mesh_normal_local_to_world},
+    mesh_functions::{get_world_from_local, mesh_position_local_to_clip, mesh_position_local_to_world, mesh_normal_local_to_world, mesh_tangent_local_to_world},
     mesh_bindings::mesh,
-}
+};
 
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
-#else
-#import bevy_pbr::{
-    forward_io::{VertexOutput, FragmentOutput},
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
+    forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-}
-#endif
+};
 
 struct PlanetExtension {
     planet_type: u32,
@@ -46,21 +45,8 @@ struct PlanetExtension {
     cutaway_params: vec4<f32>, // x: cutaway_active (1.0 or 0.0), y: cut_angle, z: core_ratio, w: mantle_ratio
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(101)
+@group(constants::MATERIAL_BIND_GROUP) @binding(101)
 var<uniform> planet: PlanetExtension;
-
-struct Vertex {
-    @builtin(instance_index) instance_index: u32,
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-#ifdef VERTEX_TANGENTS
-    @location(3) tangent: vec4<f32>,
-#endif
-#ifdef VERTEX_COLORS
-    @location(4) color: vec4<f32>,
-#endif
-};
 
 
 // Vertex-safe spherical Gaussian harmonic mask for recognizable modern Earth continents & ocean basins
@@ -438,12 +424,14 @@ fn get_spun_p_surf(local_normal: vec3<f32>, instance_index: u32) -> vec3<f32> {
 }
 
 
+@if(!PREPASS_PIPELINE)
 @vertex
-fn vertex(vertex: Vertex) -> VertexOutput {
+fn vertex(vertex_in: Vertex) -> VertexOutput {
     var out: VertexOutput;
+    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     
     let local_n = normalize(vertex.normal);
-    let p_surf = get_spun_p_surf(local_n, vertex.instance_index);
+    let p_surf = get_spun_p_surf(local_n, vertex_in.instance_index);
     let elev = get_vertex_displacement(p_surf);
 
     let cam_alt_ratio = length(view.world_position - planet.planet_center_and_radius.xyz)
@@ -457,8 +445,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
     var displaced_local_pos = vertex.position + local_n * (elev * scale);
 
-    var world_from_local = get_world_from_local(vertex.instance_index);
-    let base_world_n = normalize(mesh_normal_local_to_world(local_n, vertex.instance_index));
+    var world_from_local = get_world_from_local(vertex_in.instance_index);
+    let base_world_n = normalize(mesh_normal_local_to_world(local_n, vertex_in.instance_index));
 
     // --- 1. ROTATIONAL OBLATENESS (Maclaurin Spheroid Squishing for Gas/Ice Giants) ---
     var s_axis = planet.spin_axis.xyz;
@@ -524,10 +512,16 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.world_position = mesh_position_local_to_world(world_from_local, local_pos);
     out.world_normal = deformed_world_n;
     out.position = mesh_position_local_to_clip(world_from_local, local_pos);
+@if(VERTEX_UVS_A)
     out.uv = vertex.uv;
-#ifdef VERTEX_COLORS
+@if(VERTEX_UVS_B)
+    out.uv_b = vertex.uv_b;
+@if(VERTEX_TANGENTS)
+    out.world_tangent = mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
+@if(VERTEX_COLORS)
     out.color = vertex.color;
-#endif
+@if(VERTEX_OUTPUT_INSTANCE_INDEX)
+    out.instance_index = vertex_in.instance_index;
     return out;
 }
 
@@ -4770,13 +4764,18 @@ fn fragment(
     }
 
     pbr_input.material.base_color = vec4<f32>(color, 1.0);
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    pbr_input.material.base_color = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        pbr_input.material.base_color,
+    );
 
-#ifdef PREPASS_PIPELINE
+@if(PREPASS_PIPELINE)
     let out = deferred_output(in, pbr_input);
-#else
+@if(!PREPASS_PIPELINE)
     var out: FragmentOutput;
     
+@if(!PREPASS_PIPELINE)
     if (planet.planet_type == 0u) {
         // Universal Procedural Stellar Photosphere Engine
         out.color = render_stellar_photosphere(p_surf, norm, pbr_input.V, t);
@@ -5167,10 +5166,11 @@ fn fragment(
         out.color = vec4<f32>((balanced_lit + ambient_boost + pbr_input.material.emissive.rgb) * surface_attenuation + atmospheric_haze + aurora_glow, 1.0);
     }
     
+@if(!PREPASS_PIPELINE)
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-#endif
 
     // 3D Planetary Internal Cutaway Mode: render internal geological cross-section in +X / +Z quadrant
+@if(!PREPASS_PIPELINE)
     if (planet.cutaway_params.x > 0.5 && p_tilted.x > 0.0 && p_tilted.z > 0.0) {
         let inner_core_ratio = planet.cutaway_params.y;
         let core_ratio = planet.cutaway_params.z;

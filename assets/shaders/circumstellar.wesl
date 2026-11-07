@@ -9,10 +9,10 @@
 // 4: Herbig Ae/Be & T Tauri Flared Protoplanetary Accretion Torus & Outflow Cavity
 // 5: Population III Lyman-Alpha Ionization Bubble & Dark Star WIMP Annihilation Halo
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::{VertexOutput, FragmentOutput},
-}
+};
 
 struct CircumstellarUniforms {
     center_and_outer_r: vec4<f32>,      // xyz = star world pos, w = outer envelope radius (AU)
@@ -23,7 +23,7 @@ struct CircumstellarUniforms {
     kinematics: vec4<f32>,              // x = spiral/shell freq, y = clumping, z = optical density, w = pulse rate
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> env: CircumstellarUniforms;
 
 const PI: f32 = 3.14159265359;

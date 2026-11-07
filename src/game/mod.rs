@@ -4,6 +4,10 @@ pub mod interaction;
 pub mod phases;
 pub mod slingshot;
 pub mod time_control;
+#[allow(
+    deprecated,
+    reason = "Bevy 0.20 classic Button/Interaction HUD retained while ui_focus_system remains active"
+)]
 pub mod ui;
 
 use bevy::prelude::*;

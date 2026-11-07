@@ -3,7 +3,7 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use protostellar::game::ui::{
-    update_quick_bar_highlights, update_scenario_contextual_ui, InspectorExoticHeader,
+    update_quick_bar_highlights, update_scenario_contextual_ui, HudButton, InspectorExoticHeader,
     InspectorSection, QuickBarButtonBaseColor, UiButtonAction,
 };
 use protostellar::simulation::components::*;
@@ -288,7 +288,7 @@ fn test_quick_bar_highlights_and_ui_selection_flag() {
     let btn_sun = app
         .world_mut()
         .spawn((
-            Button,
+            HudButton,
             UiButtonAction::SelectEntity(sun_ent),
             sun_base,
             BackgroundColor(sun_base.bg),
@@ -299,7 +299,7 @@ fn test_quick_bar_highlights_and_ui_selection_flag() {
     let btn_earth = app
         .world_mut()
         .spawn((
-            Button,
+            HudButton,
             UiButtonAction::SelectEntity(earth_ent),
             earth_base,
             BackgroundColor(earth_base.bg),
@@ -310,7 +310,7 @@ fn test_quick_bar_highlights_and_ui_selection_flag() {
     let btn_mars = app
         .world_mut()
         .spawn((
-            Button,
+            HudButton,
             UiButtonAction::SelectEntity(mars_ent),
             mars_base,
             BackgroundColor(mars_base.bg),

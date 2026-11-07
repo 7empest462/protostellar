@@ -352,7 +352,7 @@ fn test_supernova_uniforms_alignment_and_defaults() {
 #[test]
 fn test_supernova_wgsl_shader_naga_validation() {
     crate::shader_guardrails::validate_wgsl_shader_with_naga(
-        "assets/shaders/supernova.wgsl",
+        "assets/shaders/supernova.wesl",
         "struct SupernovaUniforms",
     );
 }

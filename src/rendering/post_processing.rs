@@ -5,6 +5,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::extract_component::ExtractComponent;
 use bevy::render::render_resource::*;
+use bevy::render::RenderApp;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{Material2d, Material2dPlugin};
 
@@ -13,6 +14,7 @@ use crate::simulation::components::CelestialBody;
 
 /// Component attached to the post-processing full-screen quad camera.
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType, Debug, Reflect)]
+#[extract_app(RenderApp)]
 pub struct PostProcessingSettings {
     pub exposure: f32,
     pub bloom_intensity: f32,
@@ -60,7 +62,7 @@ pub struct PostProcessingMaterial {
 
 impl Material2d for PostProcessingMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/post_processing.wgsl".into()
+        "shaders/post_processing.wesl".into()
     }
 }
 

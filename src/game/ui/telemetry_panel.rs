@@ -9,7 +9,7 @@ use super::types::*;
 /// Spawns the floating glassmorphic Telemetry & Climate Graphing Panel drawer.
 pub fn spawn_telemetry_panel(root: &mut ChildSpawnerCommands) {
     root.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleMinimizeTelemetryPanel,
         HudPanelElement::TelemetryPanelPill,
         Node {
@@ -140,7 +140,7 @@ fn spawn_telemetry_metric_selector_pills(panel: &mut ChildSpawnerCommands) {
 
             for (metric, label) in metrics {
                 row.spawn((
-                    Button,
+                    HudButton,
                     UiButtonAction::SelectTelemetryMetric(metric),
                     TelemetryMetricButton(metric),
                     Node {

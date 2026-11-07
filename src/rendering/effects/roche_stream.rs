@@ -26,7 +26,7 @@ pub struct RocheStreamMaterial {
 
 impl Material for RocheStreamMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/roche_stream.wgsl".into()
+        "shaders/roche_stream.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {

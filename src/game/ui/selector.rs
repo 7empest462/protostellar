@@ -637,7 +637,7 @@ pub fn update_quick_bar_highlights(
             &mut BackgroundColor,
             &mut BorderColor,
         ),
-        With<Button>,
+        With<HudButton>,
     >,
 ) {
     if !player_state.is_changed() {

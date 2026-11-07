@@ -2,8 +2,8 @@
 // Renders 45-degree chamfered corners, glowing corner targeting brackets,
 // subtle CRT/hologram scanlines, and an angled header accent bar.
 
-#import bevy_ui::ui_vertex_output::UiVertexOutput
-#import bevy_render::globals::Globals
+import bevy_ui_render::ui_vertex_output::UiVertexOutput;
+import bevy_render::globals::Globals;
 
 @group(0) @binding(1) var<uniform> globals: Globals;
 

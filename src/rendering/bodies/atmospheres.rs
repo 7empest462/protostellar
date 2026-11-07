@@ -499,8 +499,8 @@ fn build_planet_atmosphere_uniforms(
     let cloud_coverage = raw_cloud.max(gas_cloud);
 
     let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.25;
-    let is_ice_giant = body.body_type == BodyType::IceGiant
-        || (norm.gas_frac > 0.20 && norm.ice_frac > 0.20);
+    let is_ice_giant =
+        body.body_type == BodyType::IceGiant || (norm.gas_frac > 0.20 && norm.ice_frac > 0.20);
     let has_atmosphere =
         !is_gas_giant && !is_ice_giant && (pressure_bar >= 0.005 || norm.gas_frac > 0.02);
 
@@ -643,10 +643,7 @@ fn should_skip_atmosphere_shell(
     is_giant_planet
         || matches!(
             body.body_type,
-            BodyType::Asteroid
-                | BodyType::Comet
-                | BodyType::DustGrain
-                | BodyType::Planetesimal
+            BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain | BodyType::Planetesimal
         )
 }
 

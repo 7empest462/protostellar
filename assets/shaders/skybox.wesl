@@ -3,7 +3,7 @@
 // Modern Milky Way & Star Clusters vs Early Universe High-Redshift Cosmic Web
 // ============================================================================
 
-#import bevy_pbr::forward_io::VertexOutput
+import bevy_pbr::render::forward_io::VertexOutput;
 
 struct SkyboxUniforms {
     params: vec4<f32>, // x: time, y: scenario_blend (0.0 = Milky Way, 1.0 = Early Universe), z: exposure, w: star_twinkle
@@ -13,7 +13,7 @@ struct SkyboxUniforms {
     scenario_params: vec4<f32>, // x: galactic_center_blend (0.0 to 1.0)
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0)
+@group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> skybox: SkyboxUniforms;
 
 // --- FAST 3D HASH & VALUE NOISE FUNCTIONS ---

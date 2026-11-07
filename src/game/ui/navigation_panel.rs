@@ -14,7 +14,7 @@ pub fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) 
         .with_children(|right_col| {
             right_col
                 .spawn((
-                    Button,
+                    HudButton,
                     UiButtonAction::ToggleBottomRightPanel,
                     HudPanelElement::BottomRightPill,
                     Node {

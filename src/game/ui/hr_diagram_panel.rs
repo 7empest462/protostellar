@@ -25,7 +25,7 @@ use super::types::*;
 pub fn spawn_hr_diagram_panel(root: &mut ChildSpawnerCommands) {
     // 1. Minimized floating pill button
     root.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleMinimizeHrDiagram,
         HudPanelElement::HrDiagramPanelPill,
         Node {

@@ -95,7 +95,15 @@ fn project_world_to_viewport(
         return None; // Behind camera
     }
     let aspect = win_w / win_h;
-    let proj = Mat4::perspective_infinite_reverse_rh(std::f32::consts::FRAC_PI_4, aspect, 0.0001);
+    let (sin_fov, cos_fov) = (0.5 * std::f32::consts::FRAC_PI_4).sin_cos();
+    let h = cos_fov / sin_fov;
+    let w = h / aspect;
+    let proj = Mat4::from_cols(
+        Vec4::new(w, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, h, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.0, -1.0),
+        Vec4::new(0.0, 0.0, 0.0001, 0.0),
+    );
     let clip = proj.project_point3(view_pos);
     if !clip.is_finite() {
         return None;

@@ -397,15 +397,15 @@ pub fn step_galaxy_simulation_render_world(
         {
             if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
                 if let Some(sender) = sender.as_ref() {
-                    let mapped = staging_buf.slice(..).get_mapped_range();
-                    let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
-                    if buf.capacity() < mapped.len() {
-                        buf.reserve_exact(mapped.len().saturating_sub(buf.capacity()));
+                    if let Ok(mapped) = staging_buf.slice(..).get_mapped_range() {
+                        let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
+                        if buf.capacity() < mapped.len() {
+                            buf.reserve_exact(mapped.len().saturating_sub(buf.capacity()));
+                        }
+                        buf.clear();
+                        buf.extend_from_slice(&mapped);
+                        let _ = sender.tx.try_send(buf);
                     }
-                    buf.clear();
-                    buf.extend_from_slice(&mapped);
-                    let _ = sender.tx.try_send(buf);
-                    drop(mapped);
                 }
                 staging_buf.unmap();
                 state.store(STAGING_STATE_IDLE, Ordering::Release);

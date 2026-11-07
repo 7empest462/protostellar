@@ -7,7 +7,7 @@ use super::types::*;
 /// Spawns the complete floating Planet Builder & Spawner drawer modal.
 pub fn spawn_planet_builder_panel(root: &mut ChildSpawnerCommands) {
     root.spawn((
-        Button,
+        HudButton,
         UiButtonAction::ToggleMinimizePlanetBuilder,
         HudPanelElement::PlanetBuilderPill,
         Node {

@@ -373,12 +373,15 @@ fn step_gmc_far_field(
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
             if result.is_ok() {
-                let accs: Vec<[f32; 4]> = {
-                    let data = staging_cb.slice(..).get_mapped_range();
-                    bytemuck::pod_collect_to_vec::<u8, [f32; 4]>(&data)
-                };
+                let accs: Option<Vec<[f32; 4]>> = staging_cb
+                    .slice(..)
+                    .get_mapped_range()
+                    .ok()
+                    .map(|data| bytemuck::pod_collect_to_vec::<u8, [f32; 4]>(&data));
                 staging_cb.unmap();
-                let _ = tx.try_send((entities, accs));
+                if let Some(accs) = accs {
+                    let _ = tx.try_send((entities, accs));
+                }
             }
             busy_flag.store(false, Ordering::Release);
         });

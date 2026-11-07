@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use super::types::UiButtonAction;
+use super::types::{HudButton, UiButtonAction};
 
 /// Stores the resting colors of a Quick Bar button so it can be dynamically highlighted without recreating the UI.
 #[derive(Component, Debug, Clone, Copy)]
@@ -21,17 +21,17 @@ pub fn create_button(
 ) {
     parent
         .spawn((
-            Button,
+            HudButton,
             action,
             Node {
                 padding: UiRect::new(Val::Px(9.0), Val::Px(8.0), Val::Px(4.5), Val::Px(4.5)),
                 margin: UiRect::all(Val::Px(2.0)),
                 border: UiRect::new(Val::Px(2.5), Val::Px(0.5), Val::Px(0.5), Val::Px(0.5)),
                 border_radius: BorderRadius {
-                    top_left: Val::Px(1.5),
-                    top_right: Val::Px(7.0),
-                    bottom_right: Val::Px(1.5),
-                    bottom_left: Val::Px(7.0),
+                    top_left: Val::Px(1.5).into(),
+                    top_right: Val::Px(7.0).into(),
+                    bottom_right: Val::Px(1.5).into(),
+                    bottom_left: Val::Px(7.0).into(),
                 },
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -65,7 +65,7 @@ pub fn create_compact_selectable_button(
 ) {
     parent
         .spawn((
-            Button,
+            HudButton,
             action,
             QuickBarButtonBaseColor {
                 bg: base_bg,
@@ -76,10 +76,10 @@ pub fn create_compact_selectable_button(
                 margin: UiRect::all(Val::Px(1.5)),
                 border: UiRect::new(Val::Px(2.5), Val::Px(0.5), Val::Px(0.5), Val::Px(0.5)),
                 border_radius: BorderRadius {
-                    top_left: Val::Px(1.5),
-                    top_right: Val::Px(6.0),
-                    bottom_right: Val::Px(1.5),
-                    bottom_left: Val::Px(6.0),
+                    top_left: Val::Px(1.5).into(),
+                    top_right: Val::Px(6.0).into(),
+                    bottom_right: Val::Px(1.5).into(),
+                    bottom_left: Val::Px(6.0).into(),
                 },
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -111,17 +111,17 @@ pub fn create_compact_button(
 ) {
     parent
         .spawn((
-            Button,
+            HudButton,
             action,
             Node {
                 padding: UiRect::new(Val::Px(7.0), Val::Px(6.0), Val::Px(2.5), Val::Px(2.5)),
                 margin: UiRect::all(Val::Px(1.5)),
                 border: UiRect::new(Val::Px(2.5), Val::Px(0.5), Val::Px(0.5), Val::Px(0.5)),
                 border_radius: BorderRadius {
-                    top_left: Val::Px(1.5),
-                    top_right: Val::Px(6.0),
-                    bottom_right: Val::Px(1.5),
-                    bottom_left: Val::Px(6.0),
+                    top_left: Val::Px(1.5).into(),
+                    top_right: Val::Px(6.0).into(),
+                    bottom_right: Val::Px(1.5).into(),
+                    bottom_left: Val::Px(6.0).into(),
                 },
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,

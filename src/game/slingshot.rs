@@ -4,7 +4,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use std::f64::consts::PI;
 
-use crate::game::ui::NotificationToast;
+use crate::game::ui::{HudButton, NotificationToast};
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
@@ -157,8 +157,61 @@ fn execute_slingshot_release(
     slingshot_state.target_entity = None;
 }
 
+fn update_slingshot_drag_feedback(
+    slingshot_state: &SlingshotState,
+    star_pos: DVec3,
+    star_mass: f64,
+    toast: &mut NotificationToast,
+) {
+    let (Some(origin), Some(current)) = (slingshot_state.drag_origin, slingshot_state.drag_current)
+    else {
+        return;
+    };
+    let delta = current - origin;
+    if delta.length() < 0.02 {
+        return;
+    }
+
+    let launch_velocity = delta * slingshot_state.velocity_scale;
+    let v_au_yr = launch_velocity.length();
+    let v_kms = v_au_yr * AU_PER_YR_TO_KM_PER_S;
+    let rel_pos = origin - star_pos;
+
+    if let Some(el) = state_vectors_to_orbital_elements(rel_pos, launch_velocity, star_mass, 1e-6) {
+        let (status, icon) = if el.eccentricity >= 1.0 {
+            ("Hyperbolic Escape", "🚀")
+        } else if el.periapsis <= 0.006 {
+            ("STELLAR COLLISION WARNING", "💥")
+        } else if el.eccentricity < 0.10 {
+            ("CIRCULAR ORBIT", "✨")
+        } else {
+            ("Bound Orbit", "🪐")
+        };
+
+        toast.message = format!(
+            "🎯 Slingshot [{}]: Speed: {:.1} km/s ({:.2} AU/yr) | a={:.2} AU, e={:.2} [{} {}]",
+            slingshot_state.archetype.display_name(),
+            v_kms,
+            v_au_yr,
+            el.semi_major_axis,
+            el.eccentricity,
+            status,
+            icon,
+        );
+    } else {
+        toast.message = format!(
+            "🎯 Slingshot [{}]: Speed: {:.1} km/s ({:.2} AU/yr)",
+            slingshot_state.archetype.display_name(),
+            v_kms,
+            v_au_yr,
+        );
+    }
+    toast.timer = 0.25;
+}
+
 /// System that handles interactive orbital slingshot clicks, aiming drag vector, and launching.
 #[allow(
+    deprecated,
     clippy::too_many_arguments,
     clippy::type_complexity,
     reason = "Bevy system query dispatches across window, cameras, bodies, and slingshot state"
@@ -174,7 +227,7 @@ pub fn handle_slingshot_input(
     mut player_state: ResMut<PlayerInteractionState>,
     disk_params: Res<DiskParameters>,
     mut toast: ResMut<NotificationToast>,
-    ui_interaction_query: Query<&Interaction, With<Button>>,
+    ui_interaction_query: Query<&Interaction, With<HudButton>>,
     star_query: Query<&SimPosition, With<CentralStar>>,
     mut bodies_query: Query<(
         Entity,
@@ -242,53 +295,12 @@ pub fn handle_slingshot_input(
         if let Some(plane_pt) = hit_plane_coords {
             slingshot_state.drag_current = Some(plane_pt);
         }
-
-        if let (Some(origin), Some(current)) =
-            (slingshot_state.drag_origin, slingshot_state.drag_current)
-        {
-            let delta = current - origin;
-            let dist = delta.length();
-            if dist >= 0.02 {
-                let launch_velocity = delta * slingshot_state.velocity_scale;
-                let v_kms = launch_velocity.length() * AU_PER_YR_TO_KM_PER_S;
-                let v_au_yr = launch_velocity.length();
-                let star_mass = disk_params.central_star_mass;
-                let rel_pos = origin - star_pos;
-                let elements_opt =
-                    state_vectors_to_orbital_elements(rel_pos, launch_velocity, star_mass, 1e-6);
-
-                if let Some(el) = elements_opt {
-                    let (status, icon) = if el.eccentricity >= 1.0 {
-                        ("Hyperbolic Escape", "🚀")
-                    } else if el.periapsis <= 0.006 {
-                        ("STELLAR COLLISION WARNING", "💥")
-                    } else if el.eccentricity < 0.10 {
-                        ("CIRCULAR ORBIT", "✨")
-                    } else {
-                        ("Bound Orbit", "🪐")
-                    };
-
-                    toast.message = format!(
-                        "🎯 Slingshot [{}]: Speed: {:.1} km/s ({:.2} AU/yr) | a={:.2} AU, e={:.2} [{} {}]",
-                        slingshot_state.archetype.display_name(),
-                        v_kms,
-                        v_au_yr,
-                        el.semi_major_axis,
-                        el.eccentricity,
-                        status,
-                        icon,
-                    );
-                } else {
-                    toast.message = format!(
-                        "🎯 Slingshot [{}]: Speed: {:.1} km/s ({:.2} AU/yr)",
-                        slingshot_state.archetype.display_name(),
-                        v_kms,
-                        v_au_yr,
-                    );
-                }
-                toast.timer = 0.25;
-            }
-        }
+        update_slingshot_drag_feedback(
+            &slingshot_state,
+            star_pos,
+            disk_params.central_star_mass,
+            &mut toast,
+        );
     }
 
     // 3. Mouse released: execute launch or impulse

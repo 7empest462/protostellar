@@ -6,9 +6,10 @@ use crate::simulation::components::{CelestialBody, CentralStar};
 use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
-    HrDiagramPanel, HrDiagramPanelState, HudDynamicText, HudPanelElement, HudVisibilityState,
-    InspectorExoticHeader, InspectorSection, InspectorTab, PlanetBuilderPanel, PlanetBuilderState,
-    QuickBarButtonBaseColor, TelemetryGraphPanel, TelemetryPanelState, UiButtonAction,
+    HrDiagramPanel, HrDiagramPanelState, HudButton, HudDynamicText, HudPanelElement,
+    HudVisibilityState, InspectorExoticHeader, InspectorSection, InspectorTab, PlanetBuilderPanel,
+    PlanetBuilderState, QuickBarButtonBaseColor, TelemetryGraphPanel, TelemetryPanelState,
+    UiButtonAction,
 };
 use crate::simulation::resources::{
     DiagnosticOverlayMode, HabitableZoneConfig, LagrangeOverlayConfig,
@@ -43,7 +44,7 @@ pub fn update_hud_visibility(
             &mut BackgroundColor,
             &mut BorderColor,
         ),
-        With<Button>,
+        With<HudButton>,
     >,
 ) {
     update_panel_nodes(
@@ -80,7 +81,7 @@ fn update_inspector_tab_highlights(
             &mut BackgroundColor,
             &mut BorderColor,
         ),
-        With<Button>,
+        With<HudButton>,
     >,
     active_tab: InspectorTab,
 ) {

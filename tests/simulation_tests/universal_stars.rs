@@ -397,8 +397,8 @@ fn test_all_star_types_have_distinct_wgsl_photosphere_subtypes() {
         );
     }
 
-    let wgsl_src = std::fs::read_to_string("assets/shaders/planet.wgsl")
-        .expect("Failed to read assets/shaders/planet.wgsl");
+    let wgsl_src = std::fs::read_to_string("assets/shaders/planet.wesl")
+        .expect("Failed to read assets/shaders/planet.wesl");
     for idx in 0..=25u32 {
         let pattern = format!("subtype == {idx}u");
         assert!(
@@ -489,9 +489,9 @@ fn test_circumstellar_environments_and_shader_validity() {
         "QuarkStar must have compact photon sphere shadow parameter"
     );
 
-    // Validate assets/shaders/circumstellar.wgsl structure
-    let wgsl = std::fs::read_to_string("assets/shaders/circumstellar.wgsl")
-        .expect("Failed to read assets/shaders/circumstellar.wgsl");
+    // Validate assets/shaders/circumstellar.wesl structure
+    let wgsl = std::fs::read_to_string("assets/shaders/circumstellar.wesl")
+        .expect("Failed to read assets/shaders/circumstellar.wesl");
     assert!(wgsl.contains("struct CircumstellarUniforms"));
     for env_idx in 0..=4u32 {
         let branch = format!("env_type == {env_idx}u");
