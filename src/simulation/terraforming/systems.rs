@@ -130,7 +130,11 @@ fn resolve_bombardment_impact(
 
     // Record glowing impact crater basin
     let norm = params.disp.normalize_or_zero();
-    let surface_normal = Vec3::new(norm.x as f32, norm.y as f32, norm.z as f32);
+    let surface_normal = if norm == DVec3::ZERO {
+        Vec3::Y
+    } else {
+        Vec3::new(norm.x as f32, norm.y as f32, norm.z as f32)
+    };
     record_impact_crater_basin(
         commands,
         target.entity,
@@ -148,6 +152,8 @@ fn resolve_bombardment_impact(
             + delivery.steam_vapor_delivered_m_earth,
         gas_added_bar: delivery.delta_co2_bar + delivery.delta_nitrogen_bar,
         impact_velocity_km_s: delivery.impact_speed_km_s,
+        surface_normal,
+        crater_angular_radius: delivery.crater_angular_radius,
     });
 }
 
@@ -183,6 +189,7 @@ pub fn update_guided_bombardment_projectiles(
             Option<&mut TerraformingAtmosphere>,
             Option<&mut PlanetaryClimate>,
             Option<&mut InternalDifferentiation>,
+            Option<&Transform>,
         ),
         Without<BombardmentProjectile>,
     >,
@@ -209,6 +216,7 @@ pub fn update_guided_bombardment_projectiles(
             opt_terra,
             opt_climate,
             opt_diff,
+            opt_target_tf,
         )) = target_query.get_mut(proj.target_entity)
         else {
             // Target was consumed, shattered, or despawned
@@ -221,7 +229,11 @@ pub fn update_guided_bombardment_projectiles(
         let dt = sim_time.current_dt_yr.max(1e-6);
         let disp = p_pos.0 - t_pos.0;
         let dist = disp.length();
-        let contact_dist = (t_rad.0 + p_rad.0 * 2.0).max(t_rad.0 * 1.15);
+        let eff_target_radius = opt_target_tf
+            .map(|tf| f64::from(tf.scale.x))
+            .filter(|&vis_r| vis_r > t_rad.0 && (vis_r - 1.0).abs() > 1e-4)
+            .unwrap_or(t_rad.0);
+        let contact_dist = (eff_target_radius + p_rad.0 * 2.0).max(eff_target_radius * 1.02);
         let arrival_elapsed = sim_time.elapsed_years >= proj.expected_arrival_yr;
 
         if !check_swept_impact(

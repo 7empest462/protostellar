@@ -440,6 +440,53 @@ fn test_minor_bodies_do_not_spawn_atmosphere_shells() {
         ))
         .id();
 
+    app.add_systems(Update, sync_planetary_atmospheres);
+    app.update();
+
+    let comet_children = app.world().get::<Children>(comet_ent);
+    assert!(
+        comet_children.is_none() || comet_children.unwrap().is_empty(),
+        "Comet must never spawn an atmospheric shell child"
+    );
+
+    let asteroid_children = app.world().get::<Children>(asteroid_ent);
+    assert!(
+        asteroid_children.is_none() || asteroid_children.unwrap().is_empty(),
+        "Asteroid must never spawn an atmospheric shell child"
+    );
+}
+
+#[test]
+fn test_giant_planets_do_not_spawn_atmosphere_shells() {
+    use protostellar::rendering::bodies::VisualAssets;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::asset::AssetPlugin::default());
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<AtmosphereMaterial>>();
+
+    let sphere_mesh = {
+        let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+        meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap())
+    };
+
+    app.insert_resource(VisualAssets::dummy(sphere_mesh));
+
+    // Spawn central star
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        CentralStar,
+        SimPosition(bevy::math::DVec3::ZERO),
+        Mass(1.0),
+        Radius(0.00465),
+        Temperature(5778.0),
+        Composition::solar_gas(),
+    ));
+
     // Spawn Gas Giant (Jupiter) and Ice Giant (Neptune) — their opaque 1-bar cloud deck
     // and Chapman limb scattering are rendered natively on the planet mesh in planet.wgsl,
     // so they must never spawn a detached outer VisualAtmosphereChild envelope.
@@ -487,19 +534,6 @@ fn test_minor_bodies_do_not_spawn_atmosphere_shells() {
 
     app.add_systems(Update, sync_planetary_atmospheres);
     app.update();
-
-    // Verify neither Comet, Asteroid, GasGiant, nor IceGiant spawned an atmosphere shell child
-    let comet_children = app.world().get::<Children>(comet_ent);
-    assert!(
-        comet_children.is_none() || comet_children.unwrap().is_empty(),
-        "Comet must never spawn an atmospheric shell child"
-    );
-
-    let asteroid_children = app.world().get::<Children>(asteroid_ent);
-    assert!(
-        asteroid_children.is_none() || asteroid_children.unwrap().is_empty(),
-        "Asteroid must never spawn an atmospheric shell child"
-    );
 
     let jupiter_children = app.world().get::<Children>(jupiter_ent);
     assert!(

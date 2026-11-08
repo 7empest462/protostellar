@@ -603,6 +603,8 @@ pub struct ImpactShockwave {
     pub timer: f32,
     pub max_timer: f32,
     pub color: Color,
+    pub primary_entity: Option<Entity>,
+    pub local_position: Vec3,
 }
 
 /// Pool of active visual impact shockwaves.
@@ -842,6 +844,14 @@ pub struct MoltenDebrisFragment {
     pub max_age: f32,
     /// Recent past positions for trailing ribbon streamer.
     pub trail: [Vec3; 4],
+    /// Local position relative to primary entity center in AU.
+    pub local_position: Vec3,
+    /// Local ballistic velocity relative to primary entity in AU/s.
+    pub local_velocity: Vec3,
+    /// Local past positions relative to primary entity center.
+    pub local_trail: [Vec3; 4],
+    /// Optional color tint for icy/volatile ablation plumes.
+    pub color_tint: Option<Color>,
 }
 
 impl MoltenDebrisFragment {

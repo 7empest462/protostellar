@@ -101,6 +101,8 @@ pub struct BombardmentEvent {
     pub water_delivered_m_earth: f64,
     pub gas_added_bar: f32,
     pub impact_velocity_km_s: f64,
+    pub surface_normal: Vec3,
+    pub crater_angular_radius: f32,
 }
 
 /// Calculated outcome of an atmospheric entry and surface strike.

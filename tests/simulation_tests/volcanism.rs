@@ -334,3 +334,28 @@ fn test_ice_dwarf_vs_cryotectonic_moon_shader_routing() {
         );
     }
 }
+
+#[test]
+fn test_snowball_earth_and_frozen_planets_exclude_cryotectonic_fractures() {
+    crate::shader_guardrails::assert_shader_patterns(
+        "assets/shaders/planet.wesl",
+        &[
+            (
+                "let is_cryotectonic = planet.composition.y > 0.30",
+                "Cryotectonic fractures must be gated on bulk water ice composition > 0.30",
+            ),
+            (
+                "sastrugi_macro",
+                "Snowball surface must contain sastrugi wind dune features",
+            ),
+            (
+                "nunatak_thresh",
+                "Snowball surface must model continental nunatak mountain peaks",
+            ),
+        ],
+        &[(
+            "planet.climate_and_bio.y > 0.35\n            && (planet.planet_type == 4u",
+            "Surface climate ice fraction must not trigger cryotectonic fractures",
+        )],
+    );
+}

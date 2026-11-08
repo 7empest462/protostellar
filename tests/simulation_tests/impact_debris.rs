@@ -7,6 +7,7 @@ use protostellar::simulation::components::{BodyType, Mass, Radius, SimPosition, 
 use protostellar::simulation::resources::{
     ImpactEjectaPool, MoltenDebrisFragment, SimTime, TimeWarp,
 };
+use protostellar::simulation::terraforming::{BombardmentEvent, BombardmentType};
 use protostellar::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU};
 
 #[test]
@@ -23,6 +24,10 @@ fn test_molten_debris_blackbody_colors() {
         age: 0.0,
         max_age: 10.0,
         trail: [Vec3::ZERO; 4],
+        local_position: Vec3::ZERO,
+        local_velocity: Vec3::ZERO,
+        local_trail: [Vec3::ZERO; 4],
+        color_tint: None,
     };
 
     // 3500 K: White-hot plasma core
@@ -60,6 +65,7 @@ fn test_moon_formation_ejecta_spawns_fragments_and_rings() {
         .add_message::<MoonFormationEvent>()
         .add_message::<AccretionMergeEvent>()
         .add_message::<CollisionBounceEvent>()
+        .add_message::<BombardmentEvent>()
         .init_resource::<ImpactEjectaPool>()
         .insert_resource(TimeWarp::default())
         .insert_resource(SimTime::default())
@@ -133,6 +139,7 @@ fn test_collision_merger_spawns_ballistic_fragments() {
         .add_message::<MoonFormationEvent>()
         .add_message::<AccretionMergeEvent>()
         .add_message::<CollisionBounceEvent>()
+        .add_message::<BombardmentEvent>()
         .init_resource::<ImpactEjectaPool>()
         .insert_resource(TimeWarp::default())
         .insert_resource(SimTime::default())
@@ -186,6 +193,7 @@ fn test_reimpact_detection_culls_subsurface_fragments() {
         .add_message::<MoonFormationEvent>()
         .add_message::<AccretionMergeEvent>()
         .add_message::<CollisionBounceEvent>()
+        .add_message::<BombardmentEvent>()
         .init_resource::<ImpactEjectaPool>()
         .insert_resource(TimeWarp::default())
         .insert_resource(SimTime::default())
@@ -219,6 +227,10 @@ fn test_reimpact_detection_culls_subsurface_fragments() {
             age: 0.0,
             max_age: 10.0,
             trail: [planet_pos; 4],
+            local_position: Vec3::new(planet_rad * 0.5, 0.0, 0.0),
+            local_velocity: Vec3::ZERO,
+            local_trail: [Vec3::new(planet_rad * 0.5, 0.0, 0.0); 4],
+            color_tint: None,
         });
         pool.fragments.push(MoltenDebrisFragment {
             position: planet_pos + Vec3::new(planet_rad * 10.0, 0.0, 0.0), // Safe orbital distance
@@ -232,6 +244,10 @@ fn test_reimpact_detection_culls_subsurface_fragments() {
             age: 0.0,
             max_age: 10.0,
             trail: [planet_pos; 4],
+            local_position: Vec3::new(planet_rad * 10.0, 0.0, 0.0),
+            local_velocity: Vec3::new(0.0, 0.0, 0.5),
+            local_trail: [Vec3::new(planet_rad * 10.0, 0.0, 0.0); 4],
+            color_tint: None,
         });
     }
 
@@ -255,6 +271,7 @@ fn test_comet_impact_ejecta_blasts_into_space_and_gets_reabsorbed() {
         .add_message::<MoonFormationEvent>()
         .add_message::<AccretionMergeEvent>()
         .add_message::<CollisionBounceEvent>()
+        .add_message::<BombardmentEvent>()
         .init_resource::<ImpactEjectaPool>()
         .insert_resource(TimeWarp::default())
         .insert_resource(SimTime::default())
@@ -337,4 +354,100 @@ fn test_comet_impact_ejecta_blasts_into_space_and_gets_reabsorbed() {
         remaining < initial_count / 4,
         "Sub-orbital ballistic ejecta must curve back under planet gravity and get reabsorbed into the planet (initial: {initial_count}, remaining: {remaining})"
     );
+}
+
+#[test]
+fn test_bombardment_event_ejecta_comoves_with_orbiting_planet() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_message::<MoonFormationEvent>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .add_message::<BombardmentEvent>()
+        .init_resource::<ImpactEjectaPool>()
+        .insert_resource(TimeWarp::default())
+        .insert_resource(SimTime::default())
+        .add_systems(Update, update_impact_ejecta);
+
+    let initial_planet_pos = Vec3::new(1.0, 0.0, 0.0);
+    let visual_radius = 0.02_f32;
+    let surface_normal = Vec3::new(0.0, 1.0, 0.0);
+
+    let planet_ent = app
+        .world_mut()
+        .spawn((
+            SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, 6.28)),
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            Transform::from_translation(initial_planet_pos).with_scale(Vec3::splat(visual_radius)),
+        ))
+        .id();
+
+    // Fire BombardmentEvent
+    {
+        let mut events = app
+            .world_mut()
+            .resource_mut::<bevy::ecs::message::Messages<BombardmentEvent>>();
+        events.write(BombardmentEvent {
+            target_entity: planet_ent,
+            target_name: "Earth".to_string(),
+            bombardment_type: BombardmentType::IcyComet,
+            water_delivered_m_earth: 0.0001,
+            gas_added_bar: 0.05,
+            impact_velocity_km_s: 35.0,
+            surface_normal,
+            crater_angular_radius: 0.08,
+        });
+    }
+
+    // Frame 1: Impact event is processed immediately
+    app.update();
+
+    {
+        let pool = app.world().resource::<ImpactEjectaPool>();
+        assert!(
+            !pool.fragments.is_empty(),
+            "BombardmentEvent must spawn ejecta immediately without waiting for basin polling"
+        );
+        for frag in &pool.fragments {
+            assert_eq!(frag.primary_entity, planet_ent);
+            assert!(frag.color_tint.is_some(), "Icy comet must have color tint");
+            let d = frag.position.distance(initial_planet_pos);
+            assert!(
+                d >= visual_radius * 0.95 && d <= visual_radius * 1.5,
+                "Ejecta must erupt directly from the planet's visible surface (d={d})"
+            );
+        }
+    }
+
+    // Simulate planet orbiting ahead along its orbital trajectory
+    let orbit_displacement = Vec3::new(0.35, 0.0, 0.45);
+    let new_planet_pos = initial_planet_pos + orbit_displacement;
+    {
+        let mut entity_mut = app.world_mut().entity_mut(planet_ent);
+        entity_mut.get_mut::<SimPosition>().unwrap().0 += bevy::math::DVec3::new(0.35, 0.0, 0.45);
+        entity_mut.get_mut::<Transform>().unwrap().translation = new_planet_pos;
+    }
+
+    // Frame 2: Next frame after orbit step
+    app.update();
+
+    {
+        let pool = app.world().resource::<ImpactEjectaPool>();
+        assert!(!pool.fragments.is_empty());
+        for frag in &pool.fragments {
+            let dist_to_planet = frag.position.distance(new_planet_pos);
+            let dist_to_old_pos = frag.position.distance(initial_planet_pos);
+
+            assert!(
+                dist_to_planet <= visual_radius * 2.5,
+                "Ejecta must co-move seamlessly with the orbiting planet (dist_to_planet={dist_to_planet})"
+            );
+            assert!(
+                dist_to_old_pos > orbit_displacement.length() * 0.5,
+                "Ejecta must NOT lag behind at old orbital position (dist_to_old_pos={dist_to_old_pos})"
+            );
+        }
+    }
 }

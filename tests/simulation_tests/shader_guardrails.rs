@@ -440,53 +440,68 @@ fn test_entity_try_despawn_idempotence_and_safety() {
     assert!(app.world().get_entity(e2).is_err(), "e2 must be despawned");
 }
 
+/// Asserts that a shader source file contains all required string patterns
+/// and does not contain any forbidden string patterns.
+pub(crate) fn assert_shader_patterns(
+    shader_path: &str,
+    required: &[(&str, &str)],
+    forbidden: &[(&str, &str)],
+) {
+    let content = std::fs::read_to_string(shader_path)
+        .unwrap_or_else(|err| panic!("{shader_path} must exist and be readable: {err:?}"));
+
+    for &(pattern, message) in required {
+        assert!(
+            content.contains(pattern),
+            "{message} (missing required pattern: {pattern})"
+        );
+    }
+    for &(pattern, message) in forbidden {
+        assert!(
+            !content.contains(pattern),
+            "{message} (found forbidden pattern: {pattern})"
+        );
+    }
+}
+
 #[test]
 fn test_planet_wgsl_ocean_hypsometry_guardrails() {
-    let content = std::fs::read_to_string("assets/shaders/planet.wesl")
-        .expect("assets/shaders/planet.wesl must exist");
-
-    // Guardrail 1: Exposed seabed must ONLY render when oceans are absent (!has_oceans)
-    assert!(
-        content.contains("let is_exposed_seabed = !has_oceans && (elev < primordial_shelf_elev);"),
-        "planet.wgsl must guard exposed seabed by !has_oceans on terrestrial planets"
-    );
-    assert!(
-        content.contains(
-            "let is_exposed_seabed = !has_oceans && (combined_elev < primordial_shelf_elev);"
-        ),
-        "planet.wgsl must guard exposed seabed by !has_oceans on super-earths"
-    );
-
-    // Guardrail 2: Oceanic base elevation must stay submerged below sea level
-    assert!(
-        content.contains("let ocean_base = sea_level - 0.22;"),
-        "planet.wgsl must depress oceanic basin base level safely below sea_level"
-    );
-
-    // Guardrail 3: Animated gentle capillary swell must exist on open water
-    assert!(
-        content.contains("let ocean_normal = normalize(surface_dir + wave_pert_world);"),
-        "planet.wgsl must compute smooth liquid capillary swell for open water"
-    );
-
-    // Guardrail 4: Ice caps and eyeball glaciers must strictly require volatile water/ice
-    assert!(
-        content.contains(
-            "let has_volatile_ice = has_volatiles && (ice_frac > 0.005 || ocean_frac > 0.005);"
-        ),
-        "planet.wgsl must define has_volatile_ice before evaluating ice caps"
-    );
-    assert!(
-        content
-            .contains("let eyeball_ice = is_tidally_locked && has_volatile_ice && (temp < 345.0)"),
-        "planet.wgsl must require has_volatile_ice for eyeball glaciers"
-    );
-    assert!(
-        content.contains("if (in_ice_cap) {"),
-        "planet.wgsl must guard ice cap rendering by in_ice_cap"
-    );
-    assert!(
-        content.contains("let boil_steam_factor = clamp((temp - 345.0) / 35.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles"),
-        "planet.wgsl must strictly require has_water_volatiles before activating boiling-ocean steam clouds"
+    assert_shader_patterns(
+        "assets/shaders/planet.wesl",
+        &[
+            (
+                "let is_exposed_seabed = !has_oceans && (elev < primordial_shelf_elev);",
+                "planet.wgsl must guard exposed seabed by !has_oceans on terrestrial planets",
+            ),
+            (
+                "let is_exposed_seabed = !has_oceans && (combined_elev < primordial_shelf_elev);",
+                "planet.wgsl must guard exposed seabed by !has_oceans on super-earths",
+            ),
+            (
+                "let ocean_base = sea_level - 0.22;",
+                "planet.wgsl must depress oceanic basin base level safely below sea_level",
+            ),
+            (
+                "let ocean_normal = normalize(surface_dir + wave_pert_world);",
+                "planet.wgsl must compute smooth liquid capillary swell for open water",
+            ),
+            (
+                "let has_volatile_ice = has_volatiles && (ice_frac > 0.005 || ocean_frac > 0.005);",
+                "planet.wgsl must define has_volatile_ice before evaluating ice caps",
+            ),
+            (
+                "let eyeball_ice = is_tidally_locked && has_volatile_ice && (temp < 345.0)",
+                "planet.wgsl must require has_volatile_ice for eyeball glaciers",
+            ),
+            (
+                "if (in_ice_cap) {",
+                "planet.wgsl must guard ice cap rendering by in_ice_cap",
+            ),
+            (
+                "let boil_steam_factor = clamp((temp - 345.0) / 35.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles",
+                "planet.wgsl must strictly require has_water_volatiles before activating boiling-ocean steam clouds",
+            ),
+        ],
+        &[],
     );
 }

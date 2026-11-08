@@ -341,6 +341,40 @@ fn sync_orbital_near_plane(projection: &mut Projection, orbital_radius: f32) {
     }
 }
 
+fn process_surface_camera_inputs(
+    camera: &mut PanOrbitCamera,
+    mouse_buttons: &ButtonInput<MouseButton>,
+    keyboard_input: &ButtonInput<KeyCode>,
+    mouse_motion_events: &mut MessageReader<MouseMotion>,
+    mouse_wheel_events: &mut MessageReader<MouseWheel>,
+    text_focused: bool,
+    player_target: Option<Entity>,
+    toast: &mut NotificationToast,
+) -> (f32, f32) {
+    let is_shift =
+        keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
+    if !text_focused && is_shift && keyboard_input.just_pressed(KeyCode::KeyV) {
+        toggle_surface_horizon_mode(camera, player_target, toast);
+    }
+
+    if !camera.surface_horizon_mode {
+        return (0.0, 0.0);
+    }
+
+    let (delta_yaw, delta_pitch, scroll) = read_surface_mouse_and_scroll_deltas(
+        mouse_buttons,
+        mouse_motion_events,
+        mouse_wheel_events,
+        camera.orbit_sensitivity,
+    );
+
+    if text_focused {
+        (0.0, 0.0)
+    } else {
+        step_surface_horizon_controls(keyboard_input, delta_yaw, delta_pitch, scroll, camera)
+    }
+}
+
 /// Synchronizes the 3D camera transform, near clipping plane, and manual rover driving
 /// when First-Person Surface / Rover Horizon Mode (`Shift + V`) is active.
 #[allow(
@@ -378,29 +412,21 @@ pub fn update_surface_horizon_camera(
     let text_focused =
         crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
 
-    let is_shift =
-        keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
-    if !text_focused && is_shift && keyboard_input.just_pressed(KeyCode::KeyV) {
-        toggle_surface_horizon_mode(&mut camera, player_state.selected_entity, &mut toast);
-    }
+    let (forward_drive, turn_drive) = process_surface_camera_inputs(
+        &mut camera,
+        &mouse_buttons,
+        &keyboard_input,
+        &mut mouse_motion_events,
+        &mut mouse_wheel_events,
+        text_focused,
+        player_state.selected_entity,
+        &mut toast,
+    );
 
     if !camera.surface_horizon_mode {
         sync_orbital_near_plane(&mut projection, camera.radius);
         return;
     }
-
-    let (delta_yaw, delta_pitch, scroll) = read_surface_mouse_and_scroll_deltas(
-        &mouse_buttons,
-        &mut mouse_motion_events,
-        &mut mouse_wheel_events,
-        camera.orbit_sensitivity,
-    );
-
-    let (forward_drive, turn_drive) = if text_focused {
-        (0.0, 0.0)
-    } else {
-        step_surface_horizon_controls(&keyboard_input, delta_yaw, delta_pitch, scroll, &mut camera)
-    };
 
     let candidate_target = player_state.selected_entity.or(camera.target_entity);
     let Some((host_ent, opt_rover_ent, mut unspun_norm, mut heading_unspun)) =

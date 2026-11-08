@@ -100,11 +100,14 @@ pub fn update_impact_shockwaves(
             ev.merged_position.y as f32,
             ev.merged_position.z as f32,
         );
-        let (pos, r_surf) = if let Ok((_, p_pos, p_rad, p_tf, opt_basins, opt_mat)) =
+        let (local_pos, pos, r_surf) = if let Ok((_, p_pos, p_rad, p_tf, opt_basins, opt_mat)) =
             bodies_query.get(ev.primary_entity)
         {
-            let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
-            resolve_shockwave_surface_pos_and_radius(
+            let p_center = p_tf.map_or(
+                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                |tf| tf.translation,
+            );
+            let (w_pos, r) = resolve_shockwave_surface_pos_and_radius(
                 p_pos,
                 p_rad,
                 p_tf,
@@ -112,9 +115,10 @@ pub fn update_impact_shockwaves(
                 opt_mat,
                 materials_ref,
                 ev_pos - p_center,
-            )
+            );
+            (w_pos - p_center, w_pos, r)
         } else {
-            (ev_pos, 0.04)
+            (Vec3::ZERO, ev_pos, 0.04)
         };
 
         let max_r = (r_surf * (0.45 + (ev.merged_mass * 400.0).cbrt() as f32 * 0.40))
@@ -132,12 +136,17 @@ pub fn update_impact_shockwaves(
             timer: 0.0,
             max_timer: 1.4,
             color,
+            primary_entity: Some(ev.primary_entity),
+            local_position: local_pos,
         });
     }
 
     for ev in bounce_reader.read() {
         if let Ok((_, pos1, p_rad, p_tf, _, _)) = bodies_query.get(ev.entity1) {
-            let pos = Vec3::new(pos1.x as f32, pos1.y as f32, pos1.z as f32);
+            let pos = p_tf.map_or(
+                Vec3::new(pos1.x as f32, pos1.y as f32, pos1.z as f32),
+                |tf| tf.translation,
+            );
             let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
             let r_surf = p_tf
                 .map(|tf| tf.scale.x)
@@ -150,6 +159,8 @@ pub fn update_impact_shockwaves(
                 timer: 0.0,
                 max_timer: 1.0,
                 color: Color::srgba(0.4, 0.8, 1.0, 0.7),
+                primary_entity: Some(ev.entity1),
+                local_position: Vec3::ZERO,
             });
         }
     }
@@ -163,6 +174,8 @@ pub fn update_impact_shockwaves(
             timer: 0.0,
             max_timer: 3.5,
             color: Color::srgba(1.0, 0.2, 0.1, 0.95),
+            primary_entity: None,
+            local_position: Vec3::ZERO,
         });
     }
 
@@ -170,6 +183,15 @@ pub fn update_impact_shockwaves(
         sw.timer += dt;
         let progress = sw.timer / sw.max_timer;
         sw.radius = sw.max_radius * progress.sqrt();
+        if let Some(ent) = sw.primary_entity {
+            if let Ok((_, p_pos, _, p_tf, _, _)) = bodies_query.get(ent) {
+                let p_center = p_tf.map_or(
+                    Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                    |tf| tf.translation,
+                );
+                sw.position = p_center + sw.local_position;
+            }
+        }
         sw.timer < sw.max_timer
     });
 }

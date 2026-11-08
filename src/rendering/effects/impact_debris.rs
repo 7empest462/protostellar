@@ -5,6 +5,7 @@ use crate::rendering::materials::PlanetMaterial;
 use crate::simulation::accretion::events::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::terraforming::{BombardmentEvent, BombardmentType};
 
 type BodyQueryItem<'w> = (
     Entity,
@@ -112,6 +113,7 @@ fn spawn_ballistic_ejecta_fountain(
     n_spawn: usize,
     base_temp: f32,
     total_ejecta_mass: f64,
+    opt_bombard_type: Option<BombardmentType>,
 ) {
     let normal = if world_normal.length_squared() > 1e-6 {
         world_normal.normalize()
@@ -122,8 +124,8 @@ fn spawn_ballistic_ejecta_fountain(
     // Avoid duplicate spawning if an event and basin update trigger on the same impact frame
     let already_spawned = ejecta_pool.fragments.iter().any(|f| {
         f.primary_entity == p_ent
-            && f.age < 0.20
-            && (f.position - p_center).normalize_or_zero().dot(normal) > 0.65
+            && f.age < 0.25
+            && f.local_position.normalize_or_zero().dot(normal) > 0.65
     });
     if already_spawned {
         return;
@@ -138,6 +140,14 @@ fn spawn_ballistic_ejecta_fountain(
     let bitangent = normal.cross(tangent).normalize_or_zero();
     let v_circ_eff = EJECTA_SURFACE_OMEGA * r_surf;
 
+    let color_tint = match opt_bombard_type {
+        Some(BombardmentType::IcyComet) => Some(Color::srgba(0.85, 0.95, 1.0, 0.95)),
+        Some(BombardmentType::CarbonaceousChondrite) => Some(Color::srgba(1.0, 0.68, 0.32, 0.95)),
+        Some(BombardmentType::VolatileAblationSalvo) => Some(Color::srgba(0.65, 0.82, 1.0, 0.90)),
+        Some(BombardmentType::IronAsteroid) => Some(Color::srgba(1.0, 0.98, 0.88, 0.98)),
+        None => None,
+    };
+
     for i in 0..n_spawn {
         let frac = i as f32 / (n_spawn.max(1) as f32);
         let az = frac * TAU + (i as f32 * 0.73).sin() * 0.32;
@@ -151,14 +161,15 @@ fn spawn_ballistic_ejecta_fountain(
         // in space and 100% fall back into the planet within ~2.5 seconds
         let speed_frac = (i as f32 * 2.31).sin() * 0.5 + 0.5;
         let speed = v_circ_eff * (0.62 + speed_frac * 0.34);
-        let pos = p_center + normal * (r_surf * 1.03) + dir * (r_surf * 0.02);
-        let vel = dir * speed;
+        let local_pos = normal * (r_surf * 1.02) + dir * (r_surf * 0.015);
+        let local_vel = dir * speed;
+        let world_pos = p_center + local_pos;
         let temp = base_temp + ((i as f32 * 1.9).sin() * 0.5 + 0.5) * 450.0;
         let size_frac = (i as f32 * 1.17).cos() * 0.5 + 0.5;
 
         ejecta_pool.fragments.push(MoltenDebrisFragment {
-            position: pos,
-            velocity: vel,
+            position: world_pos,
+            velocity: local_vel,
             initial_temperature: temp,
             temperature: temp,
             cooling_rate: 0.42 + ((i as f32 * 0.5).sin() * 0.5 + 0.5) * 0.28,
@@ -166,8 +177,12 @@ fn spawn_ballistic_ejecta_fountain(
             mass: total_ejecta_mass / f64::from(n_spawn.max(1) as u32),
             primary_entity: p_ent,
             age: 0.0,
-            max_age: 6.5 + ((i as f32 * 1.2).sin() * 0.5 + 0.5) * 4.5,
-            trail: [pos; 4],
+            max_age: 4.5 + ((i as f32 * 1.2).sin() * 0.5 + 0.5) * 3.5,
+            trail: [world_pos; 4],
+            local_position: local_pos,
+            local_velocity: local_vel,
+            local_trail: [local_pos; 4],
+            color_tint,
         });
     }
 }
@@ -218,20 +233,20 @@ fn collect_moon_formation_ejecta(
                 let frac = i as f32 / n_molten as f32;
                 let r_dist = disk_in + (disk_out - disk_in) * frac;
                 let theta = frac * TAU + (i as f32 * 0.35).sin() * 0.15;
-                let pos = p_center
-                    + Vec3::new(
-                        r_dist * theta.cos(),
-                        ((i as f32 * 2.1).sin() * 0.04) * r_dist,
-                        r_dist * theta.sin(),
-                    );
-
                 let v_circ = v_circ_surf * (r_surf / r_dist.max(1e-5)).sqrt();
                 let v_dir = Vec3::new(-theta.sin(), 0.0, theta.cos());
                 let vel = v_dir * v_circ * (0.92 + (i as f32 * 1.7).sin() * 0.14);
 
                 let temp = 2800.0 + (i as f32 * 1.3).sin() * 600.0;
+                let local_pos = Vec3::new(
+                    r_dist * theta.cos(),
+                    ((i as f32 * 2.1).sin() * 0.04) * r_dist,
+                    r_dist * theta.sin(),
+                );
+                let world_pos = p_center + local_pos;
+
                 ejecta_pool.fragments.push(MoltenDebrisFragment {
-                    position: pos,
+                    position: world_pos,
                     velocity: vel,
                     initial_temperature: temp,
                     temperature: temp,
@@ -241,7 +256,11 @@ fn collect_moon_formation_ejecta(
                     primary_entity: ev.parent_entity,
                     age: 0.0,
                     max_age: 18.0 + ((i as f32 * 1.4).sin() * 0.5 + 0.5) * 12.0,
-                    trail: [pos; 4],
+                    trail: [world_pos; 4],
+                    local_position: local_pos,
+                    local_velocity: vel,
+                    local_trail: [local_pos; 4],
+                    color_tint: None,
                 });
             }
         }
@@ -262,7 +281,10 @@ fn collect_collision_merger_ejecta(
             continue;
         };
 
-        let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+        let p_center = p_tf.map_or(
+            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+            |tf| tf.translation,
+        );
         let r_surf = effective_surface_radius(p_rad, p_tf);
         let imp_pos = Vec3::new(
             ev.merged_position.x as f32,
@@ -290,6 +312,57 @@ fn collect_collision_merger_ejecta(
             n_spawn,
             base_temp,
             ev.merged_mass * 0.005,
+            None,
+        );
+    }
+}
+
+/// Spawns 3D ballistic ejecta fountains immediately upon guided bombardment impact.
+fn collect_bombardment_ejecta(
+    ejecta_pool: &mut ImpactEjectaPool,
+    bombard_reader: &mut MessageReader<BombardmentEvent>,
+    bodies_query: &Query<BodyQueryItem>,
+    opt_materials: Option<&Assets<PlanetMaterial>>,
+) {
+    for ev in bombard_reader.read() {
+        let Ok((p_ent, p_pos, _, p_mass, p_rad, p_tf, opt_basins, opt_mat_handle)) =
+            bodies_query.get(ev.target_entity)
+        else {
+            continue;
+        };
+
+        let p_center = p_tf.map_or(
+            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+            |tf| tf.translation,
+        );
+        let r_surf = effective_surface_radius(p_rad, p_tf);
+        let world_normal = resolve_entity_world_impact_normal(
+            ev.surface_normal,
+            opt_basins,
+            opt_mat_handle,
+            opt_materials,
+        );
+
+        let (n_spawn, base_temp, mass_ejecta): (usize, f32, f64) = match ev.bombardment_type {
+            BombardmentType::IcyComet => (36, 2800.0, 4.0e-6),
+            BombardmentType::CarbonaceousChondrite => (30, 2600.0, 3.5e-6),
+            BombardmentType::VolatileAblationSalvo => (24, 2200.0, 2.5e-6),
+            BombardmentType::IronAsteroid => (48, 3600.0, 8.0e-6),
+        };
+
+        let m_prim = p_mass.map_or(3e-6, |m| m.0);
+        let total_mass = mass_ejecta.min(m_prim * 1e-4);
+
+        spawn_ballistic_ejecta_fountain(
+            ejecta_pool,
+            p_ent,
+            p_center,
+            r_surf,
+            world_normal,
+            n_spawn,
+            base_temp,
+            total_mass,
+            Some(ev.bombardment_type),
         );
     }
 }
@@ -327,7 +400,10 @@ fn collect_basin_impact_ejecta(
         }
         triggered_basins.push((p_ent, norm_key));
 
-        let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+        let p_center = p_tf.map_or(
+            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+            |tf| tf.translation,
+        );
         let r_surf = effective_surface_radius(p_rad, p_tf);
         let world_normal = resolve_entity_world_impact_normal(
             latest.surface_normal,
@@ -350,6 +426,7 @@ fn collect_basin_impact_ejecta(
             n_spawn,
             base_temp,
             m_prim * 1e-4 * f64::from(size_factor),
+            None,
         );
     }
 }
@@ -393,12 +470,14 @@ fn collect_collision_bounce_ejecta(
             let angle = (i as f32 / n_spray as f32 - 0.5) * 1.4;
             let dir = (spray_dir * angle.cos() + side * angle.sin()).normalize_or_zero();
             let speed = v_circ * (0.78 + ((i as f32 * 1.7).sin() * 0.5 + 0.5) * 0.48);
-            let pos = p1 + spray_dir * (r_surf * 1.04) + dir * (r_surf * 0.04);
+            let local_pos = spray_dir * (r_surf * 1.04) + dir * (r_surf * 0.04);
+            let local_vel = dir * speed;
+            let world_pos = p1 + local_pos;
             let temp = 2400.0 + ((i as f32 * 1.3).sin() * 0.5 + 0.5) * 600.0;
 
             ejecta_pool.fragments.push(MoltenDebrisFragment {
-                position: pos,
-                velocity: dir * speed,
+                position: world_pos,
+                velocity: local_vel,
                 initial_temperature: temp,
                 temperature: temp,
                 cooling_rate: 0.38,
@@ -407,7 +486,11 @@ fn collect_collision_bounce_ejecta(
                 primary_entity: ev.entity1,
                 age: 0.0,
                 max_age: 7.0,
-                trail: [pos; 4],
+                trail: [world_pos; 4],
+                local_position: local_pos,
+                local_velocity: local_vel,
+                local_trail: [local_pos; 4],
+                color_tint: None,
             });
         }
     }
@@ -417,9 +500,7 @@ fn collect_collision_bounce_ejecta(
 fn step_ejecta_simulation(
     ejecta_pool: &mut ImpactEjectaPool,
     dt_secs: f32,
-    sim_dt_yr: f64,
     bodies_query: &Query<BodyQueryItem>,
-    _star_query: &Query<(&SimPosition, &Mass), With<CentralStar>>,
 ) {
     let dt = if dt_secs > 1e-3 {
         dt_secs.min(0.05)
@@ -437,46 +518,51 @@ fn step_ejecta_simulation(
         let cool_decay = (-frag.cooling_rate * frag.age).exp();
         frag.temperature = 200.0 + (frag.initial_temperature - 200.0) * cool_decay;
 
-        // Gravitational acceleration toward primary planet and surface reabsorption
-        if let Ok((_, p_pos, p_vel, _, p_rad, p_tf, _, _)) = bodies_query.get(frag.primary_entity) {
-            let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
-            // Co-move ejecta with the orbiting planet's frame displacement
-            if let Some(vel) = p_vel {
-                let p_delta = Vec3::new(
-                    (vel.x * sim_dt_yr) as f32,
-                    (vel.y * sim_dt_yr) as f32,
-                    (vel.z * sim_dt_yr) as f32,
-                );
-                if p_delta.is_finite() && p_delta.length_squared() < 4.0 {
-                    frag.position += p_delta;
-                    for t_pt in &mut frag.trail {
-                        *t_pt += p_delta;
-                    }
-                }
-            }
-
-            let to_center = p_center - frag.position;
-            let dist = to_center.length();
+        // Gravitational acceleration toward primary planet and surface reabsorption in planet local frame
+        if let Ok((_, p_pos, _, _, p_rad, p_tf, _, _)) = bodies_query.get(frag.primary_entity) {
+            let p_center = p_tf.map_or(
+                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                |tf| tf.translation,
+            );
             let r_surf = effective_surface_radius(p_rad, p_tf);
 
+            // Backward compatibility for fragments initialized without local coordinates
+            if frag.local_position == Vec3::ZERO && frag.position != Vec3::ZERO {
+                frag.local_position = frag.position - p_center;
+                frag.local_velocity = frag.velocity;
+                frag.local_trail = [frag.local_position; 4];
+            }
+
+            let to_center = -frag.local_position;
+            let dist = frag.local_position.length();
+
             // Re-impact / reabsorption detection: fragment plunged back into the planet's surface
-            let is_falling_inward = to_center.dot(frag.velocity) >= -1e-6;
-            if dist <= r_surf * 0.98 || (dist <= r_surf * 1.03 && is_falling_inward) {
+            let is_falling_inward = to_center.dot(frag.local_velocity) >= -1e-6;
+            if dist <= r_surf * 0.98 || (dist <= r_surf * 1.02 && is_falling_inward) {
                 return false;
             }
 
             let mu_eff = EJECTA_SURFACE_OMEGA * EJECTA_SURFACE_OMEGA * r_surf * r_surf * r_surf;
             let inv_r3 = 1.0 / (dist * dist * dist).max(1e-18);
             let a_prim = to_center * (mu_eff * inv_r3);
-            frag.velocity += a_prim * dt;
+            frag.local_velocity += a_prim * dt;
 
             // Shift trailing history
-            frag.trail[3] = frag.trail[2];
-            frag.trail[2] = frag.trail[1];
-            frag.trail[1] = frag.trail[0];
-            frag.trail[0] = frag.position;
+            frag.local_trail[3] = frag.local_trail[2];
+            frag.local_trail[2] = frag.local_trail[1];
+            frag.local_trail[1] = frag.local_trail[0];
+            frag.local_trail[0] = frag.local_position;
 
-            frag.position += frag.velocity * dt;
+            frag.local_position += frag.local_velocity * dt;
+
+            // Synchronize world coordinates
+            frag.position = p_center + frag.local_position;
+            frag.trail[0] = p_center + frag.local_trail[0];
+            frag.trail[1] = p_center + frag.local_trail[1];
+            frag.trail[2] = p_center + frag.local_trail[2];
+            frag.trail[3] = p_center + frag.local_trail[3];
+            frag.velocity = frag.local_velocity;
+
             true
         } else {
             false
@@ -493,8 +579,11 @@ fn step_ejecta_simulation(
     // Step expanding ring structures
     ejecta_pool.rings.retain_mut(|ring| {
         ring.timer += dt;
-        if let Ok((_, pos, _, _, _, _, _, _)) = bodies_query.get(ring.primary_entity) {
-            ring.primary_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        if let Ok((_, pos, _, _, _, p_tf, _, _)) = bodies_query.get(ring.primary_entity) {
+            ring.primary_pos = p_tf
+                .map_or(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32), |tf| {
+                    tf.translation
+                });
         }
         for frag in &mut ring.fragments {
             frag.1 += frag.2 * dt;
@@ -507,15 +596,16 @@ fn step_ejecta_simulation(
 #[allow(clippy::too_many_arguments, reason = "Bevy ECS system parameters")]
 pub fn update_impact_ejecta(
     time: Res<Time>,
-    sim_time: Option<Res<SimTime>>,
+    _sim_time: Option<Res<SimTime>>,
     time_warp: Option<Res<TimeWarp>>,
     opt_materials: Option<Res<Assets<PlanetMaterial>>>,
     mut ejecta_pool: ResMut<ImpactEjectaPool>,
     mut moon_reader: MessageReader<MoonFormationEvent>,
     mut merge_reader: MessageReader<AccretionMergeEvent>,
     mut bounce_reader: MessageReader<CollisionBounceEvent>,
+    mut bombard_reader: MessageReader<BombardmentEvent>,
     bodies_query: Query<BodyQueryItem>,
-    star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
+    _star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
     mut triggered_basins: Local<Vec<(Entity, Vec3)>>,
 ) {
     if time_warp
@@ -526,13 +616,18 @@ pub fn update_impact_ejecta(
     }
 
     let dt_secs = time.delta_secs();
-    let sim_dt_yr = sim_time.as_ref().map_or(0.0, |t| t.current_dt_yr);
     let materials_ref = opt_materials.as_deref();
 
     collect_moon_formation_ejecta(&mut ejecta_pool, &mut moon_reader, &bodies_query);
     collect_collision_merger_ejecta(
         &mut ejecta_pool,
         &mut merge_reader,
+        &bodies_query,
+        materials_ref,
+    );
+    collect_bombardment_ejecta(
+        &mut ejecta_pool,
+        &mut bombard_reader,
         &bodies_query,
         materials_ref,
     );
@@ -544,24 +639,65 @@ pub fn update_impact_ejecta(
     );
     collect_collision_bounce_ejecta(&mut ejecta_pool, &mut bounce_reader, &bodies_query);
 
-    step_ejecta_simulation(
-        &mut ejecta_pool,
-        dt_secs,
-        sim_dt_yr,
-        &bodies_query,
-        &star_query,
-    );
+    step_ejecta_simulation(&mut ejecta_pool, dt_secs, &bodies_query);
 }
 
 /// Draws individual 3D incandescent fragments as glowing ballistic streaks with trailing molten streamers
 /// (using zero wireframe gizmo spheres so no circular wire cages / "ball of string" ever appear).
-fn draw_molten_fragments(gizmos: &mut Gizmos, fragments: &[MoltenDebrisFragment]) {
+fn draw_molten_fragments(
+    gizmos: &mut Gizmos,
+    fragments: &[MoltenDebrisFragment],
+    transforms_query: &Query<&Transform>,
+) {
+    let mut cached_ent = Entity::PLACEHOLDER;
+    let mut p_center = Vec3::ZERO;
+    let mut has_center = false;
+
     for frag in fragments {
-        let col = frag.blackbody_color();
+        if frag.primary_entity != cached_ent {
+            cached_ent = frag.primary_entity;
+            if let Ok(tf) = transforms_query.get(cached_ent) {
+                p_center = tf.translation;
+                has_center = true;
+            } else {
+                has_center = false;
+            }
+        }
+
+        let (pos, t0, t1, t2, t3) = if has_center {
+            (
+                p_center + frag.local_position,
+                p_center + frag.local_trail[0],
+                p_center + frag.local_trail[1],
+                p_center + frag.local_trail[2],
+                p_center + frag.local_trail[3],
+            )
+        } else {
+            (
+                frag.position,
+                frag.trail[0],
+                frag.trail[1],
+                frag.trail[2],
+                frag.trail[3],
+            )
+        };
+
+        let col = if let Some(tint) = frag.color_tint {
+            let bb = frag.blackbody_color().to_srgba();
+            let tr = tint.to_srgba();
+            Color::srgba(
+                (bb.red * 0.45 + tr.red * 0.55).min(1.0),
+                (bb.green * 0.45 + tr.green * 0.55).min(1.0),
+                (bb.blue * 0.35 + tr.blue * 0.65).min(1.0),
+                bb.alpha * tr.alpha,
+            )
+        } else {
+            frag.blackbody_color()
+        };
         let srgba = col.to_srgba();
 
         // Bright incandescent leading head bolt along the velocity vector
-        let vel_dir = frag.velocity.normalize_or_zero();
+        let vel_dir = frag.local_velocity.normalize_or_zero();
         let head_len = (frag.radius * 0.45).clamp(0.00015, 0.0025);
         let head_col = Color::srgba(
             (srgba.red * 1.15).min(1.0),
@@ -569,7 +705,7 @@ fn draw_molten_fragments(gizmos: &mut Gizmos, fragments: &[MoltenDebrisFragment]
             (srgba.blue * 1.15 + 0.20).min(1.0),
             srgba.alpha,
         );
-        gizmos.line(frag.position + vel_dir * head_len, frag.position, head_col);
+        gizmos.line(pos + vel_dir * head_len, pos, head_col);
 
         let t_col1 = Color::srgba(srgba.red, srgba.green, srgba.blue, srgba.alpha * 0.85);
         let t_col2 = Color::srgba(
@@ -585,16 +721,23 @@ fn draw_molten_fragments(gizmos: &mut Gizmos, fragments: &[MoltenDebrisFragment]
             srgba.alpha * 0.20,
         );
 
-        gizmos.line(frag.position, frag.trail[0], col);
-        gizmos.line(frag.trail[0], frag.trail[1], t_col1);
-        gizmos.line(frag.trail[1], frag.trail[2], t_col2);
-        gizmos.line(frag.trail[2], frag.trail[3], t_col3);
+        gizmos.line(pos, t0, col);
+        gizmos.line(t0, t1, t_col1);
+        gizmos.line(t1, t2, t_col2);
+        gizmos.line(t2, t3, t_col3);
     }
 }
 
 /// Draws coalescing equatorial protolunar rings.
-fn draw_ejecta_rings(gizmos: &mut Gizmos, rings: &[ImpactEjectaRing]) {
+fn draw_ejecta_rings(
+    gizmos: &mut Gizmos,
+    rings: &[ImpactEjectaRing],
+    transforms_query: &Query<&Transform>,
+) {
     for ring in rings {
+        let p_center = transforms_query
+            .get(ring.primary_entity)
+            .map_or(ring.primary_pos, |tf| tf.translation);
         let p = (ring.timer / ring.max_timer).clamp(0.0, 1.0);
         let coalesce = p * p;
         let alpha = if p < 0.1 {
@@ -625,8 +768,8 @@ fn draw_ejecta_rings(gizmos: &mut Gizmos, rings: &[ImpactEjectaRing]) {
                 alpha * 0.48,
             );
 
-            let pos1 = ring.primary_pos
-                + Vec3::new(current_r * phi.cos(), current_z, current_r * phi.sin());
+            let pos1 =
+                p_center + Vec3::new(current_r * phi.cos(), current_z, current_r * phi.sin());
             let tangent = Vec3::new(-phi.sin(), 0.0, phi.cos());
             let arc_half = (current_r * 0.14).clamp(0.00008, 0.0035) * (1.0 - frac * 0.35);
             gizmos.line(
@@ -638,7 +781,7 @@ fn draw_ejecta_rings(gizmos: &mut Gizmos, rings: &[ImpactEjectaRing]) {
             if let Some(&(r2, phi2, _, z2)) = ring.fragments.get(i + 1) {
                 let cr2 = r2 * (1.0 - coalesce * 0.5);
                 let cz2 = z2 * (1.0 - coalesce * 0.9);
-                let pos2 = ring.primary_pos + Vec3::new(cr2 * phi2.cos(), cz2, cr2 * phi2.sin());
+                let pos2 = p_center + Vec3::new(cr2 * phi2.cos(), cz2, cr2 * phi2.sin());
                 if pos1.distance(pos2) <= current_r * 0.65 {
                     gizmos.line(pos1, pos2, line_col);
                 }
@@ -648,14 +791,18 @@ fn draw_ejecta_rings(gizmos: &mut Gizmos, rings: &[ImpactEjectaRing]) {
 }
 
 /// Renders all active molten collision fragments, Keplerian ribbons, and ejecta rings.
-pub fn draw_impact_ejecta_system(mut gizmos: Gizmos, ejecta_pool: Option<Res<ImpactEjectaPool>>) {
+pub fn draw_impact_ejecta_system(
+    mut gizmos: Gizmos,
+    ejecta_pool: Option<Res<ImpactEjectaPool>>,
+    transforms_query: Query<&Transform>,
+) {
     let Some(pool) = ejecta_pool else {
         return;
     };
     if !pool.fragments.is_empty() {
-        draw_molten_fragments(&mut gizmos, &pool.fragments);
+        draw_molten_fragments(&mut gizmos, &pool.fragments, &transforms_query);
     }
     if !pool.rings.is_empty() {
-        draw_ejecta_rings(&mut gizmos, &pool.rings);
+        draw_ejecta_rings(&mut gizmos, &pool.rings, &transforms_query);
     }
 }

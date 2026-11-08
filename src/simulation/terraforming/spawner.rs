@@ -73,8 +73,8 @@ pub fn launch_targeted_bombardment(
         }
     };
 
-    // Standoff approach vector outside the planetary radius
-    let standoff_dist = (target_radius_au * 20.0).clamp(0.008, 0.045);
+    // Standoff approach vector positioned just outside the planetary exosphere / visual halo
+    let standoff_dist = (target_radius_au * 12.0).clamp(0.0008, 0.015);
     let mut approach_dir = if target_vel.length_squared() > 1e-6 {
         let v_norm = target_vel.normalize();
         let radial = target_pos.normalize_or_zero();
@@ -88,8 +88,9 @@ pub fn launch_targeted_bombardment(
 
     let spawn_pos = target_pos + approach_dir * standoff_dist;
 
-    // Flight time ~0.0035 years (~30 sim hours) for a satisfying, visible approach
-    let dt_flight = 0.0035f64;
+    // Flight time tuned for a prompt, cinematic intercept (~38 km/s closing speed, arriving in ~1-2s of gameplay)
+    let closing_speed_au_yr = 8.0f64;
+    let dt_flight = (standoff_dist / closing_speed_au_yr).clamp(0.00008, 0.0015);
 
     // Estimate stellar gravitational acceleration on target:
     // a_* = - (G * M_star / r^3) * r
