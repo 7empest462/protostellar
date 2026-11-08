@@ -14,10 +14,6 @@ use protostellar::game::ui::visibility::update_hud_visibility;
 use protostellar::simulation::resources::PlayerInteractionState;
 
 #[test]
-#[allow(
-    deprecated,
-    reason = "Inspector scroll test exercises Interaction::Hovered in Bevy 0.20"
-)]
 fn test_inspector_scrolling_clamping_and_reset() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -44,14 +40,18 @@ fn test_inspector_scrolling_clamping_and_reset() {
                 inverse_scale_factor: 1.0,
                 ..default()
             },
-            Interaction::default(),
+            bevy::picking::hover::Hovered::default(),
         ))
         .id();
 
     // Spawn a child button inside scroll_ent that is currently hovered
     let _child_btn = app
         .world_mut()
-        .spawn((Node::default(), Interaction::Hovered, ChildOf(scroll_ent)))
+        .spawn((
+            Node::default(),
+            bevy::picking::hover::Hovered(true),
+            ChildOf(scroll_ent),
+        ))
         .id();
 
     let dummy_target1 = app.world_mut().spawn_empty().id();

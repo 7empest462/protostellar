@@ -377,14 +377,10 @@ fn update_camera_min_zoom_bounds(
     camera.radius = camera.radius.clamp(camera.min_radius, camera.max_radius);
 }
 
-#[allow(
-    deprecated,
-    reason = "Queries classic Bevy UI Interaction state for HUD pointer blocking"
-)]
 fn is_cursor_over_active_ui(
     window: &Window,
     cursor_pos: Vec2,
-    ui_interaction_query: &Query<&Interaction>,
+    ui_interaction_query: &Query<(&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>)>,
     ui_nodes_query: &UiPickingNodesQuery,
     opt_visibility: Option<&crate::game::ui::types::HudVisibilityState>,
 ) -> bool {
@@ -415,9 +411,7 @@ fn is_cursor_over_active_ui(
         }
     };
     over_fixed_hud
-        || ui_interaction_query
-            .iter()
-            .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered)
+        || ui_interaction_query.iter().any(|(h, p)| h.get() || p)
         || ui_nodes_query.iter().any(|(cnode, gt, opt_ivis)| {
             if opt_ivis.is_some_and(|v| !v.get()) {
                 return false;
@@ -437,7 +431,6 @@ fn is_cursor_over_active_ui(
 }
 
 #[allow(
-    deprecated,
     clippy::too_many_arguments,
     reason = "3D raycast picking and screen-space fallback helper"
 )]
@@ -449,7 +442,7 @@ fn handle_camera_target_picking(
     player_state: &mut PlayerInteractionState,
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
-    ui_interaction_query: &Query<&Interaction>,
+    ui_interaction_query: &Query<(&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>)>,
     ui_nodes_query: &UiPickingNodesQuery,
     mouse_buttons: &ButtonInput<MouseButton>,
     star_pos: Vec3,
@@ -866,10 +859,14 @@ pub fn update_pan_orbit_camera(
         ),
         With<PanOrbitCamera>,
     >,
-    ui_interaction_query: Query<&Interaction>,
+    ui_interaction_query: Query<(&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>)>,
     ui_nodes_query: UiPickingNodesQuery,
     time: Option<Res<Time>>,
     opt_visibility: Option<Res<crate::game::ui::types::HudVisibilityState>>,
+    (focus, editable_query): (
+        Option<Res<bevy::input_focus::InputFocus>>,
+        Query<(), With<bevy::text::EditableText>>,
+    ),
 ) {
     let Ok((camera_comp, mut camera, mut transform, global_transform, opt_bloom)) =
         camera_query.single_mut()
@@ -880,6 +877,9 @@ pub fn update_pan_orbit_camera(
         return;
     };
 
+    let text_focused =
+        crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
+
     let (star_pos, min_orbit_r) = compute_system_min_orbit_r(&targets_query);
     update_camera_min_zoom_bounds(&mut camera, &config, &targets_query, star_pos, min_orbit_r);
 
@@ -889,9 +889,10 @@ pub fn update_pan_orbit_camera(
         camera.previous_target_entity = camera.target_entity;
         camera.last_orbital_eye = Some(transform.translation);
         player_state.just_selected_via_ui = false;
-        if keyboard_input.just_pressed(KeyCode::KeyF)
-            || keyboard_input.just_pressed(KeyCode::KeyR)
-            || keyboard_input.just_pressed(KeyCode::Escape)
+        if !text_focused
+            && (keyboard_input.just_pressed(KeyCode::KeyF)
+                || keyboard_input.just_pressed(KeyCode::KeyR)
+                || keyboard_input.just_pressed(KeyCode::Escape))
         {
             camera.surface_horizon_mode = false;
             camera.entry_transition_progress = 1.0;
@@ -919,9 +920,7 @@ pub fn update_pan_orbit_camera(
         }
     }
 
-    let cursor_over_ui = ui_interaction_query
-        .iter()
-        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+    let cursor_over_ui = ui_interaction_query.iter().any(|(h, p)| h.get() || p);
 
     handle_camera_target_picking(
         window,
@@ -939,16 +938,18 @@ pub fn update_pan_orbit_camera(
         opt_visibility.as_deref(),
     );
 
-    handle_camera_keyboard_flight(
-        &keyboard_input,
-        &transform,
-        &mut camera,
-        &mut player_state,
-        &targets_query,
-        &config,
-        star_pos,
-        min_orbit_r,
-    );
+    if !text_focused {
+        handle_camera_keyboard_flight(
+            &keyboard_input,
+            &transform,
+            &mut camera,
+            &mut player_state,
+            &targets_query,
+            &config,
+            star_pos,
+            min_orbit_r,
+        );
+    }
 
     handle_camera_mouse_controls(
         &mouse_buttons,

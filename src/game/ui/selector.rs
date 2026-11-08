@@ -624,6 +624,7 @@ type QuickBarCacheState = (
     bool,
     bool,
     Vec<BeltZone>,
+    String,
 );
 
 /// Dynamically updates background and border highlighting on Quick Bar buttons when selection changes
@@ -677,16 +678,23 @@ pub fn update_quick_body_selector_bar(
     player_state: Res<PlayerInteractionState>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut last_state: Local<QuickBarCacheState>,
+    (focus, editable_query): (
+        Option<Res<bevy::input_focus::InputFocus>>,
+        Query<(), With<bevy::text::EditableText>>,
+    ),
 ) {
     let Ok(bar_ent) = bar_query.single() else {
         return;
     };
 
-    if keyboard.just_pressed(KeyCode::KeyH) {
+    let text_focused =
+        crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
+
+    if !text_focused && keyboard.just_pressed(KeyCode::KeyH) {
         quick_bar_state.is_minimized = !quick_bar_state.is_minimized;
     }
 
-    let (embryo_bodies, minor_bodies) = collect_embryo_and_minor_bodies(
+    let (mut embryo_bodies, mut minor_bodies) = collect_embryo_and_minor_bodies(
         bodies_query.iter().map(|(e, b, p, m, r, s)| {
             (
                 e,
@@ -700,12 +708,22 @@ pub fn update_quick_body_selector_bar(
         quick_bar_state.sort_by_mass,
     );
 
-    let major_worlds =
+    let mut major_worlds =
         collect_sorted_system_worlds(bodies_query.iter(), quick_bar_state.sort_by_mass);
-    let probes: Vec<(Entity, ProbeType, ProbeStatus, String)> = probes_query
+    let mut probes: Vec<(Entity, ProbeType, ProbeStatus, String)> = probes_query
         .iter()
         .map(|(e, p, b)| (e, p.probe_type, p.status, b.name.clone()))
         .collect();
+
+    // Filter celestial worlds and probes case-insensitively when search query is active
+    let filter = quick_bar_state.filter_text.trim().to_lowercase();
+    if !filter.is_empty() {
+        major_worlds.retain(|w| w.name.to_lowercase().contains(&filter));
+        embryo_bodies.retain(|b| b.1.to_lowercase().contains(&filter));
+        minor_bodies.retain(|b| b.1.to_lowercase().contains(&filter));
+        probes.retain(|(_, _, _, name)| name.to_lowercase().contains(&filter));
+    }
+
     let probe_states: Vec<(Entity, ProbeStatus)> =
         probes.iter().map(|(e, _, s, _)| (*e, *s)).collect();
 
@@ -723,6 +741,7 @@ pub fn update_quick_body_selector_bar(
             .iter()
             .copied()
             .collect::<Vec<_>>(),
+        quick_bar_state.filter_text.clone(),
     );
 
     if *last_state == current_state && !major_worlds.is_empty() {

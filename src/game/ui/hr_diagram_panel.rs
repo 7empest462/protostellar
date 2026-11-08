@@ -12,6 +12,7 @@
 use std::fmt::Write;
 
 use bevy::prelude::*;
+use bevy::ui::{BackgroundGradient, ColorStop, Gradient, LinearGradient};
 
 use crate::simulation::components::{
     BodyType, CelestialBody, CentralStar, IgnitionState, Luminosity, Mass, Radius,
@@ -137,6 +138,15 @@ fn spawn_spectral_banner(panel: &mut ChildSpawnerCommands) {
         })
         .insert((
             BackgroundColor(Color::srgba(0.04, 0.06, 0.12, 0.85)),
+            BackgroundGradient(vec![Gradient::Linear(LinearGradient::to_right(vec![
+                ColorStop::auto(Color::srgba(0.18, 0.42, 0.95, 0.35)),
+                ColorStop::auto(Color::srgba(0.35, 0.65, 0.95, 0.35)),
+                ColorStop::auto(Color::srgba(0.75, 0.85, 0.98, 0.35)),
+                ColorStop::auto(Color::srgba(0.95, 0.95, 0.75, 0.35)),
+                ColorStop::auto(Color::srgba(0.98, 0.88, 0.35, 0.35)),
+                ColorStop::auto(Color::srgba(0.98, 0.55, 0.20, 0.35)),
+                ColorStop::auto(Color::srgba(0.90, 0.25, 0.20, 0.35)),
+            ]))]),
             BorderColor::all(Color::srgba(0.4, 0.6, 0.9, 0.4)),
         ))
         .with_children(|row| {

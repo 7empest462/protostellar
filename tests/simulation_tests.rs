@@ -112,6 +112,8 @@ mod ui;
 mod ui_contextual;
 #[path = "simulation_tests/ui_modals_and_tabs.rs"]
 mod ui_modals_and_tabs;
+#[path = "simulation_tests/ui_widgets_v020.rs"]
+mod ui_widgets_v020;
 #[path = "simulation_tests/universal_stars.rs"]
 mod universal_stars;
 #[path = "simulation_tests/volcanism.rs"]

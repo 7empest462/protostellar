@@ -11,7 +11,11 @@ use super::types::ScrollableInspector;
 pub fn handle_inspector_scroll(
     mut mouse_wheel: MessageReader<MouseWheel>,
     mut scroll_query: Query<(Entity, &mut ScrollPosition, &ComputedNode)>,
-    interaction_query: Query<(Entity, &Interaction)>,
+    interaction_query: Query<(
+        Entity,
+        &bevy::picking::hover::Hovered,
+        Has<bevy::ui::Pressed>,
+    )>,
     parent_query: Query<&ChildOf>,
 ) {
     let mut total_delta_y = 0.0;
@@ -51,11 +55,15 @@ pub fn reset_inspector_scroll_on_target_change(
 
 fn is_inspector_hovered(
     target_scroll_entity: Entity,
-    interaction_query: &Query<(Entity, &Interaction)>,
+    interaction_query: &Query<(
+        Entity,
+        &bevy::picking::hover::Hovered,
+        Has<bevy::ui::Pressed>,
+    )>,
     parent_query: &Query<&ChildOf>,
 ) -> bool {
-    for (entity, interaction) in interaction_query {
-        if *interaction != Interaction::Hovered && *interaction != Interaction::Pressed {
+    for (entity, hovered, pressed) in interaction_query {
+        if !hovered.get() && !pressed {
             continue;
         }
 

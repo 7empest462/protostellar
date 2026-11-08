@@ -227,7 +227,10 @@ pub fn handle_slingshot_input(
     mut player_state: ResMut<PlayerInteractionState>,
     disk_params: Res<DiskParameters>,
     mut toast: ResMut<NotificationToast>,
-    ui_interaction_query: Query<&Interaction, With<HudButton>>,
+    ui_interaction_query: Query<
+        (&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>),
+        With<HudButton>,
+    >,
     star_query: Query<&SimPosition, With<CentralStar>>,
     mut bodies_query: Query<(
         Entity,
@@ -236,7 +239,15 @@ pub fn handle_slingshot_input(
         &mut SimVelocity,
         &CelestialBody,
     )>,
+    (focus, editable_query): (
+        Option<Res<bevy::input_focus::InputFocus>>,
+        Query<(), With<bevy::text::EditableText>>,
+    ),
 ) {
+    if crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query) {
+        return;
+    }
+
     handle_slingshot_hotkeys(
         &keyboard,
         &mut slingshot_state,
@@ -255,9 +266,7 @@ pub fn handle_slingshot_input(
         return;
     };
 
-    let cursor_over_ui = ui_interaction_query
-        .iter()
-        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+    let cursor_over_ui = ui_interaction_query.iter().any(|(h, p)| h.get() || p);
 
     let hit_plane_coords = compute_cursor_plane_coords(window, camera, camera_transform);
     let star_pos = star_query.iter().next().map_or(DVec3::ZERO, |p| p.0);

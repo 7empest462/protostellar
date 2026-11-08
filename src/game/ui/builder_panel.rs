@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 
 use super::types::*;
+use super::widgets::*;
 
 /// Spawns the complete floating Planet Builder & Spawner drawer modal.
 pub fn spawn_planet_builder_panel(root: &mut ChildSpawnerCommands) {
@@ -291,7 +292,7 @@ fn spawn_builder_presets_section(panel: &mut ChildSpawnerCommands) {
 
 fn spawn_builder_adjustments_section(panel: &mut ChildSpawnerCommands) {
     panel.spawn((
-        Text::new("── 2. ADJUST MASS & ORBIT ──"),
+        Text::new("── 2. ADJUST NAME, MASS & ORBIT ──"),
         TextFont {
             font_size: FontSize::Px(9.5),
             ..default()
@@ -299,6 +300,55 @@ fn spawn_builder_adjustments_section(panel: &mut ChildSpawnerCommands) {
         TextColor(Color::srgb(0.5, 0.8, 1.0)),
     ));
 
+    // Custom Planet Name Input
+    panel
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            margin: UiRect::axes(Val::Px(0.0), Val::Px(2.5)),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Text::new("Name:"),
+                TextFont {
+                    font: hud_font_source(),
+                    font_size: FontSize::Px(10.5),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 0.85, 1.0)),
+            ));
+            spawn_hud_text_input(
+                row,
+                HudTextInputKind::BuilderCustomName,
+                "Proto-Earth",
+                160.0,
+                11.0,
+            );
+        });
+
+    // Continuous Sliders
+    spawn_hud_slider(
+        panel,
+        HudSliderKind::BuilderLogMassEarth,
+        0.0,
+        "Mass:",
+        110.0,
+    );
+    spawn_hud_slider(panel, HudSliderKind::BuilderOrbitAu, 1.0, "Orbit:", 110.0);
+    spawn_hud_slider(
+        panel,
+        HudSliderKind::BuilderEccentricity,
+        0.016,
+        "Eccentricity:",
+        110.0,
+    );
+
+    spawn_builder_steppers(panel);
+}
+
+fn spawn_builder_steppers(panel: &mut ChildSpawnerCommands) {
     // Mass Steppers
     panel
         .spawn(Node {

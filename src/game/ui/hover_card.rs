@@ -8,6 +8,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use super::telemetry_format::{format_body_radius_display, format_mass_string};
+use super::HoverReticleBracket;
 use crate::rendering::camera::{IgnoreUiPicking, PanOrbitCamera};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
@@ -53,6 +54,24 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         BorderColor::all(Color::srgba(0.20, 0.80, 0.96, 0.75)),
     ))
     .with_children(|card| {
+        // Holographic rotating reticle bracket at corner
+        card.spawn((
+            HoverReticleBracket,
+            UiTransform::default(),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(6.0),
+                right: Val::Px(6.0),
+                width: Val::Px(16.0),
+                height: Val::Px(16.0),
+                border: UiRect::all(Val::Px(1.5)),
+                border_radius: BorderRadius::all(Val::Px(3.0)),
+                ..default()
+            },
+            BorderColor::all(Color::srgba(0.3, 0.9, 1.0, 0.8)),
+            Pickable::IGNORE,
+        ));
+
         // Title (Name + Icon)
         card.spawn((
             HoverCardField::Title,

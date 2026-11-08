@@ -3,6 +3,9 @@
 use bevy::prelude::*;
 
 use super::types::*;
+use super::widgets::{
+    hud_font_source, spawn_hud_slider, spawn_hud_text_input, HudSliderKind, HudTextInputKind,
+};
 use crate::simulation::components::{
     CircumstellarDisk, Composition, PlanetaryClimate, RelativisticJetState, VolatileInventory,
 };
@@ -139,7 +142,7 @@ fn spawn_inspector_scrollable_body(panel: &mut ChildSpawnerCommands) {
         .spawn((
             ScrollableInspector,
             ScrollPosition::default(),
-            Interaction::default(),
+            bevy::picking::hover::Hovered::default(),
             Node {
                 flex_direction: FlexDirection::Column,
                 overflow: Overflow::scroll_y(),
@@ -457,13 +460,55 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
                         create_compact_button(row, act, label, bg, border);
                     }
                 });
+            spawn_hud_slider(
+                section,
+                HudSliderKind::InspectorOrbitAu,
+                1.0,
+                "Orbit:",
+                180.0,
+            );
+            spawn_hud_slider(
+                section,
+                HudSliderKind::InspectorAxialTiltDeg,
+                23.4,
+                "Tilt:",
+                180.0,
+            );
         });
 }
 
 fn spawn_inspector_text_and_forecast(scroll_box: &mut ChildSpawnerCommands) {
+    scroll_box
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            margin: UiRect::bottom(Val::Px(4.0)),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Text::new("Name:"),
+                TextFont {
+                    font: hud_font_source(),
+                    font_size: FontSize::Px(10.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.4, 0.8, 1.0)),
+            ));
+            spawn_hud_text_input(
+                row,
+                HudTextInputKind::InspectorBodyName,
+                "Selected Body",
+                160.0,
+                10.5,
+            );
+        });
+
     scroll_box.spawn((
         Text::new("No celestial body selected. Click on the Star or Planets to inspect & edit."),
         TextFont {
+            font: hud_font_source(),
             font_size: FontSize::Px(11.0),
             ..default()
         },
@@ -552,6 +597,13 @@ fn spawn_mass_composition_row(actions: &mut ChildSpawnerCommands) {
                         create_compact_button(row, act, label, bg, border);
                     }
                 });
+            spawn_hud_slider(
+                section,
+                HudSliderKind::InspectorLogMassEarth,
+                0.0,
+                "Mass:",
+                180.0,
+            );
         });
 }
 

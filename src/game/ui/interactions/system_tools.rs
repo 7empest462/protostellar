@@ -9,11 +9,22 @@ use super::time_and_panels::{
 };
 use crate::simulation::resources::*;
 
-/// Handles quicksave and quickload serialization trigger buttons.
+/// Handles quicksave, named slots, and clipboard seed serialization trigger buttons.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Dispatches save/load/seed serialization actions"
+)]
 pub fn handle_save_load_action(
     action: &UiButtonAction,
     save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
     load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    copy_seed_events: Option<
+        &mut MessageWriter<crate::simulation::serialization::CopySystemSeedClipboardEvent>,
+    >,
+    paste_seed_events: Option<
+        &mut MessageWriter<crate::simulation::serialization::PasteSystemSeedClipboardEvent>,
+    >,
+    slot_name: &str,
     toast: &mut NotificationToast,
 ) -> bool {
     match action {
@@ -38,6 +49,40 @@ pub fn handle_save_load_action(
             toast.timer = 4.0;
             true
         }
+        UiButtonAction::SaveNamedSlot => {
+            let filename = format!("saves/{slot_name}.json");
+            if let Some(writer) = save_events {
+                writer.write(crate::simulation::serialization::SaveSystemEvent {
+                    filename: filename.clone(),
+                });
+            }
+            toast.message = format!("💾 Saved to slot [{filename}]");
+            toast.timer = 4.0;
+            true
+        }
+        UiButtonAction::LoadNamedSlot => {
+            let filename = format!("saves/{slot_name}.json");
+            if let Some(writer) = load_events {
+                writer.write(crate::simulation::serialization::LoadSystemEvent {
+                    filename: filename.clone(),
+                });
+            }
+            toast.message = format!("📂 Loading from slot [{filename}]...");
+            toast.timer = 4.0;
+            true
+        }
+        UiButtonAction::CopySystemSeedClipboard => {
+            if let Some(writer) = copy_seed_events {
+                writer.write(crate::simulation::serialization::CopySystemSeedClipboardEvent);
+            }
+            true
+        }
+        UiButtonAction::PasteSystemSeedClipboard => {
+            if let Some(writer) = paste_seed_events {
+                writer.write(crate::simulation::serialization::PasteSystemSeedClipboardEvent);
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -51,6 +96,14 @@ pub fn dispatch_system_and_tool_actions(
     action: &UiButtonAction,
     save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
     load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    copy_seed_events: Option<
+        &mut MessageWriter<crate::simulation::serialization::CopySystemSeedClipboardEvent>,
+    >,
+    paste_seed_events: Option<
+        &mut MessageWriter<crate::simulation::serialization::PasteSystemSeedClipboardEvent>,
+    >,
+    slot_name: &str,
+    quick_bar_state: &mut QuickBarState,
     time_warp: &mut TimeWarp,
     hud_visibility: &mut HudVisibilityState,
     telemetry_panel_state: &mut TelemetryPanelState,
@@ -68,7 +121,21 @@ pub fn dispatch_system_and_tool_actions(
     mut opt_hz: Option<&mut HabitableZoneConfig>,
     toast: &mut NotificationToast,
 ) -> bool {
-    if handle_save_load_action(action, save_events, load_events, toast) {
+    if handle_save_load_action(
+        action,
+        save_events,
+        load_events,
+        copy_seed_events,
+        paste_seed_events,
+        slot_name,
+        toast,
+    ) {
+        return true;
+    }
+    if matches!(action, UiButtonAction::ClearQuickBarFilter) {
+        quick_bar_state.filter_text.clear();
+        toast.message = "🔍 Quick Bar filter cleared".to_string();
+        toast.timer = 2.0;
         return true;
     }
     if handle_time_action(action, time_warp, toast) {

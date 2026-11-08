@@ -4,10 +4,6 @@ pub mod interaction;
 pub mod phases;
 pub mod slingshot;
 pub mod time_control;
-#[allow(
-    deprecated,
-    reason = "Bevy 0.20 classic Button/Interaction HUD retained while ui_focus_system remains active"
-)]
 pub mod ui;
 
 use bevy::prelude::*;
@@ -36,7 +32,7 @@ impl Plugin for GamePlugin {
             .init_resource::<crate::game::ui::hazards_panel::HazardsPanelState>()
             .init_resource::<crate::game::ui::types::HrDiagramPanelState>()
             .init_resource::<HudVisibilityState>()
-            .add_plugins(SciFiUiThemePlugin)
+            .add_plugins((SciFiUiThemePlugin, ModernHudWidgetsPlugin))
             .add_systems(Startup, setup_hud)
             .add_systems(
                 Update,

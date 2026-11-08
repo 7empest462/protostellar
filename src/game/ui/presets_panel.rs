@@ -102,7 +102,7 @@ pub const SCENARIOS: [(UiButtonAction, &str, &str, Color, Color); 13] = [
 pub fn spawn_scenario_presets_panel(root: &mut ChildSpawnerCommands) {
     root.spawn((
         HudPanelElement::ScenarioPresets,
-        Interaction::default(),
+        bevy::picking::hover::Hovered::default(),
         Node {
             position_type: PositionType::Absolute,
             left: Val::Percent(25.0),

@@ -17,6 +17,7 @@ use super::types::{
     EpochScrubberBodyTitleText, EpochScrubberMetricsText, EpochScrubberPanel,
     EpochScrubberStatusText, HudButton, NotificationToast, UiButtonAction,
 };
+use super::widgets::{spawn_hud_slider, HudSliderKind};
 
 /// Spawns the glassmorphic Deep-Time Geological Epoch Scrubber drawer in the HUD root.
 pub fn spawn_epoch_scrubber_panel(root: &mut ChildSpawnerCommands) {
@@ -42,6 +43,7 @@ pub fn spawn_epoch_scrubber_panel(root: &mut ChildSpawnerCommands) {
         spawn_scrubber_header(panel);
         spawn_scrubber_target_row(panel);
         spawn_epoch_buttons_row(panel);
+        spawn_hud_slider(panel, HudSliderKind::EpochAgeGyr, 4.56, "Age (Ga):", 200.0);
         spawn_step_navigation_row(panel);
         spawn_scrubber_diagnostics_section(panel);
         spawn_scrubber_footer(panel);

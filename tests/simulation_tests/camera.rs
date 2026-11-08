@@ -692,10 +692,6 @@ fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
 }
 
 #[test]
-#[allow(
-    deprecated,
-    reason = "Camera UI suppression test checks Interaction::Hovered in Bevy 0.20"
-)]
 fn test_camera_zoom_ui_interaction_suppression() {
     use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
     use bevy::prelude::*;
@@ -706,7 +702,7 @@ fn test_camera_zoom_ui_interaction_suppression() {
     // Spawn a hovered UI element
     let ui_node = app
         .world_mut()
-        .spawn((Node::default(), Interaction::Hovered))
+        .spawn((Node::default(), bevy::picking::hover::Hovered(true)))
         .id();
 
     let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();

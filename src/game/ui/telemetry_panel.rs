@@ -1,6 +1,7 @@
 //! Telemetry & Climate Graphing Panel (`[F10]`) UI spawner, button dispatcher, and live updater.
 
 use bevy::prelude::*;
+use bevy::ui::{BackgroundGradient, ColorStop, Gradient, LinearGradient};
 
 use crate::simulation::telemetry::{SimulationTelemetryHistory, TelemetryMetric};
 
@@ -195,6 +196,24 @@ fn spawn_telemetry_readout_and_graph(panel: &mut ChildSpawnerCommands) {
                 Pickable::IGNORE,
             ));
         });
+
+    // Metric Gradient Status Bar
+    panel.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(3.5),
+            margin: UiRect::bottom(Val::Px(5.0)),
+            border_radius: BorderRadius::all(Val::Px(1.5)),
+            ..default()
+        },
+        BackgroundGradient(vec![Gradient::Linear(LinearGradient::to_right(vec![
+            ColorStop::auto(Color::srgb(0.15, 0.45, 0.95)),
+            ColorStop::auto(Color::srgb(0.35, 0.85, 0.65)),
+            ColorStop::auto(Color::srgb(0.95, 0.80, 0.25)),
+            ColorStop::auto(Color::srgb(0.95, 0.35, 0.25)),
+        ]))]),
+        Pickable::IGNORE,
+    ));
 
     // 5. Monospace Sparkline Graph Display Box
     panel

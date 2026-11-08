@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 
 use super::types::{HudButton, UiButtonAction};
+use super::widgets::hud_font_source;
 
 /// Stores the resting colors of a Quick Bar button so it can be dynamically highlighted without recreating the UI.
 #[derive(Component, Debug, Clone, Copy)]
@@ -44,6 +45,7 @@ pub fn create_button(
             btn.spawn((
                 Text::new(label),
                 TextFont {
+                    font: hud_font_source(),
                     font_size: FontSize::Px(12.0),
                     ..default()
                 },
@@ -92,6 +94,7 @@ pub fn create_compact_selectable_button(
             btn.spawn((
                 Text::new(label),
                 TextFont {
+                    font: hud_font_source(),
                     font_size: FontSize::Px(10.5),
                     ..default()
                 },
@@ -134,6 +137,7 @@ pub fn create_compact_button(
             btn.spawn((
                 Text::new(label),
                 TextFont {
+                    font: hud_font_source(),
                     font_size: FontSize::Px(10.5),
                     ..default()
                 },

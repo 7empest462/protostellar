@@ -127,7 +127,15 @@ pub fn handle_time_control_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut time_warp: ResMut<TimeWarp>,
     toast_res: Option<ResMut<crate::game::ui::types::NotificationToast>>,
+    (focus, editable_query): (
+        Option<Res<bevy::input_focus::InputFocus>>,
+        Query<(), With<bevy::text::EditableText>>,
+    ),
 ) {
+    if crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query) {
+        return;
+    }
+
     let mut toast_msg = None;
 
     // Space: Toggle pause

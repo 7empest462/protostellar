@@ -64,28 +64,69 @@ pub struct UiCampaignParams<'w> {
         Option<MessageWriter<'w, crate::simulation::campaign::StartCampaignMissionEvent>>,
 }
 
+/// Simulation resources bundle for UI action handlers.
+#[derive(SystemParam)]
+pub struct UiSimulationContext<'w> {
+    pub disk_params: Res<'w, DiskParameters>,
+    pub config: Res<'w, SimulationConfig>,
+    pub sim_time: Res<'w, SimTime>,
+    pub lhb_state: ResMut<'w, crate::game::phases::LateHeavyBombardmentState>,
+    pub theia_state: Option<ResMut<'w, crate::simulation::accretion::TheiaImpactState>>,
+}
+
+/// UI widget queries for button hover, click styling, and tooltip updates.
+#[derive(SystemParam)]
+#[allow(
+    clippy::type_complexity,
+    reason = "Complex Bevy ECS query for interactive HUD button components"
+)]
+pub struct UiButtonWidgets<'w, 's> {
+    pub buttons: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static UiButtonAction,
+            &'static mut BackgroundColor,
+            &'static mut BorderColor,
+            Option<&'static QuickBarButtonBaseColor>,
+            Option<&'static bevy::picking::hover::Hovered>,
+            Has<bevy::ui::Pressed>,
+        ),
+        With<HudButton>,
+    >,
+    pub tooltip_query: Query<'w, 's, &'static mut Text, With<HudActionTooltipText>>,
+}
+
+/// Serialization and clipboard message writers for system state persistence.
+#[derive(SystemParam)]
+pub struct UiSerializationWriters<'w> {
+    pub scenario_events: MessageWriter<'w, crate::simulation::scenarios::LoadScenarioEvent>,
+    pub save_events: Option<MessageWriter<'w, crate::simulation::serialization::SaveSystemEvent>>,
+    pub load_events: Option<MessageWriter<'w, crate::simulation::serialization::LoadSystemEvent>>,
+    pub copy_seed_events:
+        Option<MessageWriter<'w, crate::simulation::serialization::CopySystemSeedClipboardEvent>>,
+    pub paste_seed_events:
+        Option<MessageWriter<'w, crate::simulation::serialization::PasteSystemSeedClipboardEvent>>,
+    pub slot_state: Option<Res<'w, crate::game::ui::widgets::SaveSlotUiState>>,
+}
+
 fn handle_hover_interaction(
-    interaction: &Interaction,
+    hovered: bool,
     action: &UiButtonAction,
     border_color: &mut BorderColor,
     opt_base: Option<&QuickBarButtonBaseColor>,
     tooltip_query: &mut Query<&mut Text, With<HudActionTooltipText>>,
 ) {
-    match *interaction {
-        Interaction::Hovered => {
-            *border_color = BorderColor::all(Color::srgb(0.4, 0.9, 1.0));
-            if let Ok(mut tip) = tooltip_query.single_mut() {
-                tip.0 = action.tooltip_description().to_string();
-            }
+    if hovered {
+        *border_color = BorderColor::all(Color::srgb(0.4, 0.9, 1.0));
+        if let Ok(mut tip) = tooltip_query.single_mut() {
+            tip.0 = action.tooltip_description().to_string();
         }
-        Interaction::None => {
-            if let Some(base) = opt_base {
-                *border_color = BorderColor::all(base.border.with_alpha(0.88));
-            } else {
-                *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
-            }
-        }
-        Interaction::Pressed => {}
+    } else if let Some(base) = opt_base {
+        *border_color = BorderColor::all(base.border.with_alpha(0.88));
+    } else {
+        *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
     }
 }
 
@@ -118,6 +159,13 @@ fn dispatch_pressed_button_action(
     core: &mut UiCoreState,
     save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
     load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    copy_seed_events: Option<
+        &mut MessageWriter<crate::simulation::serialization::CopySystemSeedClipboardEvent>,
+    >,
+    paste_seed_events: Option<
+        &mut MessageWriter<crate::simulation::serialization::PasteSystemSeedClipboardEvent>,
+    >,
+    slot_name: &str,
     optional: &mut UiOptionalState,
     campaign: &mut UiCampaignParams,
     camera_query: &mut Query<&mut PanOrbitCamera>,
@@ -135,6 +183,10 @@ fn dispatch_pressed_button_action(
         action,
         save_events,
         load_events,
+        copy_seed_events,
+        paste_seed_events,
+        slot_name,
+        &mut core.quick_bar_state,
         &mut core.time_warp,
         &mut core.hud_visibility,
         &mut core.telemetry_panel_state,
@@ -226,91 +278,101 @@ fn dispatch_pressed_button_action(
     );
 }
 
-/// Handles interactive mouse clicks and hover highlights on all on-screen HUD buttons.
-#[allow(
-    clippy::too_many_arguments,
-    clippy::type_complexity,
-    reason = "HUD button interaction system dispatches across simulation controls and views"
-)]
+/// Handles interactive clicks, tab navigation, and hover highlights on all on-screen HUD buttons.
 pub fn handle_ui_button_interactions(
-    mut interaction_query: Query<
-        (
-            &Interaction,
-            &UiButtonAction,
-            &mut BackgroundColor,
-            &mut BorderColor,
-            Option<&QuickBarButtonBaseColor>,
-        ),
-        (Changed<Interaction>, With<HudButton>),
-    >,
-    mut tooltip_query: Query<&mut Text, With<HudActionTooltipText>>,
+    mut widgets: UiButtonWidgets,
+    mut activated_buttons: Option<ResMut<crate::game::ui::widgets::ActivatedHudButtons>>,
     mut core: UiCoreState,
-    disk_params: Res<DiskParameters>,
-    config: Res<SimulationConfig>,
+    mut sim: UiSimulationContext,
     mut selected_query: SelectedWorldQuery,
     mut camera_query: Query<&mut PanOrbitCamera>,
-    mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
-    mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
-    (mut scenario_events, mut save_events, mut load_events): (
-        MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
-        Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-        Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
-    ),
-    sim_time: Res<SimTime>,
+    mut ser: UiSerializationWriters,
     mut commands: Commands,
     mut quasi_star_query: Query<&mut BlackHoleStarState>,
     mut optional: UiOptionalState,
     mut campaign: UiCampaignParams,
 ) {
-    let star_mass = disk_params.central_star_mass;
+    let star_mass = sim.disk_params.central_star_mass;
+    let mut actions_to_dispatch = Vec::new();
 
-    for (interaction, action, mut bg_color, mut border_color, opt_base) in
-        interaction_query.iter_mut()
+    for (ent, action, mut bg_color, mut border_color, opt_base, opt_hovered, pressed) in
+        widgets.buttons.iter_mut()
     {
-        handle_hover_interaction(
-            interaction,
-            action,
-            &mut border_color,
-            opt_base,
-            &mut tooltip_query,
-        );
+        let is_hovered = opt_hovered.is_some_and(bevy::picking::hover::Hovered::get);
 
-        if *interaction == Interaction::None {
-            let is_active_selectable = match action {
-                UiButtonAction::SelectInspectorTab(tab) => {
-                    *tab == core.hud_visibility.active_inspector_tab
-                }
-                _ => false,
-            };
-            if !is_active_selectable {
-                if let Some(base) = opt_base {
-                    *bg_color = BackgroundColor(base.bg);
+        if pressed {
+            *bg_color = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
+            *border_color = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
+            if activated_buttons.is_none() {
+                actions_to_dispatch.push((ent, *action));
+            }
+        } else {
+            handle_hover_interaction(
+                is_hovered,
+                action,
+                &mut border_color,
+                opt_base,
+                &mut widgets.tooltip_query,
+            );
+
+            if !is_hovered {
+                let is_active_selectable = match action {
+                    UiButtonAction::SelectInspectorTab(tab) => {
+                        *tab == core.hud_visibility.active_inspector_tab
+                    }
+                    _ => false,
+                };
+                if !is_active_selectable {
+                    if let Some(base) = opt_base {
+                        *bg_color = BackgroundColor(base.bg);
+                        *border_color = BorderColor::all(base.border.with_alpha(0.88));
+                    } else {
+                        *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
+                    }
                 }
             }
         }
+    }
 
-        if *interaction == Interaction::Pressed {
-            *bg_color = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
-            *border_color = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
-
-            dispatch_pressed_button_action(
-                action,
-                &mut core,
-                save_events.as_mut(),
-                load_events.as_mut(),
-                &mut optional,
-                &mut campaign,
-                &mut camera_query,
-                &mut selected_query,
-                &config,
-                star_mass,
-                &mut commands,
-                &mut scenario_events,
-                &mut quasi_star_query,
-                &mut lhb_state,
-                theia_state.as_deref_mut(),
-                sim_time.elapsed_years,
-            );
+    if let Some(ref mut activated) = activated_buttons {
+        for ent in activated.0.drain(..) {
+            if let Ok((_, action, ..)) = widgets.buttons.get(ent) {
+                actions_to_dispatch.push((ent, *action));
+            }
         }
+    } else {
+        for (ent, _) in &actions_to_dispatch {
+            commands.entity(*ent).remove::<bevy::ui::Pressed>();
+        }
+    }
+
+    let default_slot = "quicksave".to_string();
+    let slot_name = ser
+        .slot_state
+        .as_ref()
+        .map_or(default_slot.as_str(), |s| s.slot_name.as_str());
+
+    for (_ent, action) in actions_to_dispatch {
+        dispatch_pressed_button_action(
+            &action,
+            &mut core,
+            ser.save_events.as_mut(),
+            ser.load_events.as_mut(),
+            ser.copy_seed_events.as_mut(),
+            ser.paste_seed_events.as_mut(),
+            slot_name,
+            &mut optional,
+            &mut campaign,
+            &mut camera_query,
+            &mut selected_query,
+            &sim.config,
+            star_mass,
+            &mut commands,
+            &mut ser.scenario_events,
+            &mut quasi_star_query,
+            &mut sim.lhb_state,
+            sim.theia_state.as_deref_mut(),
+            sim.sim_time.elapsed_years,
+        );
     }
 }

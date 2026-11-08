@@ -120,6 +120,9 @@ impl Plugin for SimulationPlugin {
             .add_message::<LoadScenarioEvent>()
             .add_message::<SaveSystemEvent>()
             .add_message::<LoadSystemEvent>()
+            .add_message::<CopySystemSeedClipboardEvent>()
+            .add_message::<PasteSystemSeedClipboardEvent>()
+            .add_message::<ImportSystemSeedJsonEvent>()
             .add_message::<BombardmentEvent>()
             .add_message::<GravitationalWaveMergerEvent>()
             .add_message::<AtmosphericStrippedEvent>()
@@ -132,7 +135,14 @@ impl Plugin for SimulationPlugin {
                     handle_load_scenario_events,
                     handle_save_system_events,
                     handle_load_system_events,
+                    handle_clipboard_seed_export_events,
+                    handle_clipboard_seed_import_events,
                     update_active_scenarios,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     update_simulation_visual_time,
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),

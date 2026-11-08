@@ -26,7 +26,16 @@ pub mod trophies_panel;
 pub mod types;
 pub mod update;
 pub mod visibility;
+pub mod widget_sync;
+pub mod widgets;
 pub mod world_list;
+
+pub use widget_sync::{HoverReticleBracket, SurfaceCompassNeedle};
+pub use widgets::{
+    hud_font_source, is_text_input_focused, ActivatedHudButtons, HudSlider, HudSliderFill,
+    HudSliderKind, HudSliderReadout, HudSliderThumb, HudTextInput, HudTextInputKind,
+    HudTextInputWrapper, ModernHudWidgetsPlugin, PendingSliderChanges, SaveSlotUiState,
+};
 
 pub use builder_panel::spawn_planet_builder_panel;
 pub use campaign_panel::{spawn_campaign_panels, update_campaign_ui};

@@ -155,6 +155,70 @@ pub struct LoadSystemEvent {
     pub filename: String,
 }
 
+/// Message event to request copying the active system state as a compact seed to the clipboard.
+#[derive(Event, Message, Debug, Clone, Default)]
+pub struct CopySystemSeedClipboardEvent;
+
+/// Message event to request reading a system seed from the clipboard and instantiating it.
+#[derive(Event, Message, Debug, Clone, Default)]
+pub struct PasteSystemSeedClipboardEvent;
+
+/// Message event to import a raw JSON or prefixed system seed string directly.
+#[derive(Event, Message, Debug, Clone)]
+pub struct ImportSystemSeedJsonEvent {
+    pub payload: String,
+}
+
+/// System seed prefix distinguishing Protostellar clipboard payloads.
+pub const SEED_PREFIX: &str = "PROTOSTELLAR_SEED_V1:";
+
+/// Encodes `SystemSaveData` into a version-prefixed JSON system seed string suitable for sharing and clipboard exchange.
+pub fn encode_system_seed_json(data: &SystemSaveData) -> Result<String, String> {
+    let json = serde_json::to_string(data).map_err(|e| e.to_string())?;
+    Ok(format!("{SEED_PREFIX}{json}"))
+}
+
+/// Decodes a system seed string (supporting either prefixed or raw JSON) into `SystemSaveData`.
+pub fn decode_system_seed_json(seed: &str) -> Result<SystemSaveData, String> {
+    let trimmed = seed.trim();
+    let json_str = if let Some(stripped) = trimmed.strip_prefix(SEED_PREFIX) {
+        stripped.trim()
+    } else {
+        trimmed
+    };
+    serde_json::from_str(json_str).map_err(|e| e.to_string())
+}
+
+/// Scans the `saves/` and workspace directory for save files (`.json`, `.bin`, `.postcard`)
+/// and returns sorted unique slot stems (e.g. `["quicksave", "trappist_custom"]`).
+pub fn list_save_slots() -> Vec<String> {
+    let mut slots = Vec::new();
+    let dirs = [Path::new("saves"), Path::new(".")];
+    for dir in dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                        if matches!(ext, "json" | "bin" | "postcard") {
+                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                if !slots.contains(&stem.to_string()) {
+                                    slots.push(stem.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    slots.sort();
+    if slots.is_empty() {
+        slots.push("quicksave".to_string());
+    }
+    slots
+}
+
 /// Normalizes a save filename, ensuring it points into the `saves/` folder if no path separators are present.
 pub fn normalize_save_path(filename: &str) -> String {
     let trimmed = filename.trim();
@@ -388,6 +452,44 @@ fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySa
     bodies
 }
 
+/// Assembles a `SystemSaveData` snapshot from active simulation resources and bodies.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Constructs full serialized system snapshot"
+)]
+pub fn build_system_save_data(
+    sim_time: &SimTime,
+    time_warp: &TimeWarp,
+    disk_params: &DiskParameters,
+    config: &SimulationConfig,
+    theia_state: Option<&crate::simulation::accretion::TheiaImpactState>,
+    lhb_state: Option<&crate::game::phases::LateHeavyBombardmentState>,
+    scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
+    bodies: Vec<CelestialBodySave>,
+) -> SystemSaveData {
+    SystemSaveData {
+        version: 1,
+        timestamp_epoch_yr: sim_time.elapsed_years,
+        step_count: sim_time.step_count,
+        time_warp: TimeWarpSave {
+            multiplier: time_warp.multiplier,
+            is_paused: time_warp.is_paused,
+        },
+        disk_parameters: disk_params.clone(),
+        config_save: ConfigSave {
+            gas_density_scale: config.gas_density_scale,
+            size_exaggeration: config.size_exaggeration,
+        },
+        bodies,
+        event_flags: EventFlagsSave {
+            theia_moon_formed: theia_state.is_some_and(|s| s.moon_formed),
+            lhb_active: lhb_state.is_some_and(|s| s.is_active),
+            lhb_resonance_crossed: lhb_state.is_some_and(|s| s.resonance_crossed),
+        },
+        scenario_preset: scenario_state.map(|s| s.current_preset),
+    }
+}
+
 /// System that listens for `SaveSystemEvent` and writes the solar system snapshot to disk.
 pub fn handle_save_system_events(
     mut events: MessageReader<SaveSystemEvent>,
@@ -404,28 +506,16 @@ pub fn handle_save_system_events(
     for event in events.read() {
         let path = normalize_save_path(&event.filename);
         let bodies = collect_bodies_save(&bodies_query);
-
-        let save_data = SystemSaveData {
-            version: 1,
-            timestamp_epoch_yr: sim_time.elapsed_years,
-            step_count: sim_time.step_count,
-            time_warp: TimeWarpSave {
-                multiplier: time_warp.multiplier,
-                is_paused: time_warp.is_paused,
-            },
-            disk_parameters: disk_params.clone(),
-            config_save: ConfigSave {
-                gas_density_scale: config.gas_density_scale,
-                size_exaggeration: config.size_exaggeration,
-            },
+        let save_data = build_system_save_data(
+            &sim_time,
+            &time_warp,
+            &disk_params,
+            &config,
+            theia_state.as_deref(),
+            lhb_state.as_deref(),
+            scenario_state.as_deref(),
             bodies,
-            event_flags: EventFlagsSave {
-                theia_moon_formed: theia_state.as_ref().is_some_and(|s| s.moon_formed),
-                lhb_active: lhb_state.as_ref().is_some_and(|s| s.is_active),
-                lhb_resonance_crossed: lhb_state.as_ref().is_some_and(|s| s.resonance_crossed),
-            },
-            scenario_preset: scenario_state.as_ref().map(|s| s.current_preset),
-        };
+        );
 
         match save_system_to_file(&save_data, &path) {
             Ok(()) => {
@@ -812,5 +902,177 @@ pub fn handle_load_system_events(
             detected_preset,
             path
         );
+    }
+}
+
+/// System that listens for `CopySystemSeedClipboardEvent`, serializes the active state to a seed string,
+/// and copies it to the system clipboard with toast confirmation.
+pub fn handle_clipboard_seed_export_events(
+    mut events: MessageReader<CopySystemSeedClipboardEvent>,
+    sim_time: Res<SimTime>,
+    time_warp: Res<TimeWarp>,
+    disk_params: Res<DiskParameters>,
+    config: Res<SimulationConfig>,
+    theia_state: Option<Res<crate::simulation::accretion::TheiaImpactState>>,
+    lhb_state: Option<Res<crate::game::phases::LateHeavyBombardmentState>>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    mut clipboard: Option<ResMut<bevy::clipboard::Clipboard>>,
+    mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
+    bodies_query: BodySerializeQuery,
+) {
+    for _ in events.read() {
+        let bodies = collect_bodies_save(&bodies_query);
+        let save_data = build_system_save_data(
+            &sim_time,
+            &time_warp,
+            &disk_params,
+            &config,
+            theia_state.as_deref(),
+            lhb_state.as_deref(),
+            scenario_state.as_deref(),
+            bodies,
+        );
+
+        match encode_system_seed_json(&save_data) {
+            Ok(seed) => {
+                if let Some(ref mut clip) = clipboard {
+                    if let Err(e) = clip.set_text(seed) {
+                        warn!("Failed to copy seed to system clipboard: {e:?}");
+                    }
+                }
+                if let Some(ref mut t) = toast {
+                    t.message = format!(
+                        "📋 Copied system seed ({} bodies) to clipboard!",
+                        save_data.bodies.len()
+                    );
+                    t.timer = 4.0;
+                }
+            }
+            Err(e) => {
+                if let Some(ref mut t) = toast {
+                    t.message = format!("❌ Failed to encode seed: {e}");
+                    t.timer = 4.0;
+                }
+            }
+        }
+    }
+}
+
+/// System that listens for `PasteSystemSeedClipboardEvent` or `ImportSystemSeedJsonEvent`,
+/// deserializes the system seed, and rebuilds the solar system state.
+#[allow(
+    clippy::type_complexity,
+    reason = "Full world restoration from clipboard/seed payload"
+)]
+pub fn handle_clipboard_seed_import_events(
+    mut commands: Commands,
+    mut paste_events: MessageReader<PasteSystemSeedClipboardEvent>,
+    mut import_events: MessageReader<ImportSystemSeedJsonEvent>,
+    mut clipboard: Option<ResMut<bevy::clipboard::Clipboard>>,
+    mut disk_params: ResMut<DiskParameters>,
+    mut sim_time: ResMut<SimTime>,
+    mut energy_monitor: ResMut<EnergyMonitor>,
+    mut time_warp: ResMut<TimeWarp>,
+    mut player_state: ResMut<PlayerInteractionState>,
+    mut config: ResMut<SimulationConfig>,
+    (mut theia_state, mut lhb_state): (
+        Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
+        Option<ResMut<crate::game::phases::LateHeavyBombardmentState>>,
+    ),
+    bodies_query: Query<
+        Entity,
+        (
+            With<CelestialBody>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
+    >,
+    mut camera_query: Query<&mut crate::rendering::camera::PanOrbitCamera>,
+    (mut swarm, mut swarm_mesh_query): (
+        Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
+        Query<&mut Visibility, With<crate::rendering::particle_swarm::ParticleSwarmMesh>>,
+    ),
+    (mut scenario_state, mut toast): (
+        Option<ResMut<crate::simulation::scenarios::ActiveScenarioState>>,
+        Option<ResMut<crate::game::ui::NotificationToast>>,
+    ),
+    (mut phase_mgr, mut next_phase): (
+        Option<ResMut<crate::game::phases::PhaseManager>>,
+        Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
+    ),
+) {
+    let mut payload = None;
+    for _ in paste_events.read() {
+        if let Some(ref mut clip) = clipboard {
+            match clip.fetch_text() {
+                bevy::clipboard::ClipboardRead::Ready(Ok(text)) => payload = Some(text),
+                mut pending => {
+                    if let Some(Ok(text)) = pending.poll_result() {
+                        payload = Some(text);
+                    }
+                }
+            }
+        }
+    }
+    for ev in import_events.read() {
+        payload = Some(ev.payload.clone());
+    }
+
+    let Some(text) = payload else { return };
+
+    let save_data = match decode_system_seed_json(&text) {
+        Ok(data) => data,
+        Err(e) => {
+            warn!("Failed to parse system seed: {e}");
+            if let Some(ref mut t) = toast {
+                t.message = format!("❌ Invalid system seed: {e}");
+                t.timer = 5.0;
+            }
+            return;
+        }
+    };
+
+    despawn_active_bodies(&mut commands, &bodies_query);
+    restore_simulation_resources(
+        &save_data,
+        &mut sim_time,
+        &mut time_warp,
+        &mut disk_params,
+        &mut config,
+        &mut energy_monitor,
+        &mut theia_state,
+        &mut lhb_state,
+    );
+    let (central_star_ent, first_body_ent) =
+        spawn_and_link_saved_bodies(&mut commands, &save_data.bodies);
+    let detected_preset = save_data
+        .scenario_preset
+        .unwrap_or_else(|| infer_scenario_preset(&save_data.bodies));
+    let primary_ent = central_star_ent.or(first_body_ent);
+    player_state.selected_entity = primary_ent;
+
+    apply_loaded_scenario_and_camera(
+        &save_data,
+        detected_preset,
+        &mut scenario_state,
+        &mut phase_mgr,
+        &mut next_phase,
+        &disk_params,
+        &mut config,
+        &mut swarm_mesh_query,
+        primary_ent,
+        &mut camera_query,
+    );
+
+    if let Some(ref mut swarm_data) = swarm {
+        crate::rendering::particle_swarm::reseed_particle_swarm(swarm_data, &disk_params, &config);
+    }
+
+    if let Some(ref mut t) = toast {
+        t.message = format!(
+            "📥 Imported seed ({} bodies) [{}]",
+            save_data.bodies.len(),
+            detected_preset.display_name()
+        );
+        t.timer = 5.0;
     }
 }

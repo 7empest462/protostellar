@@ -366,14 +366,21 @@ pub fn update_surface_horizon_camera(
         (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
         Without<PanOrbitCamera>,
     >,
+    (focus, editable_query): (
+        Option<Res<bevy::input_focus::InputFocus>>,
+        Query<(), With<bevy::text::EditableText>>,
+    ),
 ) {
     let Ok((mut camera, mut transform, mut projection)) = camera_query.single_mut() else {
         return;
     };
 
+    let text_focused =
+        crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
+
     let is_shift =
         keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
-    if is_shift && keyboard_input.just_pressed(KeyCode::KeyV) {
+    if !text_focused && is_shift && keyboard_input.just_pressed(KeyCode::KeyV) {
         toggle_surface_horizon_mode(&mut camera, player_state.selected_entity, &mut toast);
     }
 
@@ -389,8 +396,11 @@ pub fn update_surface_horizon_camera(
         camera.orbit_sensitivity,
     );
 
-    let (forward_drive, turn_drive) =
-        step_surface_horizon_controls(&keyboard_input, delta_yaw, delta_pitch, scroll, &mut camera);
+    let (forward_drive, turn_drive) = if text_focused {
+        (0.0, 0.0)
+    } else {
+        step_surface_horizon_controls(&keyboard_input, delta_yaw, delta_pitch, scroll, &mut camera)
+    };
 
     let candidate_target = player_state.selected_entity.or(camera.target_entity);
     let Some((host_ent, opt_rover_ent, mut unspun_norm, mut heading_unspun)) =

@@ -3,6 +3,8 @@
 use bevy::prelude::*;
 
 use super::types::*;
+use super::widgets::*;
+use super::SurfaceCompassNeedle;
 
 fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
     top_row
@@ -107,7 +109,7 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                 .spawn((
                     HudPanelElement::QuickBarContainer,
                     ScrollPosition::default(),
-                    Interaction::default(),
+                    bevy::picking::hover::Hovered::default(),
                     Node {
                         flex_direction: FlexDirection::Column,
                         width: Val::Px(640.0), // Force width so children can wrap correctly during measurement
@@ -121,6 +123,63 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                     BorderColor::all(Color::srgba(0.3, 0.6, 0.9, 0.6)),
                 ))
                 .with_children(|scroll_container| {
+                    // Search and filter row for celestial bodies
+                    scroll_container
+                        .spawn((
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                column_gap: Val::Px(6.0),
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                margin: UiRect::bottom(Val::Px(2.0)),
+                                ..default()
+                            },
+                            Name::new("QuickBarFilterRow"),
+                        ))
+                        .with_children(|filter_row| {
+                            filter_row.spawn((
+                                Text::new("🔍"),
+                                TextFont {
+                                    font: hud_font_source(),
+                                    font_size: FontSize::Px(10.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.4, 0.85, 1.0)),
+                            ));
+                            spawn_hud_text_input(
+                                filter_row,
+                                HudTextInputKind::QuickBarFilter,
+                                "",
+                                140.0,
+                                10.0,
+                            );
+                            filter_row
+                                .spawn((
+                                    HudButton,
+                                    UiButtonAction::ClearQuickBarFilter,
+                                    Node {
+                                        padding: UiRect::axes(Val::Px(5.0), Val::Px(2.0)),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.08, 0.16, 0.28, 0.85)),
+                                    BorderColor::all(Color::srgb(0.25, 0.5, 0.75)),
+                                ))
+                                .with_children(|btn| {
+                                    btn.spawn((
+                                        Text::new("✕"),
+                                        TextFont {
+                                            font: hud_font_source(),
+                                            font_size: FontSize::Px(9.5),
+                                            ..default()
+                                        },
+                                        TextColor(Color::srgb(0.7, 0.85, 1.0)),
+                                    ));
+                                });
+                        });
+
                     scroll_container.spawn((
                         QuickBodySelectorBar,
                         Node {
@@ -227,6 +286,68 @@ fn spawn_top_controls_card(right_row: &mut ChildSpawnerCommands) {
                 .with_children(|grid| {
                     spawn_main_tool_shortcuts(grid);
                     spawn_view_mode_badges(grid);
+                });
+
+                // Dedicated named save slot and clipboard system seed exchange row
+                card.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: Val::Px(3.0),
+                        margin: UiRect::top(Val::Px(4.0)),
+                        padding: UiRect::axes(Val::Px(4.0), Val::Px(2.0)),
+                        border: UiRect::top(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgba(0.2, 0.4, 0.7, 0.4)),
+                    Name::new("SaveSlotRow"),
+                ))
+                .with_children(|slot_row| {
+                    slot_row.spawn((
+                        Text::new("Slot:"),
+                        TextFont {
+                            font: hud_font_source(),
+                            font_size: FontSize::Px(9.5),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.6, 0.8, 1.0)),
+                    ));
+                    spawn_hud_text_input(
+                        slot_row,
+                        HudTextInputKind::SaveSlotName,
+                        "quicksave",
+                        64.0,
+                        9.5,
+                    );
+                    create_compact_button(
+                        slot_row,
+                        UiButtonAction::SaveNamedSlot,
+                        "💾",
+                        Color::srgba(0.08, 0.16, 0.28, 0.90),
+                        Color::srgb(0.3, 0.75, 1.0),
+                    );
+                    create_compact_button(
+                        slot_row,
+                        UiButtonAction::LoadNamedSlot,
+                        "📂",
+                        Color::srgba(0.08, 0.16, 0.28, 0.90),
+                        Color::srgb(0.4, 0.85, 0.7),
+                    );
+                    create_compact_button(
+                        slot_row,
+                        UiButtonAction::CopySystemSeedClipboard,
+                        "📋 Seed",
+                        Color::srgba(0.14, 0.10, 0.24, 0.90),
+                        Color::srgb(0.75, 0.55, 1.0),
+                    );
+                    create_compact_button(
+                        slot_row,
+                        UiButtonAction::PasteSystemSeedClipboard,
+                        "📥 Seed",
+                        Color::srgba(0.14, 0.10, 0.24, 0.90),
+                        Color::srgb(0.85, 0.65, 1.0),
+                    );
                 });
             });
         });
@@ -721,6 +842,20 @@ fn spawn_bottom_center_pill(center_dock: &mut ChildSpawnerCommands) {
                 },
                 TextColor(Color::srgb(0.95, 0.88, 0.45)),
                 HudBottomTimerText(true),
+                Pickable::IGNORE,
+            ));
+            pill.spawn((
+                SurfaceCompassNeedle,
+                UiTransform::default(),
+                Node {
+                    width: Val::Px(12.0),
+                    height: Val::Px(12.0),
+                    margin: UiRect::left(Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::srgba(0.4, 0.85, 1.0, 0.75)),
+                BackgroundColor(Color::srgba(0.1, 0.4, 0.8, 0.4)),
                 Pickable::IGNORE,
             ));
         });

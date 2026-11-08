@@ -9,11 +9,16 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::BTreeSet;
 
-/// Marker component for interactive HUD buttons, replacing Bevy's deprecated/private `Button`
-/// while automatically requiring `Node`, `FocusPolicy::Block`, and `Interaction`.
+/// Marker component for interactive HUD buttons, replacing classic Bevy UI `Interaction`
+/// with Bevy 0.20.1 `Button`, `Hovered`, and `FocusPolicy::Block`.
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default, Debug, PartialEq, Clone)]
-#[require(Node, bevy::ui::FocusPolicy::Block, Interaction)]
+#[require(
+    Node,
+    bevy::ui::FocusPolicy::Block,
+    bevy::ui_widgets::Button,
+    bevy::picking::hover::Hovered
+)]
 pub struct HudButton;
 
 pub type SelectedWorldQuery<'w, 's> = Query<
@@ -197,6 +202,8 @@ pub struct QuickBarState {
     pub sort_by_mass: bool,
     /// Active astronomical belts expanded to reveal individual member buttons.
     pub expanded_belts: BTreeSet<BeltZone>,
+    /// Active case-insensitive text search query filtering displayed celestial bodies.
+    pub filter_text: String,
 }
 
 /// Active tab in the bottom-left Target Inspector.
@@ -581,6 +588,11 @@ pub enum UiButtonAction {
     // System Save / Load & Scenario Serializer
     QuickSave,
     QuickLoad,
+    SaveNamedSlot,
+    LoadNamedSlot,
+    CopySystemSeedClipboard,
+    PasteSystemSeedClipboard,
+    ClearQuickBarFilter,
     // Inspector Tab Switching
     SelectInspectorTab(InspectorTab),
 }
@@ -727,6 +739,11 @@ impl UiButtonAction {
             UiButtonAction::CycleSlingshotArchetype => "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue).",
             UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",
             UiButtonAction::QuickLoad => "[Shift+F12]: Quick Load saved solar system state from disk.",
+            UiButtonAction::SaveNamedSlot => "Save current solar system state to the named save slot.",
+            UiButtonAction::LoadNamedSlot => "Load solar system state from the named save slot.",
+            UiButtonAction::CopySystemSeedClipboard => "Copy active system state as a compact seed to the clipboard.",
+            UiButtonAction::PasteSystemSeedClipboard => "Import and restore system seed from the clipboard.",
+            UiButtonAction::ClearQuickBarFilter => "Clear active quick bar search filter.",
             UiButtonAction::SelectInspectorTab(tab) => match tab {
                 InspectorTab::Overview => "Switch to the Overview inspector tab (orbital parameters, mass, and bulk composition).",
                 InspectorTab::GeodynamicsBio => "Switch to Geodynamics & Biosphere tab (volcanism, tectonics, oceans, and terraforming).",

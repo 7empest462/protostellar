@@ -14,21 +14,25 @@ pub use selection::*;
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::resources::*;
 
+/// Event writers and focus detection for player tools.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PlayerToolsEvents<'w> {
+    pub scenario_events: MessageWriter<'w, crate::simulation::scenarios::LoadScenarioEvent>,
+    pub save_events: Option<MessageWriter<'w, crate::simulation::serialization::SaveSystemEvent>>,
+    pub load_events: Option<MessageWriter<'w, crate::simulation::serialization::LoadSystemEvent>>,
+    pub focus: Option<Res<'w, bevy::input_focus::InputFocus>>,
+}
+
 /// Handles player tool activation and direct live editing of celestial bodies.
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 pub fn handle_player_tools(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
     disk_params: Res<DiskParameters>,
-    mut config: ResMut<SimulationConfig>,
-    mut player_state: ResMut<PlayerInteractionState>,
+    (mut config, mut player_state): (ResMut<SimulationConfig>, ResMut<PlayerInteractionState>),
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     mut theia_state: Option<ResMut<crate::simulation::accretion::TheiaImpactState>>,
-    (mut scenario_events, mut save_events, mut load_events): (
-        MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
-        Option<MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-        Option<MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
-    ),
+    mut events: PlayerToolsEvents,
     mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
     mut telemetry_state: ResMut<crate::game::ui::TelemetryPanelState>,
     (
@@ -59,7 +63,12 @@ pub fn handle_player_tools(
     mut opt_predictor: Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     mut selected_query: SelectedBodyQuery,
+    editable_query: Query<(), With<bevy::text::EditableText>>,
 ) {
+    if crate::game::ui::widgets::is_text_input_focused(events.focus.as_deref(), &editable_query) {
+        return;
+    }
+
     let star_mass = disk_params.central_star_mass;
     let (star_pos, star_vel) = selected_query
         .iter()
@@ -134,19 +143,15 @@ pub fn handle_player_tools(
         &keyboard,
         &mut config,
         &mut lhb_state,
-        &mut scenario_events,
-        save_events.as_mut(),
-        load_events.as_mut(),
+        &mut events.scenario_events,
+        events.save_events.as_mut(),
+        events.load_events.as_mut(),
         &mut toast,
         scenario_state.as_deref(),
     );
 }
 
 /// System that handles direct 3D plane click-to-place spawning when builder click mode is active.
-#[allow(
-    deprecated,
-    reason = "Queries classic Bevy Button/Interaction HUD widgets"
-)]
 pub fn handle_planet_builder_click_spawn(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -157,16 +162,17 @@ pub fn handle_planet_builder_click_spawn(
     disk_params: Res<DiskParameters>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut toast: ResMut<crate::game::ui::NotificationToast>,
-    ui_interaction_query: Query<&Interaction, With<crate::game::ui::HudButton>>,
+    ui_interaction_query: Query<
+        (&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>),
+        With<crate::game::ui::HudButton>,
+    >,
 ) {
     if !builder_state.is_open || !builder_state.click_to_spawn_mode {
         return;
     }
 
     // Don't spawn if cursor is clicking/hovering any UI button
-    let clicking_ui = ui_interaction_query
-        .iter()
-        .any(|i| *i == Interaction::Pressed || *i == Interaction::Hovered);
+    let clicking_ui = ui_interaction_query.iter().any(|(h, p)| h.get() || p);
     if clicking_ui {
         return;
     }
