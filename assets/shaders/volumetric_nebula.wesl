@@ -7,6 +7,8 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
+import protostellar::rendering::shaders::scattering::henyey_greenstein;
+
 struct VolumetricNebulaUniforms {
     box_min: vec3<f32>,
     step_count: u32,
@@ -90,11 +92,6 @@ fn intersect_box(ray_orig: vec3<f32>, ray_dir: vec3<f32>, b_min: vec3<f32>, b_ma
     return vec2<f32>(t_near, t_far);
 }
 
-// Henyey-Greenstein anisotropic phase scattering function
-fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
-    let denom = pow(max(1.0 + g * g - 2.0 * g * cos_theta, 1e-6), 1.5);
-    return (1.0 - g * g) / (4.0 * PI * denom);
-}
 
 @fragment
 fn fragment(in: VertexOutput) -> FragmentOutput {

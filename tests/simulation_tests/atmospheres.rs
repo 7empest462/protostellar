@@ -332,8 +332,8 @@ fn test_atmosphere_and_planet_shader_sources_validity() {
     );
 
     // Verify minor bodies (planet_type == 4u) have a dedicated branch before terrestrial planets
-    let idx_type4 = planet_src.find("else if (planet.planet_type == 4u)");
-    let idx_type3 = planet_src.find("else if (planet.planet_type == 3u)");
+    let idx_type4 = planet_src.find("planet.planet_type == 4u");
+    let idx_type3 = planet_src.find("planet.planet_type == 3u");
     assert!(
         idx_type4.is_some() && idx_type3.is_some(),
         "planet.wgsl must have dedicated branches for both planet_type 4u and 3u"
@@ -353,13 +353,16 @@ fn test_atmosphere_and_planet_shader_sources_validity() {
         "planet.wgsl must define evaluate_coriolis_cyclones"
     );
     assert!(
-        planet_src.contains("fn chapman_spherical_airmass("),
-        "planet.wgsl must define chapman_spherical_airmass"
+        planet_src.contains("chapman_spherical_airmass")
+            && std::fs::read_to_string("src/rendering/shaders/scattering.wesl")
+                .map(|s| s.contains("fn chapman_spherical_airmass("))
+                .unwrap_or(false),
+        "planet.wesl must import and use chapman_spherical_airmass"
     );
     assert!(
-        atmo_src.contains("fn chapman_spherical_airmass(")
-            && atmo_src.contains("fn dual_lobe_mie_phase("),
-        "atmosphere.wgsl must define chapman_spherical_airmass and dual_lobe_mie_phase"
+        atmo_src.contains("chapman_spherical_airmass")
+            && atmo_src.contains("dual_lobe_mie_phase"),
+        "atmosphere.wesl must import chapman_spherical_airmass and dual_lobe_mie_phase"
     );
 }
 

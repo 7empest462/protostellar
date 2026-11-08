@@ -7,6 +7,7 @@ pub mod gas_clouds;
 pub mod materials;
 pub mod particle_swarm;
 pub mod post_processing;
+pub mod shaders;
 pub mod skybox;
 pub mod surface_camera;
 pub mod surface_terrain;
@@ -46,6 +47,7 @@ impl Plugin for RenderingPlugin {
             .init_resource::<TidalDisruptionPool>()
             .init_resource::<surface_terrain::SurfaceTerrainState>()
             .add_plugins((
+                shaders::ProtostellarShadersPlugin,
                 GasCloudPlugin,
                 ParticleSwarmPlugin,
                 MaterialPlugin::<PlanetMaterial>::default(),

@@ -593,14 +593,20 @@ fn test_stellar_photosphere_shader_coverage() {
     let shader_src = std::fs::read_to_string("assets/shaders/planet.wesl")
         .expect("planet.wesl should be readable");
 
-    // 1. Cellular noise engine
+    // 1. Cellular noise engine (modular WESL library)
     assert!(
-        shader_src.contains("fn voronoi3("),
-        "planet.wgsl must contain 3D Voronoi cellular noise engine"
+        shader_src.contains("voronoi3")
+            && std::fs::read_to_string("src/rendering/shaders/noise.wesl")
+                .map(|s| s.contains("fn voronoi3("))
+                .unwrap_or(false),
+        "planet.wesl must import and use 3D Voronoi cellular noise engine"
     );
     assert!(
-        shader_src.contains("fn hash3_vec("),
-        "planet.wgsl must contain 3D vector hash function"
+        shader_src.contains("hash3_vec")
+            && std::fs::read_to_string("src/rendering/shaders/noise.wesl")
+                .map(|s| s.contains("fn hash3_vec("))
+                .unwrap_or(false),
+        "planet.wesl must import and use 3D vector hash function"
     );
 
     // 2. Black Hole Star / Quasi-Star Photosphere

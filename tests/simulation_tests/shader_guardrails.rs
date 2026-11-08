@@ -35,6 +35,7 @@ fn bevy_embedded_shaders() -> &'static Vec<(AssetId<Shader>, Shader)> {
         app.add_plugins(bevy::ui_render::UiMaterialPlugin::<
             protostellar::game::ui::sci_fi_theme::SciFiPanelMaterial,
         >::default());
+        app.add_plugins(protostellar::rendering::shaders::ProtostellarShadersPlugin);
         app.finish();
         app.cleanup();
 
@@ -127,6 +128,65 @@ pub fn compile_and_validate_wesl_shader(shader_path: &str, extra_defs: &[ShaderD
     });
 
     (*compiled).clone()
+}
+
+#[test]
+fn test_embedded_astrophysics_wesl_libraries_compilation_and_import() {
+    let test_src = r#"
+import protostellar::rendering::shaders::noise::{noise, fbm, hash3};
+import protostellar::rendering::shaders::scattering::{dual_lobe_mie_phase, chapman_spherical_airmass};
+import protostellar::rendering::shaders::blackbody::{blackbody_temperature_to_rgb, doppler_shift_temperature};
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    let p = vec3<f32>(1.0, 2.0, 3.0);
+    let n = noise(p);
+    let f = fbm(p);
+    let h = hash3(p);
+    let mie = dual_lobe_mie_phase(0.5, 0.8);
+    let airmass = chapman_spherical_airmass(100.0, 0.5);
+    let star_rgb = blackbody_temperature_to_rgb(5778.0);
+    let t_shifted = doppler_shift_temperature(5778.0, 0.05);
+
+    let val = n + f + h + mie + airmass + t_shifted * 0.0001;
+    return vec4<f32>(star_rgb * val, 1.0);
+}
+"#;
+
+    let mut cache: ShaderCache<String, ()> = ShaderCache::new((), |_, src, _| match src {
+        ShaderCacheSource::Wgsl(wgsl) => Ok(wgsl),
+        ShaderCacheSource::SpirV(_) => panic!("Expected WGSL output from WESL compilation"),
+    });
+
+    for (id, shader) in bevy_embedded_shaders() {
+        cache.set_shader(*id, shader.clone());
+    }
+
+    let root_id = AssetId::Uuid {
+        uuid: bevy::asset::uuid::Uuid::from_u128(0xCAFE_BABE_0001_0001),
+    };
+    cache.set_shader(root_id, Shader::from_wesl(test_src, "test_shader"));
+
+    let defs = vec![];
+    let compiled = cache.get(0, root_id, &defs).unwrap_or_else(|err| {
+        panic!("Failed to compile test shader importing protostellar embedded WESL libraries:\n{err}")
+    });
+
+    let module = wgpu::naga::front::wgsl::parse_str(&compiled).unwrap_or_else(|err| {
+        panic!(
+            "Compiled WESL produced invalid WGSL syntax:\n{}\n--- WGSL ---\n{}",
+            err.emit_to_string(&compiled),
+            compiled
+        )
+    });
+
+    let mut validator = wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    );
+    validator.validate(&module).unwrap_or_else(|err| {
+        panic!("Compiled WESL failed Naga type/semantic validation:\n{err:?}")
+    });
 }
 
 #[test]
@@ -504,4 +564,43 @@ fn test_planet_wgsl_ocean_hypsometry_guardrails() {
         ],
         &[],
     );
+}
+
+#[test]
+fn test_planet_pipeline_specialization_permutations() {
+    let classes = [
+        "BODY_CLASS_STAR_REMNANT",
+        "BODY_CLASS_GIANT",
+        "BODY_CLASS_TERRESTRIAL",
+        "BODY_CLASS_MINOR",
+    ];
+
+    for class_def in classes {
+        // Forward pass
+        compile_and_validate_wesl_shader(
+            "assets/shaders/planet.wesl",
+            &[ShaderDefVal::Bool(class_def.into(), true)],
+        );
+
+        // Forward pass with cutaway
+        compile_and_validate_wesl_shader(
+            "assets/shaders/planet.wesl",
+            &[
+                ShaderDefVal::Bool(class_def.into(), true),
+                ShaderDefVal::Bool("CUTAWAY_ENABLED".into(), true),
+            ],
+        );
+
+        // Prepass pipeline
+        compile_and_validate_wesl_shader(
+            "assets/shaders/planet.wesl",
+            &[
+                ShaderDefVal::Bool(class_def.into(), true),
+                ShaderDefVal::Bool("PREPASS_PIPELINE".into(), true),
+                ShaderDefVal::Bool("PREPASS_FRAGMENT".into(), true),
+                ShaderDefVal::Bool("DEFERRED_PREPASS".into(), true),
+                ShaderDefVal::Bool("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into(), true),
+            ],
+        );
+    }
 }

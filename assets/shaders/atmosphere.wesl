@@ -3,6 +3,8 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
+import protostellar::rendering::shaders::scattering::{chapman_spherical_airmass, dual_lobe_mie_phase};
+
 struct AtmosphereUniforms {
     rayleigh_params: vec4<f32>, // rgb = beta_R (or coronal RGB in Corona Mode), w = H_R (scale height)
     mie_params: vec4<f32>,      // rgb = beta_M (or flare/chromosphere RGB), w = H_M (scale height)
@@ -35,36 +37,7 @@ fn ray_sphere_intersect(ro: vec3<f32>, rd: vec3<f32>, center: vec3<f32>, radius:
     return vec2<f32>(-b - s, -b + s);
 }
 
-/// Analytical Spherical Chapman Function Ch(X, chi) for dimensionless curvature X = R / H.
-fn chapman_spherical_airmass(r_over_h: f32, cos_chi: f32) -> f32 {
-    let x = clamp(r_over_h, 6.0, 160.0);
-    let sqrt_half_pi_x = sqrt(1.5707963 * x);
-    if (cos_chi >= 0.0) {
-        return sqrt_half_pi_x / (1.0 + sqrt_half_pi_x * cos_chi + (0.58 / sqrt(x)) * (1.0 - cos_chi));
-    }
-    let sin_chi = sqrt(max(1.0 - cos_chi * cos_chi, 0.0));
-    let y_grazing = x * (sin_chi - 1.0);
-    if (y_grazing < -6.0) {
-        return 1e5;
-    }
-    return sqrt_half_pi_x * exp(-max(y_grazing, -6.0)) * (1.0 + abs(cos_chi) * 2.4);
-}
 
-/// Dual-lobe Cornette-Shanks / Henyey-Greenstein aerosol phase function (forward silver-lining + back glory).
-fn dual_lobe_mie_phase(cos_theta: f32, g_fwd: f32) -> f32 {
-    let cos2 = cos_theta * cos_theta;
-    let g1 = clamp(g_fwd, 0.55, 0.92);
-    let g1_2 = g1 * g1;
-    let denom1 = max(1.0 + g1_2 - 2.0 * g1 * cos_theta, 1e-4);
-    let lobe_fwd = (3.0 * (1.0 - g1_2) / (8.0 * PI * (2.0 + g1_2))) * (1.0 + cos2) / (denom1 * sqrt(denom1));
-
-    let g2 = -0.24;
-    let g2_2 = g2 * g2;
-    let denom2 = max(1.0 + g2_2 - 2.0 * g2 * cos_theta, 1e-4);
-    let lobe_back = (3.0 * (1.0 - g2_2) / (8.0 * PI * (2.0 + g2_2))) * (1.0 + cos2) / (denom2 * sqrt(denom2));
-
-    return mix(lobe_back, lobe_fwd, 0.84);
-}
 
 /// Evaluates directional radius multiplier for Maclaurin rotational oblateness and Roche Lobe teardrop deformation.
 fn directional_shape_scale(unit_dir: vec3<f32>) -> f32 {

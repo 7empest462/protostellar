@@ -1,7 +1,45 @@
-use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::mesh::MeshVertexBufferLayoutRef;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
 use bevy_shader::ShaderRef;
+
+/// Pipeline specialization key controlling compile-time WESL shader defs
+/// for celestial body classes and internal cutaway mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct PlanetPipelineKey(pub u32);
+
+impl PlanetPipelineKey {
+    pub const BODY_CLASS_STAR_REMNANT: u32 = 1 << 0;
+    pub const BODY_CLASS_GIANT: u32 = 1 << 1;
+    pub const BODY_CLASS_TERRESTRIAL: u32 = 1 << 2;
+    pub const BODY_CLASS_MINOR: u32 = 1 << 3;
+    pub const CUTAWAY_ENABLED: u32 = 1 << 4;
+
+    #[inline]
+    pub fn contains(&self, flag: u32) -> bool {
+        (self.0 & flag) != 0
+    }
+}
+
+impl From<&PlanetMaterialExtension> for PlanetPipelineKey {
+    fn from(ext: &PlanetMaterialExtension) -> Self {
+        let mut bits = match ext.uniforms.planet_type {
+            0 | 5 | 7 => PlanetPipelineKey::BODY_CLASS_STAR_REMNANT,
+            1 | 2 => PlanetPipelineKey::BODY_CLASS_GIANT,
+            4 | 8 | 9 => PlanetPipelineKey::BODY_CLASS_MINOR,
+            _ => PlanetPipelineKey::BODY_CLASS_TERRESTRIAL,
+        };
+        if ext.uniforms.cutaway_params.x > 0.5 {
+            bits |= PlanetPipelineKey::CUTAWAY_ENABLED;
+        }
+        PlanetPipelineKey(bits)
+    }
+}
 
 #[derive(Clone, ShaderType, Debug)]
 pub struct PlanetUniforms {
@@ -85,6 +123,7 @@ impl Default for PlanetUniforms {
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
+#[bind_group_data(PlanetPipelineKey)]
 pub struct PlanetMaterialExtension {
     #[uniform(101)]
     pub uniforms: PlanetUniforms,
@@ -96,6 +135,37 @@ impl MaterialExtension for PlanetMaterialExtension {
     }
     fn fragment_shader() -> ShaderRef {
         "shaders/planet.wesl".into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let flag_name = if key.bind_group_data.contains(PlanetPipelineKey::BODY_CLASS_STAR_REMNANT) {
+            "BODY_CLASS_STAR_REMNANT"
+        } else if key.bind_group_data.contains(PlanetPipelineKey::BODY_CLASS_GIANT) {
+            "BODY_CLASS_GIANT"
+        } else if key.bind_group_data.contains(PlanetPipelineKey::BODY_CLASS_MINOR) {
+            "BODY_CLASS_MINOR"
+        } else {
+            "BODY_CLASS_TERRESTRIAL"
+        };
+
+        descriptor.vertex.shader_defs.push(flag_name.into());
+        if let Some(ref mut frag) = descriptor.fragment {
+            frag.shader_defs.push(flag_name.into());
+        }
+
+        if key.bind_group_data.contains(PlanetPipelineKey::CUTAWAY_ENABLED) {
+            descriptor.vertex.shader_defs.push("CUTAWAY_ENABLED".into());
+            if let Some(ref mut frag) = descriptor.fragment {
+                frag.shader_defs.push("CUTAWAY_ENABLED".into());
+            }
+        }
+
+        Ok(())
     }
 }
 
