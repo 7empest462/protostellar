@@ -7,6 +7,9 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
+@if(MATERIAL_OIT_ENABLED)
+import bevy_core_pipeline::oit::draw::oit_draw;
+
 struct RocheStreamUniforms {
     color_and_intensity: vec4<f32>,
     stream_params: vec4<f32>, // x: time, y: turb_scale, z: cross_scale, w: unused
@@ -116,5 +119,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let alpha = clamp(density * donor_fade * accretor_fade * 0.88, 0.0, 0.92);
 
     out.color = vec4<f32>(col * emission, alpha);
+@if(MATERIAL_OIT_ENABLED) {
+    oit_draw(in.position, vec4<f32>(out.color.rgb * out.color.a, out.color.a));
+    discard;
+}
     return out;
 }

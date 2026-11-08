@@ -3,6 +3,9 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
+@if(MATERIAL_OIT_ENABLED)
+import bevy_core_pipeline::oit::draw::oit_draw;
+
 struct CometTailUniforms {
     // x: elapsed time (s), y: tail length (AU), z: coma radius (AU), w: activity scale
     params: vec4<f32>,
@@ -173,5 +176,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let final_rgb = ion_rgb + premultiplied_dust;
 
     out.color = vec4<f32>(final_rgb, final_alpha);
+@if(MATERIAL_OIT_ENABLED) {
+    oit_draw(in.position, out.color);
+    discard;
+}
     return out;
 }

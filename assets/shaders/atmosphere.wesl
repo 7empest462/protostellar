@@ -5,6 +5,9 @@ import bevy_pbr::render::{
 
 import protostellar::rendering::shaders::scattering::{chapman_spherical_airmass, dual_lobe_mie_phase};
 
+@if(MATERIAL_OIT_ENABLED)
+import bevy_core_pipeline::oit::draw::oit_draw;
+
 struct AtmosphereUniforms {
     rayleigh_params: vec4<f32>, // rgb = beta_R (or coronal RGB in Corona Mode), w = H_R (scale height)
     mie_params: vec4<f32>,      // rgb = beta_M (or flare/chromosphere RGB), w = H_M (scale height)
@@ -758,5 +761,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     }
 
     out.color = vec4<f32>(final_rgb, alpha);
+@if(MATERIAL_OIT_ENABLED) {
+    oit_draw(in.position, vec4<f32>(out.color.rgb * out.color.a, out.color.a));
+    discard;
+}
     return out;
 }

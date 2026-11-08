@@ -220,6 +220,16 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
                 continue;
             }
 
+            // FullscreenMaterial shaders legitimately bind at @group(0)
+            if filename == "post_processing.wesl" {
+                assert!(
+                    content.contains("@group(0) @binding(0)"),
+                    "FullscreenMaterial shader post_processing.wesl must bind at @group(0)"
+                );
+                checked_wesl_shaders += 1;
+                continue;
+            }
+
             assert!(
                 !content.contains("@group(1)"),
                 "Shader {filename} hardcodes @group(1), which collides with pipeline layouts! Use @group(constants::MATERIAL_BIND_GROUP)."
@@ -286,6 +296,29 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
             ShaderDefVal::Bool("NORMAL_PREPASS_OR_DEFERRED_PREPASS".into(), true),
         ],
     );
+}
+
+#[test]
+fn test_all_8_transparent_wesl_shaders_compile_with_material_oit_enabled() {
+    let transparent_shaders = [
+        "assets/shaders/planetary_rings.wesl",
+        "assets/shaders/atmosphere.wesl",
+        "assets/shaders/gas_cloud.wesl",
+        "assets/shaders/roche_stream.wesl",
+        "assets/shaders/relativistic_jet.wesl",
+        "assets/shaders/black_hole_disk.wesl",
+        "assets/shaders/supernova.wesl",
+        "assets/shaders/comet_tail.wesl",
+    ];
+
+    let oit_defs = [
+        ShaderDefVal::Bool("OIT_ENABLED".into(), true),
+        ShaderDefVal::Bool("MATERIAL_OIT_ENABLED".into(), true),
+    ];
+
+    for shader_path in transparent_shaders {
+        compile_and_validate_wesl_shader(shader_path, &oit_defs);
+    }
 }
 
 /// Validates that a WESL material shader contains the expected uniform struct and compiles cleanly
@@ -399,31 +432,28 @@ fn test_post_processing_wgsl_naga_validation() {
 }
 
 #[test]
-fn test_post_processing_settings_uniform_alignment_and_material() {
-    use protostellar::rendering::post_processing::{
-        PostProcessingMaterial, PostProcessingSettings,
-    };
+fn test_post_processing_settings_uniform_alignment_and_fullscreen_material() {
+    use bevy::core_pipeline::fullscreen_material::FullscreenMaterial;
+    use protostellar::rendering::post_processing::PostProcessingSettings;
 
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.add_plugins(AssetPlugin::default());
-    app.init_asset::<Mesh>();
-    app.init_asset::<Image>();
-    app.init_asset::<PostProcessingMaterial>();
-
-    let mut materials = app
-        .world_mut()
-        .resource_mut::<Assets<PostProcessingMaterial>>();
-    let handle = materials.add(PostProcessingMaterial {
-        source_texture: Handle::default(),
-        settings: PostProcessingSettings::default(),
-    });
-
-    let retrieved = materials.get(&handle);
-    assert!(
-        retrieved.is_some(),
-        "PostProcessingMaterial must be safely retrievable from Assets"
+    let size = std::mem::size_of::<PostProcessingSettings>();
+    assert_eq!(
+        size % 16,
+        0,
+        "PostProcessingSettings uniform struct size must be 16-byte aligned for WGSL (got {size} bytes)"
     );
+
+    let shader = PostProcessingSettings::fragment_shader();
+    match shader {
+        bevy::shader::ShaderRef::Path(path) => {
+            assert_eq!(
+                path.path().to_str().unwrap(),
+                "shaders/post_processing.wesl",
+                "PostProcessingSettings must point to shaders/post_processing.wesl"
+            );
+        }
+        _ => panic!("Expected ShaderRef::Path"),
+    }
 }
 
 #[test]

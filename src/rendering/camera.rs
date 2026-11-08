@@ -3,11 +3,14 @@
 use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::{Exposure, Hdr};
+use bevy::core_pipeline::oit::OrderIndependentTransparencySettings;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::gizmos::config::GizmoLineJoint;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
+
+use crate::rendering::post_processing::PostProcessingSettings;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
@@ -159,47 +162,56 @@ pub fn setup_camera(mut commands: Commands) {
     // bloom halo. Threshold-softness (0.4) avoids a hard pop-in at the knee.
     // TonyMcMapface is a filmic display transform that preserves hue even at extreme
     // HDR values — critical for accurate star colours. DebandDither prevents gradient banding.
-    commands.spawn((
-        Camera3d::default(),
-        Msaa::Off,
-        Smaa {
-            preset: SmaaPreset::High,
-        },
-        ContrastAdaptiveSharpening {
-            enabled: true,
-            sharpening_strength: 0.35,
-            denoise: false,
-        },
-        Hdr,
-        Exposure { ev100: 9.7 },
-        Camera::default(),
-        Projection::Perspective(PerspectiveProjection {
-            near: 0.0001,
-            far: 2_000_000.0,
-            ..default()
-        }),
-        Tonemapping::AgX,
-        DebandDither::Enabled,
-        Bloom {
-            intensity: 0.16,
-            low_frequency_boost: 0.12,
-            low_frequency_boost_curvature: 0.88,
-            high_pass_frequency: 1.0,
-            prefilter: BloomPrefilter {
-                threshold: 1.65,
-                threshold_softness: 0.48,
+    commands
+        .spawn((
+            Camera3d::default(),
+            Msaa::Off,
+            Smaa {
+                preset: SmaaPreset::High,
             },
-            composite_mode: BloomCompositeMode::EnergyConserving,
-            ..default()
-        },
-        Transform {
-            translation,
-            rotation: rot,
-            ..default()
-        },
-        pan_orbit,
-        IsDefaultUiCamera,
-    ));
+            ContrastAdaptiveSharpening {
+                enabled: true,
+                sharpening_strength: 0.35,
+                denoise: false,
+            },
+            Hdr,
+            Exposure { ev100: 9.7 },
+            Camera::default(),
+            Projection::Perspective(PerspectiveProjection {
+                near: 0.0001,
+                far: 2_000_000.0,
+                ..default()
+            }),
+            Tonemapping::AgX,
+            DebandDither::Enabled,
+            Transform {
+                translation,
+                rotation: rot,
+                ..default()
+            },
+            pan_orbit,
+            IsDefaultUiCamera,
+        ))
+        .insert((
+            OrderIndependentTransparencySettings {
+                sorted_fragment_max_count: 8,
+                fragments_per_pixel_average: 4.0,
+                alpha_threshold: 0.003,
+            },
+            PostProcessingSettings::default(),
+            Bloom {
+                intensity: 0.16,
+                low_frequency_boost: 0.12,
+                low_frequency_boost_curvature: 0.88,
+                high_pass_frequency: 1.0,
+                prefilter: BloomPrefilter {
+                    threshold: 1.65,
+                    threshold_softness: 0.48,
+                },
+                composite_mode: BloomCompositeMode::EnergyConserving,
+                ..default()
+            },
+        ));
     info!("✅ setup_camera: Spawned Camera3d with SMAA High, CAS Sharpening, HDR Bloom, AgX");
 }
 
