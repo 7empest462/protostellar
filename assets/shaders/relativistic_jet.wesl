@@ -3,8 +3,6 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
-@if(MATERIAL_OIT_ENABLED)
-import bevy_core_pipeline::oit::draw::oit_draw;
 
 struct RelativisticJetUniforms {
     jet_params: vec4<f32>,              // x: elapsed_s, y: lorentz_factor, z: opening_angle_rad, w: jet_length_au
@@ -107,9 +105,5 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let alpha = clamp(radial_fade * axial_fade * (spine_mask * 0.75 + 0.25) * pow(doppler_boost, 0.35), 0.0, 1.0);
 
     out.color = vec4<f32>(final_rgb, alpha);
-@if(MATERIAL_OIT_ENABLED) {
-    oit_draw(in.position, vec4<f32>(out.color.rgb * out.color.a, out.color.a));
-    discard;
-}
     return out;
 }

@@ -13,7 +13,7 @@ use bevy::render::RenderApp;
 use bevy::shader::ShaderRef;
 
 use crate::rendering::camera::PanOrbitCamera;
-use crate::simulation::components::{BodyType, CelestialBody, Mass};
+use crate::simulation::components::CelestialBody;
 
 /// Uniform parameters driving the fullscreen post-processing shader.
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType, Debug, Reflect)]
@@ -123,7 +123,7 @@ pub fn update_adaptive_exposure_and_bloom(
     }
 }
 
-/// Updates real-time screen-space coordinates, black hole lensing parameters,
+/// Updates real-time screen-space coordinates, tonemapping,
 /// and gravitational-wave shockwave ripples for the fullscreen post-processing pass.
 pub fn update_post_processing_effects(
     time: Res<Time>,
@@ -133,13 +133,12 @@ pub fn update_post_processing_effects(
         &mut PostProcessingSettings,
         &mut Tonemapping,
     )>,
-    bh_q: Query<(&GlobalTransform, &CelestialBody, Option<&Mass>)>,
     hazard_mgr: Option<Res<crate::simulation::events::CosmicEventManager>>,
 ) {
     let dt = time.delta_secs();
     let elapsed = time.elapsed_secs();
 
-    for (camera, cam_gtf, mut settings, mut tonemapping) in &mut cam_q {
+    for (_camera, _cam_gtf, mut settings, mut tonemapping) in &mut cam_q {
         settings.time = elapsed;
 
         // 1. Synchronize tonemapping mode with hazard manager & camera display transform
@@ -168,33 +167,10 @@ pub fn update_post_processing_effects(
             settings.shockwave_amplitude = (settings.shockwave_amplitude - dt * 0.45).max(0.0);
         }
 
-        // 3. Spacetime curvature & relativistic black hole lensing screen projection
-        let mut closest_bh_dist = f32::MAX;
-        let mut bh_screen_uv = Vec2::splat(0.5);
-        let mut lensing_strength = 0.0f32;
-
-        let cam_pos = cam_gtf.translation();
-        for (bh_gtf, body, opt_mass) in &bh_q {
-            if body.body_type == BodyType::BlackHole {
-                let d = cam_pos.distance(bh_gtf.translation());
-                if d < closest_bh_dist {
-                    closest_bh_dist = d;
-                    if let Some(ndc) = camera.world_to_ndc(cam_gtf, bh_gtf.translation()) {
-                        if ndc.z > 0.0 && ndc.z < 1.0 {
-                            let uv = Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-                            bh_screen_uv = uv;
-                            let mass_solar =
-                                opt_mass.map_or(10.0, |m| (m.0 as f32 / 333_000.0).max(1.0));
-                            let mass_factor = (mass_solar / 10.0).clamp(0.5, 8.0);
-                            lensing_strength = (mass_factor / (d * 0.8 + 0.1)).clamp(0.0, 1.0);
-                        }
-                    }
-                }
-            }
-        }
-
-        settings.black_hole_screen_pos = bh_screen_uv;
-        settings.lensing_strength = lensing_strength;
+        // 3. Reset screen-space black hole lensing: black holes compute physical
+        // General Relativistic lensing in 3D geometry via black_hole_disk.wesl.
+        settings.lensing_strength = 0.0;
+        settings.black_hole_screen_pos = Vec2::splat(0.5);
     }
 }
 

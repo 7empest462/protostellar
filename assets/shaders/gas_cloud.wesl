@@ -5,8 +5,6 @@ import bevy_pbr::prepass::io::{VertexOutput, FragmentOutput};
 @else
 import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
 
-@if(MATERIAL_OIT_ENABLED)
-import bevy_core_pipeline::oit::draw::oit_draw;
 
 struct GasUniforms {
     time_data: vec4<f32>,   // x: time, y: inner_r, z: outer_r, w: gas_scale
@@ -221,9 +219,5 @@ fn fragment(
     let emissive_boost = select(1.10, 1.30, is_massive);
     let emissive_glow = color * (emissive_boost + wisps * 0.65) * doppler;
     out.color = vec4<f32>(emissive_glow, alpha);
-@if(MATERIAL_OIT_ENABLED) {
-    oit_draw(in.position, vec4<f32>(out.color.rgb * out.color.a, out.color.a));
-    discard;
-}
     return out;
 }

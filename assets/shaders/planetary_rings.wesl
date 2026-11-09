@@ -3,9 +3,6 @@ import bevy_pbr::render::{
     forward_io::VertexOutput,
 };
 
-@if(MATERIAL_OIT_ENABLED)
-import bevy_core_pipeline::oit::draw::oit_draw;
-
 struct RingUniforms {
     inner_radius: f32,
     outer_radius: f32,
@@ -240,10 +237,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let shaded_color = base_albedo * lit_mult * ring_illumination + forward_glow;
-    let out_color = vec4<f32>(shaded_color, alpha);
-@if(MATERIAL_OIT_ENABLED) {
-    oit_draw(in.position, vec4<f32>(out_color.rgb * out_color.a, out_color.a));
-    discard;
-}
-    return out_color;
+    return vec4<f32>(shaded_color, alpha);
 }

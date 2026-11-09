@@ -20,21 +20,9 @@ struct PostProcessingSettings {
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     var uv = in.uv;
-
-    // 1. Relativistic Spacetime Curvature & Black Hole Gravitational Lensing
     var ca_shift = vec2<f32>(0.0);
-    if (settings.lensing_strength > 0.001) {
-        let to_bh = uv - settings.black_hole_screen_pos;
-        let bh_dist = length(to_bh);
-        let deflection = (settings.lensing_strength * 0.004) / max(bh_dist, 0.06);
-        let dir = normalize(to_bh + vec2<f32>(1e-5));
-        // Deflect UVs towards the black hole center (Einstein ring warping)
-        uv = uv - dir * clamp(deflection, 0.0, 0.25);
-        // Chromatic dispersion around the photon ring
-        ca_shift += dir * (deflection * 0.45);
-    }
 
-    // 2. Relativistic Gravitational-Wave Ripples & Metric Perturbations (h+ / hx strain waves)
+    // 1. Relativistic Gravitational-Wave Ripples & Metric Perturbations (h+ / hx strain waves)
     if (settings.shockwave_amplitude > 0.001) {
         let to_shock = uv - settings.shockwave_center;
         let shock_dist = length(to_shock);
@@ -46,7 +34,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         ca_shift += shock_dir * (abs(ripple) * 1.8);
     }
 
-    // 3. Chromatic Aberration Sampling on HDR Scene
+    // 2. Chromatic Aberration Sampling on HDR Scene
     var hdr_color: vec3<f32>;
     if (dot(ca_shift, ca_shift) > 1e-7) {
         let r_ch = textureSample(screen_texture, screen_sampler, uv + ca_shift).r;
@@ -57,7 +45,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         hdr_color = textureSample(screen_texture, screen_sampler, uv).rgb;
     }
 
-    // 4. Cosmic Hazard Shockwave Flash (Ionizing radiation burst overlay)
+    // 3. Cosmic Hazard Shockwave Flash (Ionizing radiation burst overlay)
     if (settings.hazard_flash_intensity > 0.001) {
         let flash_glow = vec3<f32>(1.4, 2.1, 3.2); // Blinding Cherenkov / ionizing cyan-violet
         hdr_color = mix(hdr_color, flash_glow, clamp(settings.hazard_flash_intensity * 0.75, 0.0, 0.95));

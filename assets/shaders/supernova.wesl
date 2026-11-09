@@ -5,8 +5,6 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
-@if(MATERIAL_OIT_ENABLED)
-import bevy_core_pipeline::oit::draw::oit_draw;
 
 struct SupernovaUniforms {
     params: vec4<f32>,                 // x: elapsed_s, y: max_timer_s, z: current_radius_au, w: blast_speed_au_s
@@ -162,9 +160,5 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     }
 
     out.color = vec4<f32>(final_rgb, final_alpha);
-@if(MATERIAL_OIT_ENABLED) {
-    oit_draw(in.position, vec4<f32>(out.color.rgb * out.color.a, out.color.a));
-    discard;
-}
     return out;
 }

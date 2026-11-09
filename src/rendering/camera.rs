@@ -3,7 +3,6 @@
 use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::{Exposure, Hdr};
-use bevy::core_pipeline::oit::OrderIndependentTransparencySettings;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::gizmos::config::GizmoLineJoint;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
@@ -193,11 +192,6 @@ pub fn setup_camera(mut commands: Commands) {
             IsDefaultUiCamera,
         ))
         .insert((
-            OrderIndependentTransparencySettings {
-                sorted_fragment_max_count: 8,
-                fragments_per_pixel_average: 4.0,
-                alpha_threshold: 0.003,
-            },
             PostProcessingSettings::default(),
             Bloom {
                 intensity: 0.16,

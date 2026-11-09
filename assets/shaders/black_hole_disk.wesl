@@ -11,8 +11,6 @@
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::forward_io::VertexOutput;
 
-@if(MATERIAL_OIT_ENABLED)
-import bevy_core_pipeline::oit::draw::oit_draw;
 
 struct BlackHoleDiskUniforms {
     inner_radius: f32,     // ISCO radius (normalized, ~0.16)
@@ -259,9 +257,5 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let out_color = vec4<f32>(total_emission, total_alpha);
-@if(MATERIAL_OIT_ENABLED) {
-    oit_draw(mesh.position, vec4<f32>(out_color.rgb * out_color.a, out_color.a));
-    discard;
-}
     return out_color;
 }

@@ -301,7 +301,7 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
 }
 
 #[test]
-fn test_all_8_transparent_wesl_shaders_compile_with_material_oit_enabled() {
+fn test_all_8_transparent_wesl_shaders_compile_under_forward_pipeline() {
     let transparent_shaders = [
         "assets/shaders/planetary_rings.wesl",
         "assets/shaders/atmosphere.wesl",
@@ -313,13 +313,8 @@ fn test_all_8_transparent_wesl_shaders_compile_with_material_oit_enabled() {
         "assets/shaders/comet_tail.wesl",
     ];
 
-    let oit_defs = [
-        ShaderDefVal::Bool("OIT_ENABLED".into(), true),
-        ShaderDefVal::Bool("MATERIAL_OIT_ENABLED".into(), true),
-    ];
-
     for shader_path in transparent_shaders {
-        compile_and_validate_wesl_shader(shader_path, &oit_defs);
+        compile_and_validate_wesl_shader(shader_path, &[]);
     }
 }
 
