@@ -336,8 +336,11 @@ fn compute_body_material_parameters(
         body_type,
         BodyType::Asteroid | BodyType::Comet | BodyType::DustGrain | BodyType::Planetesimal
     );
-    let has_water_volatiles =
-        norm_comp.ice_frac > 0.001 || opt_vol.is_some_and(|v| v.delivered_water_m_earth > 1e-6);
+    let is_snowball_regime =
+        opt_climate.is_some_and(|c| c.climate_regime == ClimateRegime::SnowballIceAge);
+    let has_water_volatiles = norm_comp.ice_frac > 0.001
+        || opt_vol.is_some_and(|v| v.delivered_water_m_earth > 1e-6)
+        || is_snowball_regime;
     let ocean_frac = if is_minor_body {
         0.0
     } else if has_water_volatiles {
@@ -347,6 +350,8 @@ fn compute_body_material_parameters(
     };
     let ice_frac = if is_minor_body {
         norm_comp.ice_frac as f32
+    } else if is_snowball_regime {
+        opt_climate.map_or(1.0, |c| c.ice_coverage_frac.max(0.95))
     } else if has_water_volatiles {
         opt_climate.map_or(0.0, |c| c.ice_coverage_frac)
     } else {
@@ -406,7 +411,7 @@ fn compute_body_material_parameters(
     let b_em = opt_em.map_or(0.0, |e| e.magnetic_field_gauss as f32);
     let b_diff = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
     let mag_gauss = b_em.max(b_diff);
-    let liquid_ocean_frac = if temp_k > 380.0 {
+    let liquid_ocean_frac = if is_snowball_regime || temp_k > 380.0 {
         0.0
     } else if temp_k > 340.0 {
         let boil_factor = (380.0 - temp_k) / 40.0;

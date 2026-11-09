@@ -75,18 +75,15 @@ fn resolve_entity_world_impact_normal(
     opt_mat_handle: Option<&MeshMaterial3d<PlanetMaterial>>,
     opt_materials: Option<&Assets<PlanetMaterial>>,
 ) -> Vec3 {
+    let n = raw_normal.normalize_or_zero();
+    if n != Vec3::ZERO {
+        return n;
+    }
     let base_dir = opt_basins
         .and_then(|pb| pb.basins.last())
         .map(|b| b.surface_normal.normalize_or_zero())
         .filter(|v| *v != Vec3::ZERO)
-        .unwrap_or_else(|| {
-            let n = raw_normal.normalize_or_zero();
-            if n == Vec3::ZERO {
-                Vec3::X
-            } else {
-                n
-            }
-        });
+        .unwrap_or(Vec3::X);
 
     if let Some(mat) = opt_mat_handle
         .zip(opt_materials)

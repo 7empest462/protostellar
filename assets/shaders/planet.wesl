@@ -82,13 +82,12 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
     var active_sea_level = 0.0;
     var clamp_to_sea_level = false;
     let ocean_frac = planet.climate_and_bio.x;
-    let has_volatiles = planet.composition.y > 0.001 || ocean_frac > 0.001;
+    let has_volatiles = planet.composition.y > 0.001 || ocean_frac > 0.0001 || planet.climate_and_bio.y > 0.005;
     let pressure_bar = planet.atmosphere_params.x;
     if (p_type == 3u || p_type == 6u) {
         let t_sub = select(0.0, round(planet.color_seed.w), p_type == 3u);
         let is_snowball = p_type == 3u
-            && has_volatiles
-            && (planet.climate_and_bio.y >= 0.60 || (planet.temperature < 255.0 && (ocean_frac > 0.005 || planet.climate_and_bio.y > 0.10)));
+            && (planet.climate_and_bio.y >= 0.50 || (planet.temperature < 255.0 && (has_volatiles || ocean_frac > 0.0001 || planet.climate_and_bio.y > 0.005)));
         if (t_sub >= 1.0 && t_sub != 4.0) {
             elev = evaluate_canonical_terrestrial_elevation(p_surf, t_sub);
             let has_water_or_ice_oceans = has_volatiles
@@ -148,7 +147,7 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
             let trench_depth = trench_zone * 0.09;
 
             let has_water_or_ice_oceans = has_volatiles
-                && ocean_frac > 0.01
+                && (ocean_frac > 0.005 || is_snowball)
                 && planet.temperature <= 380.0
                 && (p_type == 6u || planet.temperature >= 150.0)
                 && pressure_bar >= 0.006;
@@ -2387,7 +2386,7 @@ fn fragment(
     let metal = planet.composition.z;
     let gas = planet.composition.w;
 
-    let has_volatiles = (ice > 0.002 || planet.climate_and_bio.x > 0.005 || planet.climate_and_bio.y > 0.005 || gas > 0.01);
+    let has_volatiles = (ice > 0.001 || planet.climate_and_bio.x > 0.0001 || planet.climate_and_bio.y > 0.005 || gas > 0.01);
     let ocean_frac = planet.climate_and_bio.x;
     let ice_frac = planet.climate_and_bio.y;
     let biomass = planet.climate_and_bio.z;
@@ -3298,8 +3297,8 @@ fn fragment(
 
         let sea_level = clamp(0.18 + ocean_frac * 0.40, 0.18, 0.76);
         let primordial_shelf_elev = 0.46;
-        let is_snowball = has_volatiles && (ice_frac >= 0.60 || (temp < 255.0 && (ocean_frac > 0.005 || ice_frac > 0.10)));
-        let has_water_or_ice_oceans = has_volatiles && ocean_frac > 0.01 && temp <= 380.0 && pressure_bar >= 0.006;
+        let is_snowball = ice_frac >= 0.50 || (temp < 255.0 && (has_volatiles || ice_frac > 0.005 || ocean_frac > 0.0001));
+        let has_water_or_ice_oceans = (has_volatiles || is_snowball) && (ocean_frac > 0.005 || is_snowball) && temp <= 380.0 && pressure_bar >= 0.006;
         let has_oceans = has_water_or_ice_oceans && !is_snowball;
 
         let land_weight = smoothstep(0.28, 0.48, continent_mask);
@@ -3401,23 +3400,23 @@ fn fragment(
 
             // On continents: thick ice domes with alpine nunatak peaks piercing through high elevations
             if (is_continental) {
-                // Continental ice sheets are thicker and brighter
-                ice_base = mix(ice_base, polar_firn, clamp(rel_elev * 2.5, 0.0, 0.65));
+                // Continental ice sheets are thick, brilliant polar firn and wind-drifted sastrugi
+                ice_base = mix(ice_base, polar_firn, 0.55 + sastrugi_macro * 0.25);
 
-                // Nunatak threshold: tallest mountain ridges / cratons breach the ice sheet
-                let nunatak_thresh = 0.22;
-                if (rel_elev > nunatak_thresh) {
+                // Nunatak threshold: only the highest, sheerest mountain ridges breach the continental ice sheet
+                let nunatak_thresh = 0.58;
+                if (mountain_ridges > 0.15 && elev > nunatak_thresh) {
                     let nunatak_noise = fbm(p_tectonic * 16.0);
-                    let mtn_crest = smoothstep(0.40, 0.85, nunatak_noise * 0.5 + (rel_elev - nunatak_thresh) * 3.0);
+                    let mtn_crest = smoothstep(0.55, 0.90, nunatak_noise * 0.4 + (elev - nunatak_thresh) * 3.0);
                     let nunatak_rock = vec3<f32>(0.32, 0.29, 0.27); // Dark frost-scoured permafrost / granite
                     let nunatak_snow = vec3<f32>(0.88, 0.92, 0.96);
-                    let nunatak_col = mix(nunatak_rock, nunatak_snow, smoothstep(0.60, 0.90, nunatak_noise));
-                    ice_base = mix(ice_base, nunatak_col, mtn_crest * 0.82);
+                    let nunatak_col = mix(nunatak_rock, nunatak_snow, smoothstep(0.40, 0.80, nunatak_noise));
+                    ice_base = mix(ice_base, nunatak_col, mtn_crest * 0.65);
                 }
             } else {
                 // Oceanic sea ice / pack ice floes: subtle leads and flat gleaming pack ice
                 let floe_lead = smoothstep(0.72, 0.90, fbm(p_surf * 14.0));
-                ice_base = mix(ice_base, crevasse_tint, floe_lead * 0.40);
+                ice_base = mix(ice_base, crevasse_tint, floe_lead * 0.25);
             }
 
             // Equatorial cryo-desert: hyper-arid sublimation snow has subtle wind-blown pale titanium tint

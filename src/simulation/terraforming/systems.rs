@@ -226,7 +226,7 @@ pub fn update_guided_bombardment_projectiles(
             continue;
         };
 
-        let dt = sim_time.current_dt_yr.max(1e-6);
+        let dt = (sim_time.current_dt_yr * time_warp.multiplier.max(0.01)).max(1e-6);
         let disp = p_pos.0 - t_pos.0;
         let dist = disp.length();
         let eff_target_radius = opt_target_tf

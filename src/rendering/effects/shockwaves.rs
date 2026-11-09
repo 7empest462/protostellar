@@ -1,27 +1,21 @@
 use bevy::prelude::*;
 
-use crate::rendering::effects::impact_debris::p_surf_to_world_normal;
-use crate::rendering::materials::PlanetMaterial;
 use crate::simulation::accretion::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::terraforming::{BombardmentEvent, BombardmentType};
 
 type ShockwaveBodyQueryItem<'w> = (
     Entity,
     &'static SimPosition,
     Option<&'static Radius>,
     Option<&'static Transform>,
-    Option<&'static PlanetaryBasins>,
-    Option<&'static MeshMaterial3d<PlanetMaterial>>,
 );
 
 fn resolve_shockwave_surface_pos_and_radius(
     p_pos: &SimPosition,
     p_rad: Option<&Radius>,
     p_tf: Option<&Transform>,
-    opt_basins: Option<&PlanetaryBasins>,
-    opt_mat_handle: Option<&MeshMaterial3d<PlanetMaterial>>,
-    opt_materials: Option<&Assets<PlanetMaterial>>,
     fallback_dir: Vec3,
 ) -> (Vec3, f32) {
     let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
@@ -31,25 +25,11 @@ fn resolve_shockwave_surface_pos_and_radius(
         .filter(|&vis_r| vis_r > phys_r && (vis_r - 1.0).abs() > 1e-4)
         .unwrap_or(0.035);
 
-    let local_dir = opt_basins
-        .and_then(|pb| pb.basins.last())
-        .map(|b| b.surface_normal.normalize_or_zero())
-        .filter(|v| *v != Vec3::ZERO)
-        .unwrap_or_else(|| fallback_dir.normalize_or_zero());
-
-    let world_dir = if local_dir == Vec3::ZERO {
+    let norm = fallback_dir.normalize_or_zero();
+    let world_dir = if norm == Vec3::ZERO {
         Vec3::Y
-    } else if let Some(mat) = opt_mat_handle
-        .zip(opt_materials)
-        .and_then(|(handle, materials)| materials.get(&handle.0))
-    {
-        p_surf_to_world_normal(
-            local_dir,
-            mat.extension.uniforms.spin_axis,
-            mat.extension.uniforms.spin_angle,
-        )
     } else {
-        local_dir
+        norm
     };
 
     (p_center + world_dir * (r_surf * 0.98), r_surf)
@@ -81,18 +61,17 @@ pub fn compute_impact_blackbody_color(base: Srgba, progress: f32, alpha_scale: f
     Color::srgba(r, g, b, alpha)
 }
 
-/// Collects collision merger and engulfment events and spawns expanding physical shockwaves.
+/// Collects collision merger, bounce, and bombardment events and spawns expanding physical shockwaves.
 pub fn update_impact_shockwaves(
     time: Res<Time>,
-    opt_materials: Option<Res<Assets<PlanetMaterial>>>,
     mut shockwave_pool: ResMut<ImpactShockwavePool>,
     mut merge_reader: MessageReader<AccretionMergeEvent>,
     mut bounce_reader: MessageReader<CollisionBounceEvent>,
     mut engulf_reader: MessageReader<PlanetaryEngulfmentEvent>,
+    mut bombard_reader: MessageReader<BombardmentEvent>,
     bodies_query: Query<ShockwaveBodyQueryItem>,
 ) {
     let dt = time.delta_secs();
-    let materials_ref = opt_materials.as_deref();
 
     for ev in merge_reader.read() {
         let ev_pos = Vec3::new(
@@ -100,7 +79,7 @@ pub fn update_impact_shockwaves(
             ev.merged_position.y as f32,
             ev.merged_position.z as f32,
         );
-        let (local_pos, pos, r_surf) = if let Ok((_, p_pos, p_rad, p_tf, opt_basins, opt_mat)) =
+        let (local_pos, pos, r_surf) = if let Ok((_, p_pos, p_rad, p_tf)) =
             bodies_query.get(ev.primary_entity)
         {
             let p_center = p_tf.map_or(
@@ -111,9 +90,6 @@ pub fn update_impact_shockwaves(
                 p_pos,
                 p_rad,
                 p_tf,
-                opt_basins,
-                opt_mat,
-                materials_ref,
                 ev_pos - p_center,
             );
             (w_pos - p_center, w_pos, r)
@@ -142,16 +118,18 @@ pub fn update_impact_shockwaves(
     }
 
     for ev in bounce_reader.read() {
-        if let Ok((_, pos1, p_rad, p_tf, _, _)) = bodies_query.get(ev.entity1) {
-            let pos = p_tf.map_or(
+        if let (Ok((_, pos1, p_rad1, p_tf1)), Ok((_, pos2, _, _))) =
+            (bodies_query.get(ev.entity1), bodies_query.get(ev.entity2))
+        {
+            let p_center1 = p_tf1.map_or(
                 Vec3::new(pos1.x as f32, pos1.y as f32, pos1.z as f32),
                 |tf| tf.translation,
             );
-            let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
-            let r_surf = p_tf
-                .map(|tf| tf.scale.x)
-                .filter(|&vis_r| vis_r > phys_r && (vis_r - 1.0).abs() > 1e-4)
-                .unwrap_or(0.035);
+            let p_center2 = Vec3::new(pos2.x as f32, pos2.y as f32, pos2.z as f32);
+            let dir = (p_center2 - p_center1).normalize_or_zero();
+            let (pos, r_surf) =
+                resolve_shockwave_surface_pos_and_radius(pos1, p_rad1, p_tf1, dir);
+            let local_pos = pos - p_center1;
             shockwave_pool.shockwaves.push(ImpactShockwave {
                 position: pos,
                 radius: r_surf * 0.08,
@@ -160,7 +138,39 @@ pub fn update_impact_shockwaves(
                 max_timer: 1.0,
                 color: Color::srgba(0.4, 0.8, 1.0, 0.7),
                 primary_entity: Some(ev.entity1),
-                local_position: Vec3::ZERO,
+                local_position: local_pos,
+            });
+        }
+    }
+
+    for ev in bombard_reader.read() {
+        if let Ok((_, p_pos, p_rad, p_tf)) = bodies_query.get(ev.target_entity) {
+            let p_center = p_tf.map_or(
+                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                |tf| tf.translation,
+            );
+            let (pos, r_surf) = resolve_shockwave_surface_pos_and_radius(
+                p_pos,
+                p_rad,
+                p_tf,
+                ev.surface_normal,
+            );
+            let local_pos = pos - p_center;
+            let color = match ev.bombardment_type {
+                BombardmentType::IcyComet => Color::srgba(0.7, 0.9, 1.0, 0.95),
+                BombardmentType::CarbonaceousChondrite => Color::srgba(1.0, 0.7, 0.3, 0.95),
+                BombardmentType::VolatileAblationSalvo => Color::srgba(0.6, 0.85, 1.0, 0.90),
+                BombardmentType::IronAsteroid => Color::srgba(1.0, 0.95, 0.8, 0.98),
+            };
+            shockwave_pool.shockwaves.push(ImpactShockwave {
+                position: pos,
+                radius: r_surf * 0.08,
+                max_radius: r_surf * 0.65,
+                timer: 0.0,
+                max_timer: 1.2,
+                color,
+                primary_entity: Some(ev.target_entity),
+                local_position: local_pos,
             });
         }
     }
@@ -184,7 +194,7 @@ pub fn update_impact_shockwaves(
         let progress = sw.timer / sw.max_timer;
         sw.radius = sw.max_radius * progress.sqrt();
         if let Some(ent) = sw.primary_entity {
-            if let Ok((_, p_pos, _, p_tf, _, _)) = bodies_query.get(ent) {
+            if let Ok((_, p_pos, _, p_tf)) = bodies_query.get(ent) {
                 let p_center = p_tf.map_or(
                     Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
                     |tf| tf.translation,
@@ -267,21 +277,34 @@ pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockw
         let plume_col =
             compute_impact_blackbody_color(base_srgba, (progress + 0.15).min(1.0), 0.65);
 
-        // 3D Parabolic Ballistic Ejecta Plume Trajectories
+        let normal = if sw.local_position.length_squared() > 1e-6 {
+            sw.local_position.normalize()
+        } else {
+            Vec3::Y
+        };
+        let up = if normal.y.abs() < 0.9 {
+            Vec3::Y
+        } else {
+            Vec3::X
+        };
+        let tangent_u = normal.cross(up).normalize_or_zero();
+        let tangent_v = normal.cross(tangent_u).normalize_or_zero();
+
+        // 3D Parabolic Ballistic Ejecta Plume Trajectories oriented along surface normal
         let ray_count = 10;
         let plume_reach = sw.radius * 0.88;
         let plume_apex = sw.max_radius * 0.34 * (progress * (1.2 - progress * 0.5)).max(0.05);
         for i in 0..ray_count {
             let az = (i as f32) * (std::f32::consts::TAU / ray_count as f32) + sw.max_radius * 3.1;
-            let dir_xz = Vec3::new(az.cos(), 0.0, az.sin());
+            let dir_tangent = tangent_u * az.cos() + tangent_v * az.sin();
             let speed_var = 0.75 + ((i as f32 * 1.9).sin() * 0.5 + 0.5) * 0.45;
             let r_tip = plume_reach * speed_var;
             let h_mid = plume_apex * speed_var;
             let h_tip = h_mid * (1.0 - progress * 0.85).max(-0.15);
 
-            let p0 = sw.position + dir_xz * (r_tip * 0.18);
-            let p_mid = sw.position + dir_xz * (r_tip * 0.58) + Vec3::Y * h_mid;
-            let p_tip = sw.position + dir_xz * r_tip + Vec3::Y * h_tip;
+            let p0 = sw.position + dir_tangent * (r_tip * 0.18);
+            let p_mid = sw.position + dir_tangent * (r_tip * 0.58) + normal * h_mid;
+            let p_tip = sw.position + dir_tangent * r_tip + normal * h_tip;
 
             gizmos.line(p0, p_mid, plume_col);
             gizmos.line(p_mid, p_tip, core_col);
