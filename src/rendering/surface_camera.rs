@@ -401,18 +401,9 @@ fn process_surface_camera_inputs(
 }
 
 type ActiveSurfaceWorld<'a> = (
-    Entity,
-    Option<Entity>,
-    Vec3,
-    Vec3,
-    &'a SimPosition,
-    &'a Radius,
-    &'a Temperature,
-    &'a Composition,
-    &'a CelestialBody,
-    Option<&'a SpinState>,
-    Option<&'a BiosphereState>,
-    Option<&'a Transform>,
+    Entity, Option<Entity>, Vec3, Vec3,
+    &'a SimPosition, &'a Radius, &'a Temperature, &'a Composition,
+    &'a CelestialBody, Option<&'a SpinState>, Option<&'a BiosphereState>, Option<&'a Transform>,
 );
 
 fn resolve_surface_host_and_world<'a>(
@@ -424,24 +415,66 @@ fn resolve_surface_host_and_world<'a>(
         Without<PanOrbitCamera>,
     >,
 ) -> Option<ActiveSurfaceWorld<'a>> {
-    let (host_ent, opt_rover_ent, unspun_norm, heading_unspun) =
-        resolve_surface_vantage_point(candidate_target, surface_lat_lon, worlds_query, probes_query)?;
+    let (host_ent, opt_rover_ent, unspun_norm, heading_unspun) = resolve_surface_vantage_point(
+        candidate_target, surface_lat_lon, worlds_query, probes_query,
+    )?;
     let (_, pos, radius, _mass, temp, comp, body, opt_spin, opt_bio, opt_t) =
         worlds_query.get(host_ent).ok()?;
     Some((
-        host_ent,
-        opt_rover_ent,
-        unspun_norm,
-        heading_unspun,
-        pos,
-        radius,
-        temp,
-        comp,
-        body,
-        opt_spin,
-        opt_bio,
-        opt_t,
+        host_ent, opt_rover_ent, unspun_norm, heading_unspun,
+        pos, radius, temp, comp, body, opt_spin, opt_bio, opt_t,
     ))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Coordinates surface horizon pose, rover driving, and atmospheric lighting"
+)]
+fn apply_surface_horizon_view(
+    mut commands: Commands,
+    cam_entity: Entity,
+    (has_atmosphere_settings, has_contact_shadows): (bool, bool),
+    camera: &mut PanOrbitCamera,
+    transform: &mut Transform,
+    projection: &mut Projection,
+    world: ActiveSurfaceWorld<'_>,
+    (forward_drive, turn_drive): (f32, f32),
+    config: &SimulationConfig,
+    sim_time: Option<&SimTime>,
+    dt: f32,
+    probes_query: &mut Query<
+        (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
+        Without<PanOrbitCamera>,
+    >,
+    atmospheres_query: &Query<
+        (Option<&VolatileInventory>, Option<&PlanetaryClimate>, Has<Atmosphere>),
+        Without<PanOrbitCamera>,
+    >,
+    all_atmospheres: &Query<Entity, With<Atmosphere>>,
+    atmosphere_media: Option<&SurfaceAtmosphereMedia>,
+) {
+    let (
+        host_ent, opt_rover_ent, unspun_norm, heading_unspun,
+        pos, radius, temp, comp, body, opt_spin, opt_bio, opt_t,
+    ) = world;
+
+    let (effective_rad, vis_rad, planet_pos, world_up, world_heading) =
+        resolve_and_drive_surface_geometry(
+            opt_rover_ent, opt_spin, opt_t, radius.0, body.body_type, pos.0,
+            config, sim_time, probes_query, camera,
+            forward_drive, turn_drive, comp, temp.0, opt_bio, unspun_norm, heading_unspun,
+        );
+
+    compute_and_apply_surface_pose(
+        camera, transform, projection, planet_pos,
+        effective_rad, vis_rad, world_up, world_heading, dt,
+    );
+    sync_surface_horizon_atmosphere_and_shadows(
+        &mut commands, cam_entity, host_ent,
+        has_contact_shadows, has_atmosphere_settings,
+        effective_rad, comp, temp.0 as f32,
+        atmospheres_query, all_atmospheres, atmosphere_media,
+    );
 }
 
 /// Synchronizes the 3D camera transform, near clipping plane, and manual rover driving
@@ -469,55 +502,98 @@ pub fn update_surface_horizon_camera(
         Has<AtmosphereSettings>, Has<ContactShadows>,
     ), Without<SpaceProbe>>,
     worlds_query: Query<SurfaceWorldQueryItem, (Without<SpaceProbe>, Without<PanOrbitCamera>)>,
-    atmospheres_query: Query<(Option<&VolatileInventory>, Option<&PlanetaryClimate>, Has<Atmosphere>), Without<PanOrbitCamera>>,
+    atmospheres_query: Query<
+        (Option<&VolatileInventory>, Option<&PlanetaryClimate>, Has<Atmosphere>),
+        Without<PanOrbitCamera>,
+    >,
     all_atmospheres: Query<Entity, With<Atmosphere>>,
-    mut probes_query: Query<(Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition), Without<PanOrbitCamera>>,
-    (focus, editable_query): (Option<Res<bevy::input_focus::InputFocus>>, Query<(), With<bevy::text::EditableText>>),
+    mut probes_query: Query<
+        (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
+        Without<PanOrbitCamera>,
+    >,
+    (focus, editable_query): (
+        Option<Res<bevy::input_focus::InputFocus>>,
+        Query<(), With<bevy::text::EditableText>>,
+    ),
 ) {
-    let Ok((cam_entity, mut camera, mut transform, mut projection, has_atmosphere_settings, has_contact_shadows)) =
-        camera_query.single_mut()
+    let Ok((
+        cam_entity,
+        mut camera,
+        mut transform,
+        mut projection,
+        has_atmosphere_settings,
+        has_contact_shadows,
+    )) = camera_query.single_mut()
     else {
         return;
     };
 
-    let text_focused = crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
+    let text_focused =
+        crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
     let (forward_drive, turn_drive) = process_surface_camera_inputs(
-        &mut camera, &mouse_buttons, &keyboard_input, &mut mouse_motion_events, &mut mouse_wheel_events,
-        text_focused, player_state.selected_entity, &mut toast,
+        &mut camera,
+        &mouse_buttons,
+        &keyboard_input,
+        &mut mouse_motion_events,
+        &mut mouse_wheel_events,
+        text_focused,
+        player_state.selected_entity,
+        &mut toast,
     );
 
     if !camera.surface_horizon_mode {
-        cleanup_surface_horizon_effects(&mut commands, cam_entity, has_atmosphere_settings, has_contact_shadows, &all_atmospheres);
+        cleanup_surface_horizon_effects(
+            &mut commands,
+            cam_entity,
+            has_atmosphere_settings,
+            has_contact_shadows,
+            &all_atmospheres,
+        );
         sync_orbital_near_plane(&mut projection, camera.radius);
         return;
     }
 
     let candidate_target = player_state.selected_entity.or(camera.target_entity);
-    let Some((
-        host_ent, opt_rover_ent, unspun_norm, heading_unspun,
-        pos, radius, temp, comp, body, opt_spin, opt_bio, opt_t,
-    )) = resolve_surface_host_and_world(candidate_target, camera.surface_lat_lon, &worlds_query, &probes_query)
-    else {
+    let Some(world) = resolve_surface_host_and_world(
+        candidate_target,
+        camera.surface_lat_lon,
+        &worlds_query,
+        &probes_query,
+    ) else {
         camera.surface_horizon_mode = false;
-        cleanup_surface_horizon_effects(&mut commands, cam_entity, has_atmosphere_settings, has_contact_shadows, &all_atmospheres);
-        toast.message = "⚠️ Cannot land on a star or compact remnant! Select a planet, moon, or rover.".to_string();
+        cleanup_surface_horizon_effects(
+            &mut commands,
+            cam_entity,
+            has_atmosphere_settings,
+            has_contact_shadows,
+            &all_atmospheres,
+        );
+        toast.message =
+            "⚠️ Cannot land on a star or compact remnant! Select a planet, moon, or rover."
+                .to_string();
         toast.timer = 3.5;
         return;
     };
 
-    camera.target_entity = opt_rover_ent.or(Some(host_ent));
-
-    let (effective_rad, vis_rad, planet_pos, world_up, world_heading) = resolve_and_drive_surface_geometry(
-        opt_rover_ent, opt_spin, opt_t, radius.0, body.body_type, pos.0,
-        &config, sim_time.as_deref(), &mut probes_query, &mut camera,
-        forward_drive, turn_drive, comp, temp.0, opt_bio, unspun_norm, heading_unspun,
-    );
-
+    camera.target_entity = world.1.or(Some(world.0));
     let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
-    compute_and_apply_surface_pose(&mut camera, &mut transform, &mut projection, planet_pos, effective_rad, vis_rad, world_up, world_heading, dt);
-    sync_surface_horizon_atmosphere_and_shadows(
-        &mut commands, cam_entity, host_ent, has_contact_shadows, has_atmosphere_settings,
-        effective_rad, comp, temp.0 as f32, &atmospheres_query, &all_atmospheres, atmosphere_media.as_deref(),
+
+    apply_surface_horizon_view(
+        commands,
+        cam_entity,
+        (has_atmosphere_settings, has_contact_shadows),
+        &mut camera,
+        &mut transform,
+        &mut projection,
+        world,
+        (forward_drive, turn_drive),
+        &config,
+        sim_time.as_deref(),
+        dt,
+        &mut probes_query,
+        &atmospheres_query,
+        &all_atmospheres,
+        atmosphere_media.as_deref(),
     );
 }
 

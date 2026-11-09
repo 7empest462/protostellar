@@ -191,8 +191,8 @@ fn advance_guided_projectile(
     };
 
     // Advance inward along approach corridor toward target surface
-    let close_step = (proj.initial_distance - contact_dist).max(0.001)
-        * f64::from(flight_dt_progress);
+    let close_step =
+        (proj.initial_distance - contact_dist).max(0.001) * f64::from(flight_dt_progress);
     let new_dist = (current_dist - close_step).max(contact_dist);
     proj.relative_offset = approach_dir * new_dist;
 
