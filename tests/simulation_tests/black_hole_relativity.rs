@@ -285,6 +285,21 @@ fn test_black_hole_accretion_disk_spawning_and_sync() {
         bh_entity,
         "Disk parent must be the black hole entity"
     );
+
+    // Verify RectLight area light was spawned on the accretion disk child
+    let rect_light = app
+        .world()
+        .get::<bevy_light::RectLight>(disk_ent)
+        .expect("Disk child must have RectLight component for area lighting");
+    assert!(
+        rect_light.intensity > 1000.0,
+        "RectLight must have non-zero luminous intensity"
+    );
+    assert!(
+        rect_light.range >= 10.0,
+        "RectLight range must encompass disk scale"
+    );
+    assert!(rect_light.width >= 10.0 && rect_light.height >= 10.0);
 }
 
 #[test]

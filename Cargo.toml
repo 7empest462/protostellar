@@ -92,6 +92,8 @@ bevy = { version = "0.20.1", default-features = false, features = [
     "smaa_luts",
     "ktx2",
     "tonemapping_luts",
+    "area_light_luts",
+    "dfg_lut",
     "default_font",
     "zstd_rust",
     "x11",

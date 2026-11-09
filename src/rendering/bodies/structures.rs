@@ -1,4 +1,4 @@
-use bevy::light::NotShadowCaster;
+use bevy::light::{NotShadowCaster, RectLight};
 use bevy::prelude::*;
 
 use crate::rendering::materials::*;
@@ -746,7 +746,11 @@ pub fn sync_black_hole_accretion_disks(
         (With<VisualBody>, Without<VisualBlackHoleDiskChild>),
     >,
     mut disk_children_query: Query<
-        (&mut Transform, &MeshMaterial3d<BlackHoleDiskMaterial>),
+        (
+            &mut Transform,
+            &MeshMaterial3d<BlackHoleDiskMaterial>,
+            Option<&mut RectLight>,
+        ),
         (
             With<VisualBlackHoleDiskChild>,
             Without<CelestialBody>,
@@ -803,11 +807,18 @@ pub fn sync_black_hole_accretion_disks(
         let mut found_child = false;
         if let Some(children) = opt_children {
             for child in children.iter() {
-                if let Ok((mut transform, mat_handle)) = disk_children_query.get_mut(child) {
+                if let Ok((mut transform, mat_handle, mut opt_light)) =
+                    disk_children_query.get_mut(child)
+                {
                     found_child = true;
                     *transform = target_transform;
                     if let Some(mut mat) = disk_materials.get_mut(&mat_handle.0) {
                         mat.uniforms = uniforms.clone();
+                    }
+                    if let Some(ref mut light) = opt_light {
+                        light.range = (target_transform.scale.x * 2.5).max(1.0);
+                        light.width = (target_transform.scale.x * 1.5).max(0.5);
+                        light.height = (target_transform.scale.z * 1.5).max(0.5);
                     }
                 }
             }
@@ -824,6 +835,13 @@ pub fn sync_black_hole_accretion_disks(
                         MeshMaterial3d(material),
                         target_transform,
                         NotShadowCaster,
+                        RectLight {
+                            color: Color::srgb(1.0, 0.78, 0.45),
+                            intensity: 25_000.0,
+                            range: (target_transform.scale.x * 2.5).max(1.0),
+                            width: (target_transform.scale.x * 1.5).max(0.5),
+                            height: (target_transform.scale.z * 1.5).max(0.5),
+                        },
                     ));
                 });
             }

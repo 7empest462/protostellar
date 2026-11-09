@@ -46,6 +46,7 @@ impl Plugin for RenderingPlugin {
             .init_resource::<KilonovaPool>()
             .init_resource::<TidalDisruptionPool>()
             .init_resource::<surface_terrain::SurfaceTerrainState>()
+            .init_resource::<surface_camera::SurfaceAtmosphereMedia>()
             .add_plugins((
                 shaders::ProtostellarShadersPlugin,
                 GasCloudPlugin,
