@@ -143,11 +143,20 @@ impl MaterialExtension for PlanetMaterialExtension {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let flag_name = if key.bind_group_data.contains(PlanetPipelineKey::BODY_CLASS_STAR_REMNANT) {
+        let flag_name = if key
+            .bind_group_data
+            .contains(PlanetPipelineKey::BODY_CLASS_STAR_REMNANT)
+        {
             "BODY_CLASS_STAR_REMNANT"
-        } else if key.bind_group_data.contains(PlanetPipelineKey::BODY_CLASS_GIANT) {
+        } else if key
+            .bind_group_data
+            .contains(PlanetPipelineKey::BODY_CLASS_GIANT)
+        {
             "BODY_CLASS_GIANT"
-        } else if key.bind_group_data.contains(PlanetPipelineKey::BODY_CLASS_MINOR) {
+        } else if key
+            .bind_group_data
+            .contains(PlanetPipelineKey::BODY_CLASS_MINOR)
+        {
             "BODY_CLASS_MINOR"
         } else {
             "BODY_CLASS_TERRESTRIAL"
@@ -158,7 +167,10 @@ impl MaterialExtension for PlanetMaterialExtension {
             frag.shader_defs.push(flag_name.into());
         }
 
-        if key.bind_group_data.contains(PlanetPipelineKey::CUTAWAY_ENABLED) {
+        if key
+            .bind_group_data
+            .contains(PlanetPipelineKey::CUTAWAY_ENABLED)
+        {
             descriptor.vertex.shader_defs.push("CUTAWAY_ENABLED".into());
             if let Some(ref mut frag) = descriptor.fragment {
                 frag.shader_defs.push("CUTAWAY_ENABLED".into());

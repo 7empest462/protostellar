@@ -148,7 +148,9 @@ pub fn update_post_processing_effects(
             let target_tm = match mgr.tonemapping_mode {
                 crate::simulation::events::TonemappingDisplayMode::AgX => Tonemapping::AgX,
                 crate::simulation::events::TonemappingDisplayMode::ACES => Tonemapping::AcesFitted,
-                crate::simulation::events::TonemappingDisplayMode::Reinhard => Tonemapping::Reinhard,
+                crate::simulation::events::TonemappingDisplayMode::Reinhard => {
+                    Tonemapping::Reinhard
+                }
             };
             if *tonemapping != target_tm {
                 *tonemapping = target_tm;
@@ -181,7 +183,8 @@ pub fn update_post_processing_effects(
                         if ndc.z > 0.0 && ndc.z < 1.0 {
                             let uv = Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
                             bh_screen_uv = uv;
-                            let mass_solar = opt_mass.map_or(10.0, |m| (m.0 as f32 / 333_000.0).max(1.0));
+                            let mass_solar =
+                                opt_mass.map_or(10.0, |m| (m.0 as f32 / 333_000.0).max(1.0));
                             let mass_factor = (mass_solar / 10.0).clamp(0.5, 8.0);
                             lensing_strength = (mass_factor / (d * 0.8 + 0.1)).clamp(0.0, 1.0);
                         }

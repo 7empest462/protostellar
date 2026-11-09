@@ -360,8 +360,7 @@ fn test_atmosphere_and_planet_shader_sources_validity() {
         "planet.wesl must import and use chapman_spherical_airmass"
     );
     assert!(
-        atmo_src.contains("chapman_spherical_airmass")
-            && atmo_src.contains("dual_lobe_mie_phase"),
+        atmo_src.contains("chapman_spherical_airmass") && atmo_src.contains("dual_lobe_mie_phase"),
         "atmosphere.wesl must import chapman_spherical_airmass and dual_lobe_mie_phase"
     );
 }

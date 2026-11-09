@@ -169,7 +169,9 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     let defs = vec![];
     let compiled = cache.get(0, root_id, &defs).unwrap_or_else(|err| {
-        panic!("Failed to compile test shader importing protostellar embedded WESL libraries:\n{err}")
+        panic!(
+            "Failed to compile test shader importing protostellar embedded WESL libraries:\n{err}"
+        )
     });
 
     let module = wgpu::naga::front::wgsl::parse_str(&compiled).unwrap_or_else(|err| {
