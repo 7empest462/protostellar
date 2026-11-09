@@ -74,47 +74,25 @@ pub fn launch_targeted_bombardment(
     };
 
     // Standoff approach vector positioned just outside the planetary exosphere / visual halo
-    let standoff_dist = (target_radius_au * 12.0).clamp(0.004, 0.025);
+    let standoff_dist = (target_radius_au * 12.0).clamp(0.008, 0.035);
     let mut approach_dir = if target_vel.length_squared() > 1e-6 {
         let v_norm = target_vel.normalize();
         let radial = target_pos.normalize_or_zero();
-        (radial * 0.75 + v_norm * 0.45 + DVec3::Y * 0.25).normalize()
+        (radial * 0.70 + v_norm * 0.50 + DVec3::Y * 0.35).normalize()
     } else {
-        DVec3::new(0.85, 0.25, 0.45).normalize()
+        DVec3::new(0.85, 0.35, 0.45).normalize()
     };
     if approach_dir.length_squared() < 1e-6 {
         approach_dir = DVec3::new(1.0, 0.2, 0.0).normalize();
     }
 
-    let spawn_pos = target_pos + approach_dir * standoff_dist;
+    let relative_offset = approach_dir * standoff_dist;
+    let spawn_pos = target_pos + relative_offset;
 
     // Flight time tuned for a prompt, cinematic intercept (~38 km/s closing speed, arriving in ~1-2s of gameplay)
     let closing_speed_au_yr = 8.0f64;
     let dt_flight = (standoff_dist / closing_speed_au_yr).clamp(0.0001, 0.0035);
-
-    // Estimate stellar gravitational acceleration on target:
-    // a_* = - (G * M_star / r^3) * r
-    let r_target_mag = target_pos.length();
-    let a_target = if r_target_mag > 1e-4 {
-        -(G_ASTRO * 1.0 / (r_target_mag * r_target_mag * r_target_mag)) * target_pos
-    } else {
-        DVec3::ZERO
-    };
-
-    // Target position at arrival time t + dt_flight accounting for Keplerian orbital curvature:
-    let predicted_target_pos =
-        target_pos + target_vel * dt_flight + 0.5 * a_target * dt_flight * dt_flight;
-
-    // Estimate stellar gravitational acceleration at spawn position
-    let r_spawn_mag = spawn_pos.length();
-    let a_spawn = if r_spawn_mag > 1e-4 {
-        -(G_ASTRO * 1.0 / (r_spawn_mag * r_spawn_mag * r_spawn_mag)) * spawn_pos
-    } else {
-        DVec3::ZERO
-    };
-
-    // Solved launch velocity compensating for differential gravitational curvature:
-    let spawn_vel = (predicted_target_pos - spawn_pos) / dt_flight - 0.5 * a_spawn * dt_flight;
+    let spawn_vel = target_vel - approach_dir * closing_speed_au_yr;
 
     commands
         .spawn((
@@ -136,6 +114,10 @@ pub fn launch_targeted_bombardment(
                 expected_arrival_yr: sim_time_years + dt_flight,
                 trail_color: bombardment_type.color(),
                 is_detonated: false,
+                relative_offset,
+                initial_distance: standoff_dist,
+                flight_duration_secs: 1.0,
+                flight_elapsed_secs: 0.0,
             },
         ))
         .id()

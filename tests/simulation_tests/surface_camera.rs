@@ -688,7 +688,10 @@ fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
     let mut sched = Schedule::default();
     sched.add_systems(update_surface_horizon_camera);
 
-    assert!(!app.world().entity(camera_ent).contains::<AtmosphereSettings>());
+    assert!(!app
+        .world()
+        .entity(camera_ent)
+        .contains::<AtmosphereSettings>());
     assert!(!app.world().entity(camera_ent).contains::<ContactShadows>());
 
     // 1. Enter Surface Horizon mode on Earth (has atmosphere: 1.013 bar)
@@ -703,7 +706,9 @@ fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
     sched.run(app.world_mut());
 
     assert!(
-        app.world().entity(camera_ent).contains::<AtmosphereSettings>(),
+        app.world()
+            .entity(camera_ent)
+            .contains::<AtmosphereSettings>(),
         "Camera must have AtmosphereSettings when on an atmosphere-bearing planet"
     );
     assert!(
@@ -723,7 +728,9 @@ fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
     sched.run(app.world_mut());
 
     assert!(
-        !app.world().entity(camera_ent).contains::<AtmosphereSettings>(),
+        !app.world()
+            .entity(camera_ent)
+            .contains::<AtmosphereSettings>(),
         "AtmosphereSettings must be removed when exiting Surface Horizon mode"
     );
     assert!(
@@ -761,7 +768,9 @@ fn test_surface_horizon_airless_body_shadows() {
         "Camera must have ContactShadows on the Moon"
     );
     assert!(
-        !app.world().entity(camera_ent).contains::<AtmosphereSettings>(),
+        !app.world()
+            .entity(camera_ent)
+            .contains::<AtmosphereSettings>(),
         "Airless bodies like the Moon must NOT attach AtmosphereSettings"
     );
 }

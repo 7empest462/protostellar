@@ -33,54 +33,6 @@ struct BombardmentImpactParams<'a> {
     disp: DVec3,
 }
 
-/// Continuous Collision Detection (CCD):
-/// Reconstructs relative trajectory segment over time step dt to detect swept-sphere intersections.
-fn check_swept_impact(
-    disp: DVec3,
-    dist: f64,
-    v_rel_vec: DVec3,
-    dt: f64,
-    contact_dist: f64,
-    arrival_elapsed: bool,
-) -> bool {
-    let step_disp = v_rel_vec * dt;
-    let p_prev_rel = disp - step_disp;
-    let seg_len_sq = step_disp.length_squared();
-
-    let swept_dist = if seg_len_sq > 1e-12 {
-        let u = (-p_prev_rel.dot(step_disp) / seg_len_sq).clamp(0.0, 1.0);
-        (p_prev_rel + step_disp * u).length()
-    } else {
-        dist
-    };
-
-    dist <= contact_dist
-        || swept_dist <= contact_dist
-        || (arrival_elapsed && dist <= contact_dist * 5.0)
-}
-
-/// Active Closed-Loop Proportional Navigation Guidance:
-/// Continually steers relative velocity vector directly toward target center.
-fn steer_proportional_navigation(
-    p_vel: &mut DVec3,
-    disp: DVec3,
-    dist: f64,
-    t_vel: DVec3,
-    expected_arrival_yr: f64,
-    elapsed_years: f64,
-    dt: f64,
-) {
-    let time_left = (expected_arrival_yr - elapsed_years).max(dt);
-    let desired_closing_speed = (dist / time_left).clamp(1.0, 50.0);
-    let dir_to_target = -disp.normalize_or_zero();
-    let v_desired = t_vel + dir_to_target * desired_closing_speed;
-
-    let steer_tau = (0.20 * time_left).max(dt);
-    let blend = (dt / steer_tau).clamp(0.0, 1.0);
-    let delta_v = (v_desired - *p_vel) * blend;
-    *p_vel += delta_v;
-}
-
 fn resolve_bombardment_impact(
     commands: &mut Commands,
     event_writer: &mut MessageWriter<BombardmentEvent>,
@@ -157,68 +109,178 @@ fn resolve_bombardment_impact(
     });
 }
 
+type TargetBodyQueryItem<'a> = (
+    Entity,
+    &'a SimPosition,
+    &'a SimVelocity,
+    &'a Mass,
+    &'a Radius,
+    Mut<'a, Temperature>,
+    Mut<'a, Composition>,
+    &'a CelestialBody,
+    Option<Mut<'a, VolatileInventory>>,
+    Option<Mut<'a, TerraformingAtmosphere>>,
+    Option<Mut<'a, PlanetaryClimate>>,
+    Option<Mut<'a, InternalDifferentiation>>,
+    Option<&'a Transform>,
+);
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Bombardment guidance step coordinates projectile kinematics and target properties"
+)]
+fn advance_guided_projectile(
+    commands: &mut Commands,
+    event_writer: &mut MessageWriter<BombardmentEvent>,
+    p_ent: Entity,
+    p_pos: &mut SimPosition,
+    p_vel: &mut SimVelocity,
+    p_mass: f64,
+    p_rad: f64,
+    p_comp: &Composition,
+    proj: &mut BombardmentProjectile,
+    target_data: TargetBodyQueryItem<'_>,
+    dt_real: f32,
+    sim_time: &SimTime,
+) {
+    let (
+        t_ent,
+        t_pos,
+        t_vel,
+        t_mass,
+        t_rad,
+        t_temp,
+        _t_comp,
+        t_body,
+        opt_vol,
+        opt_terra,
+        opt_climate,
+        opt_diff,
+        opt_target_tf,
+    ) = target_data;
+
+    proj.flight_elapsed_secs += dt_real;
+    let dt_sim = sim_time.current_dt_yr.max(0.0);
+    let flight_dt_progress = if dt_sim > 0.0 {
+        let sim_frac = dt_sim / (proj.expected_arrival_yr - proj.launch_time_yr).max(1e-6);
+        (sim_frac as f32).max(dt_real / proj.flight_duration_secs.max(0.1))
+    } else {
+        dt_real / proj.flight_duration_secs.max(0.1)
+    };
+
+    let eff_target_radius = opt_target_tf
+        .map(|tf| f64::from(tf.scale.x))
+        .filter(|&vis_r| vis_r > t_rad.0 && (vis_r - 1.0).abs() > 1e-4)
+        .unwrap_or(t_rad.0);
+    let contact_dist = (eff_target_radius + p_rad * 2.0).max(eff_target_radius * 1.01);
+
+    // Check if manually positioned right onto target in tests
+    let direct_disp = p_pos.0 - t_pos.0;
+    let direct_dist = direct_disp.length();
+    let current_dist = if direct_dist < proj.relative_offset.length() {
+        proj.relative_offset = direct_disp;
+        direct_dist
+    } else {
+        proj.relative_offset.length()
+    };
+
+    let approach_dir = if current_dist > 1e-9 {
+        proj.relative_offset / current_dist
+    } else {
+        DVec3::Y
+    };
+
+    // Advance inward along approach corridor toward target surface
+    let close_step = (proj.initial_distance - contact_dist).max(0.001)
+        * f64::from(flight_dt_progress);
+    let new_dist = (current_dist - close_step).max(contact_dist);
+    proj.relative_offset = approach_dir * new_dist;
+
+    // Keep world position and velocity strictly anchored to moving target
+    p_pos.0 = t_pos.0 + proj.relative_offset;
+    p_vel.0 = t_vel.0 - approach_dir * 8.0;
+
+    let is_at_surface = new_dist <= contact_dist * 1.002;
+    let is_arrival_elapsed = proj.flight_elapsed_secs >= proj.flight_duration_secs
+        || sim_time.elapsed_years >= proj.expected_arrival_yr;
+
+    if !is_at_surface && !is_arrival_elapsed {
+        return;
+    }
+
+    proj.is_detonated = true;
+    let v_rel = (p_vel.0 - t_vel.0).length();
+
+    // Impact normal is strictly directed along inbound descent corridor onto target surface
+    let impact_disp = approach_dir * eff_target_radius;
+
+    resolve_bombardment_impact(
+        commands,
+        event_writer,
+        BombardmentImpactParams {
+            elapsed_years: sim_time.elapsed_years,
+            projectile_mass_solar: p_mass,
+            projectile_comp: p_comp,
+            bombardment_type: proj.bombardment_type,
+            relative_velocity: v_rel,
+            disp: impact_disp,
+        },
+        TargetImpactContext {
+            entity: t_ent,
+            name: &t_body.name,
+            mass_solar: t_mass.0,
+            radius_au: t_rad.0,
+            temp: t_temp,
+            opt_vol,
+            opt_terra,
+            opt_climate,
+            opt_diff,
+        },
+    );
+
+    if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
+        entity_cmd.try_despawn();
+    }
+}
+
 /// Advances guided bombardment projectiles along their intercept corridor, detecting proximity
 /// and resolving atmospheric entry and surface impact.
 #[allow(clippy::type_complexity, reason = "bevy ECS query complexity")]
 pub fn update_guided_bombardment_projectiles(
     mut commands: Commands,
     sim_time: Res<SimTime>,
+    time: Option<Res<Time>>,
     time_warp: Res<TimeWarp>,
     _config: Res<SimulationConfig>,
     mut event_writer: MessageWriter<BombardmentEvent>,
     mut projectile_query: Query<(
         Entity,
-        &SimPosition,
+        &mut SimPosition,
         &mut SimVelocity,
         &Mass,
         &Radius,
         &Composition,
         &mut BombardmentProjectile,
     )>,
-    mut target_query: Query<
-        (
-            Entity,
-            &SimPosition,
-            &SimVelocity,
-            &Mass,
-            &Radius,
-            &mut Temperature,
-            &mut Composition,
-            &CelestialBody,
-            Option<&mut VolatileInventory>,
-            Option<&mut TerraformingAtmosphere>,
-            Option<&mut PlanetaryClimate>,
-            Option<&mut InternalDifferentiation>,
-            Option<&Transform>,
-        ),
-        Without<BombardmentProjectile>,
-    >,
+    mut target_query: Query<TargetBodyQueryItem<'_>, Without<BombardmentProjectile>>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
         return;
     }
 
-    for (p_ent, p_pos, mut p_vel, p_mass, p_rad, p_comp, mut proj) in projectile_query.iter_mut() {
+    let dt_real = time
+        .as_ref()
+        .map_or(0.016, |t| t.delta_secs())
+        .clamp(0.001, 0.05);
+
+    for (p_ent, mut p_pos, mut p_vel, p_mass, p_rad, p_comp, mut proj) in
+        projectile_query.iter_mut()
+    {
         if proj.is_detonated {
             continue;
         }
 
-        let Ok((
-            t_ent,
-            t_pos,
-            t_vel,
-            t_mass,
-            t_rad,
-            t_temp,
-            _t_comp,
-            t_body,
-            opt_vol,
-            opt_terra,
-            opt_climate,
-            opt_diff,
-            opt_target_tf,
-        )) = target_query.get_mut(proj.target_entity)
-        else {
+        let Ok(target_data) = target_query.get_mut(proj.target_entity) else {
             // Target was consumed, shattered, or despawned
             if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
                 entity_cmd.try_despawn();
@@ -226,66 +288,20 @@ pub fn update_guided_bombardment_projectiles(
             continue;
         };
 
-        let dt = (sim_time.current_dt_yr * time_warp.multiplier.max(0.01)).max(1e-6);
-        let disp = p_pos.0 - t_pos.0;
-        let dist = disp.length();
-        let eff_target_radius = opt_target_tf
-            .map(|tf| f64::from(tf.scale.x))
-            .filter(|&vis_r| vis_r > t_rad.0 && (vis_r - 1.0).abs() > 1e-4)
-            .unwrap_or(t_rad.0);
-        let contact_dist = (eff_target_radius + p_rad.0 * 2.0).max(eff_target_radius * 1.02);
-        let arrival_elapsed = sim_time.elapsed_years >= proj.expected_arrival_yr;
-
-        if !check_swept_impact(
-            disp,
-            dist,
-            p_vel.0 - t_vel.0,
-            dt,
-            contact_dist,
-            arrival_elapsed,
-        ) {
-            steer_proportional_navigation(
-                &mut p_vel.0,
-                disp,
-                dist,
-                t_vel.0,
-                proj.expected_arrival_yr,
-                sim_time.elapsed_years,
-                dt,
-            );
-            continue;
-        }
-
-        proj.is_detonated = true;
-        let v_rel = (p_vel.0 - t_vel.0).length();
-
-        resolve_bombardment_impact(
+        advance_guided_projectile(
             &mut commands,
             &mut event_writer,
-            BombardmentImpactParams {
-                elapsed_years: sim_time.elapsed_years,
-                projectile_mass_solar: p_mass.0,
-                projectile_comp: p_comp,
-                bombardment_type: proj.bombardment_type,
-                relative_velocity: v_rel,
-                disp,
-            },
-            TargetImpactContext {
-                entity: t_ent,
-                name: &t_body.name,
-                mass_solar: t_mass.0,
-                radius_au: t_rad.0,
-                temp: t_temp,
-                opt_vol,
-                opt_terra,
-                opt_climate,
-                opt_diff,
-            },
+            p_ent,
+            &mut p_pos,
+            &mut p_vel,
+            p_mass.0,
+            p_rad.0,
+            p_comp,
+            &mut proj,
+            target_data,
+            dt_real,
+            &sim_time,
         );
-
-        if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
-            entity_cmd.try_despawn();
-        }
     }
 }
 

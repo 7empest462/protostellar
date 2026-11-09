@@ -129,7 +129,10 @@ fn write_back_physics_results(
             Option<&mut SatelliteOf>,
             Option<&CentralStar>,
         ),
-        Without<crate::simulation::probes::SpaceProbe>,
+        (
+            Without<crate::simulation::probes::SpaceProbe>,
+            Without<crate::simulation::terraforming::BombardmentProjectile>,
+        ),
     >,
 ) {
     let mut escaped_minor_debris: SmallVec<[Entity; 16]> = SmallVec::new();
@@ -753,6 +756,62 @@ fn apply_player_velocity_impulse(
     }
 }
 
+fn calculate_target_dt(
+    config: &SimulationConfig,
+    time_warp: &TimeWarp,
+    time: Option<&Time>,
+) -> f64 {
+    let dt = config.base_dt_yr;
+    let wall_frame_scale = if time_warp.step_once {
+        1.0
+    } else {
+        time.map(Time::delta_secs_f64)
+            .filter(|&d| (0.016..=0.5).contains(&d))
+            .map_or(1.0, |d| (d * 60.0).max(1.0))
+    };
+    dt * time_warp.multiplier.max(TimeWarp::MIN_SPEED) * wall_frame_scale
+}
+
+type PhysicsBodiesQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut Mass,
+        &'static mut SimPosition,
+        &'static mut SimVelocity,
+        &'static mut SimAcceleration,
+        &'static Radius,
+        &'static CelestialBody,
+        Option<&'static mut SatelliteOf>,
+        Option<&'static CentralStar>,
+    ),
+    (
+        Without<crate::simulation::probes::SpaceProbe>,
+        Without<crate::simulation::terraforming::BombardmentProjectile>,
+    ),
+>;
+
+fn collect_physics_bodies(bodies_query: &PhysicsBodiesQuery<'_, '_>) -> Vec<PhysicsBodyEntry> {
+    bodies_query
+        .iter()
+        .map(
+            |(e, m, pos, vel, acc, rad, body, sat, opt_c)| PhysicsBodyEntry {
+                entity: e,
+                mass: m.0,
+                pos: pos.0,
+                vel: vel.0,
+                acc: acc.0,
+                radius: rad.0,
+                body_type: body.body_type,
+                satellite: sat.copied(),
+                is_central_star: opt_c.is_some(),
+                name: body.name.clone(),
+            },
+        )
+        .collect()
+}
+
 #[allow(
     clippy::type_complexity,
     clippy::too_many_arguments,
@@ -770,20 +829,7 @@ pub fn step_physics_simulation(
     mut lhb_state: ResMut<crate::game::phases::LateHeavyBombardmentState>,
     scenario_state: Option<Res<ActiveScenarioState>>,
     mut commands: Commands,
-    mut bodies_query: Query<
-        (
-            Entity,
-            &mut Mass,
-            &mut SimPosition,
-            &mut SimVelocity,
-            &mut SimAcceleration,
-            &Radius,
-            &CelestialBody,
-            Option<&mut SatelliteOf>,
-            Option<&CentralStar>,
-        ),
-        Without<crate::simulation::probes::SpaceProbe>,
-    >,
+    mut bodies_query: PhysicsBodiesQuery<'_, '_>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
         sim_time.current_dt_yr = 0.0;
@@ -791,40 +837,12 @@ pub fn step_physics_simulation(
     }
 
     let dt = config.base_dt_yr;
-    // Scale all time-warp presets by actual wall-clock frame delta so every speed label
-    // (1s = 1s, 1m..72h, 1x = 11 days/s, 10x = 3.6 mo/s, 100x = 3 yr/s, etc.) is exact and
-    // strictly monotonic at any live frame rate (e.g. 8–60+ FPS), while keeping tight-loop
-    // headless unit tests (d < 5ms) deterministic.
-    let wall_frame_scale = if time_warp.step_once {
-        1.0
-    } else {
-        time.as_ref()
-            .map(|t| t.delta_secs_f64())
-            .filter(|&d| (0.016..=0.5).contains(&d))
-            .map_or(1.0, |d| (d * 60.0).max(1.0))
-    };
-    let target_dt = dt * time_warp.multiplier.max(TimeWarp::MIN_SPEED) * wall_frame_scale;
+    let target_dt = calculate_target_dt(&config, &time_warp, time.as_deref());
     let eff_softening_au =
         compute_effective_softening_au(scenario_state.as_deref(), &disk_params, &config);
     let softening_sq = eff_softening_au * eff_softening_au;
 
-    let mut body_data: Vec<PhysicsBodyEntry> = bodies_query
-        .iter()
-        .map(
-            |(e, m, pos, vel, acc, rad, body, sat, opt_c)| PhysicsBodyEntry {
-                entity: e,
-                mass: m.0,
-                pos: pos.0,
-                vel: vel.0,
-                acc: acc.0,
-                radius: rad.0,
-                body_type: body.body_type,
-                satellite: sat.copied(),
-                is_central_star: opt_c.is_some(),
-                name: body.name.clone(),
-            },
-        )
-        .collect();
+    let mut body_data = collect_physics_bodies(&bodies_query);
 
     let is_gmc_cluster = scenario_state
         .as_deref()

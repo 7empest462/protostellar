@@ -18,7 +18,10 @@ fn resolve_shockwave_surface_pos_and_radius(
     p_tf: Option<&Transform>,
     fallback_dir: Vec3,
 ) -> (Vec3, f32) {
-    let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let p_center = p_tf.map_or(
+        Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+        |tf| tf.translation,
+    );
     let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
     let r_surf = p_tf
         .map(|tf| tf.scale.x)
@@ -26,11 +29,7 @@ fn resolve_shockwave_surface_pos_and_radius(
         .unwrap_or(0.035);
 
     let norm = fallback_dir.normalize_or_zero();
-    let world_dir = if norm == Vec3::ZERO {
-        Vec3::Y
-    } else {
-        norm
-    };
+    let world_dir = if norm == Vec3::ZERO { Vec3::Y } else { norm };
 
     (p_center + world_dir * (r_surf * 0.98), r_surf)
 }
@@ -79,23 +78,18 @@ pub fn update_impact_shockwaves(
             ev.merged_position.y as f32,
             ev.merged_position.z as f32,
         );
-        let (local_pos, pos, r_surf) = if let Ok((_, p_pos, p_rad, p_tf)) =
-            bodies_query.get(ev.primary_entity)
-        {
-            let p_center = p_tf.map_or(
-                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-                |tf| tf.translation,
-            );
-            let (w_pos, r) = resolve_shockwave_surface_pos_and_radius(
-                p_pos,
-                p_rad,
-                p_tf,
-                ev_pos - p_center,
-            );
-            (w_pos - p_center, w_pos, r)
-        } else {
-            (Vec3::ZERO, ev_pos, 0.04)
-        };
+        let (local_pos, pos, r_surf) =
+            if let Ok((_, p_pos, p_rad, p_tf)) = bodies_query.get(ev.primary_entity) {
+                let p_center = p_tf.map_or(
+                    Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                    |tf| tf.translation,
+                );
+                let (w_pos, r) =
+                    resolve_shockwave_surface_pos_and_radius(p_pos, p_rad, p_tf, ev_pos - p_center);
+                (w_pos - p_center, w_pos, r)
+            } else {
+                (Vec3::ZERO, ev_pos, 0.04)
+            };
 
         let max_r = (r_surf * (0.45 + (ev.merged_mass * 400.0).cbrt() as f32 * 0.40))
             .clamp(r_surf * 0.35, r_surf * 1.15);
@@ -127,8 +121,7 @@ pub fn update_impact_shockwaves(
             );
             let p_center2 = Vec3::new(pos2.x as f32, pos2.y as f32, pos2.z as f32);
             let dir = (p_center2 - p_center1).normalize_or_zero();
-            let (pos, r_surf) =
-                resolve_shockwave_surface_pos_and_radius(pos1, p_rad1, p_tf1, dir);
+            let (pos, r_surf) = resolve_shockwave_surface_pos_and_radius(pos1, p_rad1, p_tf1, dir);
             let local_pos = pos - p_center1;
             shockwave_pool.shockwaves.push(ImpactShockwave {
                 position: pos,
@@ -149,12 +142,8 @@ pub fn update_impact_shockwaves(
                 Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
                 |tf| tf.translation,
             );
-            let (pos, r_surf) = resolve_shockwave_surface_pos_and_radius(
-                p_pos,
-                p_rad,
-                p_tf,
-                ev.surface_normal,
-            );
+            let (pos, r_surf) =
+                resolve_shockwave_surface_pos_and_radius(p_pos, p_rad, p_tf, ev.surface_normal);
             let local_pos = pos - p_center;
             let color = match ev.bombardment_type {
                 BombardmentType::IcyComet => Color::srgba(0.7, 0.9, 1.0, 0.95),

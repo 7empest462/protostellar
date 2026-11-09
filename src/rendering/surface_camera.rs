@@ -400,6 +400,50 @@ fn process_surface_camera_inputs(
     }
 }
 
+type ActiveSurfaceWorld<'a> = (
+    Entity,
+    Option<Entity>,
+    Vec3,
+    Vec3,
+    &'a SimPosition,
+    &'a Radius,
+    &'a Temperature,
+    &'a Composition,
+    &'a CelestialBody,
+    Option<&'a SpinState>,
+    Option<&'a BiosphereState>,
+    Option<&'a Transform>,
+);
+
+fn resolve_surface_host_and_world<'a>(
+    candidate_target: Option<Entity>,
+    surface_lat_lon: Vec2,
+    worlds_query: &'a Query<SurfaceWorldQueryItem, (Without<SpaceProbe>, Without<PanOrbitCamera>)>,
+    probes_query: &Query<
+        (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
+        Without<PanOrbitCamera>,
+    >,
+) -> Option<ActiveSurfaceWorld<'a>> {
+    let (host_ent, opt_rover_ent, unspun_norm, heading_unspun) =
+        resolve_surface_vantage_point(candidate_target, surface_lat_lon, worlds_query, probes_query)?;
+    let (_, pos, radius, _mass, temp, comp, body, opt_spin, opt_bio, opt_t) =
+        worlds_query.get(host_ent).ok()?;
+    Some((
+        host_ent,
+        opt_rover_ent,
+        unspun_norm,
+        heading_unspun,
+        pos,
+        radius,
+        temp,
+        comp,
+        body,
+        opt_spin,
+        opt_bio,
+        opt_t,
+    ))
+}
+
 /// Synchronizes the 3D camera transform, near clipping plane, and manual rover driving
 /// when First-Person Surface / Rover Horizon Mode (`Shift + V`) is active.
 #[allow(
@@ -421,12 +465,8 @@ pub fn update_surface_horizon_camera(
     time: Option<Res<Time>>,
     mut toast: ResMut<NotificationToast>,
     mut camera_query: Query<(
-        Entity,
-        &mut PanOrbitCamera,
-        &mut Transform,
-        &mut Projection,
-        Has<AtmosphereSettings>,
-        Has<ContactShadows>,
+        Entity, &mut PanOrbitCamera, &mut Transform, &mut Projection,
+        Has<AtmosphereSettings>, Has<ContactShadows>,
     ), Without<SpaceProbe>>,
     worlds_query: Query<SurfaceWorldQueryItem, (Without<SpaceProbe>, Without<PanOrbitCamera>)>,
     atmospheres_query: Query<(Option<&VolatileInventory>, Option<&PlanetaryClimate>, Has<Atmosphere>), Without<PanOrbitCamera>>,
@@ -442,14 +482,8 @@ pub fn update_surface_horizon_camera(
 
     let text_focused = crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
     let (forward_drive, turn_drive) = process_surface_camera_inputs(
-        &mut camera,
-        &mouse_buttons,
-        &keyboard_input,
-        &mut mouse_motion_events,
-        &mut mouse_wheel_events,
-        text_focused,
-        player_state.selected_entity,
-        &mut toast,
+        &mut camera, &mouse_buttons, &keyboard_input, &mut mouse_motion_events, &mut mouse_wheel_events,
+        text_focused, player_state.selected_entity, &mut toast,
     );
 
     if !camera.surface_horizon_mode {
@@ -459,8 +493,10 @@ pub fn update_surface_horizon_camera(
     }
 
     let candidate_target = player_state.selected_entity.or(camera.target_entity);
-    let Some((host_ent, opt_rover_ent, unspun_norm, heading_unspun)) =
-        resolve_surface_vantage_point(candidate_target, camera.surface_lat_lon, &worlds_query, &probes_query)
+    let Some((
+        host_ent, opt_rover_ent, unspun_norm, heading_unspun,
+        pos, radius, temp, comp, body, opt_spin, opt_bio, opt_t,
+    )) = resolve_surface_host_and_world(candidate_target, camera.surface_lat_lon, &worlds_query, &probes_query)
     else {
         camera.surface_horizon_mode = false;
         cleanup_surface_horizon_effects(&mut commands, cam_entity, has_atmosphere_settings, has_contact_shadows, &all_atmospheres);
@@ -471,67 +507,17 @@ pub fn update_surface_horizon_camera(
 
     camera.target_entity = opt_rover_ent.or(Some(host_ent));
 
-    let Ok((_, pos, radius, _mass, temp, comp, body, opt_spin, opt_bio, opt_t)) =
-        worlds_query.get(host_ent)
-    else {
-        camera.surface_horizon_mode = false;
-        cleanup_surface_horizon_effects(
-            &mut commands,
-            cam_entity,
-            has_atmosphere_settings,
-            has_contact_shadows,
-            &all_atmospheres,
-        );
-        return;
-    };
-
-    let (effective_rad, vis_rad, planet_pos, world_up, world_heading) =
-        resolve_and_drive_surface_geometry(
-            opt_rover_ent,
-            opt_spin,
-            opt_t,
-            radius.0,
-            body.body_type,
-            pos.0,
-            &config,
-            sim_time.as_deref(),
-            &mut probes_query,
-            &mut camera,
-            forward_drive,
-            turn_drive,
-            comp,
-            temp.0,
-            opt_bio,
-            unspun_norm,
-            heading_unspun,
-        );
-
-    let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
-
-    compute_and_apply_surface_pose(
-        &mut camera,
-        &mut transform,
-        &mut projection,
-        planet_pos,
-        effective_rad,
-        vis_rad,
-        world_up,
-        world_heading,
-        dt,
+    let (effective_rad, vis_rad, planet_pos, world_up, world_heading) = resolve_and_drive_surface_geometry(
+        opt_rover_ent, opt_spin, opt_t, radius.0, body.body_type, pos.0,
+        &config, sim_time.as_deref(), &mut probes_query, &mut camera,
+        forward_drive, turn_drive, comp, temp.0, opt_bio, unspun_norm, heading_unspun,
     );
 
+    let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
+    compute_and_apply_surface_pose(&mut camera, &mut transform, &mut projection, planet_pos, effective_rad, vis_rad, world_up, world_heading, dt);
     sync_surface_horizon_atmosphere_and_shadows(
-        &mut commands,
-        cam_entity,
-        host_ent,
-        has_contact_shadows,
-        has_atmosphere_settings,
-        effective_rad,
-        comp,
-        temp.0 as f32,
-        &atmospheres_query,
-        &all_atmospheres,
-        atmosphere_media.as_deref(),
+        &mut commands, cam_entity, host_ent, has_contact_shadows, has_atmosphere_settings,
+        effective_rad, comp, temp.0 as f32, &atmospheres_query, &all_atmospheres, atmosphere_media.as_deref(),
     );
 }
 
@@ -674,11 +660,14 @@ fn sync_surface_horizon_atmosphere_and_shadows(
 
     if has_atmosphere {
         if !has_atmosphere_settings {
-            commands.entity(cam_entity).insert(AtmosphereSettings::default());
+            commands
+                .entity(cam_entity)
+                .insert(AtmosphereSettings::default());
         }
         if !has_atmosphere_comp {
             if let Some(media) = atmosphere_media {
-                let medium = if comp.silicate_frac > 0.6 && comp.metal_frac > 0.2 && temp_k < 270.0 {
+                let medium = if comp.silicate_frac > 0.6 && comp.metal_frac > 0.2 && temp_k < 270.0
+                {
                     media.mars.clone()
                 } else {
                     media.earth.clone()

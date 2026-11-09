@@ -1,5 +1,6 @@
 //! Types, components, and events for targeted terraforming and orbital bombardment.
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +53,14 @@ pub struct BombardmentProjectile {
     pub trail_color: Color,
     /// Whether this projectile has already initiated impact resolution
     pub is_detonated: bool,
+    /// Current 3D position offset relative to the target body in AU
+    pub relative_offset: DVec3,
+    /// Initial standoff distance in AU
+    pub initial_distance: f64,
+    /// Real-time flight duration in seconds
+    pub flight_duration_secs: f32,
+    /// Elapsed flight time in real-world seconds
+    pub flight_elapsed_secs: f32,
 }
 
 /// Dynamic multi-species atmospheric composition and terraforming progress.
