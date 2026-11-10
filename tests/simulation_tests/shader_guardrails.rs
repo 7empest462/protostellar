@@ -413,6 +413,11 @@ fn test_nbody_galaxy_wgsl_naga_validation() {
 }
 
 #[test]
+fn test_particle_orbit_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/particle_orbit.wgsl");
+}
+
+#[test]
 fn test_volumetric_nebula_wgsl_naga_validation() {
     validate_wgsl_shader_with_naga(
         "assets/shaders/volumetric_nebula.wesl",

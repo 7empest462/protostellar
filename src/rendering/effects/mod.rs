@@ -89,11 +89,15 @@ fn draw_star_effects(
     overlay_mode: DiagnosticOverlayMode,
     elapsed: f32,
 ) {
-    // When overlays are hidden or in GPU MagneticFields mode, skip star-related
+    // When overlays are hidden, realistic, or in GPU MagneticFields mode, skip star-related
     // line gizmos so the 3D visual field representations remain pristine.
     if overlay_mode == DiagnosticOverlayMode::Hidden
         || overlay_mode == DiagnosticOverlayMode::MagneticFields
+        || overlay_mode == DiagnosticOverlayMode::Realistic
     {
+        if let Some(ignition) = opt_ignition {
+            draw_ignition_shockwave(gizmos, star_vec, ignition);
+        }
         return;
     }
     if let Some(evo) = opt_evo {
