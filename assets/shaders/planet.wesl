@@ -1999,14 +1999,34 @@ fn evaluate_mars_surface_landmarks(
     let syrtis_basalt = vec3<f32>(0.24, 0.16, 0.14);
     col = mix(col, syrtis_basalt, dark_basalt_mask);
 
-    // 3. Valles Marineris stratified canyon walls & deep chasma floor
+    // 3. Valles Marineris canyon complex: rugged scarps, talus gullies & dark basaltic chasma floor
     let vm_center = vec3<f32>(0.89, -0.11, -0.44);
     let vm_along = dot(p - vm_center, vec3<f32>(0.42, -0.06, 0.90));
     let vm_across = abs(dot(p - vm_center, vec3<f32>(0.10, 0.99, 0.04)) + 0.015 * sin(vm_along * 18.0));
-    let in_valles = smoothstep(0.28, 0.16, abs(vm_along)) * smoothstep(0.048, 0.012, vm_across);
-    let strata_band = sin(elev * 150.0 + micro * 4.0) * 0.5 + 0.5;
-    let canyon_wall = mix(vec3<f32>(0.34, 0.18, 0.12), vec3<f32>(0.76, 0.44, 0.24), strata_band);
-    col = mix(col, canyon_wall, in_valles * 0.85);
+    let canyon_reach = smoothstep(0.28, 0.16, abs(vm_along));
+    let in_valles = canyon_reach * smoothstep(0.048, 0.012, vm_across);
+
+    if (in_valles > 0.001) {
+        // Canyon morphology: steep scarp walls (outer) vs. dark chasma floor (inner)
+        let floor_mask = canyon_reach * smoothstep(0.024, 0.007, vm_across);
+        let scarp_mask = in_valles;
+
+        // Exposed canyon wall crust: weathered dark umber bedrock with spur-and-gully talus
+        let gully_ribs = fbm_lod(vec3<f32>(vm_along * 28.0, vm_across * 16.0, micro * 1.5));
+        let wall_bedrock = vec3<f32>(0.40, 0.22, 0.15);
+        let wall_talus = vec3<f32>(0.56, 0.29, 0.18);
+        let canyon_wall = mix(wall_bedrock, wall_talus, gully_ribs * 0.60);
+
+        // Chasma floor: dark wind-scoured basaltic sand sheets and dunes (Melas/Coprates Chasma)
+        let floor_dune = fbm_lod(vec3<f32>(vm_along * 44.0, vm_across * 64.0, 0.0));
+        let basalt_floor = vec3<f32>(0.22, 0.14, 0.12);
+        let dusted_floor = vec3<f32>(0.34, 0.20, 0.15);
+        let floor_col = mix(basalt_floor, dusted_floor, floor_dune * 0.45);
+
+        // Natural hierarchical blend: wall rock into plateau, then basalt floor into deep chasma
+        col = mix(col, canyon_wall, scarp_mask * 0.78);
+        col = mix(col, floor_col, floor_mask * 0.85);
+    }
 
     // 4. Hellas Planitia pale dust-settled floor & winter frost haze
     let d_hellas = length(p - vec3<f32>(-0.56, -0.67, 0.48));
@@ -2024,7 +2044,7 @@ fn evaluate_mars_surface_landmarks(
     let caldera_lava = vec3<f32>(0.38, 0.20, 0.14);
     col = mix(col, caldera_lava, clamp(volcano_flank * 0.65, 0.0, 0.75));
 
-    var rough = mix(0.88, 0.76, dark_basalt_mask);
+    var rough = mix(mix(0.88, 0.76, dark_basalt_mask), 0.92, in_valles * 0.50);
     var cloud_a = 0.0;
     if (cloud_density > 0.005) {
         let orographic_wisp = clamp(volcano_flank, 0.0, 1.0) * smoothstep(0.35, 0.78, fbm_lod(p * 14.0 + vec3<f32>(t * 0.02, 0.0, 0.0)));
