@@ -44,7 +44,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (491 Tests)](#-automated-test-suite-491-tests)
+6. [🧪 Automated Test Suite (512 Tests)](#-automated-test-suite-512-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -678,15 +678,22 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 52 specialized test suites covering 491 automated tests
+    └── simulation_tests/         # 54 specialized test suites covering 512 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (491 Tests)
+## 🧪 Automated Test Suite (512 Tests)
 
-Protostellar enforces rigorous physical validity through **491 comprehensive integration tests** across 52 specialized test suites:
+Protostellar enforces rigorous physical validity through **512 comprehensive integration tests** across 54 specialized test suites:
 
+- **Bevy 0.20 Modern UI & Typography**: Parley + Fontique system font fallback, Unicode formatting, `TextInput` and `Slider` widget synchronization, clipboard scenario and seed export/import, and UI transform animations.
+- **Modular WESL Shader Infrastructure & Pipeline Specialization**: Naga validation and compile tests for all 15 embedded WESL shaders, `@if(...)` compile-time dead-code elimination, and forward/prepass/deferred specialization permutations.
+- **Per-Pixel Order-Independent Transparency (OIT) & Fullscreen Post-Processing**: Fragment list OIT across all 8 volumetric and transmissive shaders, `FullscreenMaterial` screen-space pipeline, and black hole gravitational lensing projection.
+- **Hillaire Atmosphere Scattering & Surface Horizon Optics**: `AtmosphereSettings` Rayleigh/Mie aerial perspective, screen-space `ContactShadows`, and black hole accretion disk `RectLight` area light emission.
+- **Workgroup-Shared GPU Compute & Swarm Density Tiers**: On-chip LDS cache validation (`var<workgroup>`), 100k/250k/500k particle capacity tiers, and dormant particle buffer parking.
+- **Continuous Frame Pacing & Display Refresh Scaling**: High-refresh 120Hz/60Hz frame delta scaling and adaptive substep budgeting for 1,000+ minor body planetary systems.
+- **Procedural Hypsometry & Canonical Planetary Landmarks**: MOLA Mars elevation, organic Valles Marineris canyon texturing with isotropic 3D surface detail and dendritic fault rifts, and lunar basaltic maria.
 - **3D Internal Planetary Cutaway Views & Geodynamics**: Quadrant discard shader logic, archetype core/mantle/crust strata resolution for terrestrial, gas giant, ice giant, and stellar bodies, Theia LLSVP mantle plume structures, diagnostic overlay cycling, and universal button visibility.
 - **Surface Horizon Navigation, 3D Terrains & Rover Drive Mechanics**: Tangent horizon camera pose stabilization, surface altitude limits, collision avoidance, and terrain-skimming driving controls.
 - **Galilean Moons, Volcanism & Cryotectonics**: Io sulfur volcanism, Europa/Enceladus cryotectonic lineae, cryovolcanic planetary ring replenishment, and multi-moon non-overlapping orbital initialization.
