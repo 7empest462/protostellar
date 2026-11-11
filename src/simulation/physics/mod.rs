@@ -485,6 +485,11 @@ fn analyze_physics_system(
         config.max_substeps_per_frame.clamp(1, 64)
     } else if is_smbh || is_little_red_dot || is_compact_system {
         config.max_substeps_per_frame.max(128)
+    } else if body_data.len() > 300 {
+        // High-body systems (e.g. Solar System with 1,000+ belt minor bodies):
+        // Keplerian drift is analytically exact for 2-body orbits. Clamping substeps to 16
+        // prevents Rayon barrier overhead and thread starvation, ensuring fluid 60-120 FPS.
+        config.max_substeps_per_frame.clamp(1, 16)
     } else {
         config.max_substeps_per_frame
     };
@@ -499,6 +504,9 @@ fn analyze_physics_system(
         dt.min(0.000_005)
     } else if is_little_red_dot || is_compact_system {
         dt.min(0.00004)
+    } else if body_data.len() > 300 {
+        // Slightly larger substep intervals (~17.5 hours) for minor body swarms where perturbations are small
+        (dt * 2.5).max(0.002)
     } else {
         dt
     };
@@ -760,10 +768,15 @@ fn calculate_target_dt(
     config: &SimulationConfig,
     time_warp: &TimeWarp,
     time: Option<&Time>,
+    has_window: bool,
 ) -> f64 {
     let dt = config.base_dt_yr;
     let wall_frame_scale = if time_warp.step_once {
         1.0
+    } else if has_window {
+        time.map(Time::delta_secs_f64)
+            .filter(|&d| (0.001..=0.5).contains(&d))
+            .map_or(1.0, |d| (d * 60.0).clamp(0.05, 4.0))
     } else {
         time.map(Time::delta_secs_f64)
             .filter(|&d| (0.016..=0.5).contains(&d))
@@ -830,6 +843,7 @@ pub fn step_physics_simulation(
     scenario_state: Option<Res<ActiveScenarioState>>,
     mut commands: Commands,
     mut bodies_query: PhysicsBodiesQuery<'_, '_>,
+    windows: Query<(), With<Window>>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
         sim_time.current_dt_yr = 0.0;
@@ -837,7 +851,8 @@ pub fn step_physics_simulation(
     }
 
     let dt = config.base_dt_yr;
-    let target_dt = calculate_target_dt(&config, &time_warp, time.as_deref());
+    let target_dt =
+        calculate_target_dt(&config, &time_warp, time.as_deref(), !windows.is_empty());
     let eff_softening_au =
         compute_effective_softening_au(scenario_state.as_deref(), &disk_params, &config);
     let softening_sq = eff_softening_au * eff_softening_au;

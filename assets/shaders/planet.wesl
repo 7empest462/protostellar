@@ -2002,30 +2002,32 @@ fn evaluate_mars_surface_landmarks(
     // 3. Valles Marineris canyon complex: rugged scarps, talus gullies & dark basaltic chasma floor
     let vm_center = vec3<f32>(0.89, -0.11, -0.44);
     let vm_along = dot(p - vm_center, vec3<f32>(0.42, -0.06, 0.90));
-    let vm_across = abs(dot(p - vm_center, vec3<f32>(0.10, 0.99, 0.04)) + 0.015 * sin(vm_along * 18.0));
-    let canyon_reach = smoothstep(0.28, 0.16, abs(vm_along));
-    let in_valles = canyon_reach * smoothstep(0.048, 0.012, vm_across);
+    let vm_cross_coord = dot(p - vm_center, vec3<f32>(0.10, 0.99, 0.04));
+    let vm_organic_warp = (fbm_lod(p * 12.0) - 0.5) * 0.020;
+    let vm_across = abs(vm_cross_coord + vm_organic_warp);
+    let canyon_reach = smoothstep(0.30, 0.16, abs(vm_along));
+    let canyon_width = 0.040 + (fbm_lod(p * 20.0) - 0.5) * 0.015;
+    let in_valles = canyon_reach * smoothstep(canyon_width, canyon_width * 0.25, vm_across);
 
     if (in_valles > 0.001) {
-        // Canyon morphology: steep scarp walls (outer) vs. dark chasma floor (inner)
-        let floor_mask = canyon_reach * smoothstep(0.024, 0.007, vm_across);
-        let scarp_mask = in_valles;
+        // Natural 3D isotropic texture for canyon walls (weathered ferric bedrock & talus gullies)
+        let wall_detail = fbm_lod(p * 32.0);
+        let wall_bedrock = vec3<f32>(0.42, 0.24, 0.16);
+        let wall_talus = vec3<f32>(0.54, 0.30, 0.19);
+        let canyon_wall = mix(wall_bedrock, wall_talus, wall_detail * 0.60);
 
-        // Exposed canyon wall crust: weathered dark umber bedrock with spur-and-gully talus
-        let gully_ribs = fbm_lod(vec3<f32>(vm_along * 28.0, vm_across * 16.0, micro * 1.5));
-        let wall_bedrock = vec3<f32>(0.40, 0.22, 0.15);
-        let wall_talus = vec3<f32>(0.56, 0.29, 0.18);
-        let canyon_wall = mix(wall_bedrock, wall_talus, gully_ribs * 0.60);
-
-        // Chasma floor: dark wind-scoured basaltic sand sheets and dunes (Melas/Coprates Chasma)
-        let floor_dune = fbm_lod(vec3<f32>(vm_along * 44.0, vm_across * 64.0, 0.0));
-        let basalt_floor = vec3<f32>(0.22, 0.14, 0.12);
-        let dusted_floor = vec3<f32>(0.34, 0.20, 0.15);
+        // Chasma floor: wind-scoured basaltic sand sheets & transverse dunes (Melas/Coprates)
+        let floor_dune = fbm_lod(p * 56.0);
+        let basalt_floor = vec3<f32>(0.20, 0.13, 0.11);
+        let dusted_floor = vec3<f32>(0.32, 0.20, 0.15);
         let floor_col = mix(basalt_floor, dusted_floor, floor_dune * 0.45);
 
-        // Natural hierarchical blend: wall rock into plateau, then basalt floor into deep chasma
-        col = mix(col, canyon_wall, scarp_mask * 0.78);
-        col = mix(col, floor_col, floor_mask * 0.85);
+        // Continuous blend from wall talus into basaltic floor
+        let floor_blend = canyon_reach * smoothstep(canyon_width * 0.65, canyon_width * 0.20, vm_across);
+        let canyon_mat = mix(canyon_wall, floor_col, floor_blend * 0.85);
+
+        // Integrate naturally into surrounding ochre plateau
+        col = mix(col, canyon_mat, in_valles * 0.88);
     }
 
     // 4. Hellas Planitia pale dust-settled floor & winter frost haze
