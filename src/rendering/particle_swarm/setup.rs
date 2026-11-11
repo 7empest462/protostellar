@@ -94,28 +94,30 @@ pub struct SwarmInitialBuffers {
 }
 
 pub fn generate_initial_swarm_buffers(
-    n_particles: usize,
+    capacity: usize,
+    active_count: usize,
     individual_mass: f32,
     disk_params: &DiskParameters,
     config: &SimulationConfig,
 ) -> SwarmInitialBuffers {
     let mut rng = fastrand::Rng::new();
-    let mut positions = Vec::with_capacity(n_particles);
-    let mut velocities = Vec::with_capacity(n_particles);
-    let mut masses = Vec::with_capacity(n_particles);
-    let mut compositions = Vec::with_capacity(n_particles);
-    let mut temperatures = Vec::with_capacity(n_particles);
-    let mut colors = Vec::with_capacity(n_particles);
+    let mut positions = Vec::with_capacity(capacity);
+    let mut velocities = Vec::with_capacity(capacity);
+    let mut masses = Vec::with_capacity(capacity);
+    let mut compositions = Vec::with_capacity(capacity);
+    let mut temperatures = Vec::with_capacity(capacity);
+    let mut colors = Vec::with_capacity(capacity);
 
-    let mut mesh_positions = Vec::with_capacity(n_particles * 4);
-    let mut mesh_uvs = Vec::with_capacity(n_particles * 4);
-    let mut mesh_colors = Vec::with_capacity(n_particles * 4);
-    let mut indices: Vec<u32> = Vec::with_capacity(n_particles * 6);
+    let mut mesh_positions = Vec::with_capacity(capacity * 4);
+    let mut mesh_uvs = Vec::with_capacity(capacity * 4);
+    let mut mesh_colors = Vec::with_capacity(capacity * 4);
+    let mut indices: Vec<u32> = Vec::with_capacity(capacity * 6);
 
     let scale_mult = (disk_params.outer_radius_au / 45.0).clamp(0.02, 1.0) as f32;
     let base_render_r = 0.085 * config.particle_render_scale * scale_mult;
+    let active = active_count.min(capacity);
 
-    for i in 0..n_particles {
+    for i in 0..active {
         let (r, comp) = sample_disk_radius(&mut rng, disk_params);
         let phi = rng.f64_range(0.0, 2.0 * PI);
         let h_scale = (0.030 * r * (r / 1.0).powf(0.25)).max(1e-4);
@@ -164,6 +166,38 @@ pub fn generate_initial_swarm_buffers(
         indices.push(v_idx + 3);
     }
 
+    for i in active..capacity {
+        positions.push([0.0, -5000.0, 0.0]);
+        velocities.push([0.0, 0.0, 0.0]);
+        masses.push(0.0);
+        compositions.push(Composition::default());
+        temperatures.push(0.0);
+        colors.push([0.0, 0.0, 0.0, 0.0]);
+
+        let v_idx = (i * 4) as u32;
+        mesh_positions.push([0.0, -5000.0, 0.0]);
+        mesh_positions.push([0.0, -5000.0, 0.0]);
+        mesh_positions.push([0.0, -5000.0, 0.0]);
+        mesh_positions.push([0.0, -5000.0, 0.0]);
+
+        mesh_uvs.push([0.0, 0.0]);
+        mesh_uvs.push([1.0, 0.0]);
+        mesh_uvs.push([1.0, 1.0]);
+        mesh_uvs.push([0.0, 1.0]);
+
+        mesh_colors.push([0.0, 0.0, 0.0, 0.0]);
+        mesh_colors.push([0.0, 0.0, 0.0, 0.0]);
+        mesh_colors.push([0.0, 0.0, 0.0, 0.0]);
+        mesh_colors.push([0.0, 0.0, 0.0, 0.0]);
+
+        indices.push(v_idx);
+        indices.push(v_idx + 1);
+        indices.push(v_idx + 2);
+        indices.push(v_idx);
+        indices.push(v_idx + 2);
+        indices.push(v_idx + 3);
+    }
+
     SwarmInitialBuffers {
         positions,
         velocities,
@@ -190,11 +224,18 @@ pub fn setup_particle_swarm(
     disk_params: Res<DiskParameters>,
     config: Res<SimulationConfig>,
 ) {
-    let n_particles = config.target_particle_count.clamp(50_000, MAX_SWARM_PARTICLES);
+    let n_particles = config
+        .target_particle_count
+        .clamp(50_000, MAX_SWARM_PARTICLES);
     let individual_mass = (disk_params.disk_mass / (n_particles as f64)) as f32;
 
-    let buffers =
-        generate_initial_swarm_buffers(MAX_SWARM_PARTICLES, individual_mass, &disk_params, &config);
+    let buffers = generate_initial_swarm_buffers(
+        MAX_SWARM_PARTICLES,
+        n_particles,
+        individual_mass,
+        &disk_params,
+        &config,
+    );
 
     let mesh_normals = vec![[0.0f32, 1.0f32, 0.0f32]; MAX_SWARM_PARTICLES * 4];
     let mut mesh = Mesh::new(
@@ -251,6 +292,108 @@ pub fn setup_particle_swarm(
     });
 }
 
+/// Parks dormant particles beyond the active count out of view with zero mass and zero alpha.
+pub fn park_dormant_particles(data: &mut ParticleSwarmData) {
+    let n = data.count;
+    let total = data.positions.len();
+    if n >= total {
+        return;
+    }
+    for i in n..total {
+        if let Some(m) = data.masses.get_mut(i) {
+            *m = 0.0;
+        }
+        if let Some(p) = data.positions.get_mut(i) {
+            *p = [0.0, -5000.0, 0.0];
+        }
+        if let Some(v) = data.velocities.get_mut(i) {
+            *v = [0.0, 0.0, 0.0];
+        }
+        if let Some(c) = data.colors.get_mut(i) {
+            *c = [0.0, 0.0, 0.0, 0.0];
+        }
+        let v_idx = i * 4;
+        for k in 0..4 {
+            if let Some(mp) = data.mesh_positions.get_mut(v_idx + k) {
+                *mp = [0.0, -5000.0, 0.0];
+            }
+            if let Some(mc) = data.mesh_colors.get_mut(v_idx + k) {
+                *mc = [0.0, 0.0, 0.0, 0.0];
+            }
+        }
+    }
+}
+
+fn reseed_colliding_galaxies(data: &mut ParticleSwarmData, n: usize) {
+    data.base_mass = 1.0;
+    let mut rng = fastrand::Rng::new();
+    let n_mw = n / 2;
+    let rs = 50_000.0_f32;
+
+    for i in 0..n {
+        let is_mw = i < n_mw;
+        let (center_pos, center_vel, smbh_mass, halo_mass, max_radius, base_col) = if is_mw {
+            (
+                [-100_000.0_f32, -15_000.0_f32, -50_000.0_f32],
+                [40.0_f32, 5.0_f32, 20.0_f32],
+                4_300_000.0_f32,
+                1.0e12_f32,
+                80_000.0_f32,
+                [1.0_f32, 0.95_f32, 0.85_f32, 1.0_f32],
+            )
+        } else {
+            (
+                [100_000.0_f32, 15_000.0_f32, 50_000.0_f32],
+                [-40.0_f32, -5.0_f32, -20.0_f32],
+                140_000_000.0_f32,
+                1.4e12_f32,
+                120_000.0_f32,
+                [0.85_f32, 0.92_f32, 1.20_f32, 1.0_f32],
+            )
+        };
+
+        let r = rng.f32_range(5000.0, max_radius);
+        let phi = rng.f32_range(0.0, 2.0 * PI as f32);
+        let z = rng.f32_range(-500.0, 500.0);
+        let pos = [
+            center_pos[0] + r * phi.cos(),
+            center_pos[1] + z,
+            center_pos[2] + r * phi.sin(),
+        ];
+
+        let x = r / rs;
+        let mass_enclosed = halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
+        let v_circ = (G_ASTRO as f32 * (smbh_mass + mass_enclosed) / r).sqrt();
+        let vel = [
+            center_vel[0] - v_circ * phi.sin(),
+            center_vel[1],
+            center_vel[2] + v_circ * phi.cos(),
+        ];
+
+        let col_var = rng.f32_range(0.85, 1.15_f32);
+        let color = [
+            (base_col[0] * col_var).clamp(0.2, 1.5),
+            (base_col[1] * col_var).clamp(0.2, 1.5),
+            (base_col[2] * col_var).clamp(0.2, 1.5),
+            1.0,
+        ];
+
+        if let (Some(p), Some(v), Some(m), Some(t), Some(c)) = (
+            data.positions.get_mut(i),
+            data.velocities.get_mut(i),
+            data.masses.get_mut(i),
+            data.temperatures.get_mut(i),
+            data.colors.get_mut(i),
+        ) {
+            *p = pos;
+            *v = vel;
+            *m = 1.0;
+            *t = 5000.0;
+            *c = color;
+        }
+    }
+}
+
 /// Instantaneously reseeds all particles in the swarm to match a newly loaded scenario's disk parameters.
 pub fn reseed_particle_swarm(
     data: &mut ParticleSwarmData,
@@ -274,78 +417,14 @@ pub fn reseed_particle_swarm(
             *v = [0.0, 0.0, 0.0];
             *c = [0.0, 0.0, 0.0, 0.0];
         }
+        park_dormant_particles(data);
         data.is_dirty = true;
         return;
     }
 
     if disk_params.outer_radius_au >= 10_000.0 {
-        data.base_mass = 1.0;
-        let mut rng = fastrand::Rng::new();
-        let n_mw = n / 2;
-        let rs = 50_000.0_f32;
-
-        for i in 0..n {
-            let is_mw = i < n_mw;
-            let (center_pos, center_vel, smbh_mass, halo_mass, max_radius, base_col) = if is_mw {
-                (
-                    [-100_000.0_f32, -15_000.0_f32, -50_000.0_f32],
-                    [40.0_f32, 5.0_f32, 20.0_f32],
-                    4_300_000.0_f32,
-                    1.0e12_f32,
-                    80_000.0_f32,
-                    [1.0_f32, 0.95_f32, 0.85_f32, 1.0_f32],
-                )
-            } else {
-                (
-                    [100_000.0_f32, 15_000.0_f32, 50_000.0_f32],
-                    [-40.0_f32, -5.0_f32, -20.0_f32],
-                    140_000_000.0_f32,
-                    1.4e12_f32,
-                    120_000.0_f32,
-                    [0.85_f32, 0.92_f32, 1.20_f32, 1.0_f32],
-                )
-            };
-
-            let r = rng.f32_range(5000.0, max_radius);
-            let phi = rng.f32_range(0.0, 2.0 * PI as f32);
-            let z = rng.f32_range(-500.0, 500.0);
-            let pos = [
-                center_pos[0] + r * phi.cos(),
-                center_pos[1] + z,
-                center_pos[2] + r * phi.sin(),
-            ];
-
-            let x = r / rs;
-            let mass_enclosed = halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
-            let v_circ = (G_ASTRO as f32 * (smbh_mass + mass_enclosed) / r).sqrt();
-            let vel = [
-                center_vel[0] - v_circ * phi.sin(),
-                center_vel[1],
-                center_vel[2] + v_circ * phi.cos(),
-            ];
-
-            let col_var = rng.f32_range(0.85, 1.15_f32);
-            let color = [
-                (base_col[0] * col_var).clamp(0.2, 1.5),
-                (base_col[1] * col_var).clamp(0.2, 1.5),
-                (base_col[2] * col_var).clamp(0.2, 1.5),
-                1.0,
-            ];
-
-            if let (Some(p), Some(v), Some(m), Some(t), Some(c)) = (
-                data.positions.get_mut(i),
-                data.velocities.get_mut(i),
-                data.masses.get_mut(i),
-                data.temperatures.get_mut(i),
-                data.colors.get_mut(i),
-            ) {
-                *p = pos;
-                *v = vel;
-                *m = 1.0;
-                *t = 5000.0;
-                *c = color;
-            }
-        }
+        reseed_colliding_galaxies(data, n);
+        park_dormant_particles(data);
         data.is_dirty = true;
         return;
     }
@@ -387,5 +466,6 @@ pub fn reseed_particle_swarm(
             *c = final_color;
         }
     }
+    park_dormant_particles(data);
     data.is_dirty = true;
 }

@@ -940,3 +940,75 @@ fn test_particle_density_tiers_and_workgroup_allocation() {
     assert_eq!(config.particle_density, ParticleDensityTier::Standard100k);
     assert_eq!(config.target_particle_count, 100_000);
 }
+
+#[test]
+fn test_dormant_particles_are_hidden_and_parked() {
+    use protostellar::rendering::particle_swarm::setup::{
+        generate_initial_swarm_buffers, park_dormant_particles,
+    };
+    use protostellar::rendering::particle_swarm::ParticleSwarmData;
+    use protostellar::simulation::resources::{DiskParameters, SimulationConfig};
+
+    let disk_params = DiskParameters::default();
+    let config = SimulationConfig::default();
+    let capacity = 5000;
+    let active_count = 1000;
+
+    let buffers =
+        generate_initial_swarm_buffers(capacity, active_count, 1.0e-5, &disk_params, &config);
+
+    assert_eq!(buffers.positions.len(), capacity);
+    assert_eq!(buffers.masses.len(), capacity);
+    assert_eq!(buffers.mesh_positions.len(), capacity * 4);
+    assert_eq!(buffers.mesh_colors.len(), capacity * 4);
+
+    // Active particle verification (index 0..active_count)
+    assert!(buffers.masses[0] > 0.0);
+    assert!(buffers.positions[0][1] != -5000.0);
+    assert!(buffers.mesh_colors[0][3] > 0.0);
+
+    // Dormant particle verification (index active_count..capacity)
+    for i in active_count..capacity {
+        assert_eq!(buffers.masses[i], 0.0);
+        assert_eq!(buffers.positions[i], [0.0, -5000.0, 0.0]);
+        assert_eq!(buffers.velocities[i], [0.0, 0.0, 0.0]);
+        assert_eq!(buffers.colors[i], [0.0, 0.0, 0.0, 0.0]);
+
+        let v_idx = i * 4;
+        for k in 0..4 {
+            assert_eq!(buffers.mesh_positions[v_idx + k], [0.0, -5000.0, 0.0]);
+            assert_eq!(buffers.mesh_colors[v_idx + k], [0.0, 0.0, 0.0, 0.0]);
+        }
+    }
+
+    // Swarm data dynamic parking test
+    let mut data = ParticleSwarmData {
+        positions: buffers.positions,
+        velocities: buffers.velocities,
+        masses: buffers.masses,
+        compositions: buffers.compositions,
+        temperatures: buffers.temperatures,
+        colors: buffers.colors,
+        mesh_positions: buffers.mesh_positions,
+        mesh_colors: buffers.mesh_colors,
+        bin_heads: vec![-1; 4096],
+        bin_next: vec![-1; capacity],
+        mesh_handle: bevy::asset::Handle::default(),
+        count: 500, // Reduced from 1000 to 500
+        base_mass: 1.0e-5,
+        is_dirty: false,
+        pending_gpu_accretions: Vec::new(),
+    };
+
+    park_dormant_particles(&mut data);
+    for i in 500..capacity {
+        assert_eq!(data.masses[i], 0.0);
+        assert_eq!(data.positions[i], [0.0, -5000.0, 0.0]);
+        assert_eq!(data.colors[i], [0.0, 0.0, 0.0, 0.0]);
+        let v_idx = i * 4;
+        for k in 0..4 {
+            assert_eq!(data.mesh_positions[v_idx + k], [0.0, -5000.0, 0.0]);
+            assert_eq!(data.mesh_colors[v_idx + k], [0.0, 0.0, 0.0, 0.0]);
+        }
+    }
+}

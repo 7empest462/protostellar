@@ -186,14 +186,16 @@ pub fn extract_gpu_sim_data(
 }
 
 fn generate_initial_gpu_particles(
-    n_particles: u32,
+    capacity: u32,
+    active_count: u32,
     default_params: &DiskParameters,
 ) -> Vec<GpuParticle> {
-    let individual_mass = (default_params.disk_mass / f64::from(n_particles)) as f32;
+    let active = active_count.min(capacity);
+    let individual_mass = (default_params.disk_mass / f64::from(active.max(1))) as f32;
     let mut rng = fastrand::Rng::new();
-    let mut initial_particles = Vec::with_capacity(n_particles as usize);
+    let mut initial_particles = Vec::with_capacity(capacity as usize);
 
-    for _ in 0..n_particles {
+    for _ in 0..active {
         let (r, comp_struct) =
             crate::simulation::disk::sample_disk_radius(&mut rng, default_params);
         let phi = rng.f64_range(0.0, 2.0 * PI);
@@ -229,6 +231,15 @@ fn generate_initial_gpu_particles(
             composition: comp,
         });
     }
+
+    for _ in active..capacity {
+        initial_particles.push(GpuParticle {
+            pos_mass: [0.0, -5000.0, 0.0, 0.0],
+            vel_temp: [0.0, 0.0, 0.0, 0.0],
+            composition: [0.0, 0.0, 0.0, 0.0],
+        });
+    }
+
     initial_particles
 }
 
@@ -291,7 +302,8 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, 
     let n_particles = count.clamp(50_000, MAX_GPU_PARTICLES);
     let default_params = DiskParameters::default();
 
-    let initial_particles = generate_initial_gpu_particles(MAX_GPU_PARTICLES, &default_params);
+    let initial_particles =
+        generate_initial_gpu_particles(MAX_GPU_PARTICLES, n_particles, &default_params);
 
     let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Protostellar Particle Storage Buffer"),
@@ -400,7 +412,7 @@ fn check_and_reseed_scenario(
     }
 
     let mut rng = fastrand::Rng::new();
-    let mut reseed_particles = Vec::with_capacity(engine.num_particles as usize);
+    let mut reseed_particles = Vec::with_capacity(MAX_GPU_PARTICLES as usize);
     let is_empty_disk = params.disk_mass <= 0.0;
     let disk_mass = if is_empty_disk {
         0.0
@@ -460,6 +472,13 @@ fn check_and_reseed_scenario(
                 composition: comp,
             });
         }
+    }
+    for _ in reseed_particles.len()..(MAX_GPU_PARTICLES as usize) {
+        reseed_particles.push(GpuParticle {
+            pos_mass: [0.0, -5000.0, 0.0, 0.0],
+            vel_temp: [0.0, 0.0, 0.0, 0.0],
+            composition: [0.0, 0.0, 0.0, 0.0],
+        });
     }
     queue.write_buffer(
         &engine.particle_buffer,
@@ -622,6 +641,50 @@ pub fn step_gpu_simulation_render_world(
     let _ = render_device.poll(wgpu::PollType::Poll);
 }
 
+fn adjust_particle_count(
+    target_count: usize,
+    data: &mut crate::rendering::particle_swarm::ParticleSwarmData,
+) {
+    if target_count == 0 || target_count == data.count {
+        return;
+    }
+    let old_count = data.count;
+    let new_count = target_count.min(data.positions.len());
+    data.count = new_count;
+    if new_count < old_count {
+        for i in new_count..old_count {
+            if let Some(m) = data.masses.get_mut(i) {
+                *m = 0.0;
+            }
+            if let Some(p) = data.positions.get_mut(i) {
+                *p = [0.0, -5000.0, 0.0];
+            }
+            if let Some(v) = data.velocities.get_mut(i) {
+                *v = [0.0, 0.0, 0.0];
+            }
+            if let Some(c) = data.colors.get_mut(i) {
+                *c = [0.0, 0.0, 0.0, 0.0];
+            }
+            let v_idx = i * 4;
+            for k in 0..4 {
+                if let Some(mp) = data.mesh_positions.get_mut(v_idx + k) {
+                    *mp = [0.0, -5000.0, 0.0];
+                }
+                if let Some(mc) = data.mesh_colors.get_mut(v_idx + k) {
+                    *mc = [0.0, 0.0, 0.0, 0.0];
+                }
+            }
+        }
+    } else if new_count > old_count {
+        for i in old_count..new_count {
+            if let Some(m) = data.masses.get_mut(i) {
+                *m = data.base_mass.max(1e-12);
+            }
+        }
+    }
+    data.is_dirty = true;
+}
+
 /// Main-world system that receives GPU readback data and updates ParticleSwarmData positions.
 /// This bridges GPU compute results → CPU visual mesh and accretion without frame stalls.
 pub fn receive_gpu_readback(
@@ -650,10 +713,7 @@ pub fn receive_gpu_readback(
     };
 
     if let Some(ref mut cfg) = config {
-        if cfg.target_particle_count > 0 && cfg.target_particle_count != data.count {
-            data.count = cfg.target_particle_count.min(data.positions.len());
-            data.is_dirty = true;
-        }
+        adjust_particle_count(cfg.target_particle_count, data);
     }
 
     if data.base_mass <= 0.0 {
