@@ -286,6 +286,7 @@ pub enum HudPanelElement {
     TrajectoryPredictorBadge,
     LagrangePointsBadge,
     HabitableZoneBadge,
+    ParticleDensityBadge,
     QuickBarContainer,
 }
 
@@ -300,6 +301,7 @@ pub enum HudDynamicText {
     FullScreenBadge,
     OrbitModeBadge,
     OverlayModeBadge,
+    ParticleDensityBadge,
     TrajectoryPredictorBadge,
     LagrangePointsBadge,
     HabitableZoneBadge,
@@ -492,6 +494,7 @@ pub enum UiButtonAction {
     // Scientific Instruments & Overlays
     ToggleOrbitMode,
     CycleOverlayMode,
+    CycleParticleDensity,
     ToggleTractor,
     ToggleTrajectoryPredictor,
     ToggleLagrangePoints,
@@ -683,6 +686,7 @@ impl UiButtonAction {
             UiButtonAction::ToggleScrubAutoAdvance => "Toggle continuous simulation time auto-advance for the geological clock.",
             UiButtonAction::ToggleOrbitMode => "[Y]: Cycle orbit trails (All -> Selected Target Only -> Hidden).",
             UiButtonAction::CycleOverlayMode => "[V]: Cycle diagnostic HUD overlays (Natural Color -> Spectral Temperature -> Hill Spheres & Gaps).",
+            UiButtonAction::CycleParticleDensity => "Cycle GPU particle swarm density preset (100k Standard -> 250k High -> 500k Ultra).",
             UiButtonAction::ToggleTractor => "[T]: Toggles Gravitational Tractor Beam to pull particles & planetesimals.",
             UiButtonAction::ToggleTrajectoryPredictor => "[N]: Toggle real-time trajectory prediction and close-encounter / impact warning reticles.",
             UiButtonAction::ToggleLagrangePoints => "[Shift-L]: Toggle gravitational Lagrange libration points (L1-L5) and Hill sphere wireframe.",

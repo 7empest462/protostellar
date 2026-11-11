@@ -34,6 +34,10 @@ struct GalaxyUniforms {
 
 const PI: f32 = 3.141592653589793;
 
+// High-speed on-chip workgroup-shared cache for galaxy N-body gravity integration
+var<workgroup> shared_galaxy_bodies: array<vec4<f32>, 32>;
+var<workgroup> shared_galaxy_velocities: array<vec4<f32>, 32>;
+
 // Analytical NFW Dark Matter Halo Potential Gradient with 500 AU core softening
 fn get_nfw_acceleration(pos: vec3<f32>, halo_m: f32) -> vec3<f32> {
     let r_sq = dot(pos, pos) + 250000.0; // 500 AU core softening to prevent central singularity
@@ -53,8 +57,8 @@ fn compute_gravity_at(pos: vec3<f32>, current_t: f32) -> vec3<f32> {
     var a_total = vec3<f32>(0.0, 0.0, 0.0);
     let n_bodies = min(uniforms.num_massive_bodies, 32u);
     for (var j: u32 = 0u; j < n_bodies; j = j + 1u) {
-        let mb = uniforms.massive_bodies[j];
-        let mb_vel = uniforms.massive_body_velocities[j];
+        let mb = shared_galaxy_bodies[j];
+        let mb_vel = shared_galaxy_velocities[j];
         let m_body_mass = mb.w;
         if (m_body_mass <= 0.0) {
             continue;
@@ -79,7 +83,18 @@ fn compute_gravity_at(pos: vec3<f32>, current_t: f32) -> vec3<f32> {
 }
 
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    // Cooperative workgroup caching: the first 32 threads preload massive body state
+    // into ultra-fast on-chip LDS, eliminating thousands of repeated global VRAM reads.
+    if (lid < 32u) {
+        shared_galaxy_bodies[lid] = uniforms.massive_bodies[lid];
+        shared_galaxy_velocities[lid] = uniforms.massive_body_velocities[lid];
+    }
+    workgroupBarrier();
+
     let idx = gid.x;
     if (idx >= uniforms.num_particles || idx >= arrayLength(&particles)) {
         return;

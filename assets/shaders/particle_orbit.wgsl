@@ -30,8 +30,21 @@ struct SimUniforms {
 
 const PI: f32 = 3.141592653589793;
 
+// High-speed on-chip workgroup-shared cache for coalescing massive body gravitational evaluation
+var<workgroup> shared_massive_bodies: array<vec4<f32>, 32>;
+
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    // Cooperative workgroup caching: the first 32 threads preload the massive body array
+    // into ultra-fast on-chip Local Data Share (LDS), eliminating redundant VRAM memory fetches.
+    if (lid < 32u) {
+        shared_massive_bodies[lid] = uniforms.massive_bodies[lid];
+    }
+    workgroupBarrier();
+
     let idx = gid.x;
     if (idx >= uniforms.num_particles || idx >= arrayLength(&particles)) {
         return;
@@ -102,11 +115,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Baseline circular velocity
     var vel = vec3<f32>(-v_k * sin(phi), 0.0, v_k * cos(phi));
 
-    // Phase 2: Planetary Perturbations & Hill-Sphere Resonant Clearing
+    // Phase 2: Planetary Perturbations & Hill-Sphere Resonant Clearing (cached via workgroup LDS)
     var a_pert = vec3<f32>(0.0, 0.0, 0.0);
     let n_bodies = min(uniforms.num_massive_bodies, 32u);
     for (var j: u32 = 0u; j < n_bodies; j = j + 1u) {
-        let mb = uniforms.massive_bodies[j];
+        let mb = shared_massive_bodies[j];
         let m_body_mass = mb.w;
         if (m_body_mass <= 0.0) {
             continue;

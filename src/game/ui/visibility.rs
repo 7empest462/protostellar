@@ -12,7 +12,7 @@ use super::types::{
     UiButtonAction,
 };
 use crate::simulation::resources::{
-    DiagnosticOverlayMode, HabitableZoneConfig, LagrangeOverlayConfig,
+    DiagnosticOverlayMode, HabitableZoneConfig, LagrangeOverlayConfig, SimulationConfig,
 };
 
 /// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
@@ -28,6 +28,7 @@ pub fn update_hud_visibility(
     opt_hr_state: Option<Res<HrDiagramPanelState>>,
     opt_lagrange: Option<Res<LagrangeOverlayConfig>>,
     opt_hz: Option<Res<HabitableZoneConfig>>,
+    opt_config: Option<Res<SimulationConfig>>,
     mut panel_nodes: ParamSet<(
         Query<(&mut Node, &HudPanelElement)>,
         Query<&mut Node, With<PlanetBuilderPanel>>,
@@ -69,6 +70,7 @@ pub fn update_hud_visibility(
         opt_predictor.as_deref(),
         opt_lagrange.as_deref(),
         opt_hz.as_deref(),
+        opt_config.as_deref(),
     );
     update_inspector_tab_highlights(&mut tab_buttons_query, hud_visibility.active_inspector_tab);
 }
@@ -111,6 +113,7 @@ fn update_panel_nodes(
             | HudPanelElement::QuickBarContainer
             | HudPanelElement::OrbitModeBadge
             | HudPanelElement::OverlayModeBadge
+            | HudPanelElement::ParticleDensityBadge
             | HudPanelElement::TrajectoryPredictorBadge
             | HudPanelElement::LagrangePointsBadge
             | HudPanelElement::HabitableZoneBadge => {
@@ -194,6 +197,7 @@ fn update_dynamic_badges(
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
     opt_lagrange: Option<&LagrangeOverlayConfig>,
     opt_hz: Option<&HabitableZoneConfig>,
+    opt_config: Option<&SimulationConfig>,
 ) {
     for (mut text, dynamic_text) in text_query.iter_mut() {
         match dynamic_text {
@@ -209,6 +213,10 @@ fn update_dynamic_badges(
             }
             HudDynamicText::OverlayModeBadge => {
                 text.0 = format!("OVERLAY: {} [V]", player_state.overlay_mode.display_name());
+            }
+            HudDynamicText::ParticleDensityBadge => {
+                let label = opt_config.map_or("100k [Standard]", |c| c.particle_density.label());
+                text.0 = format!("✨ Swarm: {label}");
             }
             HudDynamicText::TrajectoryPredictorBadge => {
                 let is_on = opt_predictor.is_none_or(|p| p.is_enabled);

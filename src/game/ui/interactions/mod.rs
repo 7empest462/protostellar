@@ -68,7 +68,7 @@ pub struct UiCampaignParams<'w> {
 #[derive(SystemParam)]
 pub struct UiSimulationContext<'w> {
     pub disk_params: Res<'w, DiskParameters>,
-    pub config: Res<'w, SimulationConfig>,
+    pub config: ResMut<'w, SimulationConfig>,
     pub sim_time: Res<'w, SimTime>,
     pub lhb_state: ResMut<'w, crate::game::phases::LateHeavyBombardmentState>,
     pub theia_state: Option<ResMut<'w, crate::simulation::accretion::TheiaImpactState>>,
@@ -170,7 +170,7 @@ fn dispatch_pressed_button_action(
     campaign: &mut UiCampaignParams,
     camera_query: &mut Query<&mut PanOrbitCamera>,
     selected_query: &mut SelectedWorldQuery,
-    config: &SimulationConfig,
+    config: &mut SimulationConfig,
     star_mass: f64,
     commands: &mut Commands,
     scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
@@ -179,6 +179,17 @@ fn dispatch_pressed_button_action(
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
 ) {
+    if *action == UiButtonAction::CycleParticleDensity {
+        config.particle_density = config.particle_density.cycle();
+        config.target_particle_count = config.particle_density.particle_count() as usize;
+        core.toast.message = format!(
+            "✨ Particle Swarm Density: {}",
+            config.particle_density.label()
+        );
+        core.toast.timer = 3.0;
+        return;
+    }
+
     if dispatch_system_and_tool_actions(
         action,
         save_events,
@@ -365,7 +376,7 @@ pub fn handle_ui_button_interactions(
             &mut campaign,
             &mut camera_query,
             &mut selected_query,
-            &sim.config,
+            &mut sim.config,
             star_mass,
             &mut commands,
             &mut ser.scenario_events,

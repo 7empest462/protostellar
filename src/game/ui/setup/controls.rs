@@ -364,6 +364,35 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
         ));
     });
 
+    // Particle Swarm Density badge
+    col.spawn((
+        HudButton,
+        UiButtonAction::CycleParticleDensity,
+        HudPanelElement::ParticleDensityBadge,
+        Node {
+            padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+            margin: UiRect::all(Val::Px(1.5)),
+            border: UiRect::all(Val::Px(1.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.04, 0.12, 0.18, 0.88)),
+        BorderColor::all(Color::srgba(0.35, 0.85, 0.95, 0.65)),
+    ))
+    .with_children(|badge| {
+        badge.spawn((
+            Text::new("✨ Swarm: 100k [Standard]"),
+            TextFont {
+                font_size: FontSize::Px(10.5),
+                ..default()
+            },
+            TextColor(Color::srgb(0.55, 0.95, 1.0)),
+            HudDynamicText::ParticleDensityBadge,
+            Pickable::IGNORE,
+        ));
+    });
+
     // Fullscreen badge
     col.spawn((
         HudButton,

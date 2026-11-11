@@ -18,6 +18,9 @@ pub const STAGING_STATE_IDLE: u8 = 0;
 pub const STAGING_STATE_MAPPING: u8 = 1;
 pub const STAGING_STATE_MAPPED: u8 = 2;
 
+/// Maximum particle capacity supported by VRAM compute and staging buffers (500k Ultra).
+pub const MAX_GPU_PARTICLES: u32 = 500_000;
+
 /// Holds WGPU compute pipeline resources and VRAM-resident particle buffers.
 #[derive(Resource)]
 pub struct GpuParticleOrbitEngine {
@@ -282,13 +285,13 @@ fn create_gpu_orbit_pipeline(
     (bind_group_layout, pipeline)
 }
 
-/// Initializes the 100,000 particle VRAM storage buffers and compiles WGSL compute pipelines in RenderApp.
+/// Initializes the 100k-500k particle VRAM storage buffers and compiles WGSL compute pipelines in RenderApp.
 pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
     let device = render_dev.wgpu_device();
-    let n_particles = count.max(100_000);
+    let n_particles = count.clamp(50_000, MAX_GPU_PARTICLES);
     let default_params = DiskParameters::default();
 
-    let initial_particles = generate_initial_gpu_particles(n_particles, &default_params);
+    let initial_particles = generate_initial_gpu_particles(MAX_GPU_PARTICLES, &default_params);
 
     let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Protostellar Particle Storage Buffer"),
@@ -340,7 +343,8 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, 
         ],
     });
 
-    let staging_buffer_size = u64::from(n_particles) * std::mem::size_of::<GpuParticle>() as u64;
+    let staging_buffer_size =
+        u64::from(MAX_GPU_PARTICLES) * std::mem::size_of::<GpuParticle>() as u64;
     let staging_buffer_0 = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Protostellar Orbit Staging Readback Buffer 0"),
         size: staging_buffer_size,
@@ -380,13 +384,19 @@ fn check_and_reseed_scenario(
     params: &GpuSimExtractedParams,
     queue: &RenderQueue,
 ) {
+    let count_changed = params.count > 0 && params.count != engine.num_particles;
     let scenario_restarted = params.elapsed_years < engine.last_elapsed_years;
     engine.last_elapsed_years = params.elapsed_years;
     if !scenario_restarted
+        && !count_changed
         && (params.outer_radius - engine.last_disk_outer_r).abs() <= 1.0
         && (params.star_mass - engine.last_star_mass).abs() <= 0.05
     {
         return;
+    }
+
+    if count_changed {
+        engine.num_particles = params.count.clamp(50_000, MAX_GPU_PARTICLES);
     }
 
     let mut rng = fastrand::Rng::new();
@@ -638,6 +648,13 @@ pub fn receive_gpu_readback(
     let Some(bytes) = latest else {
         return;
     };
+
+    if let Some(ref mut cfg) = config {
+        if cfg.target_particle_count > 0 && cfg.target_particle_count != data.count {
+            data.count = cfg.target_particle_count.min(data.positions.len());
+            data.is_dirty = true;
+        }
+    }
 
     if data.base_mass <= 0.0 {
         let _ = receiver.recycle_tx.try_send(bytes);

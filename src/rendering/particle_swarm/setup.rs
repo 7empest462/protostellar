@@ -178,7 +178,10 @@ pub fn generate_initial_swarm_buffers(
     }
 }
 
-/// Initializes the dense 50,000 particle visual mesh and zero-allocation data structures.
+/// Maximum particle capacity supported by CPU particle swarm buffers (500k Ultra).
+pub const MAX_SWARM_PARTICLES: usize = 500_000;
+
+/// Initializes the dense 100k-500k particle visual mesh and zero-allocation data structures.
 pub fn setup_particle_swarm(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -187,13 +190,13 @@ pub fn setup_particle_swarm(
     disk_params: Res<DiskParameters>,
     config: Res<SimulationConfig>,
 ) {
-    let n_particles = config.target_particle_count.max(50_000);
+    let n_particles = config.target_particle_count.clamp(50_000, MAX_SWARM_PARTICLES);
     let individual_mass = (disk_params.disk_mass / (n_particles as f64)) as f32;
 
     let buffers =
-        generate_initial_swarm_buffers(n_particles, individual_mass, &disk_params, &config);
+        generate_initial_swarm_buffers(MAX_SWARM_PARTICLES, individual_mass, &disk_params, &config);
 
-    let mesh_normals = vec![[0.0f32, 1.0f32, 0.0f32]; n_particles * 4];
+    let mesh_normals = vec![[0.0f32, 1.0f32, 0.0f32]; MAX_SWARM_PARTICLES * 4];
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -239,7 +242,7 @@ pub fn setup_particle_swarm(
         mesh_positions: buffers.mesh_positions,
         mesh_colors: buffers.mesh_colors,
         bin_heads: vec![-1; 4096],
-        bin_next: vec![-1; n_particles],
+        bin_next: vec![-1; MAX_SWARM_PARTICLES],
         mesh_handle,
         count: n_particles,
         base_mass: individual_mass,

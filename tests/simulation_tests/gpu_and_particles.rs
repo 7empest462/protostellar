@@ -909,3 +909,34 @@ fn test_compute_node_reseed_logic_and_disk_mass() {
     };
     assert_eq!(smbh_disk_mass, 500.0);
 }
+
+#[test]
+fn test_particle_density_tiers_and_workgroup_allocation() {
+    use protostellar::gpu::compute_node::MAX_GPU_PARTICLES;
+    use protostellar::rendering::particle_swarm::setup::MAX_SWARM_PARTICLES;
+    use protostellar::simulation::resources::{ParticleDensityTier, SimulationConfig};
+
+    assert_eq!(MAX_GPU_PARTICLES, 500_000);
+    assert_eq!(MAX_SWARM_PARTICLES, 500_000);
+
+    let tier_100k = ParticleDensityTier::Standard100k;
+    assert_eq!(tier_100k.particle_count(), 100_000);
+    assert_eq!(tier_100k.label(), "100k [Standard]");
+
+    let tier_250k = tier_100k.cycle();
+    assert_eq!(tier_250k, ParticleDensityTier::High250k);
+    assert_eq!(tier_250k.particle_count(), 250_000);
+    assert_eq!(tier_250k.label(), "250k [High]");
+
+    let tier_500k = tier_250k.cycle();
+    assert_eq!(tier_500k, ParticleDensityTier::Ultra500k);
+    assert_eq!(tier_500k.particle_count(), 500_000);
+    assert_eq!(tier_500k.label(), "500k [Ultra]");
+
+    let back_to_100k = tier_500k.cycle();
+    assert_eq!(back_to_100k, ParticleDensityTier::Standard100k);
+
+    let config = SimulationConfig::default();
+    assert_eq!(config.particle_density, ParticleDensityTier::Standard100k);
+    assert_eq!(config.target_particle_count, 100_000);
+}

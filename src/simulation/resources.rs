@@ -38,10 +38,47 @@ pub struct SimulationConfig {
     pub size_exaggeration: f32,
     /// Minimum visual radius floor (AU) to prevent tiny bodies (dust, planetesimals) from vanishing.
     pub min_body_visual_radius: f32,
+    /// Particle swarm density preset tier (100k Standard, 250k High, 500k Ultra).
+    pub particle_density: ParticleDensityTier,
     /// Whether GPU Compute Pipeline is active for disk particle dynamics.
     pub enable_gpu_compute: bool,
     /// Live telemetry: whether GPU compute shader is successfully dispatching frames.
     pub gpu_compute_active: bool,
+}
+
+/// Selectable particle swarm density tier for GPU Keplerian orbit mechanics and N-body simulation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ParticleDensityTier {
+    #[default]
+    Standard100k,
+    High250k,
+    Ultra500k,
+}
+
+impl ParticleDensityTier {
+    pub const fn particle_count(&self) -> u32 {
+        match self {
+            Self::Standard100k => 100_000,
+            Self::High250k => 250_000,
+            Self::Ultra500k => 500_000,
+        }
+    }
+
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Standard100k => "100k [Standard]",
+            Self::High250k => "250k [High]",
+            Self::Ultra500k => "500k [Ultra]",
+        }
+    }
+
+    pub const fn cycle(&self) -> Self {
+        match self {
+            Self::Standard100k => Self::High250k,
+            Self::High250k => Self::Ultra500k,
+            Self::Ultra500k => Self::Standard100k,
+        }
+    }
 }
 
 impl Default for SimulationConfig {
@@ -61,6 +98,7 @@ impl Default for SimulationConfig {
             particle_render_scale: 0.3,
             size_exaggeration: 1.0,
             min_body_visual_radius: 0.0006,
+            particle_density: ParticleDensityTier::Standard100k,
             enable_gpu_compute: true,
             gpu_compute_active: false,
         }

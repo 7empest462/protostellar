@@ -88,6 +88,7 @@ pub fn inject_sci_fi_panel_frames(
                 HudPanelElement::RootContainer
                     | HudPanelElement::OrbitModeBadge
                     | HudPanelElement::OverlayModeBadge
+                    | HudPanelElement::ParticleDensityBadge
                     | HudPanelElement::TrajectoryPredictorBadge
             )
         ) {
