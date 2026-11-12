@@ -129,3 +129,9 @@ pub struct OortCometInfallEvent {
     /// Whether the trajectory is Sun-grazing ($q < 0.15\text{ AU}$).
     pub is_sungrazer: bool,
 }
+
+/// Event requesting on-demand procedural generation of an Oort Cloud cometary swarm.
+#[derive(Event, Message, Debug, Clone, Copy, Default)]
+pub struct TriggerOortCloudSwarmEvent {
+    pub comet_count: usize,
+}

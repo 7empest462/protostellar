@@ -498,10 +498,22 @@ pub fn handle_scenario_and_system_hotkeys(
     mut glitch_events: Option<
         &mut MessageWriter<crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
     >,
+    mut oort_events: Option<
+        &mut MessageWriter<crate::simulation::oort::TriggerOortCloudSwarmEvent>,
+    >,
     toast: &mut crate::game::ui::NotificationToast,
     scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
 ) {
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    if is_shift && keyboard.just_pressed(KeyCode::KeyO) {
+        if let Some(ref mut oe) = oort_events {
+            oe.write(crate::simulation::oort::TriggerOortCloudSwarmEvent { comet_count: 48 });
+        }
+        toast.message =
+            "☄️ OORT CLOUD SWARM // Procedurally spawned 48 cometary bodies into Hills & Outer Oort reservoirs (200 - 25,000 AU)!"
+                .to_string();
+        toast.timer = 6.0;
+    }
     if keyboard.just_pressed(KeyCode::KeyG) {
         if is_shift {
             if let Some(ref mut ge) = glitch_events {

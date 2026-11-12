@@ -16,9 +16,12 @@ pub use physics::{
     step_oort_galactic_tides_system, PARSEC_TO_AU,
 };
 pub use spawner::{
-    keplerian_elements_to_cartesian, solve_kepler_eccentric_anomaly, spawn_oort_cloud_swarm,
+    handle_spawn_oort_cloud_swarm_system, keplerian_elements_to_cartesian,
+    solve_kepler_eccentric_anomaly, spawn_oort_cloud_swarm,
 };
-pub use types::{GalacticTideState, OortCloudConfig, OortComet, OortCometInfallEvent};
+pub use types::{
+    GalacticTideState, OortCloudConfig, OortComet, OortCometInfallEvent, TriggerOortCloudSwarmEvent,
+};
 
 use crate::simulation::physics::step_physics_simulation;
 
@@ -30,9 +33,13 @@ impl Plugin for OortPlugin {
         app.init_resource::<OortCloudConfig>()
             .init_resource::<GalacticTideState>()
             .add_message::<OortCometInfallEvent>()
+            .add_message::<TriggerOortCloudSwarmEvent>()
             .add_systems(
                 Update,
-                step_oort_galactic_tides_system.after(step_physics_simulation),
+                (
+                    step_oort_galactic_tides_system.after(step_physics_simulation),
+                    handle_spawn_oort_cloud_swarm_system,
+                ),
             );
     }
 }

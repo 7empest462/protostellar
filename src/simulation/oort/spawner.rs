@@ -206,3 +206,26 @@ pub fn spawn_oort_cloud_swarm(
         ));
     }
 }
+
+/// Handles on-demand requests to spawn an Oort Cloud cometary swarm around the central star.
+pub fn handle_spawn_oort_cloud_swarm_system(
+    mut commands: Commands,
+    mut swarm_triggers: MessageReader<TriggerOortCloudSwarmEvent>,
+    star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
+    config: Res<OortCloudConfig>,
+) {
+    for event in swarm_triggers.read() {
+        let (star_pos, star_mass) = if let Ok((pos, mass)) = star_query.single() {
+            (pos.0, mass.0)
+        } else {
+            (DVec3::ZERO, 1.0)
+        };
+        let count = if event.comet_count == 0 {
+            config.default_comet_count
+        } else {
+            event.comet_count
+        };
+        let mut rng = fastrand::Rng::new();
+        spawn_oort_cloud_swarm(&mut commands, &config, star_mass, star_pos, count, &mut rng);
+    }
+}

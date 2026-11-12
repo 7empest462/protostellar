@@ -23,6 +23,7 @@ pub struct PlayerToolsEvents<'w> {
     pub glitch_events: Option<
         MessageWriter<'w, crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
     >,
+    pub oort_events: Option<MessageWriter<'w, crate::simulation::oort::TriggerOortCloudSwarmEvent>>,
     pub focus: Option<Res<'w, bevy::input_focus::InputFocus>>,
 }
 
@@ -150,6 +151,7 @@ pub fn handle_player_tools(
         events.save_events.as_mut(),
         events.load_events.as_mut(),
         events.glitch_events.as_mut(),
+        events.oort_events.as_mut(),
         &mut toast,
         scenario_state.as_deref(),
     );

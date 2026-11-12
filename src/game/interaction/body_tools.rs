@@ -89,7 +89,8 @@ fn apply_body_mass_and_orbit_edits(
             trans.scale = Vec3::splat(scale);
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyO) && !body.body_type.is_star_or_remnant() {
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    if keyboard.just_pressed(KeyCode::KeyO) && !is_shift && !body.body_type.is_star_or_remnant() {
         let rel_pos = (pos.0 - star_pos) * 1.10;
         pos.0 = star_pos + rel_pos;
         let r = rel_pos.length().max(0.1);

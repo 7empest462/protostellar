@@ -471,6 +471,7 @@ pub enum UiButtonAction {
     ExpandAllBelts,
     CollapseAllBelts,
     ToggleEmbryos,
+    SpawnOortCloudSwarm,
     // Planet Builder Actions
     TogglePlanetBuilder,
     BuilderSelectPreset(BuilderPreset),
@@ -651,6 +652,7 @@ impl UiButtonAction {
             UiButtonAction::ExpandAllBelts => "Expand all astronomical belt groups in the quick selector.",
             UiButtonAction::CollapseAllBelts => "Contract all astronomical belt groups into compact summary counts.",
             UiButtonAction::ToggleEmbryos => "Toggle visibility of protoplanetary embryos.",
+            UiButtonAction::SpawnOortCloudSwarm => "[Shift+O]: Procedurally populate the isotropic Hills (200-2,000 AU) and Outer Oort (2,000-25,000 AU) cometary swarm.",
             UiButtonAction::TogglePlanetBuilder => "[P]: Open or close the interactive Planet Builder & Spawner panel.",
             UiButtonAction::BuilderSelectPreset(_) => "Load this physical planetary archetype preset into the Planet Builder.",
             UiButtonAction::BuilderMassStep(s) => if *s > 0 { "Scale up target world mass." } else { "Scale down target world mass." },

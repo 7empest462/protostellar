@@ -255,3 +255,65 @@ fn test_stellar_flyby_perturbation() {
         "Velocity must be deflected by flyby"
     );
 }
+
+#[test]
+fn test_trigger_oort_cloud_swarm_event_and_belt_categorization() {
+    use protostellar::simulation::disk::belts::BeltZone;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(OortPlugin);
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sol".to_string(),
+            body_type: BodyType::Protostar,
+        },
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Mass(1.0),
+        Radius(0.00465),
+    ));
+
+    app.update();
+
+    // Verify 0 comets before trigger
+    let mut initial_query = app.world_mut().query::<&OortComet>();
+    assert_eq!(initial_query.iter(app.world()).count(), 0);
+
+    // Send trigger event
+    app.world_mut()
+        .write_message(TriggerOortCloudSwarmEvent { comet_count: 48 });
+
+    app.update();
+
+    let mut comet_query = app
+        .world_mut()
+        .query::<(&SimPosition, &SimVelocity, &OortComet, &CelestialBody)>();
+    let comets: Vec<_> = comet_query.iter(app.world()).collect();
+    assert_eq!(
+        comets.len(),
+        48,
+        "Triggering event must spawn exactly 48 Oort Cloud comets"
+    );
+
+    let mut oort_belt_count = 0;
+    for (pos, _, comet, body) in comets {
+        assert!(body.name.starts_with("Oort Comet C/"));
+        assert_eq!(body.body_type, BodyType::Comet);
+        assert!(comet.semi_major_axis_au >= 100.0);
+        assert!(comet.volatile_ice_fraction >= 0.70);
+
+        let dist_au = pos.0.length();
+        let zone = BeltZone::from_distance_au(dist_au);
+        if zone == BeltZone::OortCloud {
+            oort_belt_count += 1;
+        }
+    }
+
+    assert!(
+        oort_belt_count >= 40,
+        "Overwhelming majority of Oort comets must reside in BeltZone::OortCloud (>200 AU)"
+    );
+}

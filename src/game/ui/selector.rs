@@ -552,6 +552,15 @@ fn populate_minor_body_belts(
             .filter(|b| BeltZone::from_distance_au(b.4) == *zone)
             .collect();
         if zone_members.is_empty() {
+            if *zone == BeltZone::OortCloud {
+                create_compact_button(
+                    btn_row,
+                    UiButtonAction::SpawnOortCloudSwarm,
+                    "☄️ + Oort Swarm [Shift+O]",
+                    Color::srgba(0.12, 0.08, 0.22, 0.85),
+                    Color::srgb(0.65, 0.60, 1.0),
+                );
+            }
             continue;
         }
 

@@ -249,6 +249,9 @@ fn dispatch_pressed_button_action(
     ) {
         return;
     }
+    if handle_spawn_oort_swarm_action(action, selected_query, star_mass, commands, core) {
+        return;
+    }
     if handle_builder_action(
         action,
         &mut core.builder_state,
@@ -287,6 +290,44 @@ fn dispatch_pressed_button_action(
         theia_state,
         sim_time_years,
     );
+}
+
+fn handle_spawn_oort_swarm_action(
+    action: &UiButtonAction,
+    selected_query: &SelectedWorldQuery,
+    star_mass: f64,
+    commands: &mut Commands,
+    core: &mut UiCoreState,
+) -> bool {
+    if *action != UiButtonAction::SpawnOortCloudSwarm {
+        return false;
+    }
+    let mut s_pos = bevy::math::DVec3::ZERO;
+    for (_, _, _, p, _, _, b, s, ..) in selected_query.iter() {
+        if s.is_some() || b.body_type.is_star_or_remnant() {
+            s_pos = p.0;
+            break;
+        }
+    }
+    let oort_config = crate::simulation::oort::OortCloudConfig::default();
+    let mut rng = fastrand::Rng::new();
+    crate::simulation::oort::spawn_oort_cloud_swarm(
+        commands,
+        &oort_config,
+        if star_mass > 0.0 { star_mass } else { 1.0 },
+        s_pos,
+        48,
+        &mut rng,
+    );
+    core.quick_bar_state.show_minor_bodies = true;
+    core.quick_bar_state
+        .expanded_belts
+        .insert(crate::simulation::disk::belts::BeltZone::OortCloud);
+    core.toast.message =
+        "☄️ OORT CLOUD SWARM // Procedurally spawned 48 cometary bodies into Hills & Outer Oort reservoirs (200 - 25,000 AU)!"
+            .to_string();
+    core.toast.timer = 6.0;
+    true
 }
 
 /// Handles interactive clicks, tab navigation, and hover highlights on all on-screen HUD buttons.
