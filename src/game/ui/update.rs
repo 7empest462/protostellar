@@ -6,6 +6,8 @@ use bevy::prelude::*;
 use crate::game::phases::PhaseManager;
 use crate::simulation::accretion::RocheDisruptionEvent;
 use crate::simulation::components::*;
+use crate::simulation::neutron_stars::types::{MagnetarCrustStress, PulsarGlitchState};
+use crate::simulation::oort::types::OortComet;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
@@ -336,6 +338,11 @@ fn update_inspector_body_telemetry(
         &crate::simulation::probes::FlightComputer,
     )>,
     disk_hud_query: &Query<&CircumstellarDisk>,
+    neutron_oort_hud_query: &Query<(
+        Option<&PulsarGlitchState>,
+        Option<&MagnetarCrustStress>,
+        Option<&OortComet>,
+    )>,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
 ) {
@@ -419,6 +426,18 @@ fn update_inspector_body_telemetry(
 
     if let Ok(disk) = disk_hud_query.get(selected_entity) {
         super::inspector_panel::append_circumstellar_disk_telemetry(&mut next_telemetry, disk);
+    }
+
+    if let Ok((opt_glitch, opt_stress, opt_comet)) = neutron_oort_hud_query.get(selected_entity) {
+        if let Some(glitch) = opt_glitch {
+            append_pulsar_glitch_telemetry(&mut next_telemetry, glitch);
+        }
+        if let Some(stress) = opt_stress {
+            append_magnetar_stress_telemetry(&mut next_telemetry, stress);
+        }
+        if let Some(comet) = opt_comet {
+            append_oort_comet_telemetry(&mut next_telemetry, comet);
+        }
     }
 
     set_text_if_changed(text, next_telemetry);
@@ -592,6 +611,11 @@ pub fn update_hud(
         &crate::simulation::probes::FlightComputer,
     )>,
     disk_hud_query: Query<&CircumstellarDisk>,
+    neutron_oort_hud_query: Query<(
+        Option<&PulsarGlitchState>,
+        Option<&MagnetarCrustStress>,
+        Option<&OortComet>,
+    )>,
     mut text_queries: HudTextQueries,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
 ) {
@@ -635,6 +659,7 @@ pub fn update_hud(
                 &space_weather_hud_query,
                 &probes_hud_query,
                 &disk_hud_query,
+                &neutron_oort_hud_query,
                 &phase_mgr,
                 &config,
             );

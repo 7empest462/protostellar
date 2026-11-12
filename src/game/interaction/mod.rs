@@ -20,6 +20,9 @@ pub struct PlayerToolsEvents<'w> {
     pub scenario_events: MessageWriter<'w, crate::simulation::scenarios::LoadScenarioEvent>,
     pub save_events: Option<MessageWriter<'w, crate::simulation::serialization::SaveSystemEvent>>,
     pub load_events: Option<MessageWriter<'w, crate::simulation::serialization::LoadSystemEvent>>,
+    pub glitch_events: Option<
+        MessageWriter<'w, crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
+    >,
     pub focus: Option<Res<'w, bevy::input_focus::InputFocus>>,
 }
 
@@ -146,6 +149,7 @@ pub fn handle_player_tools(
         &mut events.scenario_events,
         events.save_events.as_mut(),
         events.load_events.as_mut(),
+        events.glitch_events.as_mut(),
         &mut toast,
         scenario_state.as_deref(),
     );

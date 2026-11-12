@@ -1981,9 +1981,20 @@ fn evaluate_mars_surface_landmarks(
     let meso = fbm_lod(p * 6.5);
 
     // 1. Bright ferric-oxide (nanophase hematite / goethite) dusty highlands vs ochre plains
+    let vm_center = vec3<f32>(0.89, -0.11, -0.44);
+    let vm_along = dot(p - vm_center, vec3<f32>(0.42, -0.06, 0.90));
+    let vm_cross_coord = dot(p - vm_center, vec3<f32>(0.10, 0.99, 0.04));
+    let fault_scarp_noise = (ridge_noise(p * 24.0) - 0.5) * 0.012 + (fbm_lod(p * 48.0) - 0.5) * 0.006;
+    let v_warped = abs(vm_cross_coord + fault_scarp_noise);
+    let canyon_reach = smoothstep(0.30, 0.16, abs(vm_along));
+    let half_width = 0.038 + (fbm_lod(p * 16.0) - 0.5) * 0.014;
+    let norm_dist = v_warped / max(half_width, 0.005);
+    let valles_marineris_depth = -0.09 * canyon_reach * smoothstep(1.0, 0.60, norm_dist);
+
+    let regional_elev = elev - valles_marineris_depth;
     let bright_dust = vec3<f32>(0.82, 0.48, 0.28);
     let rust_ochre = vec3<f32>(0.68, 0.32, 0.17);
-    var col = mix(rust_ochre, bright_dust, clamp((elev - 0.30) * 1.8 + meso * 0.35, 0.0, 1.0));
+    var col = mix(rust_ochre, bright_dust, clamp((regional_elev - 0.30) * 1.8 + meso * 0.35, 0.0, 1.0));
 
     // 2. Dark wind-scoured basaltic sand seas (Syrtis Major, Acidalia, Sinus Meridiani, Solis Lacus)
     let d_syrtis = length(p - vec3<f32>(0.28, 0.16, 0.95));
@@ -1999,35 +2010,27 @@ fn evaluate_mars_surface_landmarks(
     let syrtis_basalt = vec3<f32>(0.24, 0.16, 0.14);
     col = mix(col, syrtis_basalt, dark_basalt_mask);
 
-    // 3. Valles Marineris canyon complex: rugged scarps, talus gullies & dark basaltic chasma floor
-    let vm_center = vec3<f32>(0.89, -0.11, -0.44);
-    let vm_along = dot(p - vm_center, vec3<f32>(0.42, -0.06, 0.90));
-    let vm_cross_coord = dot(p - vm_center, vec3<f32>(0.10, 0.99, 0.04));
-    let vm_organic_warp = (fbm_lod(p * 12.0) - 0.5) * 0.020;
-    let vm_across = abs(vm_cross_coord + vm_organic_warp);
-    let canyon_reach = smoothstep(0.30, 0.16, abs(vm_along));
-    let canyon_width = 0.040 + (fbm_lod(p * 20.0) - 0.5) * 0.015;
-    let in_valles = canyon_reach * smoothstep(canyon_width, canyon_width * 0.25, vm_across);
+    // 3. Valles Marineris canyon complex: dendritic scarps, layered rock strata & dark basaltic chasma dunes
+    let in_valles = canyon_reach * smoothstep(1.02, 0.72, norm_dist);
 
     if (in_valles > 0.001) {
-        // Natural 3D isotropic texture for canyon walls (weathered ferric bedrock & talus gullies)
-        let wall_detail = fbm_lod(p * 32.0);
-        let wall_bedrock = vec3<f32>(0.42, 0.24, 0.16);
-        let wall_talus = vec3<f32>(0.54, 0.30, 0.19);
-        let canyon_wall = mix(wall_bedrock, wall_talus, wall_detail * 0.60);
+        // Natural banded horizontal rock strata & dendritic spur-and-gully scarps
+        let strata = sin(p.y * 280.0 + fbm_lod(p * 20.0) * 2.0) * 0.5 + 0.5;
+        let gully = ridge_noise(p * 40.0);
+        let wall_bedrock = vec3<f32>(0.44, 0.25, 0.17);
+        let wall_strata = vec3<f32>(0.56, 0.32, 0.20);
+        let canyon_wall = mix(wall_bedrock, wall_strata, strata * 0.45) * (0.85 + gully * 0.30);
 
-        // Chasma floor: wind-scoured basaltic sand sheets & transverse dunes (Melas/Coprates)
-        let floor_dune = fbm_lod(p * 56.0);
+        // Chasma floor: wind-scoured basaltic sand sheets & longitudinal dunes aligned with the rift
+        let floor_mask = canyon_reach * smoothstep(0.70, 0.45, norm_dist);
+        let floor_dunes = sin(vm_along * 160.0 + fbm_lod(p * 30.0) * 2.5) * 0.5 + 0.5;
         let basalt_floor = vec3<f32>(0.20, 0.13, 0.11);
-        let dusted_floor = vec3<f32>(0.32, 0.20, 0.15);
-        let floor_col = mix(basalt_floor, dusted_floor, floor_dune * 0.45);
+        let dusted_floor = vec3<f32>(0.30, 0.18, 0.14);
+        let floor_col = mix(basalt_floor, dusted_floor, floor_dunes * 0.40 + wind_streaks * 0.25);
 
-        // Continuous blend from wall talus into basaltic floor
-        let floor_blend = canyon_reach * smoothstep(canyon_width * 0.65, canyon_width * 0.20, vm_across);
-        let canyon_mat = mix(canyon_wall, floor_col, floor_blend * 0.85);
-
-        // Integrate naturally into surrounding ochre plateau
-        col = mix(col, canyon_mat, in_valles * 0.88);
+        // Organic blend: canyon walls into dark basaltic floor
+        let canyon_mat = mix(canyon_wall, floor_col, floor_mask * 0.90);
+        col = mix(col, canyon_mat, in_valles * 0.94);
     }
 
     // 4. Hellas Planitia pale dust-settled floor & winter frost haze

@@ -14,8 +14,10 @@ pub enum BeltZone {
     TrojanCentaur,
     /// Kuiper Belt and Trans-Neptunian Cometary Reservoir (16.0 - 45.0 AU)
     KuiperBelt,
-    /// Scattered Disk and Extreme Oort Reservoir (> 45.0 AU)
+    /// Scattered Disk & Detached Sednoids (45.0 - 200.0 AU)
     ScatteredDisk,
+    /// Distant Hills & Outer Oort Cloud Cometary Swarm (> 200.0 AU)
+    OortCloud,
 }
 
 impl BeltZone {
@@ -29,8 +31,10 @@ impl BeltZone {
             Self::TrojanCentaur
         } else if dist_au <= 45.0 {
             Self::KuiperBelt
-        } else {
+        } else if dist_au <= 200.0 {
             Self::ScatteredDisk
+        } else {
+            Self::OortCloud
         }
     }
 
@@ -41,7 +45,8 @@ impl BeltZone {
             Self::AsteroidBelt => "Main Asteroid Belt (2.1-3.45 AU)",
             Self::TrojanCentaur => "Trojans & Centaurs (3.45-16 AU)",
             Self::KuiperBelt => "Kuiper Belt (16-45 AU)",
-            Self::ScatteredDisk => "Scattered Reservoir (>45 AU)",
+            Self::ScatteredDisk => "Scattered Disk (45-200 AU)",
+            Self::OortCloud => "Oort Cloud Swarm (>200 AU)",
         }
     }
 
@@ -53,6 +58,7 @@ impl BeltZone {
             Self::TrojanCentaur => "Trojans",
             Self::KuiperBelt => "Kuiper Belt",
             Self::ScatteredDisk => "Scattered Disk",
+            Self::OortCloud => "Oort Cloud",
         }
     }
 
@@ -64,6 +70,7 @@ impl BeltZone {
             Self::TrojanCentaur => "🪐",
             Self::KuiperBelt => "🧊",
             Self::ScatteredDisk => "🌌",
+            Self::OortCloud => "☄️",
         }
     }
 
@@ -90,10 +97,14 @@ impl BeltZone {
                 Color::srgba(0.10, 0.08, 0.22, 0.90),
                 Color::srgb(0.65, 0.60, 1.0),
             ),
+            Self::OortCloud => (
+                Color::srgba(0.04, 0.12, 0.20, 0.90),
+                Color::srgb(0.40, 0.90, 1.0),
+            ),
         }
     }
 
-    /// Ordered slice of all 5 canonical belt zones from innermost to outermost.
+    /// Ordered slice of all 6 canonical belt zones from innermost to outermost.
     pub fn all() -> &'static [Self] {
         &[
             Self::InnerSystem,
@@ -101,11 +112,12 @@ impl BeltZone {
             Self::TrojanCentaur,
             Self::KuiperBelt,
             Self::ScatteredDisk,
+            Self::OortCloud,
         ]
     }
 }
 
-/// Live demographic census tracking minor bodies across all 5 astronomical belts.
+/// Live demographic census tracking minor bodies across all 6 astronomical belts.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BeltCensus {
     pub inner_count: usize,
@@ -113,6 +125,7 @@ pub struct BeltCensus {
     pub trojan_count: usize,
     pub kuiper_count: usize,
     pub scattered_count: usize,
+    pub oort_count: usize,
 }
 
 impl BeltCensus {
@@ -124,6 +137,7 @@ impl BeltCensus {
             BeltZone::TrojanCentaur => self.trojan_count += 1,
             BeltZone::KuiperBelt => self.kuiper_count += 1,
             BeltZone::ScatteredDisk => self.scattered_count += 1,
+            BeltZone::OortCloud => self.oort_count += 1,
         }
     }
 
@@ -135,6 +149,7 @@ impl BeltCensus {
             BeltZone::TrojanCentaur => self.trojan_count,
             BeltZone::KuiperBelt => self.kuiper_count,
             BeltZone::ScatteredDisk => self.scattered_count,
+            BeltZone::OortCloud => self.oort_count,
         }
     }
 
@@ -145,6 +160,7 @@ impl BeltCensus {
             + self.trojan_count
             + self.kuiper_count
             + self.scattered_count
+            + self.oort_count
     }
 
     /// Formats a concise one-line belt demographic readout for telemetry displays.
@@ -155,7 +171,7 @@ impl BeltCensus {
             self.asteroid_belt_count,
             self.trojan_count,
             self.kuiper_count,
-            self.scattered_count,
+            self.scattered_count + self.oort_count,
         )
     }
 }

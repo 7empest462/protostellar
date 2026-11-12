@@ -76,11 +76,12 @@ fn evaluate_canonical_terrestrial_elevation(p_surf: vec3<f32>, sub: f32) -> f32 
         let vm_center = vec3<f32>(0.89, -0.11, -0.44);
         let vm_along = dot(p - vm_center, vec3<f32>(0.42, -0.06, 0.90));
         let vm_cross_coord = dot(p - vm_center, vec3<f32>(0.10, 0.99, 0.04));
-        let vm_organic_warp = (fbm(p * 12.0) - 0.5) * 0.020;
-        let vm_across = abs(vm_cross_coord + vm_organic_warp);
+        let fault_scarp_noise = (ridge_noise(p * 24.0) - 0.5) * 0.012 + (fbm(p * 48.0) - 0.5) * 0.006;
+        let v_warped = abs(vm_cross_coord + fault_scarp_noise);
         let canyon_reach = smoothstep(0.30, 0.16, abs(vm_along));
-        let canyon_width = 0.040 + (fbm(p * 20.0) - 0.5) * 0.015;
-        let valles_marineris = -0.22 * canyon_reach * smoothstep(canyon_width, canyon_width * 0.25, vm_across);
+        let half_width = 0.038 + (fbm(p * 16.0) - 0.5) * 0.014;
+        let norm_dist = v_warped / max(half_width, 0.005);
+        let valles_marineris = -0.09 * canyon_reach * smoothstep(1.0, 0.60, norm_dist);
         let d_hellas = length(p - vec3<f32>(-0.56, -0.67, 0.48));
         let hellas = -0.24 * smoothstep(0.32, 0.12, d_hellas) + 0.07 * (smoothstep(0.38, 0.30, d_hellas) - smoothstep(0.30, 0.22, d_hellas));
         let d_argyre = length(p - vec3<f32>(0.55, -0.76, -0.34));

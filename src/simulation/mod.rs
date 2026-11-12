@@ -12,6 +12,8 @@ pub mod events;
 pub mod geology;
 pub mod kozai_lidov;
 pub mod naming;
+pub mod neutron_stars;
+pub mod oort;
 pub mod pebble_accretion;
 pub mod physics;
 pub mod predictor;
@@ -61,6 +63,22 @@ pub use crate::simulation::kozai_lidov::{
     detect_hierarchical_triples, update_kozai_lidov_evolution, KozaiDisruptionEvent,
     KozaiLidovConfig, KozaiLidovState, KozaiRegime,
 };
+pub use crate::simulation::naming::*;
+pub use crate::simulation::neutron_stars::{
+    evaluate_dipole_spin_down_rate, evaluate_starquake_energy_erg, step_alfven_blast_waves_system,
+    step_magnetar_crust_stress_and_starquakes_system, step_pulsar_glitches_system,
+    step_single_pulsar_glitch, trigger_instantaneous_glitch, trigger_instantaneous_starquake,
+    AlfvenBlastWave, MagnetarCrustStress, MagnetarStarquakeEvent, NeutronStarPlugin,
+    PulsarGlitchEvent, PulsarGlitchState, TriggerManualGlitchOrStarquakeEvent,
+    CRUST_SHEAR_MODULUS_CGS, CRUST_VOLUME_CGS, C_LIGHT_AU_YR, C_LIGHT_CGS,
+    NEUTRON_STAR_INERTIA_CGS,
+};
+pub use crate::simulation::oort::{
+    apply_stellar_flyby_perturbation, compute_galactic_omega_sq,
+    evaluate_galactic_tide_acceleration, evaluate_galactic_tide_secular_de,
+    keplerian_elements_to_cartesian, solve_kepler_eccentric_anomaly, spawn_oort_cloud_swarm,
+    GalacticTideState, OortCloudConfig, OortComet, OortCometInfallEvent, OortPlugin,
+};
 use crate::simulation::pebble_accretion::{
     apply_pebble_accretion, spawn_streaming_instability_minor_bodies,
 };
@@ -88,7 +106,9 @@ impl Plugin for SimulationPlugin {
         app.add_plugins(crate::simulation::probes::ProbesPlugin)
             .add_plugins(crate::simulation::economy::EconomyPlugin)
             .add_plugins(crate::simulation::campaign::CampaignPlugin)
-            .add_plugins(crate::simulation::events::CosmicEventsPlugin);
+            .add_plugins(crate::simulation::events::CosmicEventsPlugin)
+            .add_plugins(crate::simulation::oort::OortPlugin)
+            .add_plugins(crate::simulation::neutron_stars::NeutronStarPlugin);
         app.init_resource::<SimulationConfig>()
             .init_resource::<TimeWarp>()
             .init_resource::<SimTime>()

@@ -183,9 +183,9 @@ pub fn sync_geological_evolution_system(
         }
 
         let Some(ref mut geo) = opt_geo else {
-            commands
-                .entity(entity)
-                .insert(GeologicalState::default_for_planet(archetype));
+            if let Ok(mut cmd) = commands.get_entity(entity) {
+                cmd.try_insert(GeologicalState::default_for_planet(archetype));
+            }
             continue;
         };
 

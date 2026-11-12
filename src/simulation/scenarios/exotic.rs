@@ -4,6 +4,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::simulation::components::*;
+use crate::simulation::neutron_stars::{MagnetarCrustStress, PulsarGlitchState};
 use crate::simulation::relativity::RelativisticState;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
@@ -180,6 +181,17 @@ pub fn spawn_rogue_planet_scenario(
             Composition::icy(),
         ));
     }
+
+    let mut oort_rng = fastrand::Rng::with_seed(19_500_101);
+    let oort_config = crate::simulation::oort::OortCloudConfig::default();
+    crate::simulation::oort::spawn_oort_cloud_swarm(
+        commands,
+        &oort_config,
+        1.0,
+        DVec3::ZERO,
+        24,
+        &mut oort_rng,
+    );
 
     let rogue = spawn_rogue_intruder(commands);
     (star, rogue)
@@ -544,6 +556,9 @@ fn spawn_compact_remnant_scenario(
             );
 
             spawn_pulsar_planets(commands, pulsar_mass);
+            if let Ok(mut cmd) = commands.get_entity(pulsar_ent) {
+                cmd.try_insert(PulsarGlitchState::default());
+            }
             pulsar_ent
         }
         CompactRemnantPreset::Magnetar => {
@@ -584,6 +599,9 @@ fn spawn_compact_remnant_scenario(
             );
 
             spawn_magnetar_cluster_bodies(commands, magnetar_mass);
+            if let Ok(mut cmd) = commands.get_entity(magnetar_ent) {
+                cmd.try_insert(MagnetarCrustStress::default());
+            }
             magnetar_ent
         }
     }

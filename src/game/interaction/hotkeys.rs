@@ -484,6 +484,10 @@ fn handle_shift_tool_hotkeys(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Scenario and system hotkey handler"
+)]
 pub fn handle_scenario_and_system_hotkeys(
     keyboard: &ButtonInput<KeyCode>,
     config: &mut SimulationConfig,
@@ -491,28 +495,44 @@ pub fn handle_scenario_and_system_hotkeys(
     scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     mut save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
     mut load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    mut glitch_events: Option<
+        &mut MessageWriter<crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
+    >,
     toast: &mut crate::game::ui::NotificationToast,
     scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
 ) {
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if keyboard.just_pressed(KeyCode::KeyG) {
-        let is_mmsn = scenario_state.is_none_or(|s| {
-            s.current_preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
-        });
-        if is_mmsn {
-            lhb_state.is_active = true;
-            lhb_state.manual_trigger_requested = true;
+        if is_shift {
+            if let Some(ref mut ge) = glitch_events {
+                ge.write(
+                    crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent::default(
+                    ),
+                );
+            }
             toast.message =
-                "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
+                "⚡ RELATIVISTIC EVENT TRIGGERED // Pulsar glitch / Magnetar starquake & Alfvén burst launched!"
                     .to_string();
-            toast.timer = 8.0;
+            toast.timer = 6.0;
         } else {
-            toast.message =
-                "ℹ️ Late Heavy Bombardment epoch is exclusive to the Solar Nebula (MMSN) scenario."
-                    .to_string();
-            toast.timer = 5.0;
+            let is_mmsn = scenario_state.is_none_or(|s| {
+                s.current_preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+            });
+            if is_mmsn {
+                lhb_state.is_active = true;
+                lhb_state.manual_trigger_requested = true;
+                toast.message =
+                    "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
+                        .to_string();
+                toast.timer = 8.0;
+            } else {
+                toast.message =
+                    "ℹ️ Late Heavy Bombardment epoch is exclusive to the Solar Nebula (MMSN) scenario."
+                        .to_string();
+                toast.timer = 5.0;
+            }
         }
     }
-    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if keyboard.just_pressed(KeyCode::F1) {
         let preset = if is_shift {
             crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis

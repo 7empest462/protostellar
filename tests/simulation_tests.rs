@@ -60,6 +60,10 @@ mod mechanics;
 mod molecular_cloud;
 #[path = "simulation_tests/molecular_cloud_adversarial.rs"]
 mod molecular_cloud_adversarial;
+#[path = "simulation_tests/neutron_stars.rs"]
+mod neutron_stars;
+#[path = "simulation_tests/oort_cloud.rs"]
+mod oort_cloud;
 #[path = "simulation_tests/orbits_and_effects.rs"]
 mod orbits_and_effects;
 #[path = "simulation_tests/pebble_accretion.rs"]

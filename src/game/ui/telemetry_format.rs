@@ -5,6 +5,8 @@ use std::fmt::Write;
 use crate::simulation::atmosphere_escape::{AtmosphericEscapeRegime, AtmosphericEscapeState};
 use crate::simulation::components::*;
 use crate::simulation::kozai_lidov::types::KozaiLidovState;
+use crate::simulation::neutron_stars::types::{MagnetarCrustStress, PulsarGlitchState};
+use crate::simulation::oort::types::OortComet;
 use crate::simulation::relativity::types::RelativisticState;
 use crate::simulation::resources::*;
 use crate::simulation::tides::TidalState;
@@ -577,5 +579,69 @@ pub fn append_quasi_star_telemetry(out: &mut String, qs: &BlackHoleStarState) {
         qs.eddington_ratio,
         acc_mode,
         status,
+    );
+}
+
+pub fn append_pulsar_glitch_telemetry(out: &mut String, glitch: &PulsarGlitchState) {
+    let char_age_kyr = (glitch.spin_frequency_hz
+        / (2.0 * -glitch.spin_down_rate_hz_s.min(-1e-20))
+        / (TimeWarp::SECONDS_PER_YEAR * 1000.0))
+        .max(0.0);
+    let _ = write!(
+        out,
+        "\n━━━ ⟪ RELATIVISTIC PULSAR DYNAMICS ⟫ ━━━━━━━━━━━━━━\n  • Spin Frequency:   {:>10.3} Hz (P = {:.4} ms)\n  • Spin-Down Rate:   {:>10.2e} Hz/s\n  • Characteristic Age: {:>8.1} kyr\n  • Glitches Occurred: {:>9}\n  • Vortex Pinning Lag: {:>8.2e} Hz (Threshold: {:.1e})\n  • Hotkey:           [Shift+G] Trigger Vortex Unpinning\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        glitch.spin_frequency_hz,
+        1000.0 / glitch.spin_frequency_hz.max(1e-4),
+        glitch.spin_down_rate_hz_s,
+        char_age_kyr,
+        glitch.total_glitches_occurred,
+        glitch.vortex_pinning_lag_hz,
+        glitch.unpinning_threshold_hz,
+    );
+}
+
+pub fn append_magnetar_stress_telemetry(out: &mut String, stress: &MagnetarCrustStress) {
+    let status = if stress.burst_active {
+        "GIANT BURST FLARE ACTIVE"
+    } else if stress.accumulated_magnetic_strain >= stress.crust_yield_strain {
+        "CRUST CRITICAL / STARQUAKE IMMINENT"
+    } else {
+        "ELASTIC STRAIN ACCUMULATING"
+    };
+    let _ = write!(
+        out,
+        "\n━━━ ⟪ ULTRA-STRONG MAGNETAR CRUST & ALFVÉN ⟫ ━━━━━━\n  • Magnetic Field:   {:>10.2e} G\n  • Shear Strain:     {:>9.1}% (Yield: {:.1}%)\n  • Starquake Count:  {:>10}\n  • Crust State:      {}\n  • Hotkey:           [Shift+G] Trigger Magnetar Starquake\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        stress.magnetic_field_gauss,
+        stress.accumulated_magnetic_strain * 100.0,
+        stress.crust_yield_strain * 100.0,
+        stress.total_starquakes_count,
+        status,
+    );
+}
+
+pub fn append_oort_comet_telemetry(out: &mut String, comet: &OortComet) {
+    let infall_str = if comet.is_sungrazer {
+        "SUN-GRAZING INFALL (q < 0.15 AU)"
+    } else if comet.is_infall_trajectory {
+        "INNER INFALL PLUNGE (q < 3.0 AU)"
+    } else {
+        "STABLE OORT RESERVOIR"
+    };
+    let subl_str = if comet.is_active_sublimating {
+        "ACTIVE COMA & TAIL"
+    } else {
+        "QUIESCENT ICE"
+    };
+    let _ = write!(
+        out,
+        "\n━━━ ⟪ OORT CLOUD ICY PLANETESIMAL ⟫ ━━━━━━━━━━━━━━━\n  • Semi-Major Axis:  {:>10.0} AU\n  • Eccentricity:     {:>10.4}\n  • Perihelion (q):   {:>10.2} AU\n  • Inclination:      {:>10.1}°\n  • Dynamic State:    {}\n  • Volatile Ice:     {:>9.1}% ({})\n  • Volatiles Lost:   {:>10.2e} kg\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        comet.semi_major_axis_au,
+        comet.eccentricity,
+        comet.current_perihelion_au,
+        comet.inclination_rad.to_degrees(),
+        infall_str,
+        comet.volatile_ice_fraction * 100.0,
+        subl_str,
+        comet.cumulative_volatile_loss_kg,
     );
 }
