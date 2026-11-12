@@ -44,7 +44,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (512 Tests)](#-automated-test-suite-512-tests)
+6. [🧪 Automated Test Suite (515 Tests)](#-automated-test-suite-515-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -678,14 +678,16 @@ protostellar/
 │   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
 └── tests/
     ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 54 specialized test suites covering 512 automated tests
+    └── simulation_tests/         # 55 specialized test suites covering 515 automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (512 Tests)
+## 🧪 Automated Test Suite (515 Tests)
 
-Protostellar enforces rigorous physical validity through **512 comprehensive integration tests** across 54 specialized test suites:
+Protostellar enforces rigorous physical validity through **515 comprehensive integration tests** across 55 specialized test suites:
+
+- **Cross-Scenario Smoke & Regression Guardrails**: Automated dynamic dispatch and step validation across all 15 sandbox scenario presets, confirming clean entity cleanup between scenarios, finite coordinates without NaNs, and orbital bound retention under 50x–100x warp speeds.
 
 - **Bevy 0.20 Modern UI & Typography**: Parley + Fontique system font fallback, Unicode formatting, `TextInput` and `Slider` widget synchronization, clipboard scenario and seed export/import, and UI transform animations.
 - **Modular WESL Shader Infrastructure & Pipeline Specialization**: Naga validation and compile tests for all 15 embedded WESL shaders, `@if(...)` compile-time dead-code elimination, and forward/prepass/deferred specialization permutations.

@@ -851,8 +851,7 @@ pub fn step_physics_simulation(
     }
 
     let dt = config.base_dt_yr;
-    let target_dt =
-        calculate_target_dt(&config, &time_warp, time.as_deref(), !windows.is_empty());
+    let target_dt = calculate_target_dt(&config, &time_warp, time.as_deref(), !windows.is_empty());
     let eff_softening_au =
         compute_effective_softening_au(scenario_state.as_deref(), &disk_params, &config);
     let softening_sq = eff_softening_au * eff_softening_au;

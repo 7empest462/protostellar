@@ -20,6 +20,8 @@ mod campaign_tests;
 mod comets;
 #[path = "simulation_tests/cosmic_hazards_tests.rs"]
 mod cosmic_hazards_tests;
+#[path = "simulation_tests/cross_scenario_smoke.rs"]
+mod cross_scenario_smoke;
 #[path = "simulation_tests/economy_tests.rs"]
 mod economy_tests;
 #[path = "simulation_tests/engulfment.rs"]

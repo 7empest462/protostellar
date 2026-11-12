@@ -61,6 +61,7 @@ fn test_scenario_preset_definitions() {
     use protostellar::simulation::scenarios::ScenarioPreset;
 
     let presets = [
+        ScenarioPreset::GalacticCollision,
         ScenarioPreset::SolarNebulaMmsn,
         ScenarioPreset::AccretionDiskGenesis,
         ScenarioPreset::Trappist1System,
@@ -70,6 +71,11 @@ fn test_scenario_preset_definitions() {
         ScenarioPreset::LittleRedDot,
         ScenarioPreset::PulsarSystem,
         ScenarioPreset::MagnetarOutburst,
+        ScenarioPreset::RelativisticBinary,
+        ScenarioPreset::KozaiLidovTriple,
+        ScenarioPreset::SagittariusAStar,
+        ScenarioPreset::MolecularCloudCluster,
+        ScenarioPreset::TidalDisruptionEvent,
     ];
 
     for preset in presets {
