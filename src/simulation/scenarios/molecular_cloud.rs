@@ -25,7 +25,13 @@ use crate::utils::constants::*;
 pub const GMC_CORE_MASS_SOLAR: f64 = 24.0;
 
 /// Outer boundary radius of the collapsing molecular cloud core in AU.
-pub const GMC_CORE_RADIUS_AU: f64 = 550.0;
+pub const GMC_CORE_RADIUS_AU: f64 = 1100.0;
+pub const GMC_DARK_MATTER_MASS_SOLAR: f64 = 16_000.0;
+pub const GMC_NFW_SCALE_RADIUS_AU: f64 = 280.0;
+
+/// Marker indicating an ignited GMC cluster star has already spawned its bound planetary system.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct GmcPromotedSystem;
 
 /// Ambient cold molecular gas temperature in Kelvin (T ~ 10-15 K).
 pub const GMC_CLOUD_TEMPERATURE_K: f64 = 15.0;
@@ -79,7 +85,7 @@ struct ClusterSeedConfig {
 
 /// Computes the stable circular orbital speed in the GMC cluster scenario,
 /// dynamically balancing the central star or supermassive black hole, the gaseous
-/// cloud core (50 M☉), and the stabilizing Dark Matter NFW halo (8000 M☉).
+/// cloud core (50 M☉), and the stabilizing Dark Matter NFW halo.
 pub fn calculate_gmc_orbital_speed(
     r_len: f64,
     central_mass: f64,
@@ -89,13 +95,13 @@ pub fn calculate_gmc_orbital_speed(
     let safe_r = r_len.max(5.0);
     let mut total_eff_mass = central_mass;
 
-    // Cloud core Plummer potential: M_cloud_eff = M_core * r^3 / (r^2 + r_c^2)^1.5 (r_core = 35.0 AU)
-    let r_core = 35.0;
+    // Cloud core Plummer potential: M_cloud_eff = M_core * r^3 / (r^2 + r_c^2)^1.5
+    let r_core = 65.0;
     let cloud_factor = safe_r * safe_r / (safe_r * safe_r + r_core * r_core).powf(1.5);
     total_eff_mass += cloud_core_mass * cloud_factor * safe_r;
 
-    // Dark Matter NFW Halo: M_DM(r) = M_DM_total * (ln(1 + x) - x / (1 + x)) (r_s = 150.0 AU)
-    let r_s = 150.0;
+    // Dark Matter NFW Halo: M_DM(r) = M_DM_total * (ln(1 + x) - x / (1 + x))
+    let r_s = GMC_NFW_SCALE_RADIUS_AU;
     let x = safe_r / r_s;
     if x > 1e-4 {
         let ln_1p_x = (1.0 + x).ln();
@@ -112,8 +118,13 @@ fn compute_seed_3d_state(cfg: &ClusterSeedConfig, m_central: f64) -> (DVec3, DVe
     let e = cfg.eccentricity;
     let r_peri = a * (1.0 - e);
 
-    // Compute circular speed balanced by central star/BH, cloud core (50 M☉), and Dark Matter NFW halo (8000 M☉)
-    let v_circ = calculate_gmc_orbital_speed(r_peri, m_central + cfg.mass_solar, 8000.0, 50.0);
+    // Compute circular speed balanced by central star/BH, cloud core (50 M☉), and Dark Matter NFW halo
+    let v_circ = calculate_gmc_orbital_speed(
+        r_peri,
+        m_central + cfg.mass_solar,
+        GMC_DARK_MATTER_MASS_SOLAR,
+        50.0,
+    );
     let v_peri = v_circ * (1.0 + e).sqrt();
 
     // Natural azimuthal distribution around cluster disk based on semi-major axis
@@ -624,22 +635,9 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
     metallicity: f32,
     toast: &mut Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
-    let m_ratio = (star_mass / 1.0).max(0.1);
-    let inner_r = (0.60 * m_ratio.sqrt()).clamp(0.40, 2.0) as f32;
-    let outer_r = (7.5 * m_ratio.powf(0.35)).clamp(4.5, 18.0) as f32;
-    let disk_m = (0.015 * star_mass).clamp(0.005, 0.08);
-
-    commands.entity(star_ent).insert((
-        CircumstellarDisk::new(inner_r, outer_r, disk_m),
-        PlanetaryRingSystem {
-            inner_radius_au: inner_r,
-            outer_radius_au: outer_r,
-            ring_mass_earth: disk_m * 333_000.0 * 0.01,
-            optical_depth: 0.82,
-            ice_fraction: if metallicity >= 0.02 { 0.45 } else { 0.20 },
-            silicate_fraction: if metallicity >= 0.02 { 0.55 } else { 0.80 },
-        },
-    ));
+    // Stars ignite organically without crowded circumstellar accretion disks,
+    // while retaining their newly formed orbiting planetary systems.
+    commands.entity(star_ent).try_insert(GmcPromotedSystem);
 
     let tangent = if star_vel.length_squared() > 1e-4 {
         star_vel.normalize()
@@ -692,37 +690,37 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
         star_name.to_string()
     };
 
-    if let Some(ref mut t) = toast {
-        t.message = format!("{display_star_name}: disk attached ({embryo_count} embryos)");
+    if let Some(t) = toast {
+        t.message = format!("{display_star_name}: ignited ({embryo_count} worlds formed)");
         t.timer = 5.0;
     }
 
-    bevy::log::info!(
-        "{display_star_name}: disk attached ({embryo_count} embryos) [{inner_r:.1}-{outer_r:.1} AU]"
-    );
+    bevy::log::info!("{display_star_name}: ignited ({embryo_count} worlds formed)");
 }
 
+pub type NewlyStabilizedStarQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static SimPosition,
+        &'static SimVelocity,
+        &'static Mass,
+        &'static CelestialBody,
+        &'static IgnitionState,
+    ),
+    (Without<CircumstellarDisk>, Without<GmcPromotedSystem>),
+>;
+
 /// When a protostar stabilizes (transitions to main sequence / ignited state) in the GMC scenario:
-/// 1. Attaches a small circumstellar accretion disk (CircumstellarDisk + PlanetaryRingSystem).
-/// 2. Spawns 2 to 4 protoplanetary embryos on stable Keplerian orbits.
-/// 3. Caps active full 3D disks (default 4, within 3..=6) to preserve high GPU/CPU cluster performance,
-///    dissipating older disks into their surviving planetary systems.
+/// spawns 2 to 3 orbiting planetary embryos on stable Keplerian orbits around the host star
+/// without crowding the cluster with circumstellar disk rings.
 pub fn promote_stabilized_gmc_protostars(
     mut commands: Commands,
     scenario_state: Option<Res<ActiveScenarioState>>,
     disk_mgr: Option<Res<GmcClusterDiskManager>>,
     mut existing_disks: Query<(Entity, &mut CircumstellarDisk, Option<&PlanetaryRingSystem>)>,
-    newly_stabilized: Query<
-        (
-            Entity,
-            &SimPosition,
-            &SimVelocity,
-            &Mass,
-            &CelestialBody,
-            &IgnitionState,
-        ),
-        Without<CircumstellarDisk>,
-    >,
+    newly_stabilized: NewlyStabilizedStarQuery<'_, '_>,
     mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
     let is_gmc = scenario_state

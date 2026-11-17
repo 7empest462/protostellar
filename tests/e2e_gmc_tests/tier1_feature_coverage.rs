@@ -20,18 +20,18 @@ use protostellar::utils::constants::*;
 
 #[test]
 fn test_t1_r1_eulerian_grid_scaling_and_cell_volume() {
-    // F1.1: 96^3 Eulerian Grid covering 1100 AU domain
+    // F1.1: 96^3 Eulerian Grid covering 2200 AU domain
     assert_eq!(GMC_GRID_DIM, 96);
     assert_eq!(GMC_TOTAL_CELLS, 96 * 96 * 96);
     assert_eq!(GMC_TOTAL_CELLS, 884_736);
 
-    let expected_dx = 1100.0 / 96.0;
+    let expected_dx = 2200.0 / 96.0;
     assert!((GMC_CELL_DX_AU - expected_dx).abs() < 1e-5);
-    assert!((GMC_CELL_DX_AU - 11.458_333).abs() < 1e-4);
+    assert!((GMC_CELL_DX_AU - 22.916_666).abs() < 1e-4);
 
     let expected_vol = expected_dx * expected_dx * expected_dx;
     assert!((GMC_CELL_VOLUME_AU3 - expected_vol).abs() < 1e-3);
-    const { assert!(GMC_CELL_VOLUME_AU3 > 1500.0 && GMC_CELL_VOLUME_AU3 < 1510.0) };
+    const { assert!(GMC_CELL_VOLUME_AU3 > 12_000.0 && GMC_CELL_VOLUME_AU3 < 12_100.0) };
 
     // Verify 1D linear mapping bounds and bijectivity
     let idx_origin = grid_index_1d(0, 0, 0);
@@ -41,9 +41,9 @@ fn test_t1_r1_eulerian_grid_scaling_and_cell_volume() {
 
     // Verify cell center coordinate at origin cell
     let pos_origin = grid_to_world_pos(0, 0, 0);
-    assert!((pos_origin.x - (-550.0 + GMC_CELL_DX_AU * 0.5)).abs() < 1e-4);
-    assert!((pos_origin.y - (-550.0 + GMC_CELL_DX_AU * 0.5)).abs() < 1e-4);
-    assert!((pos_origin.z - (-550.0 + GMC_CELL_DX_AU * 0.5)).abs() < 1e-4);
+    assert!((pos_origin.x - (-1100.0 + GMC_CELL_DX_AU * 0.5)).abs() < 1e-4);
+    assert!((pos_origin.y - (-1100.0 + GMC_CELL_DX_AU * 0.5)).abs() < 1e-4);
+    assert!((pos_origin.z - (-1100.0 + GMC_CELL_DX_AU * 0.5)).abs() < 1e-4);
 }
 
 #[test]
@@ -83,8 +83,8 @@ fn test_t1_r1_cfl_advection_time_step_bounds() {
     let v_subsonic = 0.5 * cs_au_yr;
     let max_dt_sub = calculate_cfl_max_dt(dx, v_subsonic, cs_au_yr);
     assert!(max_dt_sub > 0.0);
-    // At C_cfl = 0.5, dt_max = 0.5 * (11.458 / (1.5 * 0.0578)) ~ 66.0 yr
-    assert!(max_dt_sub > 50.0 && max_dt_sub < 100.0);
+    // At C_cfl = 0.5, dt_max = 0.5 * (22.917 / (1.5 * 0.0578)) ~ 132.0 yr
+    assert!(max_dt_sub > 100.0 && max_dt_sub < 180.0);
 
     // Supersonic flow: Mach 5 (v_flow = 5 * c_s ~ 0.289 AU/yr)
     let v_supersonic = 5.0 * cs_au_yr;
@@ -305,18 +305,18 @@ fn test_t1_r3_volumetric_uniform_buffer_16byte_alignment() {
 
 #[test]
 fn test_t1_r3_ray_box_bounding_cuboid_intersection() {
-    // F3.1: 3D Ray-box slab intersection test for GMC domain [-550, 550]^3
-    let box_min = Vec3::splat(-550.0);
-    let box_max = Vec3::splat(550.0);
+    // F3.1: 3D Ray-box slab intersection test for GMC domain [-1100, 1100]^3
+    let box_min = Vec3::splat(-1100.0);
+    let box_max = Vec3::splat(1100.0);
 
-    // Ray 1: From outside (z = 850 AU) looking towards origin (0, 0, 0)
-    let ray_origin = Vec3::new(0.0, 0.0, 850.0);
+    // Ray 1: From outside (z = 1650 AU) looking towards origin (0, 0, 0)
+    let ray_origin = Vec3::new(0.0, 0.0, 1650.0);
     let ray_dir = Vec3::new(0.0, 0.0, -1.0);
     let hit = intersect_ray_aabb(ray_origin, ray_dir, box_min, box_max);
     assert!(hit.is_some());
     let (t_near, t_far) = hit.unwrap();
-    assert!((t_near - 300.0).abs() < 1e-4); // 850 - 550 = 300 AU to front face
-    assert!((t_far - 1400.0).abs() < 1e-4); // 850 - (-550) = 1400 AU to back face
+    assert!((t_near - 550.0).abs() < 1e-4); // 1650 - 1100 = 550 AU to front face
+    assert!((t_far - 2750.0).abs() < 1e-4); // 1650 - (-1100) = 2750 AU to back face
 
     // Ray 2: Ray looking away from volume
     let ray_dir_away = Vec3::new(0.0, 0.0, 1.0);
@@ -395,12 +395,12 @@ fn test_t1_r4_gmc_scenario_preset_metadata() {
     assert_eq!(preset.display_name(), "GMC Cluster (Jeans Instability)");
     assert!(preset.description().contains("molecular cloud core"));
     assert!(preset.description().contains("24 M☉"));
-    assert!(preset.description().contains("550 AU"));
+    assert!(preset.description().contains("1100 AU"));
 }
 
 #[test]
 fn test_t1_r4_scenario_camera_framing_pose() {
-    // F4.1: Camera framing contract for MolecularCloudCluster (850 AU, 0.785, 0.65)
+    // F4.1: Camera framing contract for MolecularCloudCluster (1650 AU, 0.785, 0.65)
     let presets = [
         ScenarioPreset::SolarNebulaMmsn,
         ScenarioPreset::AccretionDiskGenesis,
@@ -409,14 +409,14 @@ fn test_t1_r4_scenario_camera_framing_pose() {
 
     for preset in &presets {
         let (dist, pitch, yaw) = match preset {
-            ScenarioPreset::MolecularCloudCluster => (850.0f32, 0.785f32, 0.65f32),
+            ScenarioPreset::MolecularCloudCluster => (1650.0f32, 0.785f32, 0.65f32),
             ScenarioPreset::SolarNebulaMmsn => (16.0f32, 0.785f32, 0.62f32),
             ScenarioPreset::AccretionDiskGenesis => (24.0f32, 0.785f32, 0.65f32),
             _ => (10.0, 0.0, 0.0),
         };
 
         if *preset == ScenarioPreset::MolecularCloudCluster {
-            assert_eq!(dist, 850.0);
+            assert_eq!(dist, 1650.0);
             assert_eq!(pitch, 0.785);
             assert_eq!(yaw, 0.65);
         }

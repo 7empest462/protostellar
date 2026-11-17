@@ -7,8 +7,9 @@ use crate::simulation::space_weather::{AuroralOvalState, StellarFlareState};
 use crate::simulation::thermodynamics::retained_gas_envelope_bar;
 use crate::simulation::tides::TidalState;
 
-use super::palettes::*;
 use super::VisualAssets;
+use super::palettes::*;
+use super::view_overrides::apply_atmosphere_and_cloud_view_overrides;
 
 fn resolve_star_point_light(
     body_type: BodyType,
@@ -309,13 +310,13 @@ fn apply_impact_basins(
     mat.extension.uniforms.impact_basins_data = basins_data;
 }
 
-struct BodyMaterialParameters {
-    climate_and_bio: Vec4,
-    atmosphere_params: Vec4,
-    dynamics_and_mag: Vec4,
-    pressure_bar: f32,
-    cloud_density: f32,
-    mag_gauss: f32,
+pub(super) struct BodyMaterialParameters {
+    pub(super) climate_and_bio: Vec4,
+    pub(super) atmosphere_params: Vec4,
+    pub(super) dynamics_and_mag: Vec4,
+    pub(super) pressure_bar: f32,
+    pub(super) cloud_density: f32,
+    pub(super) mag_gauss: f32,
 }
 
 struct AtmosphereCloudParams {
@@ -348,7 +349,7 @@ fn compute_atmosphere_and_cloud_params(
         0.0
     } else {
         opt_vol
-            .map_or((norm_comp.gas_frac as f32 * 2.0).max(0.01), |v| {
+            .map_or((norm_comp.gas_frac as f32 * 2.0).max(0.0), |v| {
                 v.atmospheric_pressure_bar
             })
             .max(gas_envelope_bar)
@@ -431,21 +432,12 @@ fn compute_body_material_parameters(
     let has_water_volatiles = norm_comp.ice_frac > 0.001
         || opt_vol.is_some_and(|v| v.delivered_water_m_earth > 1e-6)
         || is_snowball_regime;
-    let ocean_frac = if is_minor_body {
+    let ocean_frac = if is_minor_body || !has_water_volatiles {
         0.0
-    } else if has_water_volatiles {
-        opt_vol.map_or(norm_comp.ice_frac as f32, |v| v.ocean_coverage_frac)
     } else {
-        0.0
-    };
-    let ice_frac = if is_minor_body {
-        norm_comp.ice_frac as f32
-    } else if is_snowball_regime {
-        opt_climate.map_or(1.0, |c| c.ice_coverage_frac.max(0.95))
-    } else if has_water_volatiles {
-        opt_climate.map_or(0.0, |c| c.ice_coverage_frac)
-    } else {
-        0.0
+        // Bulk composition `ice_frac` may reflect solid ice or hydrated minerals;
+        // surface liquid oceans exist only when tracked by VolatileInventory.
+        opt_vol.map_or(0.0, |v| v.ocean_coverage_frac)
     };
     let biomass_frac = if !is_minor_body && has_water_volatiles && ocean_frac > 0.01 {
         opt_bio.map_or(0.0, |b| b.biomass_coverage_frac)
@@ -467,12 +459,30 @@ fn compute_body_material_parameters(
         opt_climate,
         opt_vol,
     );
-    let greenhouse = opt_climate.map_or(33.0, |c| c.greenhouse_delta_k);
+    let ice_frac = if is_minor_body {
+        norm_comp.ice_frac as f32
+    } else if is_snowball_regime {
+        opt_climate.map_or(1.0, |c| c.ice_coverage_frac.max(0.95))
+    } else if let Some(climate) = opt_climate {
+        if has_water_volatiles {
+            climate.ice_coverage_frac
+        } else {
+            0.0
+        }
+    } else if has_water_volatiles && temp_k < 175.0 && norm_comp.ice_frac > 0.10 {
+        // Cold vacuum icy worlds stably retain exposed surface water ice without gas.
+        (norm_comp.ice_frac as f32 * 1.4).clamp(0.15, 1.0)
+    } else {
+        0.0
+    };
+    let default_greenhouse = if pressure_bar >= 0.01 { 33.0 } else { 0.0 };
+    let greenhouse = opt_climate.map_or(default_greenhouse, |c| c.greenhouse_delta_k);
 
     let b_em = opt_em.map_or(0.0, |e| e.magnetic_field_gauss as f32);
     let b_diff = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
     let mag_gauss = b_em.max(b_diff);
-    let liquid_ocean_frac = if is_snowball_regime || temp_k > 435.0 {
+    // Open surface liquid water cannot exist below H2O's 0.0061 bar triple point.
+    let liquid_ocean_frac = if is_snowball_regime || pressure_bar < 0.0061 || temp_k > 435.0 {
         0.0
     } else if temp_k > 385.0 {
         let boil_factor = (435.0 - temp_k) / 50.0;
@@ -507,10 +517,17 @@ fn compute_body_material_parameters(
         (greenhouse / 33.0).clamp(0.1, 8.0),
     );
 
+    let default_storm = if pressure_bar < 0.02 && norm_comp.gas_frac <= 0.005 {
+        0.0
+    } else {
+        0.2
+    };
     let storm_intensity = if matches!(body_type, BodyType::GasGiant) || norm_comp.gas_frac > 0.30 {
         (mass_solar / crate::utils::constants::JUPITER_MASS_SOLAR) as f32
     } else {
-        opt_climate.map_or(0.2, |c| (c.cloud_coverage_frac * 1.5).clamp(0.0, 1.5))
+        opt_climate.map_or(default_storm, |c| {
+            (c.cloud_coverage_frac * 1.5).clamp(0.0, 1.5)
+        })
     };
     let dynamics_and_mag = Vec4::new(mag_gauss, lava_frac, storm_intensity, axial_tilt);
 
@@ -636,6 +653,106 @@ fn body_uses_shader_time(
     impact_basins_data.iter().any(|b| b.w > 0.005 && b.x > 0.01)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Writes common planet uniforms and selects star or planet shading path"
+)]
+fn write_shared_shader_uniforms(
+    mat: &mut PlanetMaterial,
+    body: &CelestialBody,
+    mass: &Mass,
+    color: Color,
+    eff_type: BodyType,
+    eff_comp: &Composition,
+    eff_temp_k: f64,
+    params: &BodyMaterialParameters,
+    elapsed_secs: f32,
+    spin_angle: f32,
+    axial_tilt: f32,
+    translation: Vec3,
+    scale: f32,
+    star_dir: Vec3,
+    opt_spin: Option<&SpinState>,
+    opt_geo: Option<&GeologicalState>,
+    opt_bhs: Option<&BlackHoleStarState>,
+    opt_flare: Option<&StellarFlareState>,
+    force_terrestrial_core: bool,
+) {
+    let cutaway_active = mat.extension.uniforms.cutaway_params.x > 0.5;
+    let shader_time = if body_uses_shader_time(
+        eff_type,
+        cutaway_active,
+        params,
+        mat.extension.uniforms.aurora_params,
+        &mat.extension.uniforms.impact_basins_data,
+    ) {
+        elapsed_secs
+    } else {
+        0.0
+    };
+
+    mat.base.base_color = color;
+    mat.extension.uniforms.color_seed = LinearRgba::from(color).to_vec4();
+    mat.extension.uniforms.temperature = eff_temp_k as f32;
+    mat.extension.uniforms.time = shader_time;
+    mat.extension.uniforms.spin_angle = spin_angle;
+    mat.extension.uniforms.climate_and_bio = params.climate_and_bio;
+    mat.extension.uniforms.atmosphere_params = params.atmosphere_params;
+    mat.extension.uniforms.dynamics_and_mag = params.dynamics_and_mag;
+    mat.extension.uniforms.planet_center_and_radius =
+        Vec4::new(translation.x, translation.y, translation.z, scale);
+
+    let profile = super::atmospheres::compute_atmosphere_spectral_profile(
+        eff_type,
+        eff_comp,
+        eff_temp_k,
+        params.pressure_bar,
+        params.cloud_density,
+    );
+    mat.extension.uniforms.star_dir_and_lum = Vec4::new(star_dir.x, star_dir.y, star_dir.z, 1.0);
+    mat.extension.uniforms.scattering_params = Vec4::new(
+        profile.rayleigh_beta.x,
+        profile.rayleigh_beta.y,
+        profile.rayleigh_beta.z,
+        profile.mie_asymmetry_g,
+    );
+    mat.extension.uniforms.spin_axis = compute_spin_axis(opt_spin, opt_geo);
+    mat.extension.uniforms.geological_params = opt_geo.map_or(Vec4::ZERO, |g| {
+        Vec4::new(
+            g.geological_age_gyr,
+            g.supercontinent_aggregation,
+            g.ocean_oxidation_progress,
+            g.terrestrial_vegetation_fraction,
+        )
+    });
+
+    if body.body_type.is_star_or_remnant() {
+        let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
+        update_star_material(
+            mat,
+            body.body_type,
+            is_blown_out,
+            color,
+            params.mag_gauss,
+            mass.0,
+            axial_tilt,
+            opt_bhs,
+            opt_flare,
+        );
+    } else {
+        let mat_name = if force_terrestrial_core {
+            ""
+        } else {
+            &body.name
+        };
+        update_planet_material(mat, eff_type, mat_name, eff_comp, eff_temp_k, color);
+        if force_terrestrial_core {
+            mat.extension.uniforms.planet_type = 3;
+            mat.extension.uniforms.color_seed.w = -1.0;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, reason = "Material sync system helper")]
 pub(crate) fn update_body_material_properties(
     mat: &mut PlanetMaterial,
@@ -662,10 +779,12 @@ pub(crate) fn update_body_material_properties(
     opt_flare: Option<&StellarFlareState>,
     opt_diff: Option<&InternalDifferentiation>,
     opt_storm: Option<&AtmosphericStormState>,
+    show_atmospheres: bool,
+    show_clouds: bool,
 ) {
     apply_impact_basins(mat, opt_basins, elapsed_years);
 
-    let color = compute_body_color(body, mass, temp, comp, opt_tidal);
+    let base_color = compute_body_color(body, mass, temp, comp, opt_tidal);
     let rotations_per_year = if let Some(spin) = opt_spin {
         8766.0 / spin.rotation_period_hours.max(0.01)
     } else {
@@ -682,7 +801,7 @@ pub(crate) fn update_body_material_properties(
     };
     let axial_tilt = opt_spin.map_or(0.08, |s| (s.axial_tilt_degrees as f32).to_radians());
 
-    let params = compute_body_material_parameters(
+    let mut params = compute_body_material_parameters(
         body.body_type,
         comp,
         temp.0,
@@ -697,58 +816,6 @@ pub(crate) fn update_body_material_properties(
     );
 
     let aurora_params = compute_aurora_uniforms(opt_aurora, params.mag_gauss);
-    let cutaway_active = mat.extension.uniforms.cutaway_params.x > 0.5;
-    let shader_time = if body_uses_shader_time(
-        body.body_type,
-        cutaway_active,
-        &params,
-        aurora_params,
-        &mat.extension.uniforms.impact_basins_data,
-    ) {
-        elapsed_secs
-    } else {
-        0.0
-    };
-
-    mat.base.base_color = color;
-    mat.extension.uniforms.color_seed = LinearRgba::from(color).to_vec4();
-    mat.extension.uniforms.temperature = temp.0 as f32;
-    mat.extension.uniforms.time = shader_time;
-    mat.extension.uniforms.spin_angle = spin_angle;
-    mat.extension.uniforms.climate_and_bio = params.climate_and_bio;
-    mat.extension.uniforms.atmosphere_params = params.atmosphere_params;
-    mat.extension.uniforms.dynamics_and_mag = params.dynamics_and_mag;
-    mat.extension.uniforms.planet_center_and_radius = Vec4::new(
-        transform.translation.x,
-        transform.translation.y,
-        transform.translation.z,
-        scale,
-    );
-
-    let profile = super::atmospheres::compute_atmosphere_spectral_profile(
-        body.body_type,
-        comp,
-        temp.0,
-        params.pressure_bar,
-        params.cloud_density,
-    );
-    mat.extension.uniforms.star_dir_and_lum = Vec4::new(star_dir.x, star_dir.y, star_dir.z, 1.0);
-    mat.extension.uniforms.scattering_params = Vec4::new(
-        profile.rayleigh_beta.x,
-        profile.rayleigh_beta.y,
-        profile.rayleigh_beta.z,
-        profile.mie_asymmetry_g,
-    );
-    mat.extension.uniforms.spin_axis = compute_spin_axis(opt_spin, opt_geo);
-    mat.extension.uniforms.geological_params = opt_geo.map_or(Vec4::ZERO, |g| {
-        Vec4::new(
-            g.geological_age_gyr,
-            g.supercontinent_aggregation,
-            g.ocean_oxidation_progress,
-            g.terrestrial_vegetation_fraction,
-        )
-    });
-
     mat.extension.uniforms.aurora_params = aurora_params;
     mat.extension.uniforms.civilization_params =
         compute_civilization_uniforms(mass.0, opt_bio, opt_tidal);
@@ -757,20 +824,131 @@ pub(crate) fn update_body_material_properties(
     mat.extension.uniforms.storm_features = storm_features;
     mat.extension.uniforms.storm_dynamics = storm_dynamics;
 
-    if body.body_type.is_star_or_remnant() {
-        let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
-        update_star_material(
+    let (eff_type, eff_comp, eff_temp_k, override_color, force_terrestrial_core) =
+        apply_atmosphere_and_cloud_view_overrides(
             mat,
-            body.body_type,
-            is_blown_out,
-            color,
-            params.mag_gauss,
-            mass.0,
-            axial_tilt,
-            opt_bhs,
-            opt_flare,
+            body,
+            mass,
+            comp,
+            temp.0,
+            opt_diff,
+            opt_tidal,
+            &mut params,
+            show_atmospheres,
+            show_clouds,
         );
-    } else {
-        update_planet_material(mat, body.body_type, &body.name, comp, temp.0, color);
+    let color =
+        if force_terrestrial_core || (!show_atmospheres && !body.body_type.is_star_or_remnant()) {
+            override_color
+        } else {
+            base_color
+        };
+
+    write_shared_shader_uniforms(
+        mat,
+        body,
+        mass,
+        color,
+        eff_type,
+        &eff_comp,
+        eff_temp_k,
+        &params,
+        elapsed_secs,
+        spin_angle,
+        axial_tilt,
+        transform.translation,
+        scale,
+        star_dir,
+        opt_spin,
+        opt_geo,
+        opt_bhs,
+        opt_flare,
+        force_terrestrial_core,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::constants::EARTH_MASS_SOLAR;
+
+    #[test]
+    fn test_airless_moon_without_volatiles_renders_no_fake_ocean_or_air() {
+        let comp = Composition {
+            silicate_frac: 0.69,
+            ice_frac: 0.05,
+            metal_frac: 0.27,
+            organics_frac: 0.0,
+            gas_frac: 0.0,
+        };
+        let params = compute_body_material_parameters(
+            BodyType::Moon,
+            &comp,
+            281.0,
+            0.0081 * EARTH_MASS_SOLAR,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0.0,
+        );
+        assert_eq!(params.pressure_bar, 0.0);
+        assert_eq!(params.climate_and_bio.x, 0.0, "No fake liquid ocean");
+        assert_eq!(params.climate_and_bio.y, 0.0, "No warm vacuum polar ice");
+        assert_eq!(params.cloud_density, 0.0, "No fake clouds in vacuum");
+        assert_eq!(params.atmosphere_params.z, 0.0, "No fake haze in vacuum");
+    }
+
+    #[test]
+    fn test_cold_airless_icy_moon_preserves_ice_without_liquid_ocean() {
+        let comp = Composition {
+            silicate_frac: 0.45,
+            ice_frac: 0.50,
+            metal_frac: 0.05,
+            organics_frac: 0.0,
+            gas_frac: 0.0,
+        };
+        let cold_params = compute_body_material_parameters(
+            BodyType::Moon,
+            &comp,
+            100.0,
+            0.0081 * EARTH_MASS_SOLAR,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0.0,
+        );
+        assert_eq!(cold_params.pressure_bar, 0.0);
+        assert_eq!(cold_params.climate_and_bio.x, 0.0);
+        assert!(cold_params.climate_and_bio.y > 0.4);
+
+        let below_triple = VolatileInventory {
+            delivered_water_m_earth: 0.0001,
+            ocean_coverage_frac: 0.5,
+            atmospheric_pressure_bar: 0.004,
+            cometary_impact_count: 0,
+        };
+        let low_p_params = compute_body_material_parameters(
+            BodyType::Moon,
+            &comp,
+            281.0,
+            0.0081 * EARTH_MASS_SOLAR,
+            None,
+            None,
+            Some(&below_triple),
+            None,
+            None,
+            None,
+            0.0,
+        );
+        assert_eq!(
+            low_p_params.climate_and_bio.x, 0.0,
+            "Below 0.0061 bar triple point, liquid ocean must be zero"
+        );
     }
 }

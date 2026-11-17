@@ -8,7 +8,7 @@ use protostellar::simulation::accretion::events::{
 };
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
-use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
 use protostellar::utils::constants::*;
 
 #[test]

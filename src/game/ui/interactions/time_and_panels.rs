@@ -196,6 +196,27 @@ pub fn handle_instrument_action(
             }
             true
         }
+        UiButtonAction::ToggleAtmospheres => {
+            player_state.hide_atmospheres = !player_state.hide_atmospheres;
+            toast.message = if player_state.hide_atmospheres {
+                "🪨 Atmospheres & Gas Envelopes: HIDDEN [Shift-A] (Showing Planetary Cores & Surfaces)"
+                    .to_string()
+            } else {
+                "🌫️ Atmospheres & Gas Envelopes: VISIBLE [Shift-A]".to_string()
+            };
+            toast.timer = 2.8;
+            true
+        }
+        UiButtonAction::ToggleClouds => {
+            player_state.hide_clouds = !player_state.hide_clouds;
+            toast.message = if player_state.hide_clouds {
+                "☀️ Planetary Clouds: HIDDEN [Shift-W] (Atmospheres Retained)".to_string()
+            } else {
+                "☁️ Planetary Clouds: VISIBLE [Shift-W]".to_string()
+            };
+            toast.timer = 2.8;
+            true
+        }
         UiButtonAction::ToggleSlingshotMode => {
             if let Some(ref mut sl) = slingshot {
                 sl.is_active = !sl.is_active;

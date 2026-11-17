@@ -1,14 +1,14 @@
 //! 3D Eulerian WGPU Compute Fluid Simulation for Giant Molecular Clouds (GMC).
 //!
-//! Simulates a 96^3 grid (884,736 cells) spanning 1100 AU with Semi-Lagrangian advection,
+//! Simulates a 96^3 grid (884,736 cells) spanning 2200 AU with Semi-Lagrangian advection,
 //! pressure gradients, stellar point-mass gravity, turbulent decay, and Jeans collapse peak detection.
 
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp};
 use bytemuck::{Pod, Zeroable};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use wgpu::util::DeviceExt;
 
 use crate::rendering::effects::remnants::PersistentRemnantPool;
@@ -18,7 +18,7 @@ use crate::simulation::resources::{SimTime, TimeWarp};
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 use crate::utils::constants::G_ASTRO;
 
-pub const GMC_DOMAIN_SIZE_AU: f32 = 1100.0;
+pub const GMC_DOMAIN_SIZE_AU: f32 = 2200.0;
 pub const GMC_GRID_DIM: u32 = 96;
 pub const GMC_TOTAL_CELLS: usize = (GMC_GRID_DIM * GMC_GRID_DIM * GMC_GRID_DIM) as usize;
 pub const GMC_CELL_DX_AU: f32 = GMC_DOMAIN_SIZE_AU / GMC_GRID_DIM as f32;
@@ -238,7 +238,7 @@ where
         .collect();
 
     // Sort by mass descending
-    candidates.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+    candidates.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
 
     let mut sinks = [GpuSinkParticle::default(); 16];
     let mut num_sinks = 0u32;
@@ -390,45 +390,49 @@ fn generate_initial_gmc_fields() -> (Vec<f32>, Vec<[f32; 4]>, Vec<f32>) {
                 // Extended GMC Disk with multiple dense nodes
                 let r_cyl = (wx * wx + wz * wz).sqrt().max(0.1);
 
-                // Base exponential disk profile
-                let disk_scale_r = 250.0;
-                let disk_scale_h = 45.0;
+                // Base exponential disk profile scaled for 2200 AU spiral arm formation
+                let disk_scale_r = 500.0;
+                let disk_scale_h = 65.0;
                 let rho_disk =
                     1.8e-11 * f32::exp(-r_cyl / disk_scale_r) * f32::exp(-wy.abs() / disk_scale_h);
 
-                // Add several offset clumps/nodes
-                let c1_dist = ((wx - 150.0).powi(2) + wy.powi(2) + (wz + 120.0).powi(2)).sqrt();
-                let c2_dist = ((wx + 180.0).powi(2) + wy.powi(2) + (wz - 80.0).powi(2)).sqrt();
-                let c3_dist = ((wx - 80.0).powi(2) + wy.powi(2) + (wz - 200.0).powi(2)).sqrt();
-                let c4_dist = ((wx + 50.0).powi(2) + wy.powi(2) + (wz + 240.0).powi(2)).sqrt();
+                // Add several offset clumps/nodes distributed across inner and mid-arm disk
+                let c1_dist = ((wx - 300.0).powi(2) + wy.powi(2) + (wz + 240.0).powi(2)).sqrt();
+                let c2_dist = ((wx + 360.0).powi(2) + wy.powi(2) + (wz - 160.0).powi(2)).sqrt();
+                let c3_dist = ((wx - 160.0).powi(2) + wy.powi(2) + (wz - 400.0).powi(2)).sqrt();
+                let c4_dist = ((wx + 110.0).powi(2) + wy.powi(2) + (wz + 460.0).powi(2)).sqrt();
 
-                let clump1 = 2.0e-11 / (1.0 + (c1_dist / 60.0).powi(2)).powf(1.5);
-                let clump2 = 1.8e-11 / (1.0 + (c2_dist / 70.0).powi(2)).powf(1.5);
-                let clump3 = 1.5e-11 / (1.0 + (c3_dist / 65.0).powi(2)).powf(1.5);
-                let clump4 = 1.7e-11 / (1.0 + (c4_dist / 55.0).powi(2)).powf(1.5);
+                let clump1 = 2.0e-11 / (1.0 + (c1_dist / 100.0).powi(2)).powf(1.5);
+                let clump2 = 1.8e-11 / (1.0 + (c2_dist / 115.0).powi(2)).powf(1.5);
+                let clump3 = 1.5e-11 / (1.0 + (c3_dist / 110.0).powi(2)).powf(1.5);
+                let clump4 = 1.7e-11 / (1.0 + (c4_dist / 95.0).powi(2)).powf(1.5);
 
-                let central_core = 2.5e-11 / (1.0 + (r_au / 80.0).powi(2)).powf(1.5);
+                let central_core = 2.5e-11 / (1.0 + (r_au / 150.0).powi(2)).powf(1.5);
 
                 let base_rho = rho_disk + central_core + clump1 + clump2 + clump3 + clump4;
 
                 // Supersonic turbulent density fluctuations (filaments)
                 let turb_rho = 1.0
-                    + 0.25 * (wx * 0.03).sin() * (wz * 0.02).cos()
-                    + 0.20 * (wy * 0.04).cos() * (wx * 0.025).sin()
-                    + 0.15 * (wz * 0.035).sin() * (wy * 0.03).cos();
+                    + 0.25 * (wx * 0.015).sin() * (wz * 0.010).cos()
+                    + 0.20 * (wy * 0.025).cos() * (wx * 0.013).sin()
+                    + 0.15 * (wz * 0.018).sin() * (wy * 0.020).cos();
                 let rho = (base_rho * turb_rho.max(0.1)).max(1.0e-14);
 
                 // Rotational velocity (Keplerian-ish) + Turbulence
-                let phase_x = (wx * 0.025).sin() * (wz * 0.018).cos();
-                let phase_y = (wy * 0.022).cos() * (wx * 0.015).sin();
-                let phase_z = (wz * 0.028).sin() * (wy * 0.020).cos();
+                let phase_x = (wx * 0.012).sin() * (wz * 0.009).cos();
+                let phase_y = (wy * 0.014).cos() * (wx * 0.008).sin();
+                let phase_z = (wz * 0.014).sin() * (wy * 0.012).cos();
 
                 // Balance the global inward pull (g_cloud + NFW Dark Matter halo)
-                let v_rot = if r_cyl > 15.0 {
-                    let r_s = 150.0;
+                let v_rot = if r_cyl > 25.0 {
+                    let r_s = crate::simulation::scenarios::molecular_cloud::GMC_NFW_SCALE_RADIUS_AU
+                        as f32;
                     let x = r_cyl / r_s;
-                    let mass_dm = 8000.0 * ((1.0 + x).ln() - x / (1.0 + x));
-                    let total_mass = 40.0 + mass_dm;
+                    let mass_dm =
+                        crate::simulation::scenarios::molecular_cloud::GMC_DARK_MATTER_MASS_SOLAR
+                            as f32
+                            * ((1.0 + x).ln() - x / (1.0 + x));
+                    let total_mass = 50.0 + mass_dm;
                     (crate::utils::constants::G_ASTRO as f32 * total_mass / r_cyl).sqrt() * 0.95
                 } else {
                     0.0

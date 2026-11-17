@@ -368,17 +368,16 @@ fn sync_mesh_attributes_selective(
                 dst.copy_from_slice(src);
             }
         }
-        if sync_colors {
-            if let Some(VertexAttributeValues::Float32x4(mesh_col)) =
+        if sync_colors
+            && let Some(VertexAttributeValues::Float32x4(mesh_col)) =
                 mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
-            {
-                let copy_len = vertex_limit.min(mesh_col.len()).min(data.mesh_colors.len());
-                if let (Some(dst), Some(src)) = (
-                    mesh_col.get_mut(..copy_len),
-                    data.mesh_colors.get(..copy_len),
-                ) {
-                    dst.copy_from_slice(src);
-                }
+        {
+            let copy_len = vertex_limit.min(mesh_col.len()).min(data.mesh_colors.len());
+            if let (Some(dst), Some(src)) = (
+                mesh_col.get_mut(..copy_len),
+                data.mesh_colors.get(..copy_len),
+            ) {
+                dst.copy_from_slice(src);
             }
         }
     }

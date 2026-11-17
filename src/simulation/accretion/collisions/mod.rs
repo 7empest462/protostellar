@@ -21,7 +21,7 @@ use crate::utils::constants::*;
 
 use super::events::*;
 use super::impact_regimes::{
-    classify_impact, radius_from_mass_density, ImpactParams, ImpactRegime,
+    ImpactParams, ImpactRegime, classify_impact, radius_from_mass_density,
 };
 
 /// Detects close-contact collisions and processes physical collision regimes.
@@ -126,15 +126,15 @@ pub fn process_accretion_and_collisions(
                 continue;
             };
 
-            if b1.name.is_empty() {
-                if let Ok((_, _, _, _, _, _, _, _, body, ..)) = bodies_query.get(b1.entity) {
-                    b1.name.clone_from(&body.name);
-                }
+            if b1.name.is_empty()
+                && let Ok((_, _, _, _, _, _, _, _, body, ..)) = bodies_query.get(b1.entity)
+            {
+                b1.name.clone_from(&body.name);
             }
-            if b2.name.is_empty() {
-                if let Ok((_, _, _, _, _, _, _, _, body, ..)) = bodies_query.get(b2.entity) {
-                    b2.name.clone_from(&body.name);
-                }
+            if b2.name.is_empty()
+                && let Ok((_, _, _, _, _, _, _, _, body, ..)) = bodies_query.get(b2.entity)
+            {
+                b2.name.clone_from(&body.name);
             }
 
             let raw_dt_yr = if sim_time.current_dt_yr > 0.0 {

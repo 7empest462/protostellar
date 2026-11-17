@@ -568,6 +568,7 @@ fn update_inspector_body_telemetry(
     config: &SimulationConfig,
     visual_time: f32,
     audio_enabled: bool,
+    show_atmospheres: bool,
 ) {
     let Ok((
         (pos, vel, mass, rad, temp, comp, body),
@@ -607,6 +608,8 @@ fn update_inspector_body_telemetry(
         opt_kozai,
         rad,
         temp,
+        comp,
+        body.body_type,
         config,
     );
 
@@ -621,47 +624,101 @@ fn update_inspector_body_telemetry(
     let mut next_telemetry = format_primary_telemetry(
         pos.0, vel.0, mass.0, rad.0, temp.0, comp, body, opt_spin, phase_mgr, &env_str, &comp_str,
     );
+    append_stripped_core_view_note(
+        &mut next_telemetry,
+        mass.0,
+        rad.0,
+        body.body_type,
+        comp,
+        opt_diff,
+        show_atmospheres,
+    );
 
+    append_inspector_domain_telemetry(
+        &mut next_telemetry,
+        selected_entity,
+        body,
+        opt_rel,
+        quasi_hud_query,
+        jet_hud_query,
+        space_weather_hud_query,
+        probes_hud_query,
+        disk_hud_query,
+        neutron_oort_hud_query,
+        visual_time,
+        audio_enabled,
+    );
+
+    set_text_if_changed(text, next_telemetry);
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Appends domain-specific telemetry blocks"
+)]
+fn append_inspector_domain_telemetry(
+    next_telemetry: &mut String,
+    selected_entity: Entity,
+    body: &CelestialBody,
+    opt_rel: Option<&crate::simulation::RelativisticState>,
+    quasi_hud_query: &Query<&BlackHoleStarState>,
+    jet_hud_query: &Query<&RelativisticJetState>,
+    space_weather_hud_query: &Query<(
+        Option<&crate::simulation::space_weather::AuroralOvalState>,
+        Option<&crate::simulation::space_weather::StellarFlareState>,
+    )>,
+    probes_hud_query: &Query<(
+        &crate::simulation::probes::SpaceProbe,
+        &crate::simulation::probes::FlightComputer,
+    )>,
+    disk_hud_query: &Query<&CircumstellarDisk>,
+    neutron_oort_hud_query: &Query<(
+        Option<&PulsarGlitchState>,
+        Option<&MagnetarCrustStress>,
+        Option<&OortComet>,
+    )>,
+    visual_time: f32,
+    audio_enabled: bool,
+) {
     if let Ok(qs) = quasi_hud_query.get(selected_entity) {
-        append_quasi_star_telemetry(&mut next_telemetry, qs);
+        append_quasi_star_telemetry(next_telemetry, qs);
     }
 
     if let Ok(jet) = jet_hud_query.get(selected_entity) {
-        super::inspector_panel::append_relativistic_jet_telemetry(&mut next_telemetry, jet);
+        super::inspector_panel::append_relativistic_jet_telemetry(next_telemetry, jet);
     }
 
-    if let Ok((opt_aurora, opt_flare)) = space_weather_hud_query.get(selected_entity) {
-        if opt_aurora.is_some() || opt_flare.is_some() {
-            let is_giant =
-                body.body_type == BodyType::GasGiant || body.body_type == BodyType::IceGiant;
-            super::inspector_panel::append_space_weather_telemetry(
-                &mut next_telemetry,
-                opt_aurora,
-                opt_flare,
-                is_giant,
-            );
-        }
+    if let Ok((opt_aurora, opt_flare)) = space_weather_hud_query.get(selected_entity)
+        && (opt_aurora.is_some() || opt_flare.is_some())
+    {
+        let is_giant = body.body_type == BodyType::GasGiant || body.body_type == BodyType::IceGiant;
+        super::inspector_panel::append_space_weather_telemetry(
+            next_telemetry,
+            opt_aurora,
+            opt_flare,
+            is_giant,
+        );
     }
 
     if let Ok((probe, comp)) = probes_hud_query.get(selected_entity) {
-        append_probe_telemetry(&mut next_telemetry, probe, comp);
+        append_probe_telemetry(next_telemetry, probe, comp);
     }
 
     if let Ok(disk) = disk_hud_query.get(selected_entity) {
-        super::inspector_panel::append_circumstellar_disk_telemetry(&mut next_telemetry, disk);
+        super::inspector_panel::append_circumstellar_disk_telemetry(next_telemetry, disk);
     }
 
     let (opt_glitch, opt_stress) = if let Ok((opt_glitch, opt_stress, opt_comet)) =
         neutron_oort_hud_query.get(selected_entity)
     {
         if let Some(glitch) = opt_glitch {
-            append_pulsar_glitch_telemetry(&mut next_telemetry, glitch);
+            append_pulsar_glitch_telemetry(next_telemetry, glitch);
         }
         if let Some(stress) = opt_stress {
-            append_magnetar_stress_telemetry(&mut next_telemetry, stress);
+            append_magnetar_stress_telemetry(next_telemetry, stress);
         }
         if let Some(comet) = opt_comet {
-            append_oort_comet_telemetry(&mut next_telemetry, comet);
+            append_oort_comet_telemetry(next_telemetry, comet);
         }
         (opt_glitch, opt_stress)
     } else {
@@ -681,71 +738,7 @@ fn update_inspector_body_telemetry(
         visual_time,
         audio_enabled,
     );
-    append_sonification_telemetry(&mut next_telemetry, &sonification);
-
-    set_text_if_changed(text, next_telemetry);
-}
-
-fn append_probe_telemetry(
-    text: &mut String,
-    probe: &crate::simulation::probes::SpaceProbe,
-    comp: &crate::simulation::probes::FlightComputer,
-) {
-    use std::fmt::Write;
-    let type_label = match probe.probe_type {
-        crate::simulation::probes::ProbeType::Orbiter => "ORBITAL SURVEY PROBE",
-        crate::simulation::probes::ProbeType::Rover => "SURFACE EXPLORATION ROVER",
-    };
-    let status_label = match probe.status {
-        crate::simulation::probes::ProbeStatus::Transit => {
-            "EN ROUTE // AUTONOMOUS ION PROPULSION ACTIVE"
-        }
-        crate::simulation::probes::ProbeStatus::InOrbit => {
-            "STABLE ORBIT INSERTION // REMOTE SPECTROMETRY ACTIVE"
-        }
-        crate::simulation::probes::ProbeStatus::Landed => {
-            "SURFACE TOUCHDOWN // AUTONOMOUS GEODESIC TRAVERSE & CORE DRILLING"
-        }
-    };
-    let _ = write!(
-        text,
-        "\n\n>> AUTONOMOUS MISSION TELEMETRY <<\n\
-         Mission Type: {type_label}\n\
-         Destination World: {}\n\
-         Flight Status: {status_label}\n\
-         Range to Target: {:.3} AU ({:.0} km)\n\
-         Relative Speed: {:.1} km/s",
-        comp.target_name,
-        comp.distance_to_target,
-        comp.distance_to_target * AU_TO_KM,
-        comp.relative_speed * AU_PER_YR_TO_KM_PER_S
-    );
-
-    if probe.status == crate::simulation::probes::ProbeStatus::Landed {
-        if let Some((lat, lon)) = probe.surface_lat_lon_deg() {
-            let lat_hem = if lat >= 0.0 { 'N' } else { 'S' };
-            let lon_hem = if lon >= 0.0 { 'E' } else { 'W' };
-            let _ = write!(
-                text,
-                "\nSurface Coordinates: {:.2}° {lat_hem}, {:.2}° {lon_hem}\n\
-                 Traverse Distance: {:.1} km ({} Waypoints) | Core Samples: {}\n\
-                 Raman Assay: {}",
-                lat.abs(),
-                lon.abs(),
-                probe.distance_driven_km,
-                probe.traverse_trail_unspun.len(),
-                probe.samples_collected,
-                probe.latest_assay
-            );
-        }
-    } else if probe.status == crate::simulation::probes::ProbeStatus::InOrbit {
-        let _ = write!(
-            text,
-            "\nOrbital Surveys: {} Passes Completed\n\
-             Spectrometry: {}",
-            probe.samples_collected, probe.latest_assay
-        );
-    }
+    append_sonification_telemetry(next_telemetry, &sonification);
 }
 
 #[allow(
@@ -926,6 +919,7 @@ pub fn update_hud(
                 &config,
                 sim_time.visual_time_secs,
                 opt_audio.as_deref().is_none_or(|a| a.enabled),
+                player_state.show_atmospheres(),
             );
         } else {
             set_text_str_if_changed(

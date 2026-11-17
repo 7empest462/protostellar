@@ -195,12 +195,11 @@ pub fn update_persistent_remnants(
         rem.age_years += effective_dt_yr;
 
         // If the central remnant is a Pulsar or Magnetar, activate the Pulsar Wind Nebula
-        if let Some((star_ent, star_body)) = opt_star {
-            if star_ent == rem.star_entity
-                && matches!(star_body.body_type, BodyType::Pulsar | BodyType::Magnetar)
-            {
-                rem.has_pwn = true;
-            }
+        if let Some((star_ent, star_body)) = opt_star
+            && star_ent == rem.star_entity
+            && matches!(star_body.body_type, BodyType::Pulsar | BodyType::Magnetar)
+        {
+            rem.has_pwn = true;
         }
 
         // Sedov-Taylor phase expansion: R(t) = R_0 * (1 + t / t_sedov)^0.38

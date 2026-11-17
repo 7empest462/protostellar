@@ -135,8 +135,25 @@ pub fn step_protostar_ignition_and_limits(
         ignition,
         opt_evo,
         opt_em,
+        commands,
         supernova_events,
     );
+
+    // Sub-stellar Brown Dwarfs with IgnitionState that subsequently accrete past 0.08 M_sun
+    // immediately ignite hydrogen fusion into the matching Morgan-Keenan class.
+    if body.body_type == BodyType::BrownDwarf && mass.0 >= 0.08 {
+        let (target_type, label) =
+            classify_stellar_type_and_label(mass.0, &Composition::solar_gas());
+        body.body_type = target_type;
+        update_promoted_stellar_name(&mut body.name, target_type, mass.0, label);
+        lum.0 = mass.0.powf(3.5);
+        temp.0 = (5778.0 * mass.0.powf(0.505)).clamp(2800.0, 50_000.0);
+        radius.0 = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.12);
+        if let Some(evo) = opt_evo {
+            evo.phase = StellarEvolutionPhase::MainSequence;
+            evo.hydrogen_core_fraction = 1.0;
+        }
+    }
 }
 
 #[allow(
@@ -173,33 +190,28 @@ fn ignite_protostar_to_zams(
         )
     } else if body.name.contains("Dark Star") {
         (BodyType::DarkStar, "Dark Star (WIMP Annihilation)")
-    } else if mass.0 < 0.08 {
-        (BodyType::BrownDwarf, "The Star (Brown Dwarf - L/T)")
-    } else if mass.0 < 0.45 {
-        (BodyType::RedDwarf, "The Star (Red Dwarf - M Type)")
-    } else if mass.0 < 0.80 {
-        (BodyType::OrangeDwarf, "The Star (Orange Dwarf - K Type)")
-    } else if mass.0 < 1.04 {
-        (BodyType::YellowDwarf, "The Star (Yellow Dwarf - G2V)")
-    } else if mass.0 < 1.40 {
-        (
-            BodyType::YellowWhiteDwarf,
-            "The Star (Yellow-White Dwarf - F Type)",
-        )
-    } else if mass.0 < 2.10 {
-        (
-            BodyType::WhiteMainSequence,
-            "The Star (White Main-Sequence - A Type)",
-        )
-    } else if mass.0 < 8.0 {
-        (BodyType::BlueGiant, "The Star (Blue Giant - B Type)")
-    } else if mass.0 < 25.0 {
-        (
-            BodyType::BlueSupergiant,
-            "The Star (Blue Supergiant - O Type)",
-        )
     } else {
-        (BodyType::Hypergiant, "The Star (Luminous Hypergiant)")
+        match classify_stellar_type_and_label(mass.0, &Composition::solar_gas()).0 {
+            BodyType::BrownDwarf => (BodyType::BrownDwarf, "The Star (Brown Dwarf - L/T)"),
+            BodyType::RedDwarf => (BodyType::RedDwarf, "The Star (Red Dwarf - M Type)"),
+            BodyType::OrangeDwarf => (BodyType::OrangeDwarf, "The Star (Orange Dwarf - K Type)"),
+            BodyType::YellowDwarf => (BodyType::YellowDwarf, "The Star (Yellow Dwarf - G2V)"),
+            BodyType::YellowWhiteDwarf => (
+                BodyType::YellowWhiteDwarf,
+                "The Star (Yellow-White Dwarf - F Type)",
+            ),
+            BodyType::WhiteMainSequence => (
+                BodyType::WhiteMainSequence,
+                "The Star (White Main-Sequence - A Type)",
+            ),
+            BodyType::BlueGiant => (BodyType::BlueGiant, "The Star (Blue Giant - B Type)"),
+            BodyType::BlueSupergiant => (
+                BodyType::BlueSupergiant,
+                "The Star (Blue Supergiant - O Type)",
+            ),
+            BodyType::BlackHole => (BodyType::BlackHole, "Intermediate-Mass Black Hole"),
+            _ => (BodyType::Hypergiant, "The Star (Luminous Hypergiant)"),
+        }
     };
 
     body.body_type = assigned_type;
@@ -218,7 +230,7 @@ fn ignite_protostar_to_zams(
     temp.0 = 5778.0 * mass.0.powf(0.505);
     radius.0 = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.20);
 
-    if let Some(ref mut evo) = opt_evo {
+    if let Some(evo) = opt_evo {
         evo.phase = StellarEvolutionPhase::MainSequence;
         evo.hydrogen_core_fraction = 1.0;
     }
@@ -255,8 +267,45 @@ fn apply_stellar_collapse_limits(
     ignition: &mut IgnitionState,
     opt_evo: &mut Option<Mut<'_, StellarEvolutionState>>,
     opt_em: Option<Mut<'_, ElectromagneticFieldState>>,
+    commands: &mut Commands,
     supernova_events: &mut MessageWriter<SupernovaEvent>,
 ) {
+    if !body.body_type.is_remnant()
+        && !matches!(
+            body.body_type,
+            BodyType::QuasiStar | BodyType::DarkStar | BodyType::PopulationIIIStar
+        )
+        && mass.0 >= 500.0
+    {
+        // Direct pair-instability / general-relativistic collapse beyond 500 M_sun
+        body.body_type = BodyType::BlackHole;
+        body.name = format!("Intermediate-Mass Black Hole ({:.1} M☉)", mass.0);
+        radius.0 = (1.974e-8 * mass.0).max(1e-7);
+        temp.0 = 10.0;
+        lum.0 = 0.0;
+        ignition.is_ignited = false;
+        if let Some(evo) = opt_evo {
+            evo.phase = StellarEvolutionPhase::BlackHoleRemnant;
+        }
+        if let Some(mut em) = opt_em {
+            em.magnetic_field_gauss = 1.0e8;
+            em.rotation_period_sec = 0.001;
+            em.jet_length_au = 6.0;
+            em.synchrotron_intensity = 3.0;
+        }
+        if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.remove::<PlanetaryRingSystem>();
+            cmd.remove::<PlanetaryClimate>();
+            cmd.remove::<BiosphereState>();
+            cmd.try_insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
+                mass.0,
+                0.70,
+                bevy::math::DVec3::Y,
+            ));
+        }
+        return;
+    }
+
     if body.body_type == BodyType::WhiteDwarf && mass.0 > 1.44 {
         // Chandrasekhar limit exceeded -> Type Ia thermonuclear / core collapse
         body.body_type = BodyType::Pulsar;
@@ -265,7 +314,7 @@ fn apply_stellar_collapse_limits(
         temp.0 = 1_000_000.0;
         lum.0 = 100.0;
         ignition.is_ignited = false;
-        if let Some(ref mut evo) = opt_evo {
+        if let Some(evo) = opt_evo {
             evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
             evo.nebula_expansion_radius_au = 2.0;
             evo.nebula_opacity = 1.0;
@@ -319,7 +368,7 @@ fn apply_stellar_collapse_limits(
         temp.0 = 10.0;
         lum.0 = 0.0;
         ignition.is_ignited = false;
-        if let Some(ref mut evo) = opt_evo {
+        if let Some(evo) = opt_evo {
             evo.phase = StellarEvolutionPhase::BlackHoleRemnant;
         }
         if let Some(mut em) = opt_em {
@@ -327,6 +376,52 @@ fn apply_stellar_collapse_limits(
             em.rotation_period_sec = 0.001;
             em.jet_length_au = 6.0;
             em.synchrotron_intensity = 3.0;
+        }
+    }
+}
+
+/// Updates a non-canonical body's name after crossing a sub-stellar or Morgan-Keenan spectral mass threshold.
+pub fn update_promoted_stellar_name(
+    name: &mut String,
+    updated_type: BodyType,
+    mass_solar: f64,
+    label: &str,
+) {
+    if name.starts_with("Protostar Gen-I Jeans-") {
+        let idx = name.trim_start_matches("Protostar Gen-I Jeans-");
+        *name = format!("{label} Gen-I #{idx}");
+    } else if name.starts_with("Protostar Jeans-") {
+        let idx = name.trim_start_matches("Protostar Jeans-");
+        *name = format!("{label} #{idx}");
+    } else if name.starts_with("Protostar Gen-II NovaCore-") {
+        let idx = name.trim_start_matches("Protostar Gen-II NovaCore-");
+        *name = format!("{label} Gen-II #{idx}");
+    } else if name.starts_with("Protostar Gen-III SolCore-") {
+        let idx = name.trim_start_matches("Protostar Gen-III SolCore-");
+        *name = format!("{label} Gen-III #{idx}");
+    } else if name.starts_with("Gen-I Dark Star Protostar-") {
+        let idx = name.trim_start_matches("Gen-I Dark Star Protostar-");
+        *name = format!("Dark Star Gen-I #{idx}");
+    } else if let Some(hash_idx) = name.find('#')
+        && let Some(number_str) = name.get(hash_idx..)
+    {
+        *name = format!("{label} {number_str}");
+    } else if !crate::simulation::accretion::collisions::is_canonical_named_body(name)
+        && !name.starts_with("The Star")
+        && !name.contains("Dark Star")
+    {
+        if updated_type == BodyType::BlackHole {
+            let bh_class = if mass_solar >= 100.0 {
+                "Intermediate-Mass Black Hole"
+            } else {
+                "Stellar-Mass Black Hole"
+            };
+            *name = format!("{bh_class} ({mass_solar:.1} M☉)");
+        } else if updated_type == BodyType::BrownDwarf {
+            let mj = mass_solar / JUPITER_MASS_SOLAR;
+            *name = format!("Brown Dwarf ({mj:.1} M_J)");
+        } else {
+            *name = format!("{label} ({mass_solar:.1} M☉)");
         }
     }
 }
@@ -342,47 +437,22 @@ fn classify_ignited_protostar_to_zams(
         (BodyType::DarkStar, "Dark Star")
     } else if (body.name.contains("Gen-I") || body.name.contains("Pop-III")) && mass_solar >= 30.0 {
         (BodyType::PopulationIIIStar, "Pop-III Hypergiant")
-    } else if mass_solar < 0.08 {
-        (BodyType::BrownDwarf, "Brown Dwarf")
-    } else if mass_solar < 0.45 {
-        (BodyType::RedDwarf, "Red Dwarf")
-    } else if mass_solar < 0.80 {
-        (BodyType::OrangeDwarf, "Orange Dwarf")
-    } else if mass_solar < 1.08 {
-        (BodyType::YellowDwarf, "Yellow Dwarf")
-    } else if mass_solar < 1.40 {
-        (BodyType::YellowWhiteDwarf, "F-Type Star")
-    } else if mass_solar < 2.10 {
-        (BodyType::WhiteMainSequence, "A-Type White Star")
-    } else if mass_solar < 8.0 {
-        (BodyType::BlueGiant, "B-Type Blue Giant")
-    } else if mass_solar < 25.0 {
-        (BodyType::BlueSupergiant, "O-Type Blue Supergiant")
     } else {
-        (BodyType::Hypergiant, "Luminous Hypergiant")
+        classify_stellar_type_and_label(mass_solar, &Composition::solar_gas())
     };
 
     body.body_type = assigned_type;
-    if body.name.starts_with("Protostar Gen-I Jeans-") {
-        let idx = body.name.trim_start_matches("Protostar Gen-I Jeans-");
-        body.name = format!("{label} Gen-I #{idx}");
-    } else if body.name.starts_with("Protostar Jeans-") {
-        let idx = body.name.trim_start_matches("Protostar Jeans-");
-        body.name = format!("{label} #{idx}");
-    } else if body.name.starts_with("Protostar Gen-II NovaCore-") {
-        let idx = body.name.trim_start_matches("Protostar Gen-II NovaCore-");
-        body.name = format!("{label} Gen-II #{idx}");
-    } else if body.name.starts_with("Protostar Gen-III SolCore-") {
-        let idx = body.name.trim_start_matches("Protostar Gen-III SolCore-");
-        body.name = format!("{label} Gen-III #{idx}");
-    } else if body.name.starts_with("Gen-I Dark Star Protostar-") {
-        let idx = body.name.trim_start_matches("Gen-I Dark Star Protostar-");
-        body.name = format!("Dark Star Gen-I #{idx}");
-    }
+    update_promoted_stellar_name(&mut body.name, assigned_type, mass_solar, label);
 
-    lum.0 = mass_solar.powf(3.5);
-    temp.0 = 5778.0 * mass_solar.powf(0.505);
-    radius.0 = (SOLAR_RADIUS_AU * mass_solar.powf(0.8)).clamp(0.001, 0.12);
+    if assigned_type == BodyType::BlackHole {
+        lum.0 = 0.0;
+        temp.0 = 10.0;
+        radius.0 = (1.974e-8 * mass_solar).max(1e-7);
+    } else {
+        lum.0 = mass_solar.powf(3.5);
+        temp.0 = (5778.0 * mass_solar.powf(0.505)).clamp(1800.0, 50_000.0);
+        radius.0 = (SOLAR_RADIUS_AU * mass_solar.powf(0.8)).clamp(0.001, 0.12);
+    }
 }
 
 fn clean_star_base_name(name: &str) -> &str {
@@ -472,12 +542,33 @@ fn step_main_sequence_evolution(
     is_gmc: bool,
 ) {
     let target_lum = mass.0.powf(3.5);
-    let target_temp = 5778.0 * mass.0.powf(0.505);
+    let target_temp = (5778.0 * mass.0.powf(0.505)).clamp(1800.0, 50_000.0);
     let target_rad = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.12);
     let k = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
     lum.0 += (target_lum - lum.0) * k;
     temp.0 += (target_temp - temp.0) * k;
     radius.0 += (target_rad - radius.0) * k;
+
+    // Re-classify accreting main-sequence or sub-stellar stars across spectral tiers
+    if !body.name.starts_with("The Sun")
+        && !body.name.contains("Genesis")
+        && !matches!(
+            body.body_type,
+            BodyType::DarkStar
+                | BodyType::PopulationIIIStar
+                | BodyType::BlueStraggler
+                | BodyType::WolfRayet
+                | BodyType::LuminousBlueVariable
+                | BodyType::QuasiStar
+        )
+    {
+        let (target_type, label) =
+            classify_stellar_type_and_label(mass.0, &Composition::solar_gas());
+        if target_type != body.body_type && target_type != BodyType::BlackHole {
+            body.body_type = target_type;
+            update_promoted_stellar_name(&mut body.name, target_type, mass.0, label);
+        }
+    }
 
     // Massive stars (M > 25 M_sun) undergo extreme radiation-driven wind mass loss
     // and can strip their outer hydrogen envelopes into Wolf-Rayet or LBV states near core exhaustion

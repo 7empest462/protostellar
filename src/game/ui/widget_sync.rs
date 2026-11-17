@@ -146,15 +146,15 @@ pub fn sync_hud_sliders(
         let thumb_left = Val::Percent(pct);
 
         for child in children_query.iter_descendants(ent) {
-            if let Ok(mut fill_node) = fill_query.get_mut(child) {
-                if fill_node.width != fill_width {
-                    fill_node.width = fill_width;
-                }
+            if let Ok(mut fill_node) = fill_query.get_mut(child)
+                && fill_node.width != fill_width
+            {
+                fill_node.width = fill_width;
             }
-            if let Ok(mut thumb_node) = thumb_query.get_mut(child) {
-                if thumb_node.left != thumb_left {
-                    thumb_node.left = thumb_left;
-                }
+            if let Ok(mut thumb_node) = thumb_query.get_mut(child)
+                && thumb_node.left != thumb_left
+            {
+                thumb_node.left = thumb_left;
             }
         }
     }
@@ -217,50 +217,42 @@ pub fn apply_hud_slider_changes(
                 }
             }
             HudSliderKind::InspectorLogMassEarth => {
-                if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                    if let Ok((
-                        mut mass,
-                        mut radius_opt,
-                        mut body_opt,
+                if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity)
+                    && let Ok((mut mass, mut radius_opt, mut body_opt, comp_opt, mut diff_opt, ..)) =
+                        target_body_query.get_mut(selected)
+                {
+                    apply_mass_slider_to_body(
+                        &mut mass,
+                        radius_opt.as_deref_mut(),
+                        body_opt.as_deref_mut(),
                         comp_opt,
-                        mut diff_opt,
-                        ..,
-                    )) = target_body_query.get_mut(selected)
-                    {
-                        apply_mass_slider_to_body(
-                            &mut mass,
-                            radius_opt.as_deref_mut(),
-                            body_opt.as_deref_mut(),
-                            comp_opt,
-                            diff_opt.as_deref_mut(),
-                            val,
-                        );
-                    }
+                        diff_opt.as_deref_mut(),
+                        val,
+                    );
                 }
             }
             HudSliderKind::InspectorOrbitAu => {
-                if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                    if let Ok((.., Some(mut pos), Some(mut vel), _)) =
+                if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity)
+                    && let Ok((.., Some(mut pos), Some(mut vel), _)) =
                         target_body_query.get_mut(selected)
-                    {
-                        let current_r = pos.0.length();
-                        let target_r = f64::from(val).max(0.01);
-                        if current_r > 0.001 {
-                            let ratio = target_r / current_r;
-                            pos.0 *= ratio;
-                            // Scale velocity for circular Keplerian consistency: v ~ 1/sqrt(r)
-                            vel.0 /= ratio.sqrt();
-                        }
+                {
+                    let current_r = pos.0.length();
+                    let target_r = f64::from(val).max(0.01);
+                    if current_r > 0.001 {
+                        let ratio = target_r / current_r;
+                        pos.0 *= ratio;
+                        // Scale velocity for circular Keplerian consistency: v ~ 1/sqrt(r)
+                        vel.0 /= ratio.sqrt();
                     }
                 }
             }
             HudSliderKind::InspectorAxialTiltDeg => {
-                if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                    if let Ok((.., Some(mut spin))) = target_body_query.get_mut(selected) {
-                        spin.axial_tilt_degrees = f64::from(val);
-                        let rad = f64::from(val).to_radians();
-                        spin.spin_vector = bevy::math::DVec3::new(rad.sin(), rad.cos(), 0.0);
-                    }
+                if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity)
+                    && let Ok((.., Some(mut spin))) = target_body_query.get_mut(selected)
+                {
+                    spin.axial_tilt_degrees = f64::from(val);
+                    let rad = f64::from(val).to_radians();
+                    spin.spin_vector = bevy::math::DVec3::new(rad.sin(), rad.cos(), 0.0);
                 }
             }
             HudSliderKind::EpochAgeGyr => {
@@ -310,10 +302,10 @@ pub fn sync_hud_text_inputs(
                     }
                 }
                 HudTextInputKind::InspectorBodyName => {
-                    if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                        if let Ok(mut body) = body_name_query.get_mut(selected) {
-                            body.name = val;
-                        }
+                    if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity)
+                        && let Ok(mut body) = body_name_query.get_mut(selected)
+                    {
+                        body.name = val;
                     }
                 }
                 HudTextInputKind::QuickBarFilter => {
@@ -347,10 +339,10 @@ pub fn sync_hud_text_inputs(
                 }
             };
 
-            if let Some(ext_val) = external_val_opt {
-                if ext_val != current_val {
-                    *editable = EditableText::new(&ext_val);
-                }
+            if let Some(ext_val) = external_val_opt
+                && ext_val != current_val
+            {
+                *editable = EditableText::new(&ext_val);
             }
         }
     }
@@ -374,11 +366,11 @@ pub fn animate_hud_ui_transforms(
     }
 
     // 2. Animate holographic surface horizon rover compass needle
-    if let Some(camera) = camera_query.iter().next() {
-        if camera.surface_horizon_mode {
-            for mut transform in compass_query.iter_mut() {
-                transform.rotation = Rot2::radians(-camera.surface_azimuth);
-            }
+    if let Some(camera) = camera_query.iter().next()
+        && camera.surface_horizon_mode
+    {
+        for mut transform in compass_query.iter_mut() {
+            transform.rotation = Rot2::radians(-camera.surface_azimuth);
         }
     }
 }

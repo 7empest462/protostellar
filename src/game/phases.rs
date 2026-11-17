@@ -145,8 +145,7 @@ impl Default for PhaseManager {
             disk_mass_remaining: 0.035,
             star_mass: 1.0,
             is_star_ignited: false,
-            phase_description:
-                "Dense protoplanetary disk orbiting young protostar. Dust and pebbles are accreting.",
+            phase_description: "Dense protoplanetary disk orbiting young protostar. Dust and pebbles are accreting.",
             milestones: default_milestones(),
             latest_unlocked_milestone: None,
             milestone_toast_timer: 0.0,
@@ -526,10 +525,10 @@ fn collect_system_statistics(
         if opt_rings.is_some() {
             stats.has_rings = true;
         }
-        if let Some(bio) = opt_bio {
-            if bio.biomass_coverage_frac >= 0.02 || bio.emergence_year.is_some() {
-                stats.has_biosphere = true;
-            }
+        if let Some(bio) = opt_bio
+            && (bio.biomass_coverage_frac >= 0.02 || bio.emergence_year.is_some())
+        {
+            stats.has_biosphere = true;
         }
         if opt_kozai.is_some_and(|k| k.is_in_resonance) {
             stats.has_active_kozai = true;
@@ -569,16 +568,16 @@ fn collect_system_statistics(
         if opt_stress.is_some_and(|s| s.burst_active || s.total_starquakes_count > 0) {
             stats.has_magnetar_flare = true;
         }
-        if let Some(evo) = opt_evo {
-            if matches!(
+        if let Some(evo) = opt_evo
+            && matches!(
                 evo.phase,
                 StellarEvolutionPhase::RedGiantBranch
                     | StellarEvolutionPhase::HeliumFlashAgb
                     | StellarEvolutionPhase::PlanetaryNebulaEjection
                     | StellarEvolutionPhase::WhiteDwarf
-            ) {
-                stats.is_red_giant_or_wd = true;
-            }
+            )
+        {
+            stats.is_red_giant_or_wd = true;
         }
     }
 
@@ -759,14 +758,12 @@ fn evaluate_system_phase_transitions(
             if lhb_state.migration_progress >= 0.95 && current_sim_yr >= 3500.0 =>
         {
             phase_mgr.current_phase = SystemPhase::MatureSolarSystem;
-            phase_mgr.phase_description =
-                "🌟 Orbits have relaxed into stable, clean architectures with water-bearing worlds.";
+            phase_mgr.phase_description = "🌟 Orbits have relaxed into stable, clean architectures with water-bearing worlds.";
             next_phase.set(SystemPhase::MatureSolarSystem);
         }
         SystemPhase::MatureSolarSystem if stats.is_red_giant_or_wd => {
             phase_mgr.current_phase = SystemPhase::StellarMetamorphosis;
-            phase_mgr.phase_description =
-                "🌟 Stellar Metamorphosis! The star has swelled into a Red Giant or shed its envelope into a White Dwarf.";
+            phase_mgr.phase_description = "🌟 Stellar Metamorphosis! The star has swelled into a Red Giant or shed its envelope into a White Dwarf.";
             next_phase.set(SystemPhase::StellarMetamorphosis);
         }
         _ => {}
@@ -818,8 +815,7 @@ pub fn monitor_phase_transitions(
         );
         if can_enter_ignition_phase || !is_genesis {
             phase_mgr.current_phase = SystemPhase::StarIgnition;
-            phase_mgr.phase_description =
-                "⭐ Hydrogen fusion has ignited in the core! Radiation pressure sweeps the inner disk.";
+            phase_mgr.phase_description = "⭐ Hydrogen fusion has ignited in the core! Radiation pressure sweeps the inner disk.";
             next_phase.set(SystemPhase::StarIgnition);
         }
     }

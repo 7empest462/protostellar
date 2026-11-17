@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use std::f64::consts::PI;
 
 use crate::simulation::components::{
-    classify_body_by_mass_and_comp, BodyType, Composition, SatelliteOf,
+    BodyType, Composition, SatelliteOf, classify_body_by_mass_and_comp,
 };
 use crate::utils::constants::*;
 

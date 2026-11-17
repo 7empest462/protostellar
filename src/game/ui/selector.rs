@@ -51,13 +51,13 @@ fn format_moon_button_label(name: &str) -> String {
 }
 
 fn format_super_jupiter_button_label(name: &str) -> String {
-    if let (Some(start), Some(end)) = (name.find('('), name.find(')')) {
-        if let Some(raw_tag) = name.get(start + 1..end) {
-            let tag = raw_tag.trim().replace(" M_J", "J");
-            let candidate = format!("🪐 Sup-Jup {tag}");
-            if candidate.chars().count() <= 16 {
-                return candidate;
-            }
+    if let (Some(start), Some(end)) = (name.find('('), name.find(')'))
+        && let Some(raw_tag) = name.get(start + 1..end)
+    {
+        let tag = raw_tag.trim().replace(" M_J", "J");
+        let candidate = format!("🪐 Sup-Jup {tag}");
+        if candidate.chars().count() <= 16 {
+            return candidate;
         }
     }
     "🪐 Super-Jup".to_string()
@@ -734,9 +734,9 @@ pub fn update_quick_bar_highlights(
 }
 
 use super::world_list::{
+    QuickBarBodiesQuery, QuickBarFingerprint, QuickBarMinorEntry, QuickBarProbeEntry,
     compute_quick_bar_fingerprint, retain_filtered_quick_bar_items,
-    should_defer_quick_bar_hover_rebuild, QuickBarBodiesQuery, QuickBarFingerprint,
-    QuickBarMinorEntry, QuickBarProbeEntry,
+    should_defer_quick_bar_hover_rebuild,
 };
 
 #[allow(clippy::too_many_arguments, reason = "Quick bar rebuild helper")]

@@ -3,7 +3,7 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 
-use protostellar::rendering::effects::kilonova::{update_kilonova_effects, KilonovaPool};
+use protostellar::rendering::effects::kilonova::{KilonovaPool, update_kilonova_effects};
 
 use protostellar::simulation::components::*;
 use protostellar::simulation::relativity::*;

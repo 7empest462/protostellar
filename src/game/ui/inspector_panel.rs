@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use super::types::*;
 use super::widgets::{
-    hud_font_source, spawn_hud_slider, spawn_hud_text_input, HudSliderKind, HudTextInputKind,
+    HudSliderKind, HudTextInputKind, hud_font_source, spawn_hud_slider, spawn_hud_text_input,
 };
 use crate::simulation::components::{
     CircumstellarDisk, Composition, PlanetaryClimate, RelativisticJetState, VolatileInventory,
@@ -816,38 +816,35 @@ pub fn format_kozai_lidov_telemetry(
     opt_kozai: Option<&crate::simulation::kozai_lidov::KozaiLidovState>,
 ) -> String {
     let mut out = String::new();
-    if let Some(kozai) = opt_kozai {
-        if kozai.is_in_resonance || kozai.mutual_inclination_deg > 5.0 {
-            use std::fmt::Write;
-            let status = if kozai.is_in_resonance {
-                format!("ACTIVE ({})", kozai.regime.label())
-            } else {
-                "Subcritical".to_string()
-            };
+    if let Some(kozai) = opt_kozai
+        && (kozai.is_in_resonance || kozai.mutual_inclination_deg > 5.0)
+    {
+        use std::fmt::Write;
+        let status = if kozai.is_in_resonance {
+            format!("ACTIVE ({})", kozai.regime.label())
+        } else {
+            "Subcritical".to_string()
+        };
+        let _ = write!(
+            out,
+            "\nKozai-Lidov: {} | Mut Inc: {:.1}° (Crit: {:.1}°)",
+            status, kozai.mutual_inclination_deg, kozai.critical_inclination_deg
+        );
+        if kozai.is_in_resonance {
             let _ = write!(
                 out,
-                "\nKozai-Lidov: {} | Mut Inc: {:.1}° (Crit: {:.1}°)",
-                status, kozai.mutual_inclination_deg, kozai.critical_inclination_deg
+                "\ne_max: {:.2} (q_min: {:.3} AU) | τ_KL: {:.1e} yr",
+                kozai.max_eccentricity_forecast, kozai.min_periastron_au, kozai.kozai_period_years
             );
-            if kozai.is_in_resonance {
+            if kozai.is_gr_suppressed {
                 let _ = write!(
                     out,
-                    "\ne_max: {:.2} (q_min: {:.3} AU) | τ_KL: {:.1e} yr",
-                    kozai.max_eccentricity_forecast,
-                    kozai.min_periastron_au,
-                    kozai.kozai_period_years
+                    " | [GR Suppressed: τ_KL/τ_GR = {:.1}]",
+                    kozai.gr_precession_ratio
                 );
-                if kozai.is_gr_suppressed {
-                    let _ = write!(
-                        out,
-                        " | [GR Suppressed: τ_KL/τ_GR = {:.1}]",
-                        kozai.gr_precession_ratio
-                    );
-                }
-                if kozai.regime == crate::simulation::kozai_lidov::KozaiRegime::TidalDisruptionRisk
-                {
-                    out.push_str(" ⚠️ ROCHE DANGER");
-                }
+            }
+            if kozai.regime == crate::simulation::kozai_lidov::KozaiRegime::TidalDisruptionRisk {
+                out.push_str(" ⚠️ ROCHE DANGER");
             }
         }
     }
@@ -918,9 +915,7 @@ pub fn append_space_weather_telemetry(
         let _ = write!(
             out,
             "\n━━━ ⟪ STELLAR CORONA & SPACE WEATHER ⟫ ━━━━━━━━━━━━\n  • Coronal Activity: {}\n  • CME Shockwave:    {}\n  • Flare Frequency:  {:.1} / year\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            flare_status,
-            cme_str,
-            flare.flare_frequency
+            flare_status, cme_str, flare.flare_frequency
         );
     }
 
@@ -981,7 +976,6 @@ pub fn append_circumstellar_disk_telemetry(out: &mut String, disk: &Circumstella
     let _ = write!(
         out,
         "\n━━━ ⟪ CIRCUMSTELLAR ACCRETION DISK ⟫ ━━━━━━━━━━━━━━\n  • Status:     {status_str}\n  • Disk Age:   {age_str} / {lifetime_str}\n  • Disk Mass:  {mass_str}\n  • Extent:     {:.1} - {:.1} AU\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        disk.inner_radius_au,
-        disk.outer_radius_au
+        disk.inner_radius_au, disk.outer_radius_au
     );
 }

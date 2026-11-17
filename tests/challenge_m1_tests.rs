@@ -11,14 +11,14 @@ use bevy::prelude::*;
 use protostellar::game::phases::{LateHeavyBombardmentState, PhaseManager, SystemPhase};
 use protostellar::simulation::components::*;
 use protostellar::simulation::disk::planetesimals::{
-    auto_spawn_planetesimals, PlanetesimalSpawner,
+    PlanetesimalSpawner, auto_spawn_planetesimals,
 };
 use protostellar::simulation::pebble_accretion::apply_pebble_accretion;
 use protostellar::simulation::resources::*;
 use protostellar::simulation::scenarios::{
-    handle_load_scenario_events, ActiveScenarioState, LoadScenarioEvent, ScenarioPreset,
+    ActiveScenarioState, LoadScenarioEvent, ScenarioPreset, handle_load_scenario_events,
 };
-use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
 use protostellar::utils::constants::*;
 
 // ============================================================================
@@ -367,10 +367,14 @@ fn challenge_2a_rapid_scenario_switching_state_leaks() {
 
     // Print summary of findings
     if !spawner_was_reset {
-        println!("FINDING: PlanetesimalSpawner state (last_spawn_yr, total_spawned) leaks across scenario loads!");
+        println!(
+            "FINDING: PlanetesimalSpawner state (last_spawn_yr, total_spawned) leaks across scenario loads!"
+        );
     }
     if gas_gmc == 0.0 {
-        println!("FINDING: gas_density_scale remains 0.0 when switching from gas-free scenario into MolecularCloudCluster!");
+        println!(
+            "FINDING: gas_density_scale remains 0.0 when switching from gas-free scenario into MolecularCloudCluster!"
+        );
     }
 }
 

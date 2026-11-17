@@ -4,7 +4,7 @@ use std::f64::consts::PI;
 
 use bevy::math::DVec3;
 
-use super::types::{KozaiRegime, KOZAI_CRITICAL_ANGLE_RAD};
+use super::types::{KOZAI_CRITICAL_ANGLE_RAD, KozaiRegime};
 use crate::utils::constants::{G_ASTRO, SPEED_OF_LIGHT_AU_YR};
 
 /// Computes the mutual inclination angle between inner and outer orbital planes in radians.

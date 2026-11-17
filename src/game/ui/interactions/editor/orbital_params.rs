@@ -102,32 +102,32 @@ pub fn handle_orbital_adjustment(
         _ => return false,
     };
 
-    if let Some(ent) = player_state.selected_entity {
-        if let Ok((_, _, _, mut pos, mut vel, _, body, is_star, ..)) = selected_query.get_mut(ent) {
-            if is_star.is_some() || body.body_type.is_star_or_remnant() {
-                toast.message = format!(
-                    "⚠️ Cannot adjust orbital radius of central star {}",
-                    body.name
-                );
-                toast.timer = 3.0;
-                return true;
-            }
-            pos.0 *= mult;
-            let r = pos.0.length().max(1e-4);
-            if pos.0.length_squared() <= 1e-12 {
-                pos.0 = DVec3::new(r, 0.0, 0.0);
-            }
-            let v_mag = (G_ASTRO * star_mass.max(0.0) / r).sqrt();
-            let raw_tangent = DVec3::new(-pos.0.z, 0.0, pos.0.x);
-            let orbit_tangent = if raw_tangent.length_squared() > 1e-6 {
-                raw_tangent.normalize()
-            } else {
-                DVec3::Z
-            };
-            vel.0 = orbit_tangent * v_mag;
-            toast.message = format!("🚀 {} Orbit {} {:.2} AU", body.name, label, r);
-            toast.timer = 4.0;
+    if let Some(ent) = player_state.selected_entity
+        && let Ok((_, _, _, mut pos, mut vel, _, body, is_star, ..)) = selected_query.get_mut(ent)
+    {
+        if is_star.is_some() || body.body_type.is_star_or_remnant() {
+            toast.message = format!(
+                "⚠️ Cannot adjust orbital radius of central star {}",
+                body.name
+            );
+            toast.timer = 3.0;
+            return true;
         }
+        pos.0 *= mult;
+        let r = pos.0.length().max(1e-4);
+        if pos.0.length_squared() <= 1e-12 {
+            pos.0 = DVec3::new(r, 0.0, 0.0);
+        }
+        let v_mag = (G_ASTRO * star_mass.max(0.0) / r).sqrt();
+        let raw_tangent = DVec3::new(-pos.0.z, 0.0, pos.0.x);
+        let orbit_tangent = if raw_tangent.length_squared() > 1e-6 {
+            raw_tangent.normalize()
+        } else {
+            DVec3::Z
+        };
+        vel.0 = orbit_tangent * v_mag;
+        toast.message = format!("🚀 {} Orbit {} {:.2} AU", body.name, label, r);
+        toast.timer = 4.0;
     }
     true
 }
@@ -137,48 +137,46 @@ pub fn handle_composition_cycle(
     player_state: &PlayerInteractionState,
     toast: &mut NotificationToast,
 ) {
-    if let Some(ent) = player_state.selected_entity {
-        if let Ok((_, mut mass, mut radius, _, _, mut comp, body, is_star, ..)) =
+    if let Some(ent) = player_state.selected_entity
+        && let Ok((_, mut mass, mut radius, _, _, mut comp, body, is_star, ..)) =
             selected_query.get_mut(ent)
-        {
-            if is_star.is_some() || body.body_type.is_star_or_remnant() {
-                toast.message =
-                    format!("⚠️ Cannot overwrite stellar composition for {}", body.name);
-                toast.timer = 3.0;
-                return;
-            }
-            if comp.silicate_frac > 0.5 {
-                *comp = Composition::icy();
-                toast.message = format!(
-                    "🎨 {} Material -> Icy Mixture (Density: 1.2 g/cm³)",
-                    body.name
-                );
-            } else if comp.ice_frac > 0.5 {
-                *comp = Composition::solar_gas();
-                mass.0 *= 4.0;
-                toast.message = format!(
-                    "🎨 {} Material -> Gas Giant Envelope (Density: 0.8 g/cm³)",
-                    body.name
-                );
-            } else if comp.gas_frac > 0.5 {
-                *comp = Composition::metal_rich();
-                toast.message = format!(
-                    "🎨 {} Material -> Metal-Rich Core (Density: 7.8 g/cm³)",
-                    body.name
-                );
-            } else {
-                *comp = Composition::rocky();
-                toast.message = format!(
-                    "🎨 {} Material -> Rocky Silicate (Density: 3.9 g/cm³)",
-                    body.name
-                );
-            }
-            let avg_density = comp.average_density();
-            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                .cbrt()
-                .max(EARTH_RADIUS_AU * 0.1);
-            toast.timer = 4.0;
+    {
+        if is_star.is_some() || body.body_type.is_star_or_remnant() {
+            toast.message = format!("⚠️ Cannot overwrite stellar composition for {}", body.name);
+            toast.timer = 3.0;
+            return;
         }
+        if comp.silicate_frac > 0.5 {
+            *comp = Composition::icy();
+            toast.message = format!(
+                "🎨 {} Material -> Icy Mixture (Density: 1.2 g/cm³)",
+                body.name
+            );
+        } else if comp.ice_frac > 0.5 {
+            *comp = Composition::solar_gas();
+            mass.0 *= 4.0;
+            toast.message = format!(
+                "🎨 {} Material -> Gas Giant Envelope (Density: 0.8 g/cm³)",
+                body.name
+            );
+        } else if comp.gas_frac > 0.5 {
+            *comp = Composition::metal_rich();
+            toast.message = format!(
+                "🎨 {} Material -> Metal-Rich Core (Density: 7.8 g/cm³)",
+                body.name
+            );
+        } else {
+            *comp = Composition::rocky();
+            toast.message = format!(
+                "🎨 {} Material -> Rocky Silicate (Density: 3.9 g/cm³)",
+                body.name
+            );
+        }
+        let avg_density = comp.average_density();
+        radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+            .cbrt()
+            .max(EARTH_RADIUS_AU * 0.1);
+        toast.timer = 4.0;
     }
 }
 
@@ -195,41 +193,39 @@ pub fn handle_velocity_burn_and_fix(
             true
         }
         UiButtonAction::BoostDeltaV => {
-            if let Some(ent) = player_state.selected_entity {
-                if let Ok((_, _, _, _, mut vel, _, body, ..)) = selected_query.get_mut(ent) {
-                    vel.0 *= 1.15;
-                    toast.message =
-                        format!("⚡ {} Prograde Delta-V Boost (+15% Velocity)", body.name);
-                    toast.timer = 4.0;
-                }
+            if let Some(ent) = player_state.selected_entity
+                && let Ok((_, _, _, _, mut vel, _, body, ..)) = selected_query.get_mut(ent)
+            {
+                vel.0 *= 1.15;
+                toast.message = format!("⚡ {} Prograde Delta-V Boost (+15% Velocity)", body.name);
+                toast.timer = 4.0;
             }
             true
         }
         UiButtonAction::BrakeDeltaV => {
-            if let Some(ent) = player_state.selected_entity {
-                if let Ok((_, _, _, _, mut vel, _, body, ..)) = selected_query.get_mut(ent) {
-                    vel.0 *= 0.85;
-                    toast.message =
-                        format!("⚡ {} Retrograde Delta-V Brake (-15% Velocity)", body.name);
-                    toast.timer = 4.0;
-                }
+            if let Some(ent) = player_state.selected_entity
+                && let Ok((_, _, _, _, mut vel, _, body, ..)) = selected_query.get_mut(ent)
+            {
+                vel.0 *= 0.85;
+                toast.message =
+                    format!("⚡ {} Retrograde Delta-V Brake (-15% Velocity)", body.name);
+                toast.timer = 4.0;
             }
             true
         }
         UiButtonAction::FixOrbit => {
-            if let Some(ent) = player_state.selected_entity {
-                if let Ok((_, _, _, mut pos, mut vel, _, body, ..)) = selected_query.get_mut(ent) {
-                    if !body.body_type.is_star_or_remnant() {
-                        let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
-                        let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
-                        let phi = pos.0.z.atan2(pos.0.x);
-                        vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
-                        pos.0.y = 0.0;
-                        toast.message =
-                            format!("🪐 {} Orbit Circularized & Stabilized (e = 0.0)", body.name);
-                        toast.timer = 4.0;
-                    }
-                }
+            if let Some(ent) = player_state.selected_entity
+                && let Ok((_, _, _, mut pos, mut vel, _, body, ..)) = selected_query.get_mut(ent)
+                && !body.body_type.is_star_or_remnant()
+            {
+                let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
+                let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
+                let phi = pos.0.z.atan2(pos.0.x);
+                vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
+                pos.0.y = 0.0;
+                toast.message =
+                    format!("🪐 {} Orbit Circularized & Stabilized (e = 0.0)", body.name);
+                toast.timer = 4.0;
             }
             true
         }

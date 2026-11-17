@@ -388,15 +388,15 @@ fn resolve_perturber_snapshot(
     cached_name: &str,
     snapshots: &[(Entity, String, bevy::math::DVec3, bevy::math::DVec3, f64)],
 ) -> Option<(Entity, bevy::math::DVec3, bevy::math::DVec3, f64)> {
-    if let Some(ent) = cached_ent {
-        if let Some(cand) = snapshots.iter().find(|s| s.0 == ent) {
-            return Some((cand.0, cand.2, cand.3, cand.4));
-        }
+    if let Some(ent) = cached_ent
+        && let Some(cand) = snapshots.iter().find(|s| s.0 == ent)
+    {
+        return Some((cand.0, cand.2, cand.3, cand.4));
     }
-    if !cached_name.is_empty() {
-        if let Some(cand) = snapshots.iter().find(|s| s.1 == cached_name) {
-            return Some((cand.0, cand.2, cand.3, cand.4));
-        }
+    if !cached_name.is_empty()
+        && let Some(cand) = snapshots.iter().find(|s| s.1 == cached_name)
+    {
+        return Some((cand.0, cand.2, cand.3, cand.4));
     }
     None
 }
@@ -439,24 +439,20 @@ fn apply_secular_evolution_and_tides(
     }
 
     // Couple with high-eccentricity tidal dissipation if enabled
-    if config.enable_tidal_circularization {
-        if let Some(ref mut tide) = opt_tide {
-            if new_e > 0.4 {
-                // Hut (1981) tidal energy dissipation boost factor
-                let one_minus_e2 = (1.0 - new_e * new_e).max(0.01);
-                let tidal_boost =
-                    ((1.0 + 3.75 * new_e * new_e) / one_minus_e2.powf(7.5)).clamp(1.0, 1e5);
-                tide.tidal_heating_power_watts =
-                    (tide.tidal_heating_power_watts * tidal_boost).min(1e24);
-                tide.tidal_heating_flux_w_m2 = crate::simulation::tides::calculate_tidal_heat_flux(
-                    tide.tidal_heating_power_watts,
-                    rad_au,
-                );
-                let boosted_decay = (tide.circularization_rate_per_myr.abs()
-                    * tidal_boost.min(1e4))
-                .clamp(1e-2, 1e4);
-                tide.circularization_rate_per_myr = -boosted_decay;
-            }
-        }
+    if config.enable_tidal_circularization
+        && let Some(ref mut tide) = opt_tide
+        && new_e > 0.4
+    {
+        // Hut (1981) tidal energy dissipation boost factor
+        let one_minus_e2 = (1.0 - new_e * new_e).max(0.01);
+        let tidal_boost = ((1.0 + 3.75 * new_e * new_e) / one_minus_e2.powf(7.5)).clamp(1.0, 1e5);
+        tide.tidal_heating_power_watts = (tide.tidal_heating_power_watts * tidal_boost).min(1e24);
+        tide.tidal_heating_flux_w_m2 = crate::simulation::tides::calculate_tidal_heat_flux(
+            tide.tidal_heating_power_watts,
+            rad_au,
+        );
+        let boosted_decay =
+            (tide.circularization_rate_per_myr.abs() * tidal_boost.min(1e4)).clamp(1e-2, 1e4);
+        tide.circularization_rate_per_myr = -boosted_decay;
     }
 }

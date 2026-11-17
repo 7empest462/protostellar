@@ -6,7 +6,7 @@ fn test_adversarial_active_scenario_state_none_resilience() {
     use bevy::prelude::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_delayed_proto_earth, auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_delayed_proto_earth, auto_spawn_planetesimals,
     };
     use protostellar::simulation::pebble_accretion::{
         apply_pebble_accretion, spawn_streaming_instability_minor_bodies,
@@ -102,7 +102,7 @@ fn verify_extreme_time_warp_gmc_cluster() {
     use bevy::prelude::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_planetesimals,
     };
     use protostellar::simulation::pebble_accretion::{
         apply_pebble_accretion, spawn_streaming_instability_minor_bodies,
@@ -201,7 +201,7 @@ fn verify_extreme_time_warp_disk_stability() {
     use protostellar::simulation::accretion::events::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_planetesimals,
     };
     use protostellar::simulation::pebble_accretion::apply_pebble_accretion;
     use protostellar::simulation::resources::*;
@@ -339,7 +339,7 @@ fn verify_solar_nebula_mmsn_spawning() {
     use bevy::prelude::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_delayed_proto_earth, auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_delayed_proto_earth, auto_spawn_planetesimals,
     };
     use protostellar::simulation::pebble_accretion::spawn_streaming_instability_minor_bodies;
     use protostellar::simulation::resources::*;
@@ -427,14 +427,14 @@ fn verify_accretion_disk_genesis_spawning() {
     use bevy::prelude::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_delayed_proto_earth, auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_delayed_proto_earth, auto_spawn_planetesimals,
     };
     use protostellar::simulation::pebble_accretion::{
         apply_pebble_accretion, spawn_streaming_instability_minor_bodies,
     };
     use protostellar::simulation::resources::*;
     use protostellar::simulation::scenarios::{
-        spawn_accretion_disk_genesis, ActiveScenarioState, ScenarioPreset,
+        ActiveScenarioState, ScenarioPreset, spawn_accretion_disk_genesis,
     };
 
     let mut app = App::new();

@@ -194,6 +194,7 @@ pub fn update_thermodynamics(
         (
             Entity,
             &mut Mass,
+            Option<&mut Radius>,
             &SimPosition,
             &mut SimVelocity,
             &mut Temperature,
@@ -262,6 +263,7 @@ fn update_disk_bodies_thermodynamics(
         (
             Entity,
             &mut Mass,
+            Option<&mut Radius>,
             &SimPosition,
             &mut SimVelocity,
             &mut Temperature,
@@ -288,6 +290,7 @@ fn update_disk_bodies_thermodynamics(
     for (
         body_ent,
         mut b_mass,
+        mut opt_rad,
         pos,
         mut vel,
         mut p_temp,
@@ -319,6 +322,8 @@ fn update_disk_bodies_thermodynamics(
             });
 
         let rel_pos = pos.0 - host_star.pos;
+        let prev_gas = comp.gas_frac;
+        let prev_ice = comp.ice_frac;
 
         update_body_thermodynamics(
             commands,
@@ -343,6 +348,26 @@ fn update_disk_bodies_thermodynamics(
             elapsed_years,
             engulfment_events,
         );
+
+        let comp_shifted =
+            (comp.gas_frac - prev_gas).abs() > 1e-5 || (comp.ice_frac - prev_ice).abs() > 1e-5;
+        if comp_shifted
+            && !b_body.body_type.is_star_or_remnant()
+            && !matches!(
+                b_body.body_type,
+                BodyType::GasGiant | BodyType::IceGiant | BodyType::BrownDwarf
+            )
+            && let Some(ref mut rad) = opt_rad
+        {
+            let new_r = crate::simulation::accretion::impact_regimes::radius_from_mass_density(
+                b_mass.0,
+                comp.average_density(),
+            );
+            rad.0 = new_r;
+            if let Some(ref mut diff) = opt_diff {
+                diff.recalculate(b_mass.0, new_r, &comp);
+            }
+        }
     }
 }
 
@@ -393,30 +418,30 @@ fn update_planetary_core_dynamo(
     dt_yr: f64,
 ) -> f32 {
     let mut magnetic_field_gauss = 0.0f32;
-    if let Some(ref mut diff) = opt_diff {
-        if diff.is_differentiated {
-            if diff.core_temp_k > 1200.0 {
-                let temp_factor = ((diff.core_temp_k - 1200.0) / 2000.0).clamp(0.0, 1.5);
-                let spin_factor = (24.0 / period_hrs.max(1.0)).sqrt().clamp(0.2, 3.0);
-                let core_mass_frac = (diff.core_radius_au / (diff.mantle_radius_au.max(1e-5)))
-                    .powi(3)
-                    .clamp(0.05, 0.60);
+    if let Some(diff) = opt_diff
+        && diff.is_differentiated
+    {
+        if diff.core_temp_k > 1200.0 {
+            let temp_factor = ((diff.core_temp_k - 1200.0) / 2000.0).clamp(0.0, 1.5);
+            let spin_factor = (24.0 / period_hrs.max(1.0)).sqrt().clamp(0.2, 3.0);
+            let core_mass_frac = (diff.core_radius_au / (diff.mantle_radius_au.max(1e-5)))
+                .powi(3)
+                .clamp(0.05, 0.60);
 
-                let b_gauss = (0.35
-                    * (b_mass_solar / EARTH_MASS_SOLAR).sqrt().max(0.1)
-                    * core_mass_frac.sqrt()
-                    * spin_factor
-                    * temp_factor.powf(0.33))
-                .clamp(0.0, 5.0);
+            let b_gauss = (0.35
+                * (b_mass_solar / EARTH_MASS_SOLAR).sqrt().max(0.1)
+                * core_mass_frac.sqrt()
+                * spin_factor
+                * temp_factor.powf(0.33))
+            .clamp(0.0, 5.0);
 
-                diff.magnetic_field_gauss = b_gauss;
-                magnetic_field_gauss = b_gauss as f32;
-            } else {
-                diff.magnetic_field_gauss = 0.0;
-            }
-
-            diff.core_temp_k = (diff.core_temp_k - (1.5e-3 * dt_yr)).max(300.0);
+            diff.magnetic_field_gauss = b_gauss;
+            magnetic_field_gauss = b_gauss as f32;
+        } else {
+            diff.magnetic_field_gauss = 0.0;
         }
+
+        diff.core_temp_k = (diff.core_temp_k - (1.5e-3 * dt_yr)).max(300.0);
     }
     magnetic_field_gauss
 }
@@ -430,34 +455,35 @@ fn apply_stellar_wind_and_outer_thaw(
     magnetic_field_gauss: f32,
     dt_yr: f64,
 ) {
-    if star_is_ignited && r < 3.5 {
-        if let Some(ref mut vol) = opt_vol {
-            if magnetic_field_gauss < 0.12 {
-                let unshielded_factor = (1.0 - (magnetic_field_gauss / 0.12)).clamp(0.0, 1.0);
-                let strip_rate =
-                    (0.00015 * (1.0 / (r * r)) * f64::from(unshielded_factor) * dt_yr) as f32;
-                vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - strip_rate).max(0.0);
-                if comp.gas_frac > 0.0 && comp.gas_frac <= 0.10 {
-                    comp.gas_frac = (comp.gas_frac - f64::from(strip_rate) * 0.01).max(0.0);
-                    if vol.atmospheric_pressure_bar <= 0.001 {
-                        comp.gas_frac = 0.0;
-                    }
-                    *comp = comp.normalized();
-                } else if vol.atmospheric_pressure_bar <= 0.001 {
-                    comp.gas_frac = (comp.gas_frac - f64::from(strip_rate * 0.0001)).max(0.0);
-                }
+    if star_is_ignited
+        && r < 3.5
+        && let Some(vol) = opt_vol
+        && magnetic_field_gauss < 0.12
+    {
+        let unshielded_factor = (1.0 - (magnetic_field_gauss / 0.12)).clamp(0.0, 1.0);
+        let strip_rate = (0.00015 * (1.0 / (r * r)) * f64::from(unshielded_factor) * dt_yr) as f32;
+        vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - strip_rate).max(0.0);
+        if comp.gas_frac > 0.0 && comp.gas_frac <= 0.10 {
+            comp.gas_frac = (comp.gas_frac - f64::from(strip_rate) * 0.01).max(0.0);
+            if vol.atmospheric_pressure_bar <= 0.001 {
+                comp.gas_frac = 0.0;
             }
+            *comp = comp.normalized();
+        } else if vol.atmospheric_pressure_bar <= 0.001 {
+            comp.gas_frac = (comp.gas_frac - f64::from(strip_rate * 0.0001)).max(0.0);
         }
     }
 
-    if star_lum > 500.0 && (25.0..=65.0).contains(&r) && comp.ice_frac > 0.25 {
-        if let Some(ref mut vol) = opt_vol {
-            vol.delivered_water_m_earth =
-                (vol.delivered_water_m_earth + 0.000_01 * dt_yr).min(0.0005 * 0.85);
-            vol.ocean_coverage_frac = (vol.ocean_coverage_frac + 0.02 * dt_yr as f32).min(0.85);
-            vol.atmospheric_pressure_bar =
-                (vol.atmospheric_pressure_bar + 0.03 * dt_yr as f32).min(1.2);
-        }
+    if star_lum > 500.0
+        && (25.0..=65.0).contains(&r)
+        && comp.ice_frac > 0.25
+        && let Some(vol) = opt_vol
+    {
+        vol.delivered_water_m_earth =
+            (vol.delivered_water_m_earth + 0.000_01 * dt_yr).min(0.0005 * 0.85);
+        vol.ocean_coverage_frac = (vol.ocean_coverage_frac + 0.02 * dt_yr as f32).min(0.85);
+        vol.atmospheric_pressure_bar =
+            (vol.atmospheric_pressure_bar + 0.03 * dt_yr as f32).min(1.2);
     }
 }
 

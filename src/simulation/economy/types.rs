@@ -158,11 +158,11 @@ impl UnlockedTechs {
         if !self.can_unlock(id, science) {
             return false;
         }
-        if let Some(node) = Self::all_nodes().iter().find(|n| n.id == id) {
-            if science.spend_science(node.cost) {
-                self.unlocked.insert(id);
-                return true;
-            }
+        if let Some(node) = Self::all_nodes().iter().find(|n| n.id == id)
+            && science.spend_science(node.cost)
+        {
+            self.unlocked.insert(id);
+            return true;
         }
         false
     }
@@ -194,7 +194,6 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         cost: 1000.0,
         prerequisites: &[TechnologyId::SolarSail],
     },
-
     // --- Terraforming ---
     TechNode {
         id: TechnologyId::AtmosphericInjection,
@@ -220,7 +219,6 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         cost: 850.0,
         prerequisites: &[TechnologyId::OrbitalMirrorArray],
     },
-
     // --- Megastructures & Astrophysics ---
     TechNode {
         id: TechnologyId::GravitationalLensArray,

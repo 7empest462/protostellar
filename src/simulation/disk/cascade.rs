@@ -211,10 +211,10 @@ fn step_lhb_impactor_guidance(
         let r_sun = (*i_pos - star_pos).length();
         let v_radial = (*i_pos - star_pos).dot(*i_vel);
         let stale_timeout = current_sim_yr > impactor.expected_arrival_yr + 3.0;
-        if (r_sun > 2.2 && v_radial > 0.0) || stale_timeout {
-            if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
-                entity_cmd.try_despawn();
-            }
+        if ((r_sun > 2.2 && v_radial > 0.0) || stale_timeout)
+            && let Ok(mut entity_cmd) = commands.get_entity(i_ent)
+        {
+            entity_cmd.try_despawn();
         }
     }
 }
@@ -284,10 +284,10 @@ pub fn update_late_heavy_bombardment_cascade(
         } else {
             // Target was destroyed or missing; despawn stray impactor if far out
             let r_sun = (i_pos.0 - star_pos.0).length();
-            if r_sun > 4.5 {
-                if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
-                    entity_cmd.try_despawn();
-                }
+            if r_sun > 4.5
+                && let Ok(mut entity_cmd) = commands.get_entity(i_ent)
+            {
+                entity_cmd.try_despawn();
             }
         }
     }

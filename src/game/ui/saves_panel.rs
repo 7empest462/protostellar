@@ -8,12 +8,12 @@ use bevy::prelude::*;
 
 use crate::simulation::scenarios::{ActiveScenarioState, LoadScenarioEvent, ScenarioPreset};
 use crate::simulation::serialization::{
-    list_save_slot_entries, sanitize_save_slot_name, LoadSystemEvent, SaveSlotEntry,
-    SaveSystemEvent,
+    LoadSystemEvent, SaveSlotEntry, SaveSystemEvent, list_save_slot_entries,
+    sanitize_save_slot_name,
 };
 
-use super::types::{create_compact_button, UiButtonAction};
-use super::widgets::{hud_text_font, spawn_hud_text_input, HudTextInputKind, SaveSlotUiState};
+use super::types::{UiButtonAction, create_compact_button};
+use super::widgets::{HudTextInputKind, SaveSlotUiState, hud_text_font, spawn_hud_text_input};
 
 /// Resource tracking visibility, filters, and cached save-slot metadata for the Saves modal.
 #[derive(Resource, Default, Debug)]
@@ -107,7 +107,8 @@ pub fn spawn_saves_panel(root: &mut ChildSpawnerCommands) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.015, 0.025, 0.055, 0.96)),
-        Pickable::IGNORE,
+        bevy::ui::FocusPolicy::Block,
+        bevy::picking::hover::Hovered::default(),
         BorderColor::all(Color::srgba(0.35, 0.80, 1.0, 0.90)),
         SavesPanelElement::Container,
     ))

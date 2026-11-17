@@ -1,6 +1,6 @@
 //! 3D Volumetric Raymarching System for Giant Molecular Clouds (GMC) & Ionization Cavities.
 //!
-//! Spawns and manages the 1100 AU bounding cuboid volume and feeds real-time
+//! Spawns and manages the 2200 AU bounding cuboid volume and feeds real-time
 //! protostellar radiation pressure cavity radiuses and stellar emission data to the shader.
 
 use bevy::prelude::*;
@@ -71,7 +71,7 @@ pub fn sync_volumetric_nebula(
         mat_handle.0.clone()
     } else {
         let mat = materials.add(VolumetricNebulaMaterial::default());
-        let mesh = meshes.add(Cuboid::new(1100.0, 1100.0, 1100.0));
+        let mesh = meshes.add(Cuboid::new(2200.0, 2200.0, 2200.0));
 
         commands.spawn((
             VolumetricNebulaVolume,

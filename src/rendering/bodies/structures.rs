@@ -19,14 +19,37 @@ struct RingVisualGeometry {
     planet_radius_ratio: f32,
 }
 
+#[allow(clippy::too_many_arguments, reason = "Planetary ring geometry helper")]
 fn compute_ring_geometry(
     body: &CelestialBody,
     ring_sys: &PlanetaryRingSystem,
     radius: &Radius,
+    opt_mass: Option<&Mass>,
+    opt_comp: Option<&Composition>,
+    opt_diff: Option<&InternalDifferentiation>,
+    show_atmospheres: bool,
     planet_trans: &Transform,
     star_world_pos: Vec3,
 ) -> RingVisualGeometry {
     let is_star = body.body_type.is_star_or_remnant();
+    let stripped_r = if show_atmospheres || is_star {
+        radius.0
+    } else if let (Some(mass), Some(comp)) = (opt_mass, opt_comp) {
+        super::view_overrides::stripped_interior_radius_au(
+            mass.0,
+            radius.0,
+            body.body_type,
+            comp,
+            opt_diff,
+        )
+    } else {
+        radius.0
+    };
+    let core_ratio_inv = if !is_star && stripped_r > 1e-12 && stripped_r < radius.0 * 0.999 {
+        (radius.0 / stripped_r) as f32
+    } else {
+        1.0
+    };
     let ring_outer_scale = if is_star {
         let vis_r = planet_trans.scale.x.max(0.001);
         let target_outer_r = if ring_sys.outer_radius_au > 0.0 {
@@ -41,7 +64,7 @@ fn compute_ring_geometry(
         } else {
             2.85
         };
-        ring_ratio * 2.0
+        ring_ratio * core_ratio_inv * 2.0
     };
 
     let star_dir_local = if is_star {
@@ -161,7 +184,11 @@ fn spawn_planetary_ring_child(
 #[allow(clippy::type_complexity, reason = "Planetary ring query")]
 pub fn sync_planetary_rings(
     mut commands: Commands,
-    (time, sim_time): (Res<Time>, Option<Res<SimTime>>),
+    (time, sim_time, opt_player_state): (
+        Res<Time>,
+        Option<Res<SimTime>>,
+        Option<Res<PlayerInteractionState>>,
+    ),
     _config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
     mut ring_materials: ResMut<Assets<RingMaterial>>,
@@ -172,7 +199,10 @@ pub fn sync_planetary_rings(
             &Radius,
             &CelestialBody,
             &Transform,
+            Option<&Mass>,
+            Option<&Composition>,
             Option<&SpinState>,
+            Option<&InternalDifferentiation>,
             Option<&Children>,
         ),
         With<VisualBody>,
@@ -186,6 +216,9 @@ pub fn sync_planetary_rings(
     let elapsed_secs = sim_time
         .as_deref()
         .map_or_else(|| time.elapsed_secs(), |st| st.visual_time_secs);
+    let show_atmospheres = opt_player_state
+        .as_deref()
+        .is_none_or(PlayerInteractionState::show_atmospheres);
     let star_world_pos = stars_query
         .iter()
         .find(|(_, b)| b.body_type.is_star_or_remnant())
@@ -193,23 +226,43 @@ pub fn sync_planetary_rings(
             Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
         });
 
-    for (planet_entity, ring_sys, radius, body, planet_trans, _opt_spin, opt_children) in
-        planets_with_rings_query.iter()
+    for (
+        planet_entity,
+        ring_sys,
+        radius,
+        body,
+        planet_trans,
+        opt_mass,
+        opt_comp,
+        _opt_spin,
+        opt_diff,
+        opt_children,
+    ) in planets_with_rings_query.iter()
     {
         if body.body_type == BodyType::BlackHole {
             if let Some(children) = opt_children {
                 for child in children.iter() {
-                    if ring_children_query.get(child).is_ok() {
-                        if let Ok(mut cmd) = commands.get_entity(child) {
-                            cmd.try_despawn();
-                        }
+                    if ring_children_query.get(child).is_ok()
+                        && let Ok(mut cmd) = commands.get_entity(child)
+                    {
+                        cmd.try_despawn();
                     }
                 }
             }
             continue;
         }
 
-        let geom = compute_ring_geometry(body, ring_sys, radius, planet_trans, star_world_pos);
+        let geom = compute_ring_geometry(
+            body,
+            ring_sys,
+            radius,
+            opt_mass,
+            opt_comp,
+            opt_diff,
+            show_atmospheres,
+            planet_trans,
+            star_world_pos,
+        );
 
         let found_child = update_existing_ring_children(
             opt_children,
@@ -785,10 +838,10 @@ pub fn sync_black_hole_accretion_disks(
         if !is_black_hole {
             if let Some(children) = opt_children {
                 for child in children.iter() {
-                    if disk_children_query.get(child).is_ok() {
-                        if let Ok(mut c_cmd) = commands.get_entity(child) {
-                            c_cmd.try_despawn();
-                        }
+                    if disk_children_query.get(child).is_ok()
+                        && let Ok(mut c_cmd) = commands.get_entity(child)
+                    {
+                        c_cmd.try_despawn();
                     }
                 }
             }

@@ -782,8 +782,8 @@ fn test_nan_and_inf_state_vector_sanitization() {
 
 #[test]
 fn test_pop3_infalling_star_particle_accretion_safety() {
-    use protostellar::rendering::particle_swarm::simulation::*;
     use protostellar::rendering::particle_swarm::ParticleSwarmData;
+    use protostellar::rendering::particle_swarm::simulation::*;
     use protostellar::simulation::resources::DiskParameters;
 
     let count = 1024;

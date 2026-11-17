@@ -72,10 +72,11 @@ pub fn step_magnetar_crust_stress_and_starquakes_system(
         Option<&mut ElectromagneticFieldState>,
     )>,
 ) {
-    if let Some(ref tw) = time_warp {
-        if tw.is_paused && !tw.step_once {
-            return;
-        }
+    if let Some(ref tw) = time_warp
+        && tw.is_paused
+        && !tw.step_once
+    {
+        return;
     }
 
     let dt_years = sim_time.as_ref().map_or(0.016, |s| {
@@ -162,10 +163,11 @@ pub fn step_alfven_blast_waves_system(
     sim_time: Option<Res<SimTime>>,
     mut blast_waves_query: Query<(Entity, &mut AlfvenBlastWave, Option<&mut SimPosition>)>,
 ) {
-    if let Some(ref tw) = time_warp {
-        if tw.is_paused && !tw.step_once {
-            return;
-        }
+    if let Some(ref tw) = time_warp
+        && tw.is_paused
+        && !tw.step_once
+    {
+        return;
     }
 
     let dt_years = sim_time.as_ref().map_or(0.016, |s| {
@@ -197,10 +199,10 @@ pub fn step_alfven_blast_waves_system(
         }
 
         // Despawn once wave expands past planetary perimeter or dissipates
-        if new_r >= wave.max_radius_au || wave.luminosity_solar < 1.0 {
-            if let Ok(mut cmd) = commands.get_entity(entity) {
-                cmd.despawn();
-            }
+        if (new_r >= wave.max_radius_au || wave.luminosity_solar < 1.0)
+            && let Ok(mut cmd) = commands.get_entity(entity)
+        {
+            cmd.despawn();
         }
     }
 }

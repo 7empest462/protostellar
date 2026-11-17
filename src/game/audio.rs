@@ -88,6 +88,7 @@ pub struct CosmicAudioHandles {
     pub ambient_loop: Option<Handle<AudioSource>>,
     pub chirp_cue: Option<Handle<AudioSource>>,
     pub pulsar_cue: Option<Handle<AudioSource>>,
+    pub ui_click_cue: Option<Handle<AudioSource>>,
 }
 
 /// Marker component attached to the active looping ambient sonification player.
@@ -225,6 +226,28 @@ pub fn build_pulsar_pulse_wav(sample_rate: u32) -> Vec<u8> {
             quantize_pcm_sample(pulse * env * 0.45 * angle.cos()),
             quantize_pcm_sample(pulse * env * 0.45 * angle.sin()),
         ));
+    }
+    synthesize_pcm_wav_stereo(sample_rate, &samples)
+}
+
+/// Synthesizes a crisp, subtle 28 ms dual-tone sci-fi UI telemetry chirp (1,320 Hz -> 1,980 Hz)
+/// with a fast exponential decay.
+pub fn build_ui_click_wav(sample_rate: u32) -> Vec<u8> {
+    if sample_rate == 0 {
+        return synthesize_pcm_wav_stereo(sample_rate, &[]);
+    }
+    let total_samples = ((sample_rate as f32) * 0.028_f32).round().max(1.0) as usize;
+    let mut samples = Vec::with_capacity(total_samples);
+    let dt = 1.0 / (sample_rate as f32);
+    let mut phase = 0.0_f32;
+    for i in 0..total_samples {
+        let u = (i as f32) / (total_samples as f32);
+        let env = (u * 12.0).min(1.0) * (-u * 8.5).exp();
+        let freq = 1320.0 + (1980.0 - 1320.0) * u;
+        phase += std::f32::consts::TAU * freq * dt;
+        let sample =
+            quantize_pcm_sample((phase.sin() * 0.72 + (phase * 1.5).sin() * 0.28) * env * 0.40);
+        samples.push((sample, sample));
     }
     synthesize_pcm_wav_stereo(sample_rate, &samples)
 }
@@ -476,10 +499,14 @@ pub fn setup_cosmic_audio_assets(
     let pulsar_handle = assets.add(AudioSource {
         bytes: Arc::from(build_pulsar_pulse_wav(sample_rate).into_boxed_slice()),
     });
+    let ui_click_handle = assets.add(AudioSource {
+        bytes: Arc::from(build_ui_click_wav(sample_rate).into_boxed_slice()),
+    });
 
     handles.ambient_loop = Some(ambient_handle.clone());
     handles.chirp_cue = Some(chirp_handle);
     handles.pulsar_cue = Some(pulsar_handle);
+    handles.ui_click_cue = Some(ui_click_handle);
 
     let mut ambient_settings = PlaybackSettings::LOOP.with_volume(Volume::Linear(0.14));
     ambient_settings.muted = audio_state.as_deref().is_none_or(|state| !state.enabled);
@@ -776,6 +803,13 @@ mod tests {
         let pulse = build_pulsar_pulse_wav(22_050);
         assert!(pulse.len() > 10_000);
         assert_eq!(pulse.get(22..24), Some([2_u8, 0].as_slice()));
+        let ui_click = build_ui_click_wav(22_050);
+        assert_eq!(
+            ui_click.len(),
+            44 + ((22_050_f32 * 0.028).round() as usize) * 4
+        );
+        assert_eq!(ui_click.get(0..4), Some(b"RIFF".as_slice()));
+        assert_eq!(ui_click.get(22..24), Some([2_u8, 0].as_slice()));
     }
 
     #[test]
@@ -864,6 +898,13 @@ mod tests {
             settings.muted,
             "CosmicAmbientPlayer PlaybackSettings must start muted by default"
         );
+        assert!(
+            app.world()
+                .resource::<CosmicAudioHandles>()
+                .ui_click_cue
+                .is_some(),
+            "setup_cosmic_audio_assets must populate ui_click_cue"
+        );
 
         let mut toast = NotificationToast::default();
         toggle_cosmic_audio_mute(&mut audio, Some(&mut toast));
@@ -875,6 +916,23 @@ mod tests {
         assert!(!audio.enabled, "Second toggle must re-mute audio");
         assert_eq!(audio.waveform_bars, [0; 16]);
         assert!(toast.message.contains("Muted"));
+    }
+
+    fn fire_cme_at(app: &mut App, t: f32) -> usize {
+        app.world_mut().resource_mut::<SimTime>().visual_time_secs = t;
+        app.world_mut()
+            .resource_mut::<Messages<CmeShockwaveEvent>>()
+            .write(CmeShockwaveEvent {
+                target: Entity::PLACEHOLDER,
+                orbital_radius_au: 1.0,
+                density_multiplier: 3.0,
+                flare_intensity: 0.9,
+            });
+        app.update();
+        app.world_mut()
+            .query_filtered::<Entity, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>()
+            .iter(app.world())
+            .count()
     }
 
     #[test]
@@ -891,7 +949,7 @@ mod tests {
             .add_systems(Startup, setup_cosmic_audio_assets)
             .add_systems(Update, update_cosmic_audio_system);
 
-        // 1. KeyM while text input is focused must NOT unmute audio
+        // 1. KeyM while text input is focused must NOT unmute; muted CME must not spawn cues
         let text_ent = app
             .world_mut()
             .spawn(bevy::text::EditableText::default())
@@ -904,94 +962,23 @@ mod tests {
             .press(KeyCode::KeyM);
         app.update();
         assert!(!app.world().resource::<CosmicAudioState>().enabled);
+        assert_eq!(fire_cme_at(&mut app, 1.0), 0);
 
-        // 2. While muted, cosmic events must NOT spawn one-shot cue players
-        app.world_mut().resource_mut::<SimTime>().visual_time_secs = 1.0;
-        app.world_mut()
-            .resource_mut::<Messages<CmeShockwaveEvent>>()
-            .write(CmeShockwaveEvent {
-                target: Entity::PLACEHOLDER,
-                orbital_radius_au: 1.0,
-                density_multiplier: 3.0,
-                flare_intensity: 0.9,
-            });
-        app.update();
-        let oneshot_count = app
-            .world_mut()
-            .query_filtered::<Entity, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>()
-            .iter(app.world())
-            .count();
-        assert_eq!(oneshot_count, 0, "Muted audio must suppress one-shot cues");
-
-        // 3. Unfocus text and press KeyM -> unmutes; first CME event >= 0.35s spawns DESPAWN cue
+        // 2. Unfocus text and press KeyM -> unmutes; CME >= 0.35s spawns DESPAWN cue
         app.world_mut()
             .resource_mut::<bevy::input_focus::InputFocus>()
             .clear();
-        {
-            let mut kb = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            kb.reset_all();
-            kb.press(KeyCode::KeyM);
-        }
-        app.world_mut().resource_mut::<SimTime>().visual_time_secs = 1.0;
-        app.world_mut()
-            .resource_mut::<Messages<CmeShockwaveEvent>>()
-            .write(CmeShockwaveEvent {
-                target: Entity::PLACEHOLDER,
-                orbital_radius_au: 1.0,
-                density_multiplier: 3.0,
-                flare_intensity: 0.9,
-            });
-        app.update();
+        let mut kb = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        kb.reset_all();
+        kb.press(KeyCode::KeyM);
+        assert_eq!(fire_cme_at(&mut app, 1.0), 1);
         assert!(app.world().resource::<CosmicAudioState>().enabled);
 
-        let cues_after_first = app
-            .world_mut()
-            .query_filtered::<&PlaybackSettings, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>(
-            )
-            .iter(app.world())
-            .count();
-        assert_eq!(cues_after_first, 1, "Expected 1 one-shot CME audio cue");
-
-        // 4. Within 0.35s cooldown (1.15s - 1.0s = 0.15s), another event must be throttled
+        // 3. Within 0.35s cooldown (1.15s) throttles; after cooldown (1.50s) spawns next cue
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
-        app.world_mut().resource_mut::<SimTime>().visual_time_secs = 1.15;
-        app.world_mut()
-            .resource_mut::<Messages<CmeShockwaveEvent>>()
-            .write(CmeShockwaveEvent {
-                target: Entity::PLACEHOLDER,
-                orbital_radius_au: 1.0,
-                density_multiplier: 3.0,
-                flare_intensity: 0.9,
-            });
-        app.update();
-        let cues_during_cooldown = app
-            .world_mut()
-            .query_filtered::<Entity, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>()
-            .iter(app.world())
-            .count();
-        assert_eq!(
-            cues_during_cooldown, 1,
-            "One-shot cues within 0.35s cooldown must be deduplicated"
-        );
-
-        // 5. After cooldown expires (1.50s - 1.0s = 0.50s >= 0.35s), next cue spawns cleanly
-        app.world_mut().resource_mut::<SimTime>().visual_time_secs = 1.50;
-        app.world_mut()
-            .resource_mut::<Messages<CmeShockwaveEvent>>()
-            .write(CmeShockwaveEvent {
-                target: Entity::PLACEHOLDER,
-                orbital_radius_au: 1.0,
-                density_multiplier: 3.0,
-                flare_intensity: 0.9,
-            });
-        app.update();
-        let cues_after_cooldown = app
-            .world_mut()
-            .query_filtered::<Entity, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>()
-            .iter(app.world())
-            .count();
-        assert_eq!(cues_after_cooldown, 2);
+        assert_eq!(fire_cme_at(&mut app, 1.15), 1);
+        assert_eq!(fire_cme_at(&mut app, 1.50), 2);
     }
 }

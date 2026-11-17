@@ -339,6 +339,53 @@ pub fn apply_pebble_accretion(
     }
 }
 
+fn apply_pebble_body_promotion(
+    commands: &mut Commands,
+    entity: Entity,
+    new_mass: f64,
+    comp: &Composition,
+    body: &mut CelestialBody,
+    rad: &mut Radius,
+) {
+    let new_type = if body.body_type == BodyType::Moon {
+        BodyType::Moon
+    } else {
+        classify_body_by_mass_and_comp(new_mass, comp, false)
+    };
+    if new_type != body.body_type {
+        let old_type = body.body_type;
+        body.body_type = new_type;
+        update_promoted_name(&mut body.name, old_type, new_type);
+        if new_type == BodyType::BrownDwarf && body.name.starts_with("Super-Jupiter") {
+            let mj = new_mass / JUPITER_MASS_SOLAR;
+            body.name = format!("Brown Dwarf ({mj:.1} M_J)");
+        } else if new_type.is_star_or_remnant() && !new_type.is_remnant() && new_mass >= 0.08 {
+            let (_, label) = classify_stellar_type_and_label(new_mass, comp);
+            crate::simulation::thermodynamics::stellar_lifecycle::update_promoted_stellar_name(
+                &mut body.name,
+                new_type,
+                new_mass,
+                label,
+            );
+            rad.0 = (SOLAR_RADIUS_AU * new_mass.powf(0.8)).clamp(0.001, 0.12);
+            commands.entity(entity).try_insert((
+                IgnitionState {
+                    core_temperature: 1.2e7,
+                    fusion_fraction: 1.0,
+                    is_ignited: true,
+                    shockwave_radius: 0.25,
+                },
+                StellarEvolutionState {
+                    phase: StellarEvolutionPhase::MainSequence,
+                    hydrogen_core_fraction: 1.0,
+                    ..Default::default()
+                },
+                Luminosity(new_mass.powf(3.5).max(0.01)),
+            ));
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Per-body pebble accretion helper"
@@ -428,7 +475,7 @@ fn apply_single_body_pebble_accretion(
     }
 
     if water_gain_m_earth > 0.0 {
-        if let Some(ref mut vol) = opt_vol {
+        if let Some(vol) = opt_vol {
             vol.delivered_water_m_earth += water_gain_m_earth;
             if vol.atmospheric_pressure_bar < 1.0 {
                 vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
@@ -463,19 +510,9 @@ fn apply_single_body_pebble_accretion(
         _ => physical_radius.max(1e-8),
     };
     rad.0 = new_radius;
+    apply_pebble_body_promotion(commands, entity, new_mass, comp, body, rad);
 
-    let new_type = if body.body_type == BodyType::Moon {
-        BodyType::Moon
-    } else {
-        classify_body_by_mass_and_comp(new_mass, comp, false)
-    };
-    if new_type != body.body_type {
-        let old_type = body.body_type;
-        body.body_type = new_type;
-        update_promoted_name(&mut body.name, old_type, new_type);
-    }
-
-    if let Some(ref mut diff) = opt_diff {
+    if let Some(diff) = opt_diff {
         diff.recalculate(new_mass, new_radius, comp);
     }
 }

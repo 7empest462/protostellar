@@ -11,9 +11,9 @@ pub mod types;
 use bevy::prelude::*;
 
 pub use physics::{
-    apply_stellar_flyby_perturbation, compute_galactic_omega_sq,
+    PARSEC_TO_AU, apply_stellar_flyby_perturbation, compute_galactic_omega_sq,
     evaluate_galactic_tide_acceleration, evaluate_galactic_tide_secular_de,
-    step_oort_galactic_tides_system, PARSEC_TO_AU,
+    step_oort_galactic_tides_system,
 };
 pub use spawner::{
     handle_spawn_oort_cloud_swarm_system, keplerian_elements_to_cartesian,

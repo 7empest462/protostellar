@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::Extract;
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bytemuck::{Pod, Zeroable};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use wgpu::util::DeviceExt;
 
 use crate::gpu::buffers::{GpuParticle, MassiveBodyGpu};
@@ -399,22 +399,21 @@ pub fn step_galaxy_simulation_render_world(
     for i in 0..2 {
         if let (Some(state), Some(staging_buf)) =
             (engine.staging_states.get(i), engine.staging_buffers.get(i))
+            && state.load(Ordering::Acquire) == STAGING_STATE_MAPPED
         {
-            if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
-                if let Some(sender) = sender.as_ref() {
-                    if let Ok(mapped) = staging_buf.slice(..).get_mapped_range() {
-                        let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
-                        if buf.capacity() < mapped.len() {
-                            buf.reserve_exact(mapped.len().saturating_sub(buf.capacity()));
-                        }
-                        buf.clear();
-                        buf.extend_from_slice(&mapped);
-                        let _ = sender.tx.try_send(buf);
-                    }
+            if let Some(sender) = sender.as_ref()
+                && let Ok(mapped) = staging_buf.slice(..).get_mapped_range()
+            {
+                let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
+                if buf.capacity() < mapped.len() {
+                    buf.reserve_exact(mapped.len().saturating_sub(buf.capacity()));
                 }
-                staging_buf.unmap();
-                state.store(STAGING_STATE_IDLE, Ordering::Release);
+                buf.clear();
+                buf.extend_from_slice(&mapped);
+                let _ = sender.tx.try_send(buf);
             }
+            staging_buf.unmap();
+            state.store(STAGING_STATE_IDLE, Ordering::Release);
         }
     }
 

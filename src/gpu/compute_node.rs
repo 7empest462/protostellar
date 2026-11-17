@@ -1,12 +1,12 @@
 //! WGPU Compute Pipeline Engine for 100,000+ particle protoplanetary Keplerian mechanics and gas drag.
 
 use bevy::prelude::*;
-use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::Extract;
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use rayon::prelude::*;
 use std::f64::consts::PI;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use wgpu::util::DeviceExt;
 
 use crate::gpu::buffers::*;
@@ -104,33 +104,32 @@ pub fn extract_gpu_sim_data(
     >,
     scenario_state: Extract<Option<Res<crate::simulation::scenarios::ActiveScenarioState>>>,
 ) {
-    if let Some(scenario_state) = scenario_state.as_ref() {
-        if scenario_state.current_preset
+    if let Some(scenario_state) = scenario_state.as_ref()
+        && scenario_state.current_preset
             == crate::simulation::scenarios::ScenarioPreset::GalacticCollision
-        {
-            commands.insert_resource(GpuSimExtractedParams {
-                is_paused: time_warp.is_paused,
-                step_once: time_warp.step_once,
-                enable_gpu_compute: false, // DISABLE PREVIOUS COMPUTE NODE
-                dt: 0.0,
-                star_pos: [0.0; 3],
-                star_mass: 0.0,
-                gas_scale: 0.0,
-                inner_radius: 0.0,
-                outer_radius: 0.0,
-                enable_gas_drag: 0,
-                ref_temp_1au: 0.0,
-                shockwave_radius: 0.0,
-                softening_sq: 0.0,
-                num_massive_bodies: 0,
-                tractor_pos_mass: [0.0; 4],
-                massive_bodies: [MassiveBodyGpu::default(); 32],
-                count: 0,
-                disk_mass: 0.0,
-                elapsed_years: 0.0,
-            });
-            return;
-        }
+    {
+        commands.insert_resource(GpuSimExtractedParams {
+            is_paused: time_warp.is_paused,
+            step_once: time_warp.step_once,
+            enable_gpu_compute: false, // DISABLE PREVIOUS COMPUTE NODE
+            dt: 0.0,
+            star_pos: [0.0; 3],
+            star_mass: 0.0,
+            gas_scale: 0.0,
+            inner_radius: 0.0,
+            outer_radius: 0.0,
+            enable_gas_drag: 0,
+            ref_temp_1au: 0.0,
+            shockwave_radius: 0.0,
+            softening_sq: 0.0,
+            num_massive_bodies: 0,
+            tractor_pos_mass: [0.0; 4],
+            massive_bodies: [MassiveBodyGpu::default(); 32],
+            count: 0,
+            disk_mass: 0.0,
+            elapsed_years: 0.0,
+        });
+        return;
     }
     let mut star_pos = [0.0f32; 3];
     let mut star_mass = disk_params.central_star_mass as f32;
@@ -148,7 +147,7 @@ pub fn extract_gpu_sim_data(
         .iter()
         .map(|(ent, pos, mass, _body)| (ent, pos, mass))
         .collect();
-    sorted_bodies.sort_by(|a, b| b.2 .0.total_cmp(&a.2 .0).then_with(|| a.0.cmp(&b.0)));
+    sorted_bodies.sort_by(|a, b| b.2.0.total_cmp(&a.2.0).then_with(|| a.0.cmp(&b.0)));
 
     for (_ent, pos, mass) in sorted_bodies.into_iter().take(32) {
         if let Some(target) = massive_bodies.get_mut(num_bodies) {
@@ -511,37 +510,36 @@ fn drain_mapped_staging_buffers(
     for i in 0..2 {
         if let (Some(state), Some(staging_buf)) =
             (engine.staging_states.get(i), engine.staging_buffers.get(i))
+            && state.load(Ordering::Acquire) == STAGING_STATE_MAPPED
         {
-            if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
-                if let Some(sender) = sender {
-                    if let Ok(mapped) = staging_buf.slice(..).get_mapped_range() {
-                        let count = engine
-                            .staging_counts
-                            .get(i)
-                            .copied()
-                            .unwrap_or(0)
-                            .min(MAX_GPU_PARTICLES);
-                        let active_bytes = usize::try_from(count).unwrap_or(0)
-                            * std::mem::size_of::<GpuParticle>();
-                        let copy_len = if active_bytes == 0 {
-                            mapped.len()
-                        } else {
-                            active_bytes.min(mapped.len())
-                        };
-                        if let Some(slice) = mapped.get(..copy_len) {
-                            let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
-                            if buf.capacity() < copy_len {
-                                buf.reserve_exact(copy_len.saturating_sub(buf.capacity()));
-                            }
-                            buf.clear();
-                            buf.extend_from_slice(slice);
-                            let _ = sender.tx.try_send(buf);
-                        }
+            if let Some(sender) = sender
+                && let Ok(mapped) = staging_buf.slice(..).get_mapped_range()
+            {
+                let count = engine
+                    .staging_counts
+                    .get(i)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(MAX_GPU_PARTICLES);
+                let active_bytes =
+                    usize::try_from(count).unwrap_or(0) * std::mem::size_of::<GpuParticle>();
+                let copy_len = if active_bytes == 0 {
+                    mapped.len()
+                } else {
+                    active_bytes.min(mapped.len())
+                };
+                if let Some(slice) = mapped.get(..copy_len) {
+                    let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
+                    if buf.capacity() < copy_len {
+                        buf.reserve_exact(copy_len.saturating_sub(buf.capacity()));
                     }
+                    buf.clear();
+                    buf.extend_from_slice(slice);
+                    let _ = sender.tx.try_send(buf);
                 }
-                staging_buf.unmap();
-                state.store(STAGING_STATE_IDLE, Ordering::Release);
             }
+            staging_buf.unmap();
+            state.store(STAGING_STATE_IDLE, Ordering::Release);
         }
     }
 }

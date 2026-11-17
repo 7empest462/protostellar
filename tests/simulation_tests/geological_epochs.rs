@@ -3,9 +3,9 @@
 
 use bevy::prelude::*;
 use protostellar::simulation::components::*;
+use protostellar::simulation::geology::GeologyPlugin;
 use protostellar::simulation::geology::systems::*;
 use protostellar::simulation::geology::types::*;
-use protostellar::simulation::geology::GeologyPlugin;
 use protostellar::simulation::resources::*;
 
 #[test]

@@ -13,11 +13,11 @@ use crate::simulation::geology::types::{
 use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
-    create_compact_button, EpochPlanetButtonGroup, EpochPlanetTabButton, EpochQuickButton,
-    EpochScrubberBodyTitleText, EpochScrubberMetricsText, EpochScrubberPanel,
-    EpochScrubberStatusText, HudButton, NotificationToast, UiButtonAction,
+    EpochPlanetButtonGroup, EpochPlanetTabButton, EpochQuickButton, EpochScrubberBodyTitleText,
+    EpochScrubberMetricsText, EpochScrubberPanel, EpochScrubberStatusText, HudButton,
+    NotificationToast, UiButtonAction, create_compact_button,
 };
-use super::widgets::{spawn_hud_slider, HudSliderKind};
+use super::widgets::{HudSliderKind, spawn_hud_slider};
 
 /// Spawns the glassmorphic Deep-Time Geological Epoch Scrubber drawer in the HUD root.
 pub fn spawn_epoch_scrubber_panel(root: &mut ChildSpawnerCommands) {

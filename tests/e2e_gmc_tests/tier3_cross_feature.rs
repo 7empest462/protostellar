@@ -119,16 +119,16 @@ fn test_t3_volumetric_nebula_scenario_isolation() {
         rogue_planet_entity: None,
     };
 
-    // When GMC scenario is active: raymarching uniform is active and camera is at 850 AU
+    // When GMC scenario is active: raymarching uniform is active and camera is at 1650 AU
     let is_gmc_active = scenario_state.current_preset == ScenarioPreset::MolecularCloudCluster;
     assert!(is_gmc_active);
 
     let (cam_dist, _, _) = match scenario_state.current_preset {
-        ScenarioPreset::MolecularCloudCluster => (850.0f32, 0.785f32, 0.65f32),
+        ScenarioPreset::MolecularCloudCluster => (1650.0f32, 0.785f32, 0.65f32),
         ScenarioPreset::SolarNebulaMmsn => (16.0f32, 0.785f32, 0.62f32),
         _ => (10.0, 0.0, 0.0),
     };
-    assert_eq!(cam_dist, 850.0);
+    assert_eq!(cam_dist, 1650.0);
 
     // Switch scenario to Solar Nebula: camera shifts to 16 AU, raymarching deactivated
     scenario_state.current_preset = ScenarioPreset::SolarNebulaMmsn;
@@ -137,7 +137,7 @@ fn test_t3_volumetric_nebula_scenario_isolation() {
     assert!(!is_gmc_active_after);
 
     let (cam_dist_after, _, _) = match scenario_state.current_preset {
-        ScenarioPreset::MolecularCloudCluster => (850.0f32, 0.785f32, 0.65f32),
+        ScenarioPreset::MolecularCloudCluster => (1650.0f32, 0.785f32, 0.65f32),
         ScenarioPreset::SolarNebulaMmsn => (16.0f32, 0.785f32, 0.62f32),
         _ => (10.0, 0.0, 0.0),
     };

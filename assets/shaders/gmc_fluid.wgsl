@@ -200,14 +200,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // 4. Gravitational Acceleration (Cloud Global Core + Local Clump Self-Gravity + Stellar Sinks) & Radiation Pressure
     let r_len = length(world_pos);
-    let r_core = 50.0;
+    let r_core = 80.0;
     let r_core_sq = r_core * r_core;
-    let g_cloud = (uniforms.g_astro * 40.0) / pow(r_len * r_len + r_core_sq, 1.5);
+    let g_cloud = (uniforms.g_astro * 50.0) / pow(r_len * r_len + r_core_sq, 1.5);
     var a_grav = -world_pos * g_cloud;
 
     // Dark Matter NFW Halo (matches src/simulation/physics/forces.rs)
-    let dark_matter_mass = 8000.0;
-    let r_s = 150.0;
+    let dark_matter_mass = 16000.0;
+    let r_s = 280.0;
     let x = r_len / r_s;
     if x > 1e-4 {
         let ln_1p_x = log(1.0 + x);
@@ -218,22 +218,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Lin-Shu Logarithmic Spiral Density Wave Acceleration
     let r_cyl = length(world_pos.xz);
-    if (r_cyl > 15.0 && r_cyl < 550.0 && uniforms.elapsed_years > 600.0) {
+    if (r_cyl > 25.0 && r_cyl < 1080.0 && uniforms.elapsed_years > 600.0) {
         let t_factor = clamp((uniforms.elapsed_years - 600.0) / 1400.0, 0.0, 1.0);
         let smooth_t = t_factor * t_factor * (3.0 - 2.0 * t_factor);
 
-        let omega_p = 0.00045;
+        let omega_p = 0.00028;
         let pattern_angle = omega_p * uniforms.elapsed_years;
         let m = 4.0;
-        let k = 6.16;
-        let r_0 = 60.0;
+        let k = 7.2;
+        let r_0 = 110.0;
 
         let phi = atan2(world_pos.z, world_pos.x);
         let xi = m * (phi - pattern_angle) - k * log(r_cyl / r_0);
         let cos_xi = cos(xi);
         let sin_xi = sin(xi);
 
-        let z_0 = 35.0;
+        let z_0 = 60.0;
         let y_scaled = world_pos.y / z_0;
         let exp_y = exp(clamp(y_scaled, -10.0, 10.0));
         let exp_neg_y = exp(clamp(-y_scaled, -10.0, 10.0));
@@ -241,12 +241,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let tanh_y = (exp_y - exp_neg_y) / (exp_y + exp_neg_y);
         let sech2_y = 1.0 / max(cosh_y * cosh_y, 1e-6);
 
-        let r_scale = 120.0;
-        let r_disk = 320.0;
+        let r_scale = 240.0;
+        let r_disk = 640.0;
         let u = r_cyl / r_scale;
         let radial_profile = (u / (1.0 + u * u)) * exp(-r_cyl / r_disk);
 
-        let a_0 = -(uniforms.g_astro * 550.0 * smooth_t);
+        let a_0 = -(uniforms.g_astro * 950.0 * smooth_t);
         let phi_amp = a_0 * radial_profile * sech2_y;
 
         let d_rad_prof = (1.0 - u * u) / (r_scale * pow(1.0 + u * u, 2.0)) - radial_profile / r_disk;
@@ -268,7 +268,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     // Local clump self-gravity: accelerates gas toward local density peaks (driving Jeans runaway collapse)
-    let a_local_grav = (uniforms.g_astro * 3.5e6) * grad_rho;
+    let a_local_grav = (uniforms.g_astro * 7.0e6) * grad_rho;
     a_grav = a_grav + a_local_grav;
     var a_rad = vec3<f32>(0.0);
 
@@ -340,19 +340,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             min(world_pos.y + half_domain, half_domain - world_pos.y)),
         min(world_pos.z + half_domain, half_domain - world_pos.z)
     );
-    if (edge_dist < 60.0) {
-        v_next = v_next * (edge_dist / 60.0);
-        rho_adv = rho_adv * (edge_dist / 60.0);
+    if (edge_dist < 100.0) {
+        v_next = v_next * (edge_dist / 100.0);
+        rho_adv = rho_adv * (edge_dist / 100.0);
     }
 
     // Galactic Gas Inflow & Continuous Cloud Replenishment:
     // Sustained gas replenishment throughout galactic disk maintains star formation over cosmic time
-    if (edge_dist >= 40.0) {
+    if (edge_dist >= 60.0) {
         let inflow_dir = -world_pos / max(r_len, 1.0);
-        let inflow_speed = 0.025; // AU/yr infalling towards galactic plane
+        let inflow_speed = 0.032; // AU/yr infalling towards galactic plane
         v_next = mix(v_next, inflow_dir * inflow_speed, clamp(uniforms.dt * 0.03, 0.0, 0.2));
-        let disk_z = exp(-abs(world_pos.y) / 45.0);
-        let disk_r = exp(-r_len / 380.0);
+        let disk_z = exp(-abs(world_pos.y) / 65.0);
+        let disk_r = exp(-r_len / 760.0);
         let base_replenish = 2.5e-11 * disk_z * disk_r;
         rho_adv = max(rho_adv, base_replenish);
     }
@@ -362,8 +362,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let temp_next = mix(temp_curr, uniforms.ambient_temp, cooling_rate);
 
     // 6. Jeans Collapse Peak Detection (Cloud Core + Extended Spiral Arms)
-    // Stars form throughout the molecular cloud core and active spiral arms (r < 520 AU)
-    if (r_len < 520.0 && rho_adv > uniforms.collapse_threshold) {
+    // Stars form throughout the molecular cloud core and active spiral arms (r < 1020 AU)
+    if (r_len < 1020.0 && rho_adv > uniforms.collapse_threshold) {
         // Verify local maximum to avoid duplicate spawns in adjacent cells
         if (rho_adv >= rho_xp && rho_adv >= rho_xm && rho_adv >= rho_yp && rho_adv >= rho_ym && rho_adv >= rho_zp && rho_adv >= rho_zm) {
             let slot = atomicAdd(&collapse_counter, 1u);

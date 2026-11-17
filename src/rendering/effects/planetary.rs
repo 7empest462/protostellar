@@ -17,81 +17,82 @@ pub fn draw_cometary_escape_tails(
     visual_radius: f32,
     elapsed: f32,
 ) {
-    if let Some(tail) = opt_tail {
-        if tail.is_active && tail.tail_length_au > 0.05 {
-            let star_to_body = (body_vec - star_vec).normalize_or_zero();
-            if star_to_body != Vec3::ZERO {
-                let v_orb = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
-                let tail_axis = (star_to_body - v_orb * 0.035).normalize();
-                let tail_len = tail.tail_length_au;
-                let base_r = (visual_radius * 1.15).max(0.0003);
+    if let Some(tail) = opt_tail
+        && tail.is_active
+        && tail.tail_length_au > 0.05
+    {
+        let star_to_body = (body_vec - star_vec).normalize_or_zero();
+        if star_to_body != Vec3::ZERO {
+            let v_orb = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
+            let tail_axis = (star_to_body - v_orb * 0.035).normalize();
+            let tail_len = tail.tail_length_au;
+            let base_r = (visual_radius * 1.15).max(0.0003);
 
-                let n_spine = 16;
-                let ds = tail_len / (n_spine as f32);
+            let n_spine = 16;
+            let ds = tail_len / (n_spine as f32);
+            for s_idx in 0..n_spine {
+                let s1 = (s_idx as f32) * ds;
+                let s2 = ((s_idx + 1) as f32) * ds;
+                let t_frac = (s_idx as f32) / (n_spine as f32);
+                let a_spine = (1.0 - t_frac).powi(2) * 0.90;
+                let p1 = body_vec + tail_axis * s1;
+                let p2 = body_vec + tail_axis * s2;
+                let spine_col = Color::srgba(
+                    tail.ion_color.to_srgba().red,
+                    tail.ion_color.to_srgba().green,
+                    tail.ion_color.to_srgba().blue,
+                    a_spine,
+                );
+                gizmos.line(p1, p2, spine_col);
+            }
+
+            let ortho1 = if tail_axis.y.abs() < 0.95 {
+                tail_axis.cross(Vec3::Y).normalize()
+            } else {
+                tail_axis.cross(Vec3::Z).normalize()
+            };
+            let ortho2 = tail_axis.cross(ortho1).normalize();
+
+            for rib_i in 0..4 {
+                let rib_ang = (rib_i as f32) * (std::f32::consts::PI * 0.5);
+                let rib_dir = ortho1 * rib_ang.cos() + ortho2 * rib_ang.sin();
+
                 for s_idx in 0..n_spine {
-                    let s1 = (s_idx as f32) * ds;
-                    let s2 = ((s_idx + 1) as f32) * ds;
-                    let t_frac = (s_idx as f32) / (n_spine as f32);
-                    let a_spine = (1.0 - t_frac).powi(2) * 0.90;
-                    let p1 = body_vec + tail_axis * s1;
-                    let p2 = body_vec + tail_axis * s2;
-                    let spine_col = Color::srgba(
+                    let frac1 = (s_idx as f32) / (n_spine as f32);
+                    let frac2 = ((s_idx + 1) as f32) / (n_spine as f32);
+                    let s1 = frac1 * tail_len;
+                    let s2 = frac2 * tail_len;
+                    let w1 = base_r + frac1.sqrt() * (base_r * 2.5 + 0.12 * tail_len.sqrt());
+                    let w2 = base_r + frac2.sqrt() * (base_r * 2.5 + 0.12 * tail_len.sqrt());
+
+                    let p1 = body_vec + tail_axis * s1 + rib_dir * w1;
+                    let p2 = body_vec + tail_axis * s2 + rib_dir * w2;
+                    let a_sheath = (1.0 - frac1) * 0.45;
+                    let sheath_col = Color::srgba(
                         tail.ion_color.to_srgba().red,
                         tail.ion_color.to_srgba().green,
                         tail.ion_color.to_srgba().blue,
-                        a_spine,
+                        a_sheath,
                     );
-                    gizmos.line(p1, p2, spine_col);
+                    gizmos.line(p1, p2, sheath_col);
                 }
+            }
 
-                let ortho1 = if tail_axis.y.abs() < 0.95 {
-                    tail_axis.cross(Vec3::Y).normalize()
-                } else {
-                    tail_axis.cross(Vec3::Z).normalize()
-                };
-                let ortho2 = tail_axis.cross(ortho1).normalize();
-
-                for rib_i in 0..4 {
-                    let rib_ang = (rib_i as f32) * (std::f32::consts::PI * 0.5);
-                    let rib_dir = ortho1 * rib_ang.cos() + ortho2 * rib_ang.sin();
-
-                    for s_idx in 0..n_spine {
-                        let frac1 = (s_idx as f32) / (n_spine as f32);
-                        let frac2 = ((s_idx + 1) as f32) / (n_spine as f32);
-                        let s1 = frac1 * tail_len;
-                        let s2 = frac2 * tail_len;
-                        let w1 = base_r + frac1.sqrt() * (base_r * 2.5 + 0.12 * tail_len.sqrt());
-                        let w2 = base_r + frac2.sqrt() * (base_r * 2.5 + 0.12 * tail_len.sqrt());
-
-                        let p1 = body_vec + tail_axis * s1 + rib_dir * w1;
-                        let p2 = body_vec + tail_axis * s2 + rib_dir * w2;
-                        let a_sheath = (1.0 - frac1) * 0.45;
-                        let sheath_col = Color::srgba(
-                            tail.ion_color.to_srgba().red,
-                            tail.ion_color.to_srgba().green,
-                            tail.ion_color.to_srgba().blue,
-                            a_sheath,
-                        );
-                        gizmos.line(p1, p2, sheath_col);
-                    }
-                }
-
-                for pulse_i in 0..3 {
-                    let pulse_phase = ((elapsed * 2.0 + (pulse_i as f32 * 1.33)) % 4.0) / 4.0;
-                    let pulse_s = pulse_phase * tail_len;
-                    let knot_pos = body_vec + tail_axis * pulse_s;
-                    let knot_a = (1.0 - pulse_phase) * 0.8;
-                    gizmos.sphere(
-                        Isometry3d::from_translation(knot_pos),
-                        base_r * (0.6 + 0.4 * pulse_phase),
-                        Color::srgba(
-                            tail.ion_color.to_srgba().red,
-                            tail.ion_color.to_srgba().green,
-                            tail.ion_color.to_srgba().blue,
-                            knot_a,
-                        ),
-                    );
-                }
+            for pulse_i in 0..3 {
+                let pulse_phase = ((elapsed * 2.0 + (pulse_i as f32 * 1.33)) % 4.0) / 4.0;
+                let pulse_s = pulse_phase * tail_len;
+                let knot_pos = body_vec + tail_axis * pulse_s;
+                let knot_a = (1.0 - pulse_phase) * 0.8;
+                gizmos.sphere(
+                    Isometry3d::from_translation(knot_pos),
+                    base_r * (0.6 + 0.4 * pulse_phase),
+                    Color::srgba(
+                        tail.ion_color.to_srgba().red,
+                        tail.ion_color.to_srgba().green,
+                        tail.ion_color.to_srgba().blue,
+                        knot_a,
+                    ),
+                );
             }
         }
     }

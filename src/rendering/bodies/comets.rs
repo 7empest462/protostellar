@@ -84,10 +84,10 @@ fn compute_tail_parameters(
     // Tail length driven by sublimation activity and physical escape tail if present
     // Increased multipliers and max clamps to allow for much longer, sweeping tails.
     let mut tail_len = (0.35 + 5.5 * activity).clamp(0.15, 25.0);
-    if let Some(esc_len) = opt_escape_len {
-        if esc_len > 0.05 {
-            tail_len = tail_len.max(esc_len * 0.85).clamp(0.15, 30.0);
-        }
+    if let Some(esc_len) = opt_escape_len
+        && esc_len > 0.05
+    {
+        tail_len = tail_len.max(esc_len * 0.85).clamp(0.15, 30.0);
     }
 
     // Flaring width at tail tip (dust tails flare wider than collimated ion ribbons)

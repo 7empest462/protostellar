@@ -212,10 +212,11 @@ pub fn step_oort_galactic_tides_system(
         return;
     }
 
-    if let Some(ref tw) = time_warp {
-        if tw.is_paused && !tw.step_once {
-            return;
-        }
+    if let Some(ref tw) = time_warp
+        && tw.is_paused
+        && !tw.step_once
+    {
+        return;
     }
 
     let star_entry = star_query

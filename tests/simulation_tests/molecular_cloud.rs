@@ -192,7 +192,7 @@ fn test_molecular_cloud_cluster_scenario_phase_mapping() {
     use protostellar::game::phases::{LateHeavyBombardmentState, PhaseManager, SystemPhase};
     use protostellar::simulation::resources::*;
     use protostellar::simulation::scenarios::{
-        handle_load_scenario_events, ActiveScenarioState, LoadScenarioEvent, ScenarioPreset,
+        ActiveScenarioState, LoadScenarioEvent, ScenarioPreset, handle_load_scenario_events,
     };
 
     let mut app = App::new();
@@ -260,7 +260,7 @@ fn test_auto_spawn_planetesimals_guarded_against_gmc_cluster() {
     use bevy::prelude::*;
     use protostellar::simulation::components::CelestialBody;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_planetesimals,
     };
     use protostellar::simulation::resources::*;
     use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
@@ -342,7 +342,7 @@ fn setup_non_central_protostar_app() -> (
     use bevy::prelude::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;
-    use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+    use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
     use protostellar::utils::constants::*;
 
     let mut app = App::new();
@@ -588,23 +588,18 @@ fn test_gmc_protostar_stabilization_promotion_attaches_disk_and_embryos() {
     // Tick - GMC promotion triggers
     app.update();
 
-    // 1. Verify CircumstellarDisk and PlanetaryRingSystem attachment
-    let disk = app.world().get::<CircumstellarDisk>(star_ent);
+    // 1. Verify protostar is marked promoted WITHOUT attaching protoplanetary disk/rings
     assert!(
-        disk.is_some(),
-        "Stabilized protostar must receive a CircumstellarDisk"
+        app.world().get::<CircumstellarDisk>(star_ent).is_none(),
+        "Stabilized GMC star must not attach a CircumstellarDisk"
     );
-    let disk = disk.unwrap();
     assert!(
-        disk.is_active_full_disk,
-        "New circumstellar disk must be active"
+        app.world().get::<PlanetaryRingSystem>(star_ent).is_none(),
+        "Stabilized GMC star must not attach a PlanetaryRingSystem"
     );
-    assert!(disk.inner_radius_au > 0.0 && disk.outer_radius_au > disk.inner_radius_au);
-
-    let ring = app.world().get::<PlanetaryRingSystem>(star_ent);
     assert!(
-        ring.is_some(),
-        "Stabilized protostar must receive PlanetaryRingSystem for 3D visual geometry"
+        app.world().get::<GmcPromotedSystem>(star_ent).is_some(),
+        "Stabilized GMC star must receive GmcPromotedSystem marker"
     );
 
     // 2. Verify spawned protoplanetary embryos
@@ -696,63 +691,82 @@ fn test_gmc_active_full_disk_capping() {
         app.update();
     }
 
-    // After 4 stars stabilized with cap=3, active full disks must be capped at 3
+    // After 4 stars stabilize, zero GMC stars should carry crowded circumstellar disks or rings,
+    // while each star retains its full 3-embryo planetary system.
     let mut active_count = 0;
     for &ent in &star_entities {
-        if let Some(disk) = app.world().get::<CircumstellarDisk>(ent) {
-            let has_ring = app.world().get::<PlanetaryRingSystem>(ent).is_some();
-            if disk.is_active_full_disk && has_ring {
-                active_count += 1;
-            }
+        assert!(
+            app.world().get::<CircumstellarDisk>(ent).is_none(),
+            "GMC cluster star must not carry a CircumstellarDisk"
+        );
+        assert!(
+            app.world().get::<PlanetaryRingSystem>(ent).is_none(),
+            "GMC cluster star must not carry a PlanetaryRingSystem"
+        );
+        assert!(
+            app.world().get::<GmcPromotedSystem>(ent).is_some(),
+            "GMC cluster star must be marked promoted"
+        );
+        if let Some(disk) = app.world().get::<CircumstellarDisk>(ent)
+            && disk.is_active_full_disk
+        {
+            active_count += 1;
         }
     }
     assert_eq!(
-        active_count, 3,
-        "Active full disks must be capped at max_active_full_disks (3)"
+        active_count, 0,
+        "GMC cluster stars must omit circumstellar accretion disks to avoid cluster core crowding"
     );
 
-    // Oldest star (Star-1) must have had its disk dissipated
-    let star1_disk = app
-        .world()
-        .get::<CircumstellarDisk>(star_entities[0])
-        .unwrap();
+    // Every promoted star's orbiting embryos must exist cleanly!
+    for idx in 1..=4 {
+        let prefix = format!("Star-{idx}");
+        let star_embryos = app
+            .world_mut()
+            .query::<&CelestialBody>()
+            .iter(app.world())
+            .filter(|b| b.name.starts_with(&prefix) && b.name.contains("Embryo"))
+            .count();
+        assert_eq!(
+            star_embryos, 3,
+            "Each stabilized GMC star must spawn its 3 orbiting planetary embryos (failed for {prefix})"
+        );
+    }
+
+    // Legacy explicit disk capping helper still enforces caps when disks are manually present
+    for (idx, &ent) in star_entities.iter().enumerate() {
+        app.world_mut().entity_mut(ent).insert((
+            CircumstellarDisk {
+                age_years: 5_000.0 - idx as f64 * 1_000.0,
+                ..Default::default()
+            },
+            PlanetaryRingSystem::default(),
+        ));
+    }
+    let mut state: bevy::ecs::system::SystemState<(
+        Commands,
+        Query<(Entity, &mut CircumstellarDisk, Option<&PlanetaryRingSystem>)>,
+    )> = bevy::ecs::system::SystemState::new(app.world_mut());
+    {
+        let (mut commands, mut q) = state.get_mut(app.world_mut()).unwrap();
+        cap_gmc_active_full_disks(&mut commands, 3, &mut q);
+    }
+    state.apply(app.world_mut());
     assert!(
-        !star1_disk.is_active_full_disk,
-        "Oldest star's circumstellar disk must be marked inactive"
+        !app.world()
+            .get::<CircumstellarDisk>(star_entities[0])
+            .unwrap()
+            .is_active_full_disk
     );
     assert!(
         app.world()
             .get::<PlanetaryRingSystem>(star_entities[0])
-            .is_none(),
-        "Oldest star's PlanetaryRingSystem mesh must be removed to free GPU fill rate"
-    );
-
-    // Star-1's orbiting embryos must STILL exist!
-    let star1_embryos = app
-        .world_mut()
-        .query::<&CelestialBody>()
-        .iter(app.world())
-        .filter(|b| b.name.starts_with("Star-1") && b.name.contains("Embryo"))
-        .count();
-    assert_eq!(
-        star1_embryos, 3,
-        "Star-1's planetary embryos must survive disk dissipation"
-    );
-
-    // Newest star (Star-4) must possess an active full disk
-    let star4_disk = app
-        .world()
-        .get::<CircumstellarDisk>(star_entities[3])
-        .unwrap();
-    assert!(
-        star4_disk.is_active_full_disk,
-        "Most recently stabilized star must possess an active full disk"
+            .is_none()
     );
     assert!(
         app.world()
             .get::<PlanetaryRingSystem>(star_entities[3])
-            .is_some(),
-        "Most recently stabilized star must possess PlanetaryRingSystem"
+            .is_some()
     );
 }
 
@@ -814,23 +828,23 @@ fn test_gmc_cluster_orbital_speed_and_dark_matter_stability() {
     use bevy::math::DVec3;
 
     // 1. Initial protostar stage (3.5 M☉ central seed)
-    // Dark Matter halo (8000 M☉) and cloud core (50 M☉) dominate outer gravity
+    // Dark Matter halo (16,000 M☉) and cloud core (50 M☉) dominate outer gravity
     let r = 120.0;
-    let v_early = calculate_gmc_orbital_speed(r, 3.5, 8000.0, 50.0);
+    let v_early = calculate_gmc_orbital_speed(r, 3.5, GMC_DARK_MATTER_MASS_SOLAR, 50.0);
     assert!(
         v_early > 15.0 && v_early < 30.0,
         "Early orbital speed at r=120 AU must be balanced by dark matter and core (got {v_early:.2} AU/yr)"
     );
 
     // 2. Intermediate-Mass Black Hole stage (1000 M☉)
-    let v_imbh = calculate_gmc_orbital_speed(r, 1000.0, 8000.0, 50.0);
+    let v_imbh = calculate_gmc_orbital_speed(r, 1000.0, GMC_DARK_MATTER_MASS_SOLAR, 50.0);
     assert!(
         v_imbh > v_early,
         "Orbital speed must scale higher as black hole accretes mass"
     );
 
     // 3. Supermassive Black Hole stage (100,000 M☉)
-    let v_smbh = calculate_gmc_orbital_speed(r, 100_000.0, 8000.0, 50.0);
+    let v_smbh = calculate_gmc_orbital_speed(r, 100_000.0, GMC_DARK_MATTER_MASS_SOLAR, 50.0);
     // Keplerian circular speed around 100,000 M☉ at 120 AU: sqrt(39.478 * 100,000 / 120) ~ 181.4 AU/yr
     assert!(
         v_smbh > 170.0 && v_smbh < 220.0,

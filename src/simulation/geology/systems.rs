@@ -106,32 +106,31 @@ pub fn sync_geological_evolution_system(
     let current_epoch = scrubber.active_epoch;
 
     // Check if player selected a terrestrial world or protoplanet
-    if let Some(ref player_state) = opt_player_state {
-        if player_state.is_changed() {
-            if let Some(selected) = player_state.selected_entity {
-                if let Ok((entity, body, ref opt_sel_geo, _, _, _, _)) = query.get(selected) {
-                    let is_terrestrial = matches!(
-                        body.body_type,
-                        BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
-                    );
-                    if let Some(archetype) = EpochTargetPlanet::try_detect_from_name(&body.name) {
-                        if is_terrestrial && scrubber.target_entity != Some(entity) {
-                            scrubber.target_entity = Some(entity);
-                            scrubber.target_planet = archetype;
-                            if let Some(target_geo) = opt_sel_geo {
-                                scrubber.active_epoch = target_geo.epoch;
-                                scrubber.scrubbed_age_gyr = target_geo.geological_age_gyr;
-                            } else {
-                                let def_epoch = GeologicalEpoch::epochs_for_planet(archetype)
-                                    .first()
-                                    .copied()
-                                    .unwrap_or(GeologicalEpoch::Modern);
-                                scrubber.active_epoch = def_epoch;
-                                scrubber.scrubbed_age_gyr = def_epoch.canonical_age_gyr();
-                            }
-                        }
-                    }
-                }
+    if let Some(ref player_state) = opt_player_state
+        && player_state.is_changed()
+        && let Some(selected) = player_state.selected_entity
+        && let Ok((entity, body, ref opt_sel_geo, _, _, _, _)) = query.get(selected)
+    {
+        let is_terrestrial = matches!(
+            body.body_type,
+            BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
+        );
+        if let Some(archetype) = EpochTargetPlanet::try_detect_from_name(&body.name)
+            && is_terrestrial
+            && scrubber.target_entity != Some(entity)
+        {
+            scrubber.target_entity = Some(entity);
+            scrubber.target_planet = archetype;
+            if let Some(target_geo) = opt_sel_geo {
+                scrubber.active_epoch = target_geo.epoch;
+                scrubber.scrubbed_age_gyr = target_geo.geological_age_gyr;
+            } else {
+                let def_epoch = GeologicalEpoch::epochs_for_planet(archetype)
+                    .first()
+                    .copied()
+                    .unwrap_or(GeologicalEpoch::Modern);
+                scrubber.active_epoch = def_epoch;
+                scrubber.scrubbed_age_gyr = def_epoch.canonical_age_gyr();
             }
         }
     }
@@ -156,11 +155,11 @@ pub fn sync_geological_evolution_system(
             })
         {
             scrubber.target_entity = Some(ent);
-            if scrubber.auto_advance {
-                if let Some(geo) = opt_geo {
-                    scrubber.active_epoch = geo.epoch;
-                    scrubber.scrubbed_age_gyr = geo.geological_age_gyr;
-                }
+            if scrubber.auto_advance
+                && let Some(geo) = opt_geo
+            {
+                scrubber.active_epoch = geo.epoch;
+                scrubber.scrubbed_age_gyr = geo.geological_age_gyr;
             }
         } else {
             scrubber.target_entity = None;

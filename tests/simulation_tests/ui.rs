@@ -8,7 +8,7 @@ use protostellar::utils::constants::*;
 fn setup_lhb_test_app() -> (App, Entity) {
     use bevy::prelude::*;
     use protostellar::game::phases::{
-        monitor_phase_transitions, LateHeavyBombardmentState, PhaseManager, SystemPhase,
+        LateHeavyBombardmentState, PhaseManager, SystemPhase, monitor_phase_transitions,
     };
     use protostellar::simulation::disk::update_late_heavy_bombardment_cascade;
     use protostellar::simulation::resources::{DiskParameters, SimTime, TimeWarp};
@@ -471,8 +471,8 @@ fn setup_quick_selector_app() -> (App, Entity, Entity, Entity) {
     use bevy::prelude::*;
     use protostellar::game::phases::LateHeavyBombardmentState;
     use protostellar::game::ui::{
-        update_quick_body_selector_bar, HudActionTooltipText, HudVisibilityState,
-        NotificationToast, PlanetBuilderState, QuickBarState, QuickBodySelectorBar,
+        HudActionTooltipText, HudVisibilityState, NotificationToast, PlanetBuilderState,
+        QuickBarState, QuickBodySelectorBar, update_quick_body_selector_bar,
     };
     use protostellar::rendering::camera::PanOrbitCamera;
     use protostellar::simulation::resources::{
@@ -747,7 +747,7 @@ fn test_astronomical_belt_zoning_and_census() {
 #[test]
 fn test_quick_bar_belt_expand_and_contract_interactions() {
     use bevy::prelude::*;
-    use protostellar::game::ui::{handle_ui_button_interactions, BeltZone, QuickBarState};
+    use protostellar::game::ui::{BeltZone, QuickBarState, handle_ui_button_interactions};
 
     let (mut app, bar_ent, _cam_ent, _jupiter_ent) = setup_quick_selector_app();
 
@@ -920,7 +920,7 @@ fn test_planet_builder_presets() {
 #[test]
 fn test_hud_button_requires_activate_on_press_and_clears_stale_pressed() {
     use bevy::prelude::*;
-    use protostellar::game::ui::{handle_ui_button_interactions, ActivatedHudButtons};
+    use protostellar::game::ui::{ActivatedHudButtons, handle_ui_button_interactions};
     use protostellar::simulation::resources::PlayerInteractionState;
 
     let (mut app, bar_ent, _cam_ent, jupiter_ent) = setup_quick_selector_app();

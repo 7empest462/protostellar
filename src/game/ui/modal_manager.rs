@@ -51,88 +51,78 @@ impl ModalPanelStates<'_> {
     pub fn close_conflicting_modals(&mut self, keep_open: ActiveModalKind) -> bool {
         let mut closed_any = false;
 
-        if keep_open != ActiveModalKind::PlanetBuilder {
-            if let Some(ref mut b) = self.builder {
-                if b.is_open {
-                    b.is_open = false;
-                    b.click_to_spawn_mode = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::PlanetBuilder
+            && let Some(ref mut b) = self.builder
+            && b.is_open
+        {
+            b.is_open = false;
+            b.click_to_spawn_mode = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::Telemetry {
-            if let Some(ref mut t) = self.telemetry {
-                if t.is_open {
-                    t.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::Telemetry
+            && let Some(ref mut t) = self.telemetry
+            && t.is_open
+        {
+            t.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::Trophies {
-            if let Some(ref mut tr) = self.trophies {
-                if tr.is_open {
-                    tr.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::Trophies
+            && let Some(ref mut tr) = self.trophies
+            && tr.is_open
+        {
+            tr.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::TechTree {
-            if let Some(ref mut tt) = self.tech_tree {
-                if tt.is_open {
-                    tt.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::TechTree
+            && let Some(ref mut tt) = self.tech_tree
+            && tt.is_open
+        {
+            tt.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::Campaign {
-            if let Some(ref mut c) = self.campaign {
-                if c.is_open {
-                    c.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::Campaign
+            && let Some(ref mut c) = self.campaign
+            && c.is_open
+        {
+            c.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::Hazards {
-            if let Some(ref mut h) = self.hazards {
-                if h.is_open {
-                    h.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::Hazards
+            && let Some(ref mut h) = self.hazards
+            && h.is_open
+        {
+            h.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::EpochScrubber {
-            if let Some(ref mut s) = self.scrubber {
-                if s.is_open {
-                    s.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::EpochScrubber
+            && let Some(ref mut s) = self.scrubber
+            && s.is_open
+        {
+            s.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::HrDiagram {
-            if let Some(ref mut hr) = self.hr_diagram {
-                if hr.is_open {
-                    hr.is_open = false;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::HrDiagram
+            && let Some(ref mut hr) = self.hr_diagram
+            && hr.is_open
+        {
+            hr.is_open = false;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::ScenarioPresets {
-            if let Some(ref mut v) = self.visibility {
-                if v.scenarios_is_open {
-                    v.scenarios_is_open = false;
-                    v.scenarios_minimized = true;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::ScenarioPresets
+            && let Some(ref mut v) = self.visibility
+            && v.scenarios_is_open
+        {
+            v.scenarios_is_open = false;
+            v.scenarios_minimized = true;
+            closed_any = true;
         }
-        if keep_open != ActiveModalKind::SavesManager {
-            if let Some(ref mut saves) = self.saves {
-                if saves.is_open {
-                    saves.is_open = false;
-                    saves.pending_delete_idx = None;
-                    closed_any = true;
-                }
-            }
+        if keep_open != ActiveModalKind::SavesManager
+            && let Some(ref mut saves) = self.saves
+            && saves.is_open
+        {
+            saves.is_open = false;
+            saves.pending_delete_idx = None;
+            closed_any = true;
         }
 
         closed_any

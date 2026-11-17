@@ -523,6 +523,51 @@ fn spawn_astrodynamic_view_badges(col: &mut ChildSpawnerCommands) {
             Pickable::IGNORE,
         ));
     });
+
+    for (action, panel_el, dyn_text, initial_label, color) in [
+        (
+            UiButtonAction::ToggleAtmospheres,
+            HudPanelElement::AtmospheresBadge,
+            HudDynamicText::AtmospheresBadge,
+            "🌫️ Atmo: ON [Shift-A]",
+            Color::srgb(0.55, 0.88, 1.0),
+        ),
+        (
+            UiButtonAction::ToggleClouds,
+            HudPanelElement::CloudsBadge,
+            HudDynamicText::CloudsBadge,
+            "☁️ Clouds: ON [Shift-W]",
+            Color::srgb(0.85, 0.92, 1.0),
+        ),
+    ] {
+        col.spawn((
+            HudButton,
+            action,
+            panel_el,
+            Node {
+                padding: UiRect::axes(Val::Px(5.0), Val::Px(2.5)),
+                margin: UiRect::all(Val::Px(1.5)),
+                border: UiRect::all(Val::Px(1.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.05, 0.12, 0.88)),
+            BorderColor::all(Color::srgba(0.3, 0.7, 1.0, 0.65)),
+        ))
+        .with_children(|badge| {
+            badge.spawn((
+                Text::new(initial_label),
+                TextFont {
+                    font_size: FontSize::Px(10.5),
+                    ..default()
+                },
+                TextColor(color),
+                dyn_text,
+                Pickable::IGNORE,
+            ));
+        });
+    }
 }
 
 pub(crate) fn spawn_simulation_metrics_column(right_row: &mut ChildSpawnerCommands) {

@@ -404,7 +404,8 @@ fn test_saturn_hd_stratigraphy_and_storm_state() {
     let ring_shader_src = std::fs::read_to_string("assets/shaders/planetary_rings.wesl")
         .expect("assets/shaders/planetary_rings.wesl must exist");
     assert!(
-        ring_shader_src.contains("let inner_dist = clamp(max(ring.inner_radius, planet_surface_dist)"),
+        ring_shader_src
+            .contains("let inner_dist = clamp(max(ring.inner_radius, planet_surface_dist)"),
         "Ring shader must clamp inner radius to planet surface to prevent rings clipping through the planet"
     );
     assert!(
@@ -680,7 +681,7 @@ fn test_surface_terrain_homogeneous_scale_sync_during_atmospheric_descent() {
     use protostellar::rendering::camera::PanOrbitCamera;
     use protostellar::rendering::surface_camera::update_surface_horizon_camera;
     use protostellar::rendering::surface_terrain::{
-        sync_surface_terrain_system, SurfaceTerrainState,
+        SurfaceTerrainState, sync_surface_terrain_system,
     };
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;
@@ -769,8 +770,8 @@ fn test_surface_terrain_homogeneous_scale_sync_during_atmospheric_descent() {
 #[test]
 fn test_dormant_minor_body_skips_shader_time_dirtying() {
     use bevy::math::DVec3;
-    use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
     use protostellar::rendering::bodies::VisualAssets;
+    use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
     use protostellar::rendering::materials::{PlanetMaterial, PlanetMaterialExtension};
     use protostellar::simulation::resources::{SimTime, SimulationConfig, TimeWarp};
 

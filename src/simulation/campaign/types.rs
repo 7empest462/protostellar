@@ -155,11 +155,7 @@ impl MissionObjective {
 
     pub fn progress_fraction(&self) -> f64 {
         if self.target_value <= 0.0 {
-            if self.is_completed {
-                1.0
-            } else {
-                0.0
-            }
+            if self.is_completed { 1.0 } else { 0.0 }
         } else {
             (self.current_value / self.target_value).clamp(0.0, 1.0)
         }

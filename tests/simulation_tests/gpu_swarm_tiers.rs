@@ -105,10 +105,10 @@ fn test_particle_density_tiers_and_workgroup_allocation() {
 
 #[test]
 fn test_dormant_particles_are_hidden_and_parked() {
+    use protostellar::rendering::particle_swarm::ParticleSwarmData;
     use protostellar::rendering::particle_swarm::setup::{
         generate_initial_swarm_buffers, park_dormant_particles,
     };
-    use protostellar::rendering::particle_swarm::ParticleSwarmData;
     use protostellar::simulation::resources::{DiskParameters, SimulationConfig};
 
     let disk_params = DiskParameters::default();
@@ -205,11 +205,11 @@ fn test_dormant_particles_are_hidden_and_parked() {
 fn test_gpu_billboard_mesh_populates_centers_and_radii_normals() {
     use bevy::prelude::*;
     use bevy::render::mesh::{PrimitiveTopology, VertexAttributeValues};
+    use protostellar::rendering::particle_swarm::ParticleSwarmData;
     use protostellar::rendering::particle_swarm::billboards::update_gpu_billboard_mesh;
     use protostellar::rendering::particle_swarm::setup::{
-        generate_initial_swarm_buffers, MAX_SWARM_PARTICLES,
+        MAX_SWARM_PARTICLES, generate_initial_swarm_buffers,
     };
-    use protostellar::rendering::particle_swarm::ParticleSwarmData;
     use protostellar::simulation::resources::{DiskParameters, SimulationConfig};
 
     let disk_params = DiskParameters::default();
@@ -284,11 +284,11 @@ fn test_gpu_billboard_mesh_populates_centers_and_radii_normals() {
 fn test_selective_billboard_sync_skips_unchanged_colors_and_dormant_tail() {
     use bevy::prelude::*;
     use bevy::render::mesh::{PrimitiveTopology, VertexAttributeValues};
+    use protostellar::rendering::particle_swarm::ParticleSwarmData;
     use protostellar::rendering::particle_swarm::billboards::{
         update_gpu_billboard_mesh, update_gpu_billboard_mesh_selective,
     };
     use protostellar::rendering::particle_swarm::setup::generate_initial_swarm_buffers;
-    use protostellar::rendering::particle_swarm::ParticleSwarmData;
     use protostellar::simulation::resources::{DiskParameters, SimulationConfig};
 
     let disk_params = DiskParameters::default();

@@ -129,16 +129,17 @@ pub fn handle_viewport_and_tool_hotkeys(
     mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
     mut opt_saves: Option<&mut crate::game::ui::SavesPanelState>,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyN) && !is_star_selected {
-        if let Some(ref mut predictor) = opt_predictor {
-            predictor.is_enabled = !predictor.is_enabled;
-            toast.message = if predictor.is_enabled {
-                "🎯 Trajectory & Encounter Forecast: Active [N]".to_string()
-            } else {
-                "🎯 Trajectory & Encounter Forecast: Disabled [N]".to_string()
-            };
-            toast.timer = 2.5;
-        }
+    if keyboard.just_pressed(KeyCode::KeyN)
+        && !is_star_selected
+        && let Some(ref mut predictor) = opt_predictor
+    {
+        predictor.is_enabled = !predictor.is_enabled;
+        toast.message = if predictor.is_enabled {
+            "🎯 Trajectory & Encounter Forecast: Active [N]".to_string()
+        } else {
+            "🎯 Trajectory & Encounter Forecast: Disabled [N]".to_string()
+        };
+        toast.timer = 2.5;
     }
     handle_modal_toggle_hotkeys(
         keyboard,
@@ -189,6 +190,23 @@ pub fn handle_viewport_and_tool_hotkeys(
                 "🔬 3D Planetary Cutaway: DISABLED [Shift-X] (Surface Restored)".to_string()
             };
             toast.timer = 2.5;
+        } else if keyboard.just_pressed(KeyCode::KeyA) {
+            player_state.hide_atmospheres = !player_state.hide_atmospheres;
+            toast.message = if player_state.hide_atmospheres {
+                "🪨 Atmospheres & Gas Envelopes: HIDDEN [Shift-A] (Showing Planetary Cores & Surfaces)"
+                    .to_string()
+            } else {
+                "🌫️ Atmospheres & Gas Envelopes: VISIBLE [Shift-A]".to_string()
+            };
+            toast.timer = 2.8;
+        } else if keyboard.just_pressed(KeyCode::KeyW) {
+            player_state.hide_clouds = !player_state.hide_clouds;
+            toast.message = if player_state.hide_clouds {
+                "☀️ Planetary Clouds: HIDDEN [Shift-W] (Atmospheres Retained)".to_string()
+            } else {
+                "☁️ Planetary Clouds: VISIBLE [Shift-W]".to_string()
+            };
+            toast.timer = 2.8;
         } else {
             handle_shift_tool_hotkeys(
                 keyboard,
@@ -277,31 +295,32 @@ fn handle_modal_toggle_hotkeys(
         };
         toast.timer = 2.5;
     }
-    if keyboard.just_pressed(KeyCode::F11) && !is_shift {
-        if let Some(ref mut scrubber) = opt_scrubber {
-            scrubber.is_open = !scrubber.is_open;
-            if scrubber.is_open {
-                close_other_modals(
-                    crate::game::ui::ActiveModalKind::EpochScrubber,
-                    builder_state,
-                    telemetry_state,
-                    opt_trophies,
-                    opt_tech_tree,
-                    opt_campaign_panel,
-                    opt_hazards_panel,
-                    Some(scrubber),
-                    opt_hr_state,
-                    opt_visibility,
-                    opt_saves,
-                );
-            }
-            toast.message = if scrubber.is_open {
-                "⏳ Geological Epoch Scrubber Opened [F11]".to_string()
-            } else {
-                "⏳ Geological Epoch Scrubber Closed [F11]".to_string()
-            };
-            toast.timer = 2.5;
+    if keyboard.just_pressed(KeyCode::F11)
+        && !is_shift
+        && let Some(ref mut scrubber) = opt_scrubber
+    {
+        scrubber.is_open = !scrubber.is_open;
+        if scrubber.is_open {
+            close_other_modals(
+                crate::game::ui::ActiveModalKind::EpochScrubber,
+                builder_state,
+                telemetry_state,
+                opt_trophies,
+                opt_tech_tree,
+                opt_campaign_panel,
+                opt_hazards_panel,
+                Some(scrubber),
+                opt_hr_state,
+                opt_visibility,
+                opt_saves,
+            );
         }
+        toast.message = if scrubber.is_open {
+            "⏳ Geological Epoch Scrubber Opened [F11]".to_string()
+        } else {
+            "⏳ Geological Epoch Scrubber Closed [F11]".to_string()
+        };
+        toast.timer = 2.5;
     }
 }
 
@@ -488,16 +507,16 @@ fn handle_shift_tool_hotkeys(
             };
             toast.timer = 2.5;
         }
-    } else if keyboard.just_pressed(KeyCode::KeyZ) {
-        if let Some(ref mut hz) = opt_hz {
-            hz.is_enabled = !hz.is_enabled;
-            toast.message = if hz.is_enabled {
-                "🌱 Circumstellar Habitable Zone & Frost Line: ENABLED [Shift-Z]".to_string()
-            } else {
-                "🌱 Habitable Zone: DISABLED [Shift-Z]".to_string()
-            };
-            toast.timer = 2.5;
-        }
+    } else if keyboard.just_pressed(KeyCode::KeyZ)
+        && let Some(ref mut hz) = opt_hz
+    {
+        hz.is_enabled = !hz.is_enabled;
+        toast.message = if hz.is_enabled {
+            "🌱 Circumstellar Habitable Zone & Frost Line: ENABLED [Shift-Z]".to_string()
+        } else {
+            "🌱 Habitable Zone: DISABLED [Shift-Z]".to_string()
+        };
+        toast.timer = 2.5;
     }
 }
 

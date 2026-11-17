@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::types::{SystemSaveData, SEED_PREFIX};
+use super::types::{SEED_PREFIX, SystemSaveData};
 
 /// Encodes `SystemSaveData` into a version-prefixed JSON system seed string suitable for sharing and clipboard exchange.
 pub fn encode_system_seed_json(data: &SystemSaveData) -> Result<String, String> {

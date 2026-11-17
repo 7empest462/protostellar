@@ -121,10 +121,11 @@ pub fn step_pulsar_glitches_system(
         Option<&mut ElectromagneticFieldState>,
     )>,
 ) {
-    if let Some(ref tw) = time_warp {
-        if tw.is_paused && !tw.step_once {
-            return;
-        }
+    if let Some(ref tw) = time_warp
+        && tw.is_paused
+        && !tw.step_once
+    {
+        return;
     }
 
     let dt_years = sim_time.as_ref().map_or(0.016, |s| {

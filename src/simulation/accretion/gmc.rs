@@ -8,27 +8,155 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
+fn promote_gmc_accreted_stellar_state(
+    commands: &mut Commands,
+    entity: Entity,
+    new_m: f64,
+    rad: &mut Radius,
+    comp: &Composition,
+    body: &mut CelestialBody,
+    opt_lum: &mut Option<Mut<Luminosity>>,
+    opt_temp: &mut Option<Mut<Temperature>>,
+    opt_ign: Option<&IgnitionState>,
+) {
+    let (promoted_type, promoted_label) = classify_stellar_type_and_label(new_m, comp);
+    if new_m >= 500.0
+        && !body.body_type.is_remnant()
+        && !matches!(
+            body.body_type,
+            BodyType::QuasiStar | BodyType::DarkStar | BodyType::PopulationIIIStar
+        )
+    {
+        body.body_type = BodyType::BlackHole;
+        rad.0 = (1.974e-8 * new_m).max(1e-7);
+        if let Some(t) = opt_temp.as_mut() {
+            t.0 = 10.0;
+        }
+        if let Some(lum) = opt_lum.as_mut() {
+            lum.0 = 0.0;
+        }
+        crate::simulation::thermodynamics::stellar_lifecycle::update_promoted_stellar_name(
+            &mut body.name,
+            BodyType::BlackHole,
+            new_m,
+            "Intermediate-Mass Black Hole",
+        );
+        commands
+            .entity(entity)
+            .remove::<PlanetaryRingSystem>()
+            .remove::<PlanetaryClimate>()
+            .remove::<BiosphereState>()
+            .try_insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
+                new_m,
+                0.70,
+                bevy::math::DVec3::Y,
+            ));
+        return;
+    }
+
+    if body.body_type == BodyType::QuasiStar {
+        rad.0 = (SOLAR_RADIUS_AU * (new_m / 20.0).powf(0.45) * 45.0).clamp(0.15, 0.85);
+        return;
+    }
+
+    if (body.body_type == BodyType::BrownDwarf || !body.body_type.is_star_or_remnant())
+        && (0.0125 - 1e-7..0.08).contains(&new_m)
+    {
+        body.body_type = BodyType::BrownDwarf;
+        rad.0 = (0.000_477 * (new_m / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085);
+        if let Some(t) = opt_temp.as_mut() {
+            t.0 =
+                t.0.max(800.0 + ((new_m - 0.0125) / 0.0675).clamp(0.0, 1.0) * 1600.0);
+        }
+        if body.name.starts_with("Super-Jupiter") {
+            let mj = new_m / JUPITER_MASS_SOLAR;
+            body.name = format!("Brown Dwarf ({mj:.1} M_J)");
+        }
+        return;
+    }
+
+    if !body.body_type.is_remnant()
+        && !matches!(body.body_type, BodyType::RedGiant | BodyType::RedSupergiant)
+        && new_m >= 0.08
+    {
+        if body.body_type == BodyType::Protostar && opt_ign.is_none_or(|ig| !ig.is_ignited) {
+            rad.0 = (3.5 * SOLAR_RADIUS_AU * new_m.powf(0.5)).clamp(0.005, 0.04);
+            if let Some(lum) = opt_lum.as_mut() {
+                lum.0 = (new_m * 2.5).max(0.5);
+            }
+            return;
+        }
+
+        rad.0 = (SOLAR_RADIUS_AU * new_m.powf(0.8)).clamp(0.002, 0.12);
+        let preserve_special_branch = matches!(
+            body.body_type,
+            BodyType::DarkStar
+                | BodyType::PopulationIIIStar
+                | BodyType::BlueStraggler
+                | BodyType::WolfRayet
+                | BodyType::LuminousBlueVariable
+        );
+        if !preserve_special_branch && promoted_type != BodyType::BlackHole {
+            body.body_type = promoted_type;
+            crate::simulation::thermodynamics::stellar_lifecycle::update_promoted_stellar_name(
+                &mut body.name,
+                promoted_type,
+                new_m,
+                promoted_label,
+            );
+        }
+        let target_lum = new_m.powf(3.5).max(0.01);
+        let target_temp = (5778.0 * new_m.powf(0.505)).clamp(2800.0, 50_000.0);
+        if let Some(t) = opt_temp.as_mut() {
+            t.0 = target_temp;
+        }
+        if let Some(lum) = opt_lum.as_mut() {
+            lum.0 = target_lum;
+        }
+        if opt_ign.is_none() {
+            commands.entity(entity).try_insert((
+                IgnitionState {
+                    core_temperature: 1.2e7,
+                    fusion_fraction: 1.0,
+                    is_ignited: true,
+                    shockwave_radius: 0.5,
+                },
+                StellarEvolutionState {
+                    phase: StellarEvolutionPhase::MainSequence,
+                    hydrogen_core_fraction: 1.0,
+                    ..Default::default()
+                },
+                Luminosity(target_lum),
+            ));
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Acquisition logic needs many parameters"
 )]
 fn compute_protostar_bondi_hoyle_accretion(
+    commands: &mut Commands,
+    entity: Entity,
     pos: &SimPosition,
     vel: &SimVelocity,
     mass: &mut Mass,
     rad: &mut Radius,
+    comp: &Composition,
     body: &mut CelestialBody,
     opt_lum: &mut Option<Mut<Luminosity>>,
+    opt_temp: &mut Option<Mut<Temperature>>,
     opt_ign: Option<&IgnitionState>,
     dt_yr: f64,
     gas_scale: f64,
 ) {
     let m = mass.0;
     let r_cloud = pos.0.length();
-    if r_cloud < 600.0 {
+    if r_cloud < 1150.0 {
         // Plummer density profile of the GMC core and extended galactic disk
         let rho_0 = 3.4e-11;
-        let r_core = 240.0;
+        let r_core = 460.0;
         let profile = 1.0 / (1.0 + (r_cloud / r_core).powi(2)).powf(1.15);
         let rho_cloud = rho_0 * profile * gas_scale;
 
@@ -59,6 +187,8 @@ fn compute_protostar_bondi_hoyle_accretion(
         let is_ignited = opt_ign.is_some_and(|ig| ig.is_ignited);
         let rad_suppression = if body.body_type.is_remnant() {
             0.0
+        } else if body.body_type == BodyType::BrownDwarf && m < 0.08 && !is_ignited {
+            0.08
         } else if is_ignited {
             let lum_val = opt_lum.as_deref().map_or(1.0, |l| l.0);
             if is_pop_iii {
@@ -82,25 +212,20 @@ fn compute_protostar_bondi_hoyle_accretion(
 
         let d_mass = bondi_rate * rad_suppression * dt_yr;
         if d_mass > 1e-12 {
-            let new_m = m + d_mass;
-            mass.0 = new_m;
-
-            // Physical radius update (only for non-remnant, non-giant main sequence / protostars)
-            if body.body_type == BodyType::Protostar {
-                rad.0 = (3.5 * SOLAR_RADIUS_AU * (new_m / 1.0).powf(0.5)).clamp(0.005, 0.04);
-            } else if !body.body_type.is_remnant()
-                && !matches!(body.body_type, BodyType::RedGiant | BodyType::RedSupergiant)
-                && new_m >= 0.08
-            {
-                rad.0 = (SOLAR_RADIUS_AU * new_m.powf(0.8)).clamp(0.002, 0.12);
-            }
-
-            if let Some(ref mut lum) = opt_lum {
-                if body.body_type == BodyType::Protostar {
-                    lum.0 = (new_m * 2.5).max(0.5);
-                }
-            }
+            mass.0 = m + d_mass;
         }
+    }
+
+    let final_m = mass.0;
+    if body.body_type == BodyType::Protostar {
+        rad.0 = (3.5 * SOLAR_RADIUS_AU * (final_m / 1.0).powf(0.5)).clamp(0.005, 0.04);
+        if let Some(lum) = opt_lum.as_mut() {
+            lum.0 = (final_m * 2.5).max(0.5);
+        }
+    } else if final_m >= 0.0125 - 1e-7 {
+        promote_gmc_accreted_stellar_state(
+            commands, entity, final_m, rad, comp, body, opt_lum, opt_temp, opt_ign,
+        );
     }
 }
 
@@ -130,7 +255,7 @@ fn compute_protoplanet_envelope_accretion(
         || body.body_type == BodyType::BrownDwarf;
 
     let max_planet_m = if is_gas_giant {
-        0.015 // ~15 M_Jupiter
+        0.0115 // ~12 M_Jupiter envelope saturation below deuterium-burning Brown Dwarf threshold
     } else if comp.ice_frac > 0.20 {
         0.000_060 // ~20 M_Earth (Sub-Neptune / Water World)
     } else {
@@ -180,7 +305,7 @@ fn compute_protoplanet_envelope_accretion(
             }
 
             // Update volatile inventory and atmospheric pressure
-            if let Some(ref mut vol) = opt_vol {
+            if let Some(vol) = opt_vol {
                 let d_mass_earth = d_mass / EARTH_MASS_SOLAR;
                 let gas_added = d_mass_earth * comp.gas_frac;
                 let water_added = d_mass_earth * comp.ice_frac;
@@ -223,8 +348,8 @@ fn compute_gmc_black_hole_accretion(
     gas_scale: f64,
 ) {
     let r_bh = pos.0.length();
-    let rho_bh = if r_bh < 350.0 {
-        3.4e-11 * (1.0 / (1.0 + (r_bh / 140.0).powi(2)).powf(1.5)) * gas_scale
+    let rho_bh = if r_bh < 650.0 {
+        3.4e-11 * (1.0 / (1.0 + (r_bh / 280.0).powi(2)).powf(1.5)) * gas_scale
     } else {
         1.5e-13 * gas_scale
     };
@@ -305,6 +430,7 @@ fn find_closest_star_sorted(
 ///    allowing gas giants and terrestrial worlds to grow toward full planetary mass.
 #[allow(clippy::type_complexity, reason = "GMC cluster multi-body accretion")]
 pub fn gmc_cluster_gas_accretion(
+    mut commands: Commands,
     config: Res<SimulationConfig>,
     time_warp: Res<TimeWarp>,
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
@@ -374,7 +500,7 @@ pub fn gmc_cluster_gas_accretion(
         mut comp,
         mut body,
         mut opt_lum,
-        _opt_temp,
+        mut opt_temp,
         opt_ign,
         mut opt_vol,
         mut opt_jet,
@@ -391,12 +517,16 @@ pub fn gmc_cluster_gas_accretion(
             // Only run full accretion on is_active_full_disk hosts if accretion is expensive
             if is_host_active {
                 compute_protostar_bondi_hoyle_accretion(
+                    &mut commands,
+                    entity,
                     pos,
                     vel,
                     &mut mass,
                     &mut rad,
+                    &comp,
                     &mut body,
                     &mut opt_lum,
+                    &mut opt_temp,
                     opt_ign,
                     dt_yr,
                     gas_scale,
@@ -418,21 +548,21 @@ pub fn gmc_cluster_gas_accretion(
             let closest_star = find_closest_star_sorted(&stars, pos.0, entity);
 
             // Only run full envelope accretion if host star's disk is active
-            if let Some((_, star_pos, star_m, is_active)) = closest_star {
-                if is_active {
-                    compute_protoplanet_envelope_accretion(
-                        entity,
-                        pos,
-                        &mut mass,
-                        &mut rad,
-                        &mut comp,
-                        &mut body,
-                        &mut opt_vol,
-                        dt_yr,
-                        star_pos,
-                        star_m,
-                    );
-                }
+            if let Some((_, star_pos, star_m, is_active)) = closest_star
+                && is_active
+            {
+                compute_protoplanet_envelope_accretion(
+                    entity,
+                    pos,
+                    &mut mass,
+                    &mut rad,
+                    &mut comp,
+                    &mut body,
+                    &mut opt_vol,
+                    dt_yr,
+                    star_pos,
+                    star_m,
+                );
             }
         }
     }

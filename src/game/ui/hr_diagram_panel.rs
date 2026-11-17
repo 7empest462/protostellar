@@ -554,10 +554,10 @@ fn determine_fusion_mode(
             _ => {}
         }
     }
-    if let Some(ign) = opt_ign {
-        if !ign.is_ignited {
-            return "Hayashi Gravitational Contraction (Pre-ZAMS)";
-        }
+    if let Some(ign) = opt_ign
+        && !ign.is_ignited
+    {
+        return "Hayashi Gravitational Contraction (Pre-ZAMS)";
     }
     if mass_solar > 1.35 {
         "CNO Catalytic Cycle (Carbon-Nitrogen-Oxygen)"

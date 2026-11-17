@@ -198,7 +198,7 @@ fn test_black_hole_planets_maintain_steady_visual_radius_never_pulse() {
 #[test]
 fn test_black_hole_accretion_disk_spawning_and_sync() {
     use protostellar::rendering::bodies::structures::{
-        sync_black_hole_accretion_disks, VisualBlackHoleDiskChild,
+        VisualBlackHoleDiskChild, sync_black_hole_accretion_disks,
     };
     use protostellar::rendering::bodies::{VisualAssets, VisualBody};
     use protostellar::rendering::materials::BlackHoleDiskMaterial;
@@ -474,12 +474,16 @@ fn test_sagittarius_a_star_scenario_and_s_star_relativity() {
     assert_eq!(pistol.0.body_type, BodyType::Hypergiant);
 
     // Verify G1 and G2 dust/gas clouds are present
-    assert!(all_s_bodies
-        .iter()
-        .any(|(b, _, _, _)| b.name.contains("G1")));
-    assert!(all_s_bodies
-        .iter()
-        .any(|(b, _, _, _)| b.name.contains("G2")));
+    assert!(
+        all_s_bodies
+            .iter()
+            .any(|(b, _, _, _)| b.name.contains("G1"))
+    );
+    assert!(
+        all_s_bodies
+            .iter()
+            .any(|(b, _, _, _)| b.name.contains("G2"))
+    );
 
     // 3. Test S4714: Fastest known star (12.8°/orbit precession, pericenter speed ~8% c)
     let s4714 = all_s_bodies
@@ -523,9 +527,9 @@ fn test_sagittarius_a_star_scenario_and_s_star_relativity() {
 
 #[test]
 fn test_sagittarius_s4714_orbital_stability_and_bound_retention() {
+    use protostellar::simulation::SimulationPlugin;
     use protostellar::simulation::resources::DiskParameters;
     use protostellar::simulation::scenarios::sagittarius::spawn_sagittarius_a_star_scenario;
-    use protostellar::simulation::SimulationPlugin;
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -588,9 +592,9 @@ fn test_sagittarius_s4714_orbital_stability_and_bound_retention() {
 #[test]
 fn test_s_star_tidal_disruption_and_black_hole_rigid_geometry() {
     use protostellar::rendering::bodies::transforms::compute_tidal_deformation_uniform;
+    use protostellar::simulation::SimulationPlugin;
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::TidalDisruptionPool;
-    use protostellar::simulation::SimulationPlugin;
     use protostellar::utils::constants::SOLAR_RADIUS_AU;
 
     // 1. Verify black holes never deform via compute_tidal_deformation_uniform
@@ -756,9 +760,9 @@ fn test_milkomeda_natural_approach_merger() {
         black_holes[0].1
     );
     assert!(
-        black_holes[0].2 .0 > 140_000_000.0,
+        black_holes[0].2.0 > 140_000_000.0,
         "Merged black hole must have combined mass, got {}",
-        black_holes[0].2 .0
+        black_holes[0].2.0
     );
     let selected = app
         .world()

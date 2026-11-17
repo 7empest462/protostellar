@@ -120,12 +120,11 @@ pub fn probe_navigation_system(
                     &mut opt_bio,
                     &mut toast,
                 );
-                if probe.status == ProbeStatus::Landed {
-                    if let Some(ref mut r) = opt_rad {
-                        if r.0 > 1e-10 {
-                            r.0 = 1.0e-11;
-                        }
-                    }
+                if probe.status == ProbeStatus::Landed
+                    && let Some(ref mut r) = opt_rad
+                    && r.0 > 1e-10
+                {
+                    r.0 = 1.0e-11;
                 }
             }
             update_probe_orientation(
@@ -415,7 +414,7 @@ fn handle_orbiter_arrival(
         probe.orbit_axis = Some(orbit_axis);
         probe.arrival_time = Some(elapsed_years);
         probe.samples_collected = 1;
-        if let Some(ref mut bio) = opt_bio {
+        if let Some(bio) = opt_bio {
             bio.surface_samples_collected = bio.surface_samples_collected.saturating_add(1);
         }
         probe.latest_assay = synthesize_probe_assay(
@@ -442,7 +441,7 @@ fn handle_orbiter_arrival(
     let completed_orbits = ((current_phase / std::f64::consts::TAU).floor() as u32).clamp(1, 500);
     if completed_orbits > probe.samples_collected {
         probe.samples_collected = completed_orbits;
-        if let Some(ref mut bio) = opt_bio {
+        if let Some(bio) = opt_bio {
             bio.surface_samples_collected = bio.surface_samples_collected.saturating_add(1);
         }
         probe.latest_assay = synthesize_probe_assay(
@@ -455,7 +454,7 @@ fn handle_orbiter_arrival(
     }
 
     if just_arrived {
-        if let Some(ref mut t) = toast {
+        if let Some(t) = toast {
             t.message = format!(
                 "🛰️ Orbiter #{} has safely entered orbit around {}!",
                 probe.id, computer.target_name
@@ -519,7 +518,7 @@ fn handle_rover_arrival_and_traverse(
         probe.traverse_trail_unspun.clear();
         probe.traverse_trail_unspun.push(unspun);
         probe.samples_collected = 1;
-        if let Some(ref mut bio) = opt_bio {
+        if let Some(bio) = opt_bio {
             bio.surface_samples_collected = bio.surface_samples_collected.saturating_add(1);
         }
         probe.latest_assay = synthesize_probe_assay(
@@ -548,7 +547,7 @@ fn handle_rover_arrival_and_traverse(
     probe_vel.0 = target_vel;
 
     if just_arrived {
-        if let Some(ref mut t) = toast {
+        if let Some(t) = toast {
             t.message = format!(
                 "🛬 Rover #{} touched down on {}! Click [🎥 Surface [Shift-V]] or press Shift+V for Rover Cam.",
                 probe.id, computer.target_name
@@ -621,7 +620,7 @@ fn advance_rover_geodesic_step(
             }
             probe.traverse_trail_unspun.push(new_unspun);
             probe.samples_collected = probe.samples_collected.saturating_add(1);
-            if let Some(ref mut bio) = opt_bio {
+            if let Some(bio) = opt_bio {
                 bio.surface_samples_collected = bio.surface_samples_collected.saturating_add(1);
             }
             probe.latest_assay = synthesize_probe_assay(
@@ -642,19 +641,19 @@ fn synthesize_probe_assay(
     opt_climate: Option<&PlanetaryClimate>,
     opt_bio: Option<&BiosphereState>,
 ) -> String {
-    if let Some(bio) = opt_bio {
-        if bio.biomass_coverage_frac > 0.05 {
-            let pigment_str = bio.flora_pigment.label();
-            return match probe_type {
-                ProbeType::Rover => format!(
-                    "Core #{sample_index}: Organic microfossils & {pigment_str} biosignatures confirmed (O2: {:.1}%)",
-                    bio.oxygen_fraction * 100.0
-                ),
-                ProbeType::Orbiter => format!(
-                    "Pass #{sample_index}: Red-edge reflectance & O2/CH4 disequilibrium ({pigment_str})"
-                ),
-            };
-        }
+    if let Some(bio) = opt_bio
+        && bio.biomass_coverage_frac > 0.05
+    {
+        let pigment_str = bio.flora_pigment.label();
+        return match probe_type {
+            ProbeType::Rover => format!(
+                "Core #{sample_index}: Organic microfossils & {pigment_str} biosignatures confirmed (O2: {:.1}%)",
+                bio.oxygen_fraction * 100.0
+            ),
+            ProbeType::Orbiter => format!(
+                "Pass #{sample_index}: Red-edge reflectance & O2/CH4 disequilibrium ({pigment_str})"
+            ),
+        };
     }
 
     let temp_k = opt_climate.map_or(280.0, |c| c.surface_temperature_k);

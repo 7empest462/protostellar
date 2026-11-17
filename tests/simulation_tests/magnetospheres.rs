@@ -1,8 +1,8 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use protostellar::rendering::bodies::{
-    sync_magnetic_field_overlays, MagnetarStructureRoot, MagneticFieldLoopsPart,
-    MagneticFieldOverlayRoot, VisualAssets,
+    MagnetarStructureRoot, MagneticFieldLoopsPart, MagneticFieldOverlayRoot, VisualAssets,
+    sync_magnetic_field_overlays,
 };
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::{

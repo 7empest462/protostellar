@@ -103,7 +103,29 @@ pub fn update_merged_body_name(
         return;
     }
 
-    // 5. Planetary classifications
+    // 5. Sub-stellar Brown Dwarf & Stellar class upgrades (replaces planetary placeholder names)
+    if updated_type == BodyType::BrownDwarf {
+        let mass_mj = total_mass / crate::utils::constants::JUPITER_MASS_SOLAR;
+        if !name.contains("Substellar") && !name.contains("Embryo") {
+            *name = format!("Brown Dwarf ({mass_mj:.1} M_J)");
+        }
+        return;
+    }
+    if updated_type.is_star_or_remnant() && !updated_type.is_remnant() {
+        let (_, label) = crate::simulation::components::celestial::classify_stellar_type_and_label(
+            total_mass,
+            &crate::simulation::components::Composition::solar_gas(),
+        );
+        crate::simulation::thermodynamics::stellar_lifecycle::update_promoted_stellar_name(
+            name,
+            updated_type,
+            total_mass,
+            label,
+        );
+        return;
+    }
+
+    // 6. Planetary classifications
     let is_named_minor = name.contains("Comet") || name.contains("Asteroid");
     let is_giant_reclass = name.starts_with("Super-Jupiter") && updated_type != BodyType::GasGiant;
     if updated_type.is_planet()

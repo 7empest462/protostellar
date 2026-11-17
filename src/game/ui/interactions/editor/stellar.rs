@@ -254,11 +254,11 @@ pub fn handle_age_star(
             };
             body.body_type = assigned_type;
             body.name = name_str.to_string();
-            if let Some(ref mut evo) = opt_evo {
+            if let Some(evo) = opt_evo {
                 evo.phase = StellarEvolutionPhase::MainSequence;
             }
             toast.message = format!("⭐ Ignited: {} (Main Sequence)", body.name);
-        } else if let Some(ref mut evo) = opt_evo {
+        } else if let Some(evo) = opt_evo {
             handle_star_aging_transition(&mut mass, &mut radius, &mut body, evo, temp, lum, toast);
         }
         toast.timer = 6.0;
@@ -320,7 +320,7 @@ pub fn handle_ignite_star(
             ignition.shockwave_radius = 1.6;
             body.body_type = BodyType::MainSequenceStar;
             body.name = "The Star (Main Sequence)".to_string();
-            if let Some(ref mut evo) = opt_evo {
+            if let Some(evo) = opt_evo {
                 evo.phase = StellarEvolutionPhase::MainSequence;
             }
             toast.message =

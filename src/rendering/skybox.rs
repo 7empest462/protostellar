@@ -202,12 +202,11 @@ pub fn update_skybox_uniforms(
             star_radius,
             star_body,
             opt_bhs,
-        ) {
-            if pos_mass.w > best_theta_e {
-                best_theta_e = pos_mass.w;
-                lens_pos_and_mass = pos_mass;
-                lens_params = params;
-            }
+        ) && pos_mass.w > best_theta_e
+        {
+            best_theta_e = pos_mass.w;
+            lens_pos_and_mass = pos_mass;
+            lens_params = params;
         }
     }
 

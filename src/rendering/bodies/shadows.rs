@@ -119,7 +119,7 @@ pub fn compute_moon_eclipse_shadow(
 pub fn compute_ring_shadow_params(opt_rings: Option<&PlanetaryRingSystem>, radius_au: f64) -> Vec4 {
     if let Some(ring_sys) = opt_rings {
         let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius_au > 0.0 {
-            (ring_sys.outer_radius_au / radius_au as f32).clamp(2.0, 3.5)
+            (ring_sys.outer_radius_au / radius_au as f32).clamp(2.0, 40.0)
         } else {
             2.85
         };
@@ -231,13 +231,12 @@ pub fn compute_eclipse_moons_data(
         }
     }
 
-    if let Some(ps_pos) = parent_planetshine {
-        if let (Some(dst_pos), Some(dst_data)) = (moons_pos.first_mut(), moons_data.first_mut()) {
-            if dst_data.x < 0.5 {
-                *dst_pos = ps_pos;
-                *dst_data = active_data;
-            }
-        }
+    if let Some(ps_pos) = parent_planetshine
+        && let (Some(dst_pos), Some(dst_data)) = (moons_pos.first_mut(), moons_data.first_mut())
+        && dst_data.x < 0.5
+    {
+        *dst_pos = ps_pos;
+        *dst_data = active_data;
     }
     (moons_pos, moons_data)
 }

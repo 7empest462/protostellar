@@ -50,7 +50,7 @@ fn default_zero() -> f64 {
 macro_rules! define_deserialize_nullable_f64 {
     (
         $(#[$meta:meta])*
-        $func_name:ident, $fallback:expr
+        $func_name:ident, $fallback:expr_2021
     ) => {
         $(#[$meta])*
         pub fn $func_name<'de, D>(deserializer: D) -> Result<f64, D::Error>
@@ -116,7 +116,8 @@ macro_rules! define_deserialize_nullable_f64 {
 
 define_deserialize_nullable_f64!(
     /// Deserializes an optional/nullable float, mapping `null` or missing to `f64::INFINITY`.
-    deserialize_nullable_f64_infinity, f64::INFINITY
+    deserialize_nullable_f64_infinity,
+    f64::INFINITY
 );
 
 /// Serializes a float, clamping `f64::INFINITY` or `NaN` to a large finite number (1e12) for JSON validity.
@@ -133,7 +134,8 @@ where
 
 define_deserialize_nullable_f64!(
     /// Deserializes an optional/nullable float, mapping `null` to `0.0`.
-    deserialize_nullable_f64_zero, 0.0
+    deserialize_nullable_f64_zero,
+    0.0
 );
 
 /// Component tracking hierarchical triple Kozai-Lidov secular state and orbital forecasts.

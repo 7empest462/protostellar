@@ -22,8 +22,8 @@ pub use habitable_zone::{
 };
 pub use impact_debris::*;
 pub use lagrange::{
-    compute_cr3bp_lagrange_points, draw_lagrange_points_gizmos,
-    render_lagrange_points_and_hill_sphere, LagrangeSystemCoordinates,
+    LagrangeSystemCoordinates, compute_cr3bp_lagrange_points, draw_lagrange_points_gizmos,
+    render_lagrange_points_and_hill_sphere,
 };
 pub use roche_stream::*;
 pub use volcanism::*;
@@ -37,12 +37,12 @@ use crate::utils::constants::EARTH_MASS_SOLAR;
 use crate::utils::math::*;
 
 pub use kilonova::{
-    draw_kilonova_effects, update_kilonova_effects, KilonovaInstance, KilonovaPool,
+    KilonovaInstance, KilonovaPool, draw_kilonova_effects, update_kilonova_effects,
 };
-pub use megastructures::{draw_dyson_swarms, update_megastructure_construction, DysonSwarm};
+pub use megastructures::{DysonSwarm, draw_dyson_swarms, update_megastructure_construction};
 pub use orbits::{
-    draw_ambient_and_trailing_orbit_ribbon, draw_conic_apsides_and_nodes,
-    draw_hyperbolic_trajectory, OrbitRenderStyle,
+    OrbitRenderStyle, draw_ambient_and_trailing_orbit_ribbon, draw_conic_apsides_and_nodes,
+    draw_hyperbolic_trajectory,
 };
 pub use planetary::{
     draw_body_selection_and_beacons, draw_cometary_escape_tails, draw_diagnostic_overlays,
@@ -57,17 +57,17 @@ pub use relativistic::{
     draw_standard_black_hole_jets, draw_stellar_evolution_nebula, draw_white_dwarf_gizmos,
 };
 pub use remnants::{
-    draw_persistent_supernova_remnants, spawn_remnant_from_explosion, update_persistent_remnants,
     PersistentRemnantPool, PersistentSupernovaRemnant, RemnantFilament,
+    draw_persistent_supernova_remnants, spawn_remnant_from_explosion, update_persistent_remnants,
 };
 pub use shockwaves::{
     draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
     update_impact_shockwaves, update_roche_debris_streams,
 };
 pub use supernova::{
-    draw_supernova_explosions, sync_supernova_visuals, update_supernova_explosions, EjectaLayer,
-    SupernovaDebrisPool, SupernovaEjectaFragment, SupernovaExplosionInstance, SupernovaType,
-    SupernovaVisualShell,
+    EjectaLayer, SupernovaDebrisPool, SupernovaEjectaFragment, SupernovaExplosionInstance,
+    SupernovaType, SupernovaVisualShell, draw_supernova_explosions, sync_supernova_visuals,
+    update_supernova_explosions,
 };
 pub use tde::{draw_tidal_disruption_streams, update_tidal_disruption_streams};
 pub use tools::{
@@ -339,38 +339,38 @@ fn draw_body_physical_features(
         );
     }
 
-    if let Some(volc) = opt_volc {
-        if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
-            draw_volcanic_and_cryo_plumes(
-                gizmos,
-                body_vec,
-                visual_rad,
-                volc,
-                opt_spin,
-                params.star_vec,
-                params.cam_tf.map_or(Vec3::ZERO, |t| t.translation),
-                params.elapsed,
-            );
-        }
+    if let Some(volc) = opt_volc
+        && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
+    {
+        draw_volcanic_and_cryo_plumes(
+            gizmos,
+            body_vec,
+            visual_rad,
+            volc,
+            opt_spin,
+            params.star_vec,
+            params.cam_tf.map_or(Vec3::ZERO, |t| t.translation),
+            params.elapsed,
+        );
     }
 
-    if let Some(diff) = opt_diff {
-        if !matches!(
+    if let Some(diff) = opt_diff
+        && !matches!(
             player_state.overlay_mode,
             DiagnosticOverlayMode::Realistic
                 | DiagnosticOverlayMode::Hidden
                 | DiagnosticOverlayMode::MagneticFields
-        ) {
-            draw_planetary_magnetospheres(
-                gizmos,
-                body_vec,
-                params.star_vec,
-                visual_rad,
-                diff,
-                opt_spin,
-                params.cam_tf.map(|t| t.translation),
-            );
-        }
+        )
+    {
+        draw_planetary_magnetospheres(
+            gizmos,
+            body_vec,
+            params.star_vec,
+            visual_rad,
+            diff,
+            opt_spin,
+            params.cam_tf.map(|t| t.translation),
+        );
     }
 }
 
@@ -472,33 +472,32 @@ fn draw_body_orbit_and_overlays(
             body.body_type,
             flags.is_blown_out_quasi,
         )
+        && let Some(ctf) = params.cam_tf
     {
-        if let Some(ctf) = params.cam_tf {
-            let cam_dist = ctf.translation.distance(body_vec);
-            let sat_fade = compute_satellite_glint_resolution_fade(
-                body_vec,
-                cam_dist,
-                opt_satellite,
-                parent_query,
-            );
-            if sat_fade > 0.01 {
-                let (photo_col, weight) =
-                    crate::rendering::bodies::palettes::compute_optical_glint_photometry(
-                        body, mass.0, temp_k, comp,
-                    );
-                let c = photo_col.to_srgba();
-                let glint_col = Color::srgba(c.red, c.green, c.blue, weight * sat_fade);
-                draw_distant_optical_glint(
-                    gizmos,
-                    body_vec,
-                    ctf.translation,
-                    *ctf.up(),
-                    *ctf.right(),
-                    visual_rad,
-                    glint_col,
-                    body.body_type,
+        let cam_dist = ctf.translation.distance(body_vec);
+        let sat_fade = compute_satellite_glint_resolution_fade(
+            body_vec,
+            cam_dist,
+            opt_satellite,
+            parent_query,
+        );
+        if sat_fade > 0.01 {
+            let (photo_col, weight) =
+                crate::rendering::bodies::palettes::compute_optical_glint_photometry(
+                    body, mass.0, temp_k, comp,
                 );
-            }
+            let c = photo_col.to_srgba();
+            let glint_col = Color::srgba(c.red, c.green, c.blue, weight * sat_fade);
+            draw_distant_optical_glint(
+                gizmos,
+                body_vec,
+                ctf.translation,
+                *ctf.up(),
+                *ctf.right(),
+                visual_rad,
+                glint_col,
+                body.body_type,
+            );
         }
     }
 

@@ -8,12 +8,12 @@ use bevy::prelude::*;
 use protostellar::game::phases::{
     GlobalTrophies, LateHeavyBombardmentState, PhaseManager, SystemPhase,
 };
+use protostellar::simulation::SimulationPlugin;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
 use protostellar::simulation::scenarios::{
-    handle_load_scenario_events, ActiveScenarioState, LoadScenarioEvent, ScenarioPreset,
+    ActiveScenarioState, LoadScenarioEvent, ScenarioPreset, handle_load_scenario_events,
 };
-use protostellar::simulation::SimulationPlugin;
 
 fn create_test_app() -> App {
     let mut app = App::new();

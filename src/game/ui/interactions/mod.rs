@@ -55,6 +55,7 @@ pub struct UiOptionalState<'w> {
     pub hz_config: Option<ResMut<'w, HabitableZoneConfig>>,
     pub saves_panel: Option<ResMut<'w, crate::game::ui::SavesPanelState>>,
     pub audio_state: Option<ResMut<'w, crate::game::audio::CosmicAudioState>>,
+    pub audio_handles: Option<Res<'w, crate::game::audio::CosmicAudioHandles>>,
 }
 
 /// Campaign state and mission event writer bundle.
@@ -428,6 +429,7 @@ pub fn handle_ui_button_interactions(
         }
     }
 
+    let dispatched_any = !actions_to_dispatch.is_empty();
     for (_ent, action) in actions_to_dispatch {
         if action == UiButtonAction::CycleParticleDensity {
             handle_cycle_particle_density(&mut core.toast, &mut sim);
@@ -455,5 +457,20 @@ pub fn handle_ui_button_interactions(
             sim.theia_state.as_deref_mut(),
             sim.sim_time.elapsed_years,
         );
+    }
+
+    if dispatched_any
+        && let (Some(audio_state), Some(audio_handles)) = (
+            optional.audio_state.as_deref(),
+            optional.audio_handles.as_deref(),
+        )
+        && audio_state.enabled
+        && let Some(ref cue) = audio_handles.ui_click_cue
+    {
+        let vol = (audio_state.master_volume * 0.25).clamp(0.0, 1.0);
+        commands.spawn((
+            AudioPlayer::new(cue.clone()),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(vol)),
+        ));
     }
 }

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::simulation::components::*;
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 
-use super::gmc_fluid::{GmcCollapseEventReceiver, GpuJeansCollapseEvent, GMC_CELL_VOLUME_AU3};
+use super::gmc_fluid::{GMC_CELL_VOLUME_AU3, GmcCollapseEventReceiver, GpuJeansCollapseEvent};
 
 /// Receives Jeans collapse events on the Main App CPU side and dynamically spawns protostellar entities.
 pub fn receive_gmc_collapse_events(
@@ -65,7 +65,7 @@ pub fn receive_gmc_collapse_events(
 
             // Guard: Stars can spawn throughout the molecular cloud core and active spiral arms (r < 520 AU)
             let r_len = ev_pos.length();
-            if r_len > 520.0 {
+            if r_len > 1020.0 {
                 continue;
             }
 
@@ -116,7 +116,7 @@ fn compute_collapse_kinematics(
     let v_circ = crate::simulation::scenarios::molecular_cloud::calculate_gmc_orbital_speed(
         safe_r,
         central_mass,
-        8000.0,
+        crate::simulation::scenarios::molecular_cloud::GMC_DARK_MATTER_MASS_SOLAR,
         50.0,
     );
     let tangent = if ev_pos.cross(bevy::math::DVec3::Y).length_squared() > 1e-4 {

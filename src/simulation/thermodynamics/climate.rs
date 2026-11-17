@@ -111,6 +111,49 @@ pub fn retained_gas_envelope_bar(mass_solar: f64, gas_frac: f32) -> f32 {
     }
 }
 
+/// Computes the Clausius-Clapeyron saturation vapor pressure (bar) of pure $H_2O$
+/// over ice ($\le 273.16\text{ K}$) or liquid water ($> 273.16\text{ K}$), anchored at the
+/// water triple point ($273.16\text{ K}$, $0.00611657\text{ bar}$).
+pub fn water_saturation_vapor_pressure_bar(temp_k: f64) -> f32 {
+    const T_TRIPLE_K: f64 = 273.16;
+    const P_TRIPLE_BAR: f64 = 0.006_116_57;
+    if temp_k <= 50.0 {
+        return 0.0;
+    }
+    let delta_h_over_r = if temp_k <= T_TRIPLE_K {
+        6149.0 // Sublimation enthalpy / R_v (ice -> vapor)
+    } else {
+        5308.0 // Vaporization enthalpy / R_v (liquid -> vapor)
+    };
+    let exponent = delta_h_over_r * (1.0 / T_TRIPLE_K - 1.0 / temp_k.min(647.0));
+    (P_TRIPLE_BAR * exponent.exp()).clamp(0.0, 220.64) as f32
+}
+
+/// Returns whether a non-giant world gravitationally retains a long-lived secondary
+/// outgassed $N_2$/$CO_2$/$H_2O$ atmosphere against thermal/XUV escape and solar wind stripping.
+/// Warm bodies require sufficient gravity ($\ge 0.15\,M_\oplus$); cryogenic outer-disk bodies
+/// ($< 140\text{ K}$) like Titan ($\ge 0.020\,M_\oplus$) can hold cold heavy $N_2$/$CH_4$.
+pub fn can_retain_secondary_atmosphere(
+    body_type: BodyType,
+    mass_solar: f64,
+    surface_temp: f64,
+    has_water_volatiles: bool,
+) -> bool {
+    if body_type.is_star_or_remnant()
+        || matches!(
+            body_type,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+        )
+    {
+        return false;
+    }
+    if surface_temp < 140.0 {
+        has_water_volatiles && mass_solar >= 0.020 * crate::utils::constants::EARTH_MASS_SOLAR
+    } else {
+        mass_solar >= 0.15 * crate::utils::constants::EARTH_MASS_SOLAR
+    }
+}
+
 fn update_volatile_condensation(
     opt_vol: &mut Option<&mut VolatileInventory>,
     body_type: BodyType,
@@ -121,7 +164,9 @@ fn update_volatile_condensation(
     surface_temp: f64,
 ) -> (f32, f32) {
     let retained_gas_bar = retained_gas_envelope_bar(b_mass_solar, comp_gas_frac);
-    let Some(ref mut vol) = opt_vol else {
+    let can_retain_secondary_atm =
+        can_retain_secondary_atmosphere(body_type, b_mass_solar, surface_temp, has_water_volatiles);
+    let Some(vol) = opt_vol else {
         return (0.0, retained_gas_bar);
     };
     if retained_gas_bar > 0.0 {
@@ -134,7 +179,7 @@ fn update_volatile_condensation(
 
     let max_ocean = if vol.delivered_water_m_earth > 1e-6 {
         (vol.delivered_water_m_earth / 0.0005).clamp(0.0, 0.85) as f32
-    } else {
+    } else if can_retain_secondary_atm || (surface_temp < 175.0 && current_ice > 0.15) {
         let ice_ocean = vol
             .ocean_coverage_frac
             .max((current_ice * 3.0).clamp(0.0, 0.85));
@@ -142,25 +187,36 @@ fn update_volatile_condensation(
             vol.delivered_water_m_earth = f64::from(ice_ocean) * 0.0005;
         }
         ice_ocean
+    } else {
+        0.0
     };
 
     let condensation_frac = compute_steam_condensation_fraction(surface_temp);
-    let can_retain_secondary_atm = matches!(
-        body_type,
-        BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
-    ) || b_mass_solar
-        >= 0.015 * crate::utils::constants::EARTH_MASS_SOLAR;
     if can_retain_secondary_atm && max_ocean > 0.005 {
         let outgassed_n2_co2_h2o_bar = (0.08 + max_ocean * 1.15).clamp(0.08, 1.50);
         vol.atmospheric_pressure_bar = vol.atmospheric_pressure_bar.max(outgassed_n2_co2_h2o_bar);
     }
 
+    // Sublimating / evaporating H2O creates a transient steam vapor atmosphere in vacuum once T >= 175 K
+    let p_sat = if surface_temp >= 175.0 && vol.delivered_water_m_earth > 1e-6 && max_ocean > 0.005
+    {
+        let supply_cap = (vol.delivered_water_m_earth / 1e-7).clamp(0.0, 25.0) as f32;
+        water_saturation_vapor_pressure_bar(surface_temp).min(supply_cap)
+    } else {
+        0.0
+    };
     let steam_mult = if surface_temp >= 647.0 { 25.0 } else { 12.0 };
-    let steam_pressure = max_ocean * (1.0 - condensation_frac) * steam_mult;
+    let steam_pressure = (max_ocean * (1.0 - condensation_frac) * steam_mult).max(p_sat);
+    if steam_pressure > vol.atmospheric_pressure_bar {
+        vol.atmospheric_pressure_bar = steam_pressure;
+    }
     let atm_pressure = vol.atmospheric_pressure_bar.max(steam_pressure);
 
-    // Liquid water requires atmospheric pressure above the 0.0061 bar triple point of H2O
-    let ocean_frac = if atm_pressure >= 0.0061 {
+    // Liquid water requires atmospheric pressure >= H2O triple point (0.0061 bar),
+    // and low-gravity worlds cannot stably condense equilibrium surface oceans unless an
+    // external/buffer atmosphere (>= 0.02 bar) suppresses explosive vacuum boil-off.
+    let ocean_frac = if atm_pressure >= 0.0061 && (can_retain_secondary_atm || atm_pressure >= 0.02)
+    {
         max_ocean * condensation_frac
     } else {
         0.0
@@ -214,6 +270,11 @@ fn determine_climate_coverage(
                 } else {
                     0.0
                 }
+            }
+            // In vacuum without gas, solid water ice stays stable on the surface when cold (< 175 K),
+            // whereas warm vacuum causes exposed ice to sublimate away.
+            ClimateRegime::AirlessVacuum if surface_temp < 175.0 && current_ice > 0.15 => {
+                (current_ice * 1.4).clamp(0.25, 1.0)
             }
             _ => 0.0,
         }
@@ -333,7 +394,7 @@ pub fn update_body_climate_and_biosphere(
     let cloud_refl = if atm_pressure > 0.05 { 0.10 } else { 0.0 };
     let reported_albedo = (final_surface_albedo + cloud_refl).clamp(0.12, 0.78);
 
-    if let Some(ref mut climate) = opt_climate {
+    if let Some(climate) = opt_climate {
         climate.surface_temperature_k = thermal.surface_temp as f32;
         climate.equilibrium_temperature_k = thermal.equilibrium_temp as f32;
         climate.greenhouse_delta_k = thermal.greenhouse_delta;
@@ -344,20 +405,19 @@ pub fn update_body_climate_and_biosphere(
         climate.polar_ice_cap_latitude_deg = polar_ice_lat;
     } else if matches!(
         b_body.body_type,
-        BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
-    ) {
-        if let Ok(mut cmd) = commands.get_entity(body_ent) {
-            cmd.insert(PlanetaryClimate {
-                surface_temperature_k: thermal.surface_temp as f32,
-                equilibrium_temperature_k: thermal.equilibrium_temp as f32,
-                greenhouse_delta_k: thermal.greenhouse_delta,
-                albedo: reported_albedo,
-                ice_coverage_frac: ice_coverage,
-                cloud_coverage_frac: cloud_coverage,
-                climate_regime,
-                polar_ice_cap_latitude_deg: polar_ice_lat,
-            });
-        }
+        BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet | BodyType::Moon
+    ) && let Ok(mut cmd) = commands.get_entity(body_ent)
+    {
+        cmd.insert(PlanetaryClimate {
+            surface_temperature_k: thermal.surface_temp as f32,
+            equilibrium_temperature_k: thermal.equilibrium_temp as f32,
+            greenhouse_delta_k: thermal.greenhouse_delta,
+            albedo: reported_albedo,
+            ice_coverage_frac: ice_coverage,
+            cloud_coverage_frac: cloud_coverage,
+            climate_regime,
+            polar_ice_cap_latitude_deg: polar_ice_lat,
+        });
     }
 
     if matches!(
@@ -414,7 +474,7 @@ fn update_body_biosphere(
 
     let habitability = temp_score * water_score * shield_score * atm_score;
 
-    if let Some(ref mut bio) = opt_bio {
+    if let Some(bio) = opt_bio {
         bio.habitability_score = habitability;
         if habitability >= 0.35 {
             bio.biomass_coverage_frac = (bio.biomass_coverage_frac

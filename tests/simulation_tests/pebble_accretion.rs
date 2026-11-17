@@ -272,7 +272,7 @@ fn test_zero_gas_scale_zero_gas_density() {
 fn test_theia_giant_impact_classification_and_moon_formation() {
     use protostellar::game::ui::types::{is_embryo_body, is_major_body};
     use protostellar::simulation::accretion::impact_regimes::{
-        classify_impact, ImpactParams, ImpactRegime,
+        ImpactParams, ImpactRegime, classify_impact,
     };
     use protostellar::simulation::components::{BodyType, Composition, InternalDifferentiation};
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
@@ -319,7 +319,7 @@ fn test_theia_giant_impact_classification_and_moon_formation() {
 fn test_stellar_engulfment_and_moon_capture_surface_clearance() {
     use protostellar::simulation::accretion::collisions::is_physically_interpenetrating;
     use protostellar::simulation::accretion::impact_regimes::{
-        classify_impact, ImpactParams, ImpactRegime,
+        ImpactParams, ImpactRegime, classify_impact,
     };
     use protostellar::simulation::components::BodyType;
     use protostellar::utils::constants::{EARTH_MASS_SOLAR, JUPITER_MASS_SOLAR};
@@ -379,7 +379,7 @@ fn test_stellar_engulfment_and_moon_capture_surface_clearance() {
 #[test]
 fn test_roche_lobe_overflow_mass_transfer() {
     use protostellar::simulation::accretion::{
-        process_roche_lobe_overflow, CataclysmicVariable, RocheLobeOverflow,
+        CataclysmicVariable, RocheLobeOverflow, process_roche_lobe_overflow,
     };
     use protostellar::simulation::components::{
         BodyType, CelestialBody, Mass, Radius, SimPosition, SimVelocity,
@@ -454,7 +454,7 @@ fn test_roche_lobe_overflow_mass_transfer() {
 
 #[test]
 fn test_classical_nova_ignition_threshold() {
-    use protostellar::simulation::accretion::{process_classical_novae, CataclysmicVariable};
+    use protostellar::simulation::accretion::{CataclysmicVariable, process_classical_novae};
     use protostellar::simulation::components::SupernovaEvent;
     use protostellar::simulation::components::{BodyType, CelestialBody, Mass, SimPosition};
 
@@ -507,9 +507,9 @@ fn test_classical_nova_ignition_threshold() {
 fn test_s4714_sgr_a_roche_stream_multi_star_cluster() {
     use bevy::prelude::*;
     use protostellar::rendering::effects::roche_stream::{
-        update_roche_streams, RocheStreamMaterial, RocheStreamVisual,
+        RocheStreamMaterial, RocheStreamVisual, update_roche_streams,
     };
-    use protostellar::simulation::accretion::{process_roche_lobe_overflow, RocheLobeOverflow};
+    use protostellar::simulation::accretion::{RocheLobeOverflow, process_roche_lobe_overflow};
     use protostellar::simulation::components::{
         BodyType, CelestialBody, Mass, Radius, SimPosition, SimVelocity, Temperature,
     };
@@ -606,7 +606,7 @@ fn test_earth_accumulates_water_and_oceans_via_pebble_accretion() {
     use protostellar::simulation::components::*;
     use protostellar::simulation::pebble_accretion::apply_pebble_accretion;
     use protostellar::simulation::resources::*;
-    use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+    use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
     use protostellar::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU, SOLAR_RADIUS_AU};
 
     let mut app = App::new();

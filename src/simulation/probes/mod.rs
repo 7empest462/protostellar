@@ -269,9 +269,7 @@ fn process_launch_requests(
 
         let probe_entity = commands.spawn(probe_bundle).id();
 
-        if let (Some(ref mut meshes), Some(ref mut materials)) =
-            (&mut opt_meshes, &mut opt_materials)
-        {
+        if let (Some(meshes), Some(materials)) = (&mut opt_meshes, &mut opt_materials) {
             spawn_probe_mesh_hierarchy(&mut commands, probe_entity, is_orbiter, meshes, materials);
         }
 

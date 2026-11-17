@@ -33,7 +33,15 @@ pub fn update_body_terraforming_climate(
 
     let k_phase = (1.0 - (-1.5 * dt_yr).exp()).clamp(0.0, 1.0);
 
-    if t_surf < t_boil {
+    // Liquid water cannot remain stable on an open surface below H2O's 0.0061 bar triple point:
+    // below 273.16 K it freezes/deposits as ice; above 175 K it sublimates/boils directly to vapor.
+    if p_total < 0.0061 {
+        if t_surf >= 175.0 && terra.surface_liquid_water_m_earth > 1e-6 {
+            let boiled = terra.surface_liquid_water_m_earth * k_phase;
+            terra.surface_liquid_water_m_earth -= boiled;
+            terra.atmospheric_water_m_earth += boiled;
+        }
+    } else if t_surf < t_boil {
         // Temperature is below boiling point: atmospheric steam condenses into surface oceans
         if terra.atmospheric_water_m_earth > 1e-6 {
             let condensed = terra.atmospheric_water_m_earth * k_phase;
@@ -54,7 +62,11 @@ pub fn update_body_terraforming_climate(
     let p_total = (p_co2 + p_n2 + p_steam).max(0.0001);
 
     let total_water = terra.surface_liquid_water_m_earth + terra.atmospheric_water_m_earth;
-    let ocean_cov = (terra.surface_liquid_water_m_earth / 0.0006).clamp(0.0, 0.92) as f32;
+    let ocean_cov = if p_total >= 0.0061 {
+        (terra.surface_liquid_water_m_earth / 0.0006).clamp(0.0, 0.92) as f32
+    } else {
+        0.0
+    };
     vol.delivered_water_m_earth = total_water;
     vol.ocean_coverage_frac = ocean_cov;
     vol.atmospheric_pressure_bar = p_total;

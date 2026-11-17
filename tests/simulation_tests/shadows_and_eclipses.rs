@@ -51,8 +51,8 @@ fn test_planetary_ring_shadow_dayside_and_nightside() {
 #[test]
 fn test_ring_shadow_on_planet_cassini_division_and_hemispheres() {
     let spin_axis = Vec3::Y; // Equator in XZ plane
-                             // Star in northern celestial hemisphere at ~18 degrees inclination (Ly = 0.309, Lz = 0.951)
-                             // Max shadow distance is 1 / 0.309 = 3.236, which fully spans past the outer ring (2.85).
+    // Star in northern celestial hemisphere at ~18 degrees inclination (Ly = 0.309, Lz = 0.951)
+    // Max shadow distance is 1 / 0.309 = 3.236, which fully spans past the outer ring (2.85).
     let star_dir = Vec3::new(0.0, 0.3090, 0.9511).normalize();
 
     let r_inner = 1.25f32;

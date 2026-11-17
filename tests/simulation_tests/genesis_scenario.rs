@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
-use protostellar::simulation::scenarios::{spawn_accretion_disk_genesis, ScenarioPreset};
+use protostellar::simulation::scenarios::{ScenarioPreset, spawn_accretion_disk_genesis};
 use protostellar::utils::constants::*;
 
 #[test]
@@ -191,8 +191,8 @@ fn test_genesis_protostar_retains_inner_disk_without_premature_ignition() {
 
 #[test]
 fn test_inner_terrestrial_clump_promotion_threshold() {
-    use protostellar::rendering::particle_swarm::check_clump_promotions;
     use protostellar::rendering::particle_swarm::ParticleSwarmData;
+    use protostellar::rendering::particle_swarm::check_clump_promotions;
 
     let b_mass = 1e-10f32;
     let mut data = ParticleSwarmData {
@@ -436,9 +436,11 @@ fn test_key_i_triggers_star_ignition_and_cme() {
         .get::<IgnitionState>(star_entity)
         .expect("Ignition must exist");
     assert_eq!(ignition.shockwave_radius, 1.6);
-    assert!(toast
-        .message
-        .contains("Coronal Mass Ejection & Solar Blast Triggered"));
+    assert!(
+        toast
+            .message
+            .contains("Coronal Mass Ejection & Solar Blast Triggered")
+    );
 
     // 3. Pressing Shift+I triggers CME space weather outburst
     {
@@ -553,8 +555,8 @@ fn test_genesis_protostar_hayashi_contraction_density_growth_and_ignition() {
 fn test_genesis_milestones_and_lhb_alignment() {
     use bevy::math::DVec3;
     use protostellar::game::phases::{
-        genesis_milestones, monitor_phase_transitions, GlobalTrophies, LateHeavyBombardmentState,
-        MilestoneId, PhaseManager, SystemPhase,
+        GlobalTrophies, LateHeavyBombardmentState, MilestoneId, PhaseManager, SystemPhase,
+        genesis_milestones, monitor_phase_transitions,
     };
     use protostellar::simulation::scenarios::LoadScenarioEvent;
 
@@ -591,14 +593,16 @@ fn test_genesis_milestones_and_lhb_alignment() {
                 .any(|m| m.prompt.contains("Jupiter and Saturn")),
             "Genesis milestone prompts must not reference Jupiter and Saturn"
         );
-        assert!(pm
-            .milestones
-            .iter()
-            .any(|m| m.id == MilestoneId::GiantPlanetEmergence));
-        assert!(pm
-            .milestones
-            .iter()
-            .any(|m| m.id == MilestoneId::PlanetesimalBombardment));
+        assert!(
+            pm.milestones
+                .iter()
+                .any(|m| m.id == MilestoneId::GiantPlanetEmergence)
+        );
+        assert!(
+            pm.milestones
+                .iter()
+                .any(|m| m.id == MilestoneId::PlanetesimalBombardment)
+        );
     }
 
     // At t = 850 yr with zero formed planets, Genesis must not auto-trigger LHB
@@ -651,8 +655,8 @@ fn test_genesis_milestones_and_lhb_alignment() {
 fn test_genesis_late_ignition_preserves_forward_phases() {
     use bevy::math::DVec3;
     use protostellar::game::phases::{
-        monitor_phase_transitions, GlobalTrophies, LateHeavyBombardmentState, PhaseManager,
-        SystemPhase,
+        GlobalTrophies, LateHeavyBombardmentState, PhaseManager, SystemPhase,
+        monitor_phase_transitions,
     };
     use protostellar::simulation::scenarios::LoadScenarioEvent;
     use protostellar::simulation::thermodynamics::StarIgnitionEvent;

@@ -398,10 +398,8 @@ fn update_atmosphere_child_mesh(
                 let needs_mat_update = atmo_materials
                     .get(&mat_handle.0)
                     .is_some_and(|existing| existing.uniforms != *uniforms);
-                if needs_mat_update {
-                    if let Some(mut mat) = atmo_materials.get_mut(&mat_handle.0) {
-                        mat.uniforms = uniforms.clone();
-                    }
+                if needs_mat_update && let Some(mut mat) = atmo_materials.get_mut(&mat_handle.0) {
+                    mat.uniforms = uniforms.clone();
                 }
             } else if transform.scale != Vec3::ZERO {
                 transform.scale = Vec3::ZERO;
@@ -434,10 +432,10 @@ fn despawn_atmosphere_children(
     >,
 ) {
     for child in children.iter() {
-        if atmo_children_query.get(child).is_ok() {
-            if let Ok(mut c_cmd) = commands.get_entity(child) {
-                c_cmd.try_despawn();
-            }
+        if atmo_children_query.get(child).is_ok()
+            && let Ok(mut c_cmd) = commands.get_entity(child)
+        {
+            c_cmd.try_despawn();
         }
     }
 }
@@ -464,7 +462,7 @@ fn extract_primary_star_lighting(
     clippy::too_many_arguments,
     reason = "Atmosphere uniform calculation requires planetary state components and starlight parameters"
 )]
-fn build_planet_atmosphere_uniforms(
+pub(crate) fn build_planet_atmosphere_uniforms(
     p_pos: &SimPosition,
     visual_r: f32,
     body: &CelestialBody,
@@ -479,6 +477,7 @@ fn build_planet_atmosphere_uniforms(
     opt_planet_mat: Option<&PlanetMaterial>,
     star_pos: Vec3,
     star_lum: f32,
+    show_clouds: bool,
 ) -> (AtmosphereUniforms, bool, f32) {
     let norm = comp.normalized();
     let gas_envelope_bar = retained_gas_envelope_bar(mass_solar, norm.gas_frac as f32);
@@ -495,7 +494,11 @@ fn build_planet_atmosphere_uniforms(
     } else {
         0.0
     };
-    let cloud_coverage = raw_cloud.max(gas_cloud);
+    let cloud_coverage = if show_clouds {
+        raw_cloud.max(gas_cloud)
+    } else {
+        0.0
+    };
 
     let is_gas_giant = body.body_type == BodyType::GasGiant || norm.gas_frac > 0.25;
     let is_ice_giant =
@@ -534,7 +537,11 @@ fn build_planet_atmosphere_uniforms(
 
     if let Some(p_mat) = opt_planet_mat {
         let u = &p_mat.extension.uniforms;
-        let mat_clouds = u.climate_and_bio.w.max(cloud_coverage);
+        let mat_clouds = if show_clouds {
+            u.climate_and_bio.w.max(cloud_coverage)
+        } else {
+            0.0
+        };
         cloud_and_time_params = Vec4::new(mat_clouds, u.time, u.spin_angle, u.color_seed.x);
         spin_axis = u.spin_axis;
         let raw_w = u.tidal_deformation.w;
@@ -684,6 +691,69 @@ fn sync_single_atmosphere_entity(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Resolves corona or planetary atmosphere uniforms and cutaway flag for a single body"
+)]
+fn build_body_atmosphere_shell_state(
+    p_pos: &SimPosition,
+    visual_r: f32,
+    body: &CelestialBody,
+    comp: &Composition,
+    mass_solar: f64,
+    temp: &Temperature,
+    opt_climate: Option<&PlanetaryClimate>,
+    opt_vol: Option<&VolatileInventory>,
+    opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
+    opt_diff: Option<&InternalDifferentiation>,
+    opt_spin: Option<&SpinState>,
+    opt_flare: Option<&crate::simulation::space_weather::StellarFlareState>,
+    opt_planet_mat: Option<&PlanetMaterial>,
+    star_pos: Vec3,
+    star_lum: f32,
+    elapsed_secs: f32,
+    show_clouds: bool,
+) -> (AtmosphereUniforms, bool, f32) {
+    let (mut uniforms, has_atmosphere, shell_outer_scale) =
+        if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
+            build_stellar_corona_state(
+                p_pos,
+                visual_r,
+                body.body_type,
+                temp.0,
+                opt_spin,
+                opt_planet_mat,
+                opt_flare,
+                elapsed_secs,
+            )
+        } else {
+            build_planet_atmosphere_uniforms(
+                p_pos,
+                visual_r,
+                body,
+                comp,
+                mass_solar,
+                temp,
+                opt_climate,
+                opt_vol,
+                opt_aurora,
+                opt_diff,
+                opt_spin,
+                opt_planet_mat,
+                star_pos,
+                star_lum,
+                show_clouds,
+            )
+        };
+    if opt_planet_mat
+        .as_ref()
+        .is_some_and(|m| m.extension.uniforms.cutaway_params.x > 0.5)
+    {
+        uniforms.ring_and_ozone_params.w += 4.0;
+    }
+    (uniforms, has_atmosphere, shell_outer_scale)
+}
+
 /// Synchronizes 3D planetary atmospheric limb glow shells, stellar coronae, materials, and starlight vectors.
 #[allow(
     clippy::type_complexity,
@@ -692,9 +762,10 @@ fn sync_single_atmosphere_entity(
 )]
 pub fn sync_planetary_atmospheres(
     mut commands: Commands,
-    (time, sim_time): (
+    (time, sim_time, opt_player_state): (
         Res<Time>,
         Option<Res<crate::simulation::resources::SimTime>>,
+        Option<Res<crate::simulation::resources::PlayerInteractionState>>,
     ),
     visual_assets: Option<Res<VisualAssets>>,
     planet_materials: Option<Res<Assets<PlanetMaterial>>>,
@@ -741,6 +812,13 @@ pub fn sync_planetary_atmospheres(
         .as_deref()
         .map_or_else(|| time.elapsed_secs(), |st| st.visual_time_secs);
 
+    let show_atmospheres = opt_player_state
+        .as_deref()
+        .is_none_or(crate::simulation::resources::PlayerInteractionState::show_atmospheres);
+    let show_clouds = opt_player_state
+        .as_deref()
+        .is_none_or(crate::simulation::resources::PlayerInteractionState::show_clouds);
+
     for (
         planet_ent,
         p_pos,
@@ -757,7 +835,11 @@ pub fn sync_planetary_atmospheres(
         (opt_aurora, opt_diff, opt_spin, opt_flare, opt_bhs),
     ) in planets_query.iter()
     {
-        if should_skip_atmosphere_shell(body, comp, opt_bhs) {
+        let is_stellar_corona =
+            body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar;
+        if (!show_atmospheres && !is_stellar_corona)
+            || should_skip_atmosphere_shell(body, comp, opt_bhs)
+        {
             if let Some(children) = opt_children {
                 despawn_atmosphere_children(&mut commands, children, &atmo_children_query);
             }
@@ -771,43 +853,25 @@ pub fn sync_planetary_atmospheres(
                 .and_then(|assets| assets.get(&h.0))
         });
 
-        let (mut uniforms, has_atmosphere, shell_outer_scale) =
-            if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
-                build_stellar_corona_state(
-                    p_pos,
-                    visual_r,
-                    body.body_type,
-                    temp.0,
-                    opt_spin,
-                    opt_planet_mat,
-                    opt_flare,
-                    elapsed_secs,
-                )
-            } else {
-                build_planet_atmosphere_uniforms(
-                    p_pos,
-                    visual_r,
-                    body,
-                    comp,
-                    mass.0,
-                    temp,
-                    opt_climate,
-                    opt_vol,
-                    opt_aurora,
-                    opt_diff,
-                    opt_spin,
-                    opt_planet_mat,
-                    star_pos,
-                    star_lum,
-                )
-            };
-
-        if opt_planet_mat
-            .as_ref()
-            .is_some_and(|m| m.extension.uniforms.cutaway_params.x > 0.5)
-        {
-            uniforms.ring_and_ozone_params.w += 4.0;
-        }
+        let (uniforms, has_atmosphere, shell_outer_scale) = build_body_atmosphere_shell_state(
+            p_pos,
+            visual_r,
+            body,
+            comp,
+            mass.0,
+            temp,
+            opt_climate,
+            opt_vol,
+            opt_aurora,
+            opt_diff,
+            opt_spin,
+            opt_flare,
+            opt_planet_mat,
+            star_pos,
+            star_lum,
+            elapsed_secs,
+            show_clouds,
+        );
 
         sync_single_atmosphere_entity(
             &mut commands,

@@ -80,9 +80,9 @@ fn test_t2_r1_grid_domain_outflow_boundary_conditions() {
         let idx = grid_index_1d(x, y, z);
         assert!(idx < GMC_TOTAL_CELLS);
         let world_pos = grid_to_world_pos(x, y, z);
-        assert!(world_pos.x.abs() <= 550.0);
-        assert!(world_pos.y.abs() <= 550.0);
-        assert!(world_pos.z.abs() <= 550.0);
+        assert!(world_pos.x.abs() <= 1100.0);
+        assert!(world_pos.y.abs() <= 1100.0);
+        assert!(world_pos.z.abs() <= 1100.0);
     }
 }
 
@@ -225,11 +225,11 @@ fn test_t2_r2_depleted_gas_cell_vacuuming_floor() {
 
 #[test]
 fn test_t2_r3_ray_missing_bounding_box_returns_clear() {
-    // Ray parallel to box but placed outside domain (y = 1000 AU, shooting along x)
-    let ray_origin = Vec3::new(-1000.0, 1000.0, 0.0);
+    // Ray parallel to box but placed outside domain (y = 1800 AU, shooting along x)
+    let ray_origin = Vec3::new(-1500.0, 1800.0, 0.0);
     let ray_dir = Vec3::new(1.0, 0.0, 0.0);
-    let box_min = Vec3::splat(-550.0);
-    let box_max = Vec3::splat(550.0);
+    let box_min = Vec3::splat(-1100.0);
+    let box_max = Vec3::splat(1100.0);
 
     let hit = intersect_ray_aabb(ray_origin, ray_dir, box_min, box_max);
     assert!(hit.is_none());
@@ -240,16 +240,16 @@ fn test_t2_r3_camera_embedded_inside_nebula_volume() {
     // Camera located at origin (0, 0, 0) inside GMC volume looking along +z
     let ray_origin = Vec3::ZERO;
     let ray_dir = Vec3::new(0.0, 0.0, 1.0);
-    let box_min = Vec3::splat(-550.0);
-    let box_max = Vec3::splat(550.0);
+    let box_min = Vec3::splat(-1100.0);
+    let box_max = Vec3::splat(1100.0);
 
     let hit = intersect_ray_aabb(ray_origin, ray_dir, box_min, box_max);
     assert!(hit.is_some());
     let (t_near, t_far) = hit.unwrap();
 
-    // Inside volume: t_near must be 0.0, t_far is distance to front boundary (+550 AU)
+    // Inside volume: t_near must be 0.0, t_far is distance to front boundary (+1100 AU)
     assert_eq!(t_near, 0.0);
-    assert!((t_far - 550.0).abs() < 1e-4);
+    assert!((t_far - 1100.0).abs() < 1e-4);
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn test_t2_r3_total_optical_extinction_early_termination() {
 fn test_t2_r3_zero_density_volume_full_transparency() {
     // Cloud core with zero density (completely cleared)
     let step_count = 64;
-    let step_size_au = 1100.0 / step_count as f32;
+    let step_size_au = 2200.0 / step_count as f32;
     let absorption_coeff = 0.015f32;
     let zero_density = 0.0f32;
 
@@ -285,10 +285,10 @@ fn test_t2_r3_zero_density_volume_full_transparency() {
 
 #[test]
 fn test_t2_r3_star_outside_box_cavity_handling() {
-    // Star placed at 800 AU (outside the 550 AU GMC box)
-    let star_pos = Vec3::new(800.0, 0.0, 0.0);
-    let box_min = Vec3::splat(-550.0);
-    let box_max = Vec3::splat(550.0);
+    // Star placed at 1500 AU (outside the 1100 AU GMC box)
+    let star_pos = Vec3::new(1500.0, 0.0, 0.0);
+    let box_min = Vec3::splat(-1100.0);
+    let box_max = Vec3::splat(1100.0);
 
     let is_inside = star_pos.x >= box_min.x
         && star_pos.x <= box_max.x
@@ -297,12 +297,12 @@ fn test_t2_r3_star_outside_box_cavity_handling() {
         && star_pos.z >= box_min.z
         && star_pos.z <= box_max.z;
 
-    assert!(!is_inside, "Star at 800 AU must be detected outside box");
+    assert!(!is_inside, "Star at 1500 AU must be detected outside box");
 
     // Cavity carving must not panic or cause negative indices
     let cavity_r = calculate_ionization_cavity_radius_au(100.0, 5e-11, true);
     assert!(cavity_r > 0.0);
-    // Nearest point on box is at x = 550; distance is 250 AU > cavity_r
+    // Nearest point on box is at x = 1100; distance is 400 AU > cavity_r
     let dist_to_box = star_pos.x - box_max.x;
     assert!(dist_to_box > cavity_r);
 }

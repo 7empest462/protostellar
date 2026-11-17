@@ -47,15 +47,16 @@ fn compute_gmc_cluster_acc(
     let (cluster_com, cluster_stellar_mass) = cluster_com_mass;
     let r_vec = pos - cluster_com;
     let r_len = r_vec.length();
-    let r_core = 35.0;
+    let r_core = 65.0;
     let total_core_mass = 50.0 + cluster_stellar_mass * 0.6;
     let cloud_pull =
         -(G_ASTRO * total_core_mass / (r_len * r_len + r_core * r_core).powf(1.5)) * r_vec;
     pert_acc += cloud_pull;
 
     // Dark Matter NFW Halo to hold the galaxy structure together in the outer reaches
-    let dark_matter_mass = 8000.0;
-    let r_s = 150.0; // scale radius
+    let dark_matter_mass =
+        crate::simulation::scenarios::molecular_cloud::GMC_DARK_MATTER_MASS_SOLAR;
+    let r_s = crate::simulation::scenarios::molecular_cloud::GMC_NFW_SCALE_RADIUS_AU;
     let x = r_len / r_s;
     if x > 1e-4 {
         let ln_1p_x = (1.0 + x).ln();
@@ -279,10 +280,10 @@ fn accumulate_massive_body_pulls(
         pert_acc += far_acc;
     } else if b_mass <= 1_000_000.0 && massive_data.len() >= 4 {
         // 4-wide SIMD evaluation across `massive_data` chunks of 4
-        if let Some(s_idx) = star_index {
-            if let Some(star_entry) = massive_data.iter().find(|&&(.., m_idx)| m_idx == s_idx) {
-                accumulate_pair(star_entry);
-            }
+        if let Some(s_idx) = star_index
+            && let Some(star_entry) = massive_data.iter().find(|&&(.., m_idx)| m_idx == s_idx)
+        {
+            accumulate_pair(star_entry);
         }
         let mut chunks = massive_data.chunks_exact(4);
         let mut simd_acc = DVec3::ZERO;
@@ -449,11 +450,7 @@ pub fn compute_single_body_acc_with_companion(
         acc *= max_acc / acc_mag;
     }
 
-    if acc.is_finite() {
-        acc
-    } else {
-        DVec3::ZERO
-    }
+    if acc.is_finite() { acc } else { DVec3::ZERO }
 }
 
 pub fn apply_planetary_migration_and_lhb(
@@ -496,29 +493,31 @@ pub fn apply_planetary_migration_and_lhb(
             lhb_state.resonance_crossed = true;
             let v_j = body_data.get(j_i).map(|b| b.vel);
             let v_s = body_data.get(s_i).map(|b| b.vel);
-            if let Some(v_j) = v_j {
-                if let Some(j_b) = body_data.get_mut(j_i) {
-                    j_b.vel += v_j.cross(DVec3::Y).normalize_or_zero() * (0.02 * v_j.length());
-                }
+            if let Some(v_j) = v_j
+                && let Some(j_b) = body_data.get_mut(j_i)
+            {
+                j_b.vel += v_j.cross(DVec3::Y).normalize_or_zero() * (0.02 * v_j.length());
             }
-            if let Some(v_s) = v_s {
-                if let Some(s_b) = body_data.get_mut(s_i) {
-                    s_b.vel -= v_s.cross(DVec3::Y).normalize_or_zero() * (0.03 * v_s.length());
-                }
+            if let Some(v_s) = v_s
+                && let Some(s_b) = body_data.get_mut(s_i)
+            {
+                s_b.vel -= v_s.cross(DVec3::Y).normalize_or_zero() * (0.03 * v_s.length());
             }
         }
 
-        if r_j > 5.2 && progress < 0.95 {
-            if let Some(j_b) = body_data.get_mut(j_i) {
-                let v_dir = j_b.vel.normalize_or_zero();
-                j_b.acc -= v_dir * 0.0004;
-            }
+        if r_j > 5.2
+            && progress < 0.95
+            && let Some(j_b) = body_data.get_mut(j_i)
+        {
+            let v_dir = j_b.vel.normalize_or_zero();
+            j_b.acc -= v_dir * 0.0004;
         }
-        if r_s < 9.58 && progress < 0.95 {
-            if let Some(s_b) = body_data.get_mut(s_i) {
-                let v_dir = s_b.vel.normalize_or_zero();
-                s_b.acc += v_dir * 0.0006;
-            }
+        if r_s < 9.58
+            && progress < 0.95
+            && let Some(s_b) = body_data.get_mut(s_i)
+        {
+            let v_dir = s_b.vel.normalize_or_zero();
+            s_b.acc += v_dir * 0.0006;
         }
     } else if progress >= 0.05 && !lhb_state.resonance_crossed {
         lhb_state.resonance_crossed = true;
@@ -694,20 +693,19 @@ pub fn gmc_dynamical_friction_acc(
 /// The acceleration is a = -grad(Phi_spiral), guiding stellar orbits into trailing grand-design spiral arms.
 pub fn gmc_spiral_density_wave_acc(pos: DVec3, elapsed_years: f64) -> DVec3 {
     let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt();
-    if r_cyl < 15.0 || r_cyl > 550.0 || elapsed_years < 600.0 {
+    if r_cyl < 25.0 || r_cyl > 1080.0 || elapsed_years < 600.0 {
         return DVec3::ZERO;
     }
 
-    // Pattern speed: ~0.00045 rad/year (rotation period ~14,000 years)
-    let omega_p = 0.00045;
+    // Pattern speed: ~0.00028 rad/year matching expanded 1100 AU galactic disk scale
+    let omega_p = 0.00028;
     let pattern_angle = omega_p * elapsed_years;
 
-    // m = 2 (Two-armed grand design spiral)
-    let m = 4.0; // 4-armed spiral (Milky Way style)
+    let m = 4.0; // 4-armed grand-design spiral (Milky Way style)
 
-    // Pitch angle i ~ 18 deg -> k = 1 / tan(i) ~ 3.08
-    let k = 6.16; // Adjusted for m=4 to maintain same pitch angle
-    let r_0 = 60.0; // Reference radius in AU
+    // Logarithmic trailing spiral wavenumber tuned for long sweeping arms across 110..980 AU
+    let k = 7.2;
+    let r_0 = 110.0; // Reference radius in AU
 
     let phi = pos.z.atan2(pos.x);
     // Spiral phase: xi = m * (phi - Omega_p * t) - k * ln(R / R_0)
@@ -716,14 +714,14 @@ pub fn gmc_spiral_density_wave_acc(pos: DVec3, elapsed_years: f64) -> DVec3 {
     let cos_xi = xi.cos();
 
     // Vertical profile: sech^2(y / z_0) = 1 / cosh^2(y / z_0)
-    let z_0 = 35.0; // Vertical scale height in AU
+    let z_0 = 60.0; // Vertical scale height in AU
     let y_scaled = pos.y / z_0;
     let cosh_y = y_scaled.cosh();
     let sech2_y = 1.0 / (cosh_y * cosh_y).max(1e-6);
 
-    // Radial amplitude: vanishes at center (protects bulge/SMBH), peaks at ~180-220 AU, tapers at edge
-    let r_scale = 120.0;
-    let r_disk = 320.0;
+    // Radial amplitude: vanishes at center (protects bulge/SMBH), peaks in mid-disk, tapers toward halo edge
+    let r_scale = 240.0;
+    let r_disk = 640.0;
     let u = r_cyl / r_scale;
     let radial_profile = (u / (1.0 + u * u)) * (-r_cyl / r_disk).exp();
 
@@ -736,7 +734,7 @@ pub fn gmc_spiral_density_wave_acc(pos: DVec3, elapsed_years: f64) -> DVec3 {
     }
 
     // Perturbation amplitude (~12-15% of background NFW halo force)
-    let a_0 = -(G_ASTRO * 550.0 * smooth_t); // Negative so particles fall into the visual arms
+    let a_0 = -(G_ASTRO * 950.0 * smooth_t); // Negative so particles fall into the visual arms
     let phi_amp = a_0 * radial_profile * sech2_y;
 
     // Derivative d(radial_profile)/dr:

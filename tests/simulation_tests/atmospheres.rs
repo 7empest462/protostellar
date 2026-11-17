@@ -2,8 +2,8 @@
 
 use bevy::math::Vec3;
 use bevy::prelude::*;
-use protostellar::rendering::bodies::atmospheres::*;
 use protostellar::rendering::bodies::VisualBody;
+use protostellar::rendering::bodies::atmospheres::*;
 use protostellar::rendering::materials::*;
 use protostellar::simulation::components::*;
 use protostellar::utils::constants::*;

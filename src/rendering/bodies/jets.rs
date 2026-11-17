@@ -196,10 +196,10 @@ fn auto_provision_relativistic_jet_states(
             }
             _ => None,
         };
-        if let Some(state) = auto_state {
-            if let Ok(mut cmd) = commands.get_entity(entity) {
-                cmd.try_insert(state);
-            }
+        if let Some(state) = auto_state
+            && let Ok(mut cmd) = commands.get_entity(entity)
+        {
+            cmd.try_insert(state);
         }
     }
 }

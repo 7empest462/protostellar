@@ -26,12 +26,12 @@ pub(super) fn update_physics_energy_monitor(
     for (i, b) in body_data.iter().enumerate() {
         kinetic_e += 0.5 * b.mass * b.vel.length_squared();
 
-        if let Some(s_idx) = star_index {
-            if i != s_idx {
-                let dist_sq = (b.pos - star_pos).length_squared() + softening_sq;
-                let dist = dist_sq.sqrt();
-                potential_e -= (G_ASTRO * star_mass * b.mass) / dist;
-            }
+        if let Some(s_idx) = star_index
+            && i != s_idx
+        {
+            let dist_sq = (b.pos - star_pos).length_squared() + softening_sq;
+            let dist = dist_sq.sqrt();
+            potential_e -= (G_ASTRO * star_mass * b.mass) / dist;
         }
     }
 
@@ -159,14 +159,14 @@ pub fn enforce_dynamic_galactic_nucleus(
     };
 
     if should_transfer {
-        if let Some((curr_idx, curr_entity, _)) = current_central {
-            if curr_entity != cand_entity {
-                if let Some(old_b) = body_data.get_mut(curr_idx) {
-                    old_b.is_central_star = false;
-                }
-                if let Ok(mut cmd) = commands.get_entity(curr_entity) {
-                    cmd.remove::<CentralStar>();
-                }
+        if let Some((curr_idx, curr_entity, _)) = current_central
+            && curr_entity != cand_entity
+        {
+            if let Some(old_b) = body_data.get_mut(curr_idx) {
+                old_b.is_central_star = false;
+            }
+            if let Ok(mut cmd) = commands.get_entity(curr_entity) {
+                cmd.remove::<CentralStar>();
             }
         }
 

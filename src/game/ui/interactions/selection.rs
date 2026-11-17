@@ -37,10 +37,14 @@ fn compute_selected_query_min_orbit(selected_query: &SelectedWorldQuery) -> (Vec
     (star_pos, if min_r < f32::MAX { min_r } else { 1.0 })
 }
 
+#[allow(clippy::too_many_arguments, reason = "UI camera framing helper")]
 fn focus_camera_on_target(
     cam: &mut PanOrbitCamera,
     pos: DVec3,
     radius: f64,
+    mass: f64,
+    comp: &Composition,
+    show_atmospheres: bool,
     body_type: BodyType,
     config: &SimulationConfig,
     entity: Entity,
@@ -52,9 +56,13 @@ fn focus_camera_on_target(
         let visual_r = config.calc_visual_radius_for_type(radius, body_type);
         0.015f32.max(config.calc_camera_framing_radius(visual_r))
     } else {
-        crate::rendering::bodies::transforms::compute_close_camera_framing_radius(
+        crate::rendering::bodies::transforms::compute_close_view_camera_framing_radius(
             radius,
             body_type,
+            mass,
+            Some(comp),
+            None,
+            show_atmospheres,
             (target_vec - star_pos).length(),
             min_orbit_r,
             config,
@@ -71,6 +79,7 @@ fn select_and_toast_body(
     radius: f64,
     pos: DVec3,
     mass: f64,
+    comp: &Composition,
     is_star: bool,
     dist: f64,
     player_state: &mut PlayerInteractionState,
@@ -82,11 +91,15 @@ fn select_and_toast_body(
 ) {
     player_state.selected_entity = Some(entity);
     player_state.just_selected_via_ui = true;
+    let show_atmospheres = player_state.show_atmospheres();
     if let Ok(mut cam) = camera_query.single_mut() {
         focus_camera_on_target(
             &mut cam,
             pos,
             radius,
+            mass,
+            comp,
+            show_atmospheres,
             body_type,
             config,
             entity,
@@ -157,13 +170,19 @@ fn cycle_target_body(
     player_state.selected_entity = Some(target.entity);
 
     if let Ok(item) = selected_query.get(target.entity) {
-        let pos = item.3 .0;
+        let pos = item.3.0;
+        let mass = item.1.0;
+        let comp = *item.5;
         let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
+        let show_atmo = player_state.show_atmospheres();
         if let Ok(mut cam) = camera_query.single_mut() {
             focus_camera_on_target(
                 &mut cam,
                 pos,
                 target.radius_au,
+                mass,
+                &comp,
+                show_atmo,
                 target.body_type,
                 config,
                 target.entity,
@@ -196,6 +215,49 @@ fn cycle_target_body(
     toast.timer = 4.0;
 }
 
+fn select_star_target(
+    selected_query: &SelectedWorldQuery,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+    config: &SimulationConfig,
+    toast: &mut NotificationToast,
+) {
+    let worlds = collect_sorted_system_worlds(
+        selected_query
+            .iter()
+            .map(|(e, m, r, p, _v, _c, b, s, ..)| (e, b, p, m, r, s)),
+        false,
+    );
+    if let Some(target) = worlds.first() {
+        player_state.selected_entity = Some(target.entity);
+        player_state.just_selected_via_ui = true;
+        let show_atmo = player_state.show_atmospheres();
+        if let Ok(item) = selected_query.get(target.entity) {
+            let pos = item.3.0;
+            let mass = item.1.0;
+            let comp = *item.5;
+            let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
+            if let Ok(mut cam) = camera_query.single_mut() {
+                focus_camera_on_target(
+                    &mut cam,
+                    pos,
+                    target.radius_au,
+                    mass,
+                    &comp,
+                    show_atmo,
+                    target.body_type,
+                    config,
+                    target.entity,
+                    star_pos,
+                    min_orbit_r,
+                );
+            }
+        }
+        toast.message = format!("☀️ Selected: {} (Central Star)", target.name);
+        toast.timer = 3.5;
+    }
+}
+
 pub fn handle_selection_action(
     action: &UiButtonAction,
     player_state: &mut PlayerInteractionState,
@@ -211,9 +273,10 @@ pub fn handle_selection_action(
             if let Ok(item) = selected_query.get(entity) {
                 let body_name = item.6.name.clone();
                 let body_type = item.6.body_type;
-                let radius = item.2 .0;
-                let pos = item.3 .0;
-                let mass = item.1 .0;
+                let radius = item.2.0;
+                let pos = item.3.0;
+                let mass = item.1.0;
+                let comp = *item.5;
                 let is_star = item.7.is_some() || body_type.is_star_or_remnant();
                 let dist = if pos.is_finite() { pos.length() } else { 0.0 };
                 let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
@@ -225,6 +288,7 @@ pub fn handle_selection_action(
                     radius,
                     pos,
                     mass,
+                    &comp,
                     is_star,
                     dist,
                     player_state,
@@ -238,34 +302,7 @@ pub fn handle_selection_action(
             true
         }
         UiButtonAction::SelectStar => {
-            let worlds = collect_sorted_system_worlds(
-                selected_query
-                    .iter()
-                    .map(|(e, m, r, p, _v, _c, b, s, ..)| (e, b, p, m, r, s)),
-                false,
-            );
-            if let Some(target) = worlds.first() {
-                player_state.selected_entity = Some(target.entity);
-                player_state.just_selected_via_ui = true;
-                if let Ok(item) = selected_query.get(target.entity) {
-                    let pos = item.3 .0;
-                    let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
-                    if let Ok(mut cam) = camera_query.single_mut() {
-                        focus_camera_on_target(
-                            &mut cam,
-                            pos,
-                            target.radius_au,
-                            target.body_type,
-                            config,
-                            target.entity,
-                            star_pos,
-                            min_orbit_r,
-                        );
-                    }
-                }
-                toast.message = format!("☀️ Selected: {} (Central Star)", target.name);
-                toast.timer = 3.5;
-            }
+            select_star_target(selected_query, player_state, camera_query, config, toast);
             true
         }
         UiButtonAction::SelectMercury => {
@@ -433,9 +470,9 @@ fn select_planetary_target(
         .filter(|item| item.7.is_none() && !item.6.body_type.is_star_or_remnant())
         .collect();
     sorted.sort_by(|a, b| {
-        a.3 .0
+        a.3.0
             .length()
-            .partial_cmp(&b.3 .0.length())
+            .partial_cmp(&b.3.0.length())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -450,7 +487,7 @@ fn select_planetary_target(
     if let Some(item) = target {
         let ent = item.0;
         let body_name = item.6.name.clone();
-        let pos = item.3 .0;
+        let pos = item.3.0;
         let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
         player_state.selected_entity = Some(ent);
         player_state.just_selected_via_ui = true;
@@ -458,7 +495,10 @@ fn select_planetary_target(
             focus_camera_on_target(
                 &mut cam,
                 pos,
-                item.2 .0,
+                item.2.0,
+                item.1.0,
+                item.5,
+                player_state.show_atmospheres(),
                 item.6.body_type,
                 config,
                 ent,
@@ -483,9 +523,9 @@ fn select_kuiper_target(
         .filter(|item| item.7.is_none() && !item.6.body_type.is_star_or_remnant())
         .collect();
     sorted.sort_by(|a, b| {
-        b.3 .0
+        b.3.0
             .length()
-            .partial_cmp(&a.3 .0.length())
+            .partial_cmp(&a.3.0.length())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -499,7 +539,7 @@ fn select_kuiper_target(
     if let Some(item) = target {
         let ent = item.0;
         let body_name = item.6.name.clone();
-        let pos = item.3 .0;
+        let pos = item.3.0;
         let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
         player_state.selected_entity = Some(ent);
         player_state.just_selected_via_ui = true;
@@ -507,7 +547,10 @@ fn select_kuiper_target(
             focus_camera_on_target(
                 &mut cam,
                 pos,
-                item.2 .0,
+                item.2.0,
+                item.1.0,
+                item.5,
+                player_state.show_atmospheres(),
                 item.6.body_type,
                 config,
                 ent,

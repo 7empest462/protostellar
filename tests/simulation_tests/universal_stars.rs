@@ -3,9 +3,9 @@
 
 use bevy::prelude::*;
 
+use protostellar::simulation::SimulationPlugin;
 use protostellar::simulation::components::*;
 use protostellar::simulation::thermodynamics::stellar_lifecycle::*;
-use protostellar::simulation::SimulationPlugin;
 use protostellar::utils::constants::*;
 
 #[test]
@@ -649,8 +649,8 @@ fn test_massive_hypergiant_direct_collapse_imbh_seed_and_no_reignition() {
 
 #[test]
 fn test_dynamic_galactic_nucleus_handoff_to_growing_black_hole() {
-    use protostellar::simulation::physics::enforce_dynamic_galactic_nucleus;
     use protostellar::simulation::physics::PhysicsBodyEntry;
+    use protostellar::simulation::physics::enforce_dynamic_galactic_nucleus;
 
     let mut app = App::new();
     let initial_central_ent = app.world_mut().spawn_empty().id();

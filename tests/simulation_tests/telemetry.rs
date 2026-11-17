@@ -8,8 +8,8 @@ use std::path::Path;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
 use protostellar::simulation::telemetry::{
-    record_planetary_telemetry, PlanetaryTelemetrySample, SimulationTelemetryHistory,
-    TelemetryMetric,
+    PlanetaryTelemetrySample, SimulationTelemetryHistory, TelemetryMetric,
+    record_planetary_telemetry,
 };
 use protostellar::utils::constants::EARTH_MASS_SOLAR;
 

@@ -762,3 +762,160 @@ fn test_desiccated_planet_with_gas_atmosphere_not_airless_and_no_steam_clouds() 
         climate.cloud_coverage_frac
     );
 }
+
+fn spawn_moon_thermodynamics_test_app() -> App {
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    app.init_resource::<SimulationConfig>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_message::<SupernovaEvent>();
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Protostar".to_string(),
+            body_type: BodyType::TTauriStar,
+        },
+        Mass(1.56),
+        Radius(SOLAR_RADIUS_AU * 1.42),
+        Temperature(7225.0),
+        Luminosity(10.0),
+        IgnitionState {
+            core_temperature: 1.0e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 30.0,
+        },
+    ));
+    app.add_systems(Update, update_thermodynamics);
+    app
+}
+
+#[test]
+fn test_low_mass_moon_water_vacuum_vs_cold_ice_and_transient_steam() {
+    use bevy::math::DVec3;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::thermodynamics::*;
+    use protostellar::utils::constants::*;
+
+    assert!(water_saturation_vapor_pressure_bar(100.0) < 1e-12);
+    assert!(water_saturation_vapor_pressure_bar(150.0) < 1e-9);
+    let p_triple = water_saturation_vapor_pressure_bar(273.16);
+    assert!(
+        (p_triple - 0.00612).abs() < 1e-4,
+        "Triple point: {p_triple}"
+    );
+    let p_281 = water_saturation_vapor_pressure_bar(281.0);
+    assert!(p_281 > 0.009 && p_281 < 0.013, "P_sat(281 K): {p_281}");
+
+    let mut app = spawn_moon_thermodynamics_test_app();
+    let comp_hydrated_rock = Composition {
+        silicate_frac: 0.69,
+        ice_frac: 0.05,
+        metal_frac: 0.27,
+        organics_frac: 0.0,
+        gas_frac: 0.0,
+    }
+    .normalized();
+
+    let warm_rocky_moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Super-Jupiter XXIV (Moon)".to_string(),
+                body_type: BodyType::Moon,
+            },
+            Mass(0.0081 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.22),
+            SimPosition(DVec3::new(3.16, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 4.74)),
+            Temperature(281.0),
+            comp_hydrated_rock,
+            VolatileInventory::default(),
+        ))
+        .id();
+
+    let cold_icy_moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Cold Icy Moon".to_string(),
+                body_type: BodyType::Moon,
+            },
+            Mass(0.0081 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.24),
+            SimPosition(DVec3::new(15.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 2.0)),
+            Temperature(100.0),
+            Composition::icy(),
+            VolatileInventory::default(),
+        ))
+        .id();
+
+    let sublimating_moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Warm Sublimating Moon".to_string(),
+                body_type: BodyType::Moon,
+            },
+            Mass(0.0081 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.24),
+            SimPosition(DVec3::new(3.16, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 4.74)),
+            Temperature(281.0),
+            Composition::icy(),
+            VolatileInventory {
+                delivered_water_m_earth: 0.0001,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 0.0,
+                cometary_impact_count: 1,
+            },
+        ))
+        .id();
+
+    app.update();
+
+    let warm_vol = app
+        .world()
+        .get::<VolatileInventory>(warm_rocky_moon)
+        .unwrap();
+    let warm_clim = app
+        .world()
+        .get::<PlanetaryClimate>(warm_rocky_moon)
+        .unwrap();
+    assert_eq!(warm_vol.ocean_coverage_frac, 0.0);
+    assert_eq!(warm_vol.atmospheric_pressure_bar, 0.0);
+    assert_eq!(warm_clim.climate_regime, ClimateRegime::AirlessVacuum);
+    assert_eq!(warm_clim.ice_coverage_frac, 0.0);
+
+    let cold_vol = app.world().get::<VolatileInventory>(cold_icy_moon).unwrap();
+    let cold_clim = app.world().get::<PlanetaryClimate>(cold_icy_moon).unwrap();
+    assert_eq!(cold_vol.ocean_coverage_frac, 0.0);
+    assert!(cold_vol.atmospheric_pressure_bar < 0.001);
+    assert_eq!(cold_clim.climate_regime, ClimateRegime::AirlessVacuum);
+    assert!(cold_clim.ice_coverage_frac > 0.5);
+
+    let sub_vol = app
+        .world()
+        .get::<VolatileInventory>(sublimating_moon)
+        .unwrap();
+    let sub_clim = app
+        .world()
+        .get::<PlanetaryClimate>(sublimating_moon)
+        .unwrap();
+    assert_eq!(sub_vol.ocean_coverage_frac, 0.0);
+    assert!(
+        sub_vol.atmospheric_pressure_bar > 0.005 && sub_vol.atmospheric_pressure_bar < 0.02,
+        "Warm exposed water in vacuum must sublimate transient H2O vapor, got {}",
+        sub_vol.atmospheric_pressure_bar
+    );
+    assert_eq!(sub_clim.climate_regime, ClimateRegime::AirlessVacuum);
+}

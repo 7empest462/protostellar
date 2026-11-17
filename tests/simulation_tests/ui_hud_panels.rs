@@ -10,8 +10,8 @@ use protostellar::utils::constants::EARTH_MASS_SOLAR;
 #[test]
 fn test_tech_tree_panel_skips_content_rebuild_on_passive_science() {
     use protostellar::game::ui::tech_tree_panel::{
-        spawn_tech_tree_panel, update_tech_tree_panel, TechTreeSummaryLifetimeText,
-        TechTreeSummaryPointsText,
+        TechTreeSummaryLifetimeText, TechTreeSummaryPointsText, spawn_tech_tree_panel,
+        update_tech_tree_panel,
     };
     use protostellar::game::ui::types::{TechTreePanelElement, TechTreePanelState};
     use protostellar::simulation::economy::{ScienceData, UnlockedTechs};
@@ -112,9 +112,8 @@ fn test_quick_bar_sort_by_mass_skips_redundant_rebuild() {
     use protostellar::game::phases::LateHeavyBombardmentState;
     use protostellar::game::ui::types::TrophiesPanelState;
     use protostellar::game::ui::{
-        update_quick_body_selector_bar, HudActionTooltipText, HudVisibilityState,
-        NotificationToast, PlanetBuilderState, QuickBarState, QuickBodySelectorBar,
-        TelemetryPanelState,
+        HudActionTooltipText, HudVisibilityState, NotificationToast, PlanetBuilderState,
+        QuickBarState, QuickBodySelectorBar, TelemetryPanelState, update_quick_body_selector_bar,
     };
     use protostellar::rendering::camera::PanOrbitCamera;
     use protostellar::simulation::scenarios::LoadScenarioEvent;

@@ -1,7 +1,7 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use protostellar::rendering::bodies::{
-    sync_cometary_tails, CometComaPart, CometTailPart, CometTailRoot, VisualAssets,
+    CometComaPart, CometTailPart, CometTailRoot, VisualAssets, sync_cometary_tails,
 };
 use protostellar::rendering::materials::CometTailMaterial;
 use protostellar::simulation::components::*;

@@ -94,27 +94,26 @@ pub fn update_stellar_flares_system(
         }
 
         // 3. Natural cyclic flares and CME eruptions based on star flare frequency and evolutionary class
-        if let Some(mut clock) = opt_clock {
-            if flare.flare_frequency > 0.0
-                && !flare.cme_active
-                && flare.current_flare_intensity < 0.2
-            {
-                let activity = stellar_activity_multiplier(body.body_type) * flare.flare_frequency;
-                clock.sim_years_accum += dt_yr.max(0.0) * activity;
-                clock.realtime_secs_accum += real_dt * (activity / 1.5).clamp(0.35, 3.0);
+        if let Some(mut clock) = opt_clock
+            && flare.flare_frequency > 0.0
+            && !flare.cme_active
+            && flare.current_flare_intensity < 0.2
+        {
+            let activity = stellar_activity_multiplier(body.body_type) * flare.flare_frequency;
+            clock.sim_years_accum += dt_yr.max(0.0) * activity;
+            clock.realtime_secs_accum += real_dt * (activity / 1.5).clamp(0.35, 3.0);
 
-                if clock.sim_years_accum >= 0.65 || clock.realtime_secs_accum >= 75.0 {
-                    clock.sim_years_accum = 0.0;
-                    clock.realtime_secs_accum = 0.0;
-                    clock.eruption_count = clock.eruption_count.wrapping_add(1);
-                    let is_major_cme = clock.eruption_count.is_multiple_of(3);
-                    flare.current_flare_intensity = if is_major_cme { 5.5 } else { 2.8 };
-                    flare.flare_decay_timer_years = 0.08;
-                    flare.cme_active = true;
-                    flare.cme_front_radius_au = 0.04;
-                    flare.cme_speed_au_day = if is_major_cme { 0.36 } else { 0.24 };
-                    flare.cme_density_multiplier = if is_major_cme { 18.0 } else { 8.0 };
-                }
+            if clock.sim_years_accum >= 0.65 || clock.realtime_secs_accum >= 75.0 {
+                clock.sim_years_accum = 0.0;
+                clock.realtime_secs_accum = 0.0;
+                clock.eruption_count = clock.eruption_count.wrapping_add(1);
+                let is_major_cme = clock.eruption_count.is_multiple_of(3);
+                flare.current_flare_intensity = if is_major_cme { 5.5 } else { 2.8 };
+                flare.flare_decay_timer_years = 0.08;
+                flare.cme_active = true;
+                flare.cme_front_radius_au = 0.04;
+                flare.cme_speed_au_day = if is_major_cme { 0.36 } else { 0.24 };
+                flare.cme_density_multiplier = if is_major_cme { 18.0 } else { 8.0 };
             }
         }
     }

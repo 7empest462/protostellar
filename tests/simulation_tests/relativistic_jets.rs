@@ -2,10 +2,10 @@
 
 use bevy::math::{DVec3, Vec3};
 use bevy::prelude::*;
-use protostellar::rendering::bodies::jets::{
-    sync_relativistic_jets, RelativisticJetPart, RelativisticJetRoot,
-};
 use protostellar::rendering::bodies::VisualAssets;
+use protostellar::rendering::bodies::jets::{
+    RelativisticJetPart, RelativisticJetRoot, sync_relativistic_jets,
+};
 use protostellar::rendering::materials::RelativisticJetMaterial;
 use protostellar::simulation::components::*;
 use protostellar::simulation::relativity::*;

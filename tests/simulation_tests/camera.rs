@@ -8,7 +8,7 @@ use protostellar::utils::constants::*;
 fn setup_camera_zoom_app() -> (App, Entity, Entity, f32, f32) {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::resources::*;
 
     let mut app = App::new();
@@ -286,7 +286,7 @@ fn test_camera_zoom_stops_safely_before_surface_of_star_and_planets() {
 fn test_camera_tracking_selected_planet_zero_drift_at_high_warp() {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::components::*;
     use protostellar::simulation::physics::step_physics_simulation;
     use protostellar::simulation::resources::*;
@@ -426,7 +426,7 @@ fn test_camera_tracking_selected_planet_zero_drift_at_high_warp() {
 fn test_outer_bodies_camera_stability_no_cancellation_jitter() {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;
     use protostellar::utils::constants::*;
@@ -533,7 +533,7 @@ fn test_outer_bodies_camera_stability_no_cancellation_jitter() {
 fn setup_camera_zoom_test_app() -> (App, Entity) {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;
     use protostellar::utils::constants::*;
@@ -727,7 +727,7 @@ fn test_camera_zoom_ui_interaction_suppression() {
 fn test_camera_smooth_interplanetary_flight_on_selection() {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;
 

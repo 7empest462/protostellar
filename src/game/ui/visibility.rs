@@ -119,6 +119,8 @@ fn update_panel_nodes(
             | HudPanelElement::TrajectoryPredictorBadge
             | HudPanelElement::LagrangePointsBadge
             | HudPanelElement::HabitableZoneBadge
+            | HudPanelElement::AtmospheresBadge
+            | HudPanelElement::CloudsBadge
             | HudPanelElement::AudioMuteBadge => flex_or_none(!hud_visibility.is_full_screen_clean),
             HudPanelElement::TopLeftPanel => flex_or_none(!hud_visibility.top_left_minimized),
             HudPanelElement::TopLeftPill => flex_or_none(hud_visibility.top_left_minimized),
@@ -248,6 +250,36 @@ fn update_dynamic_badges(
                 } else {
                     "🌱 Hab Zone: OFF".to_string()
                 };
+            }
+            HudDynamicText::AtmospheresBadge => {
+                let is_on = player_state.show_atmospheres();
+                text.0 = if is_on {
+                    "🌫️ Atmo: ON [Shift-A]".to_string()
+                } else {
+                    "🪨 Atmo: OFF [Shift-A]".to_string()
+                };
+                if let Some(ref mut color) = opt_color {
+                    color.0 = if is_on {
+                        Color::srgb(0.55, 0.88, 1.0)
+                    } else {
+                        Color::srgb(1.0, 0.68, 0.35)
+                    };
+                }
+            }
+            HudDynamicText::CloudsBadge => {
+                let is_on = player_state.show_clouds();
+                text.0 = if is_on {
+                    "☁️ Clouds: ON [Shift-W]".to_string()
+                } else {
+                    "☀️ Clouds: OFF [Shift-W]".to_string()
+                };
+                if let Some(ref mut color) = opt_color {
+                    color.0 = if is_on {
+                        Color::srgb(0.85, 0.92, 1.0)
+                    } else {
+                        Color::srgb(1.0, 0.82, 0.38)
+                    };
+                }
             }
             HudDynamicText::AudioMuteBadge => {
                 let is_on = opt_audio.is_some_and(|a| a.enabled);

@@ -391,7 +391,7 @@ fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use bevy::prelude::*;
     use protostellar::game::ui::HudButton;
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::resources::*;
 
     let mut app = App::new();
@@ -487,10 +487,10 @@ fn test_ui_button_click_prevents_camera_3d_raycast_hijacking() {
 #[test]
 fn test_minor_bodies_mesh_variety_and_spectral_classification() {
     use bevy::prelude::*;
+    use protostellar::rendering::bodies::VisualAssets;
     use protostellar::rendering::bodies::meshes::{
         select_asteroid_mesh, select_body_mesh, select_comet_mesh, setup_visual_assets,
     };
-    use protostellar::rendering::bodies::VisualAssets;
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -568,8 +568,8 @@ fn test_minor_bodies_mesh_variety_and_spectral_classification() {
 #[test]
 fn test_planetesimal_and_comet_mesh_fallback_never_smooth_sphere() {
     use bevy::prelude::*;
-    use protostellar::rendering::bodies::meshes::{select_body_mesh, setup_visual_assets};
     use protostellar::rendering::bodies::VisualAssets;
+    use protostellar::rendering::bodies::meshes::{select_body_mesh, setup_visual_assets};
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -851,8 +851,8 @@ fn test_simulation_visual_time_pausing_freezes_rotation_and_animations() {
 fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_paused() {
     use bevy::pbr::ExtendedMaterial;
     use bevy::prelude::*;
-    use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
     use protostellar::rendering::bodies::VisualAssets;
+    use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
     use protostellar::rendering::materials::{
         PlanetMaterial, PlanetMaterialExtension, PlanetUniforms,
     };

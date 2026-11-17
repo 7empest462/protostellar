@@ -82,7 +82,7 @@ pub fn spawn_bottom_right_controls_panel(bottom_row: &mut ChildSpawnerCommands) 
                         });
 
                     panel.spawn((
-                        Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Space] Pause | [1..8] Speed | [F10] Telemetry | [F11] Epochs"),
+                        Text::new("⌨ NAVIGATION & SHORTCUTS:\n[R-Drag] 360 Orbit | [WASD] Pan | [Scroll] Zoom\n[Click / Tab] Select | [F] Track | [Esc] Deselect\n[Shift-A] Atmo | [Shift-W] Clouds | [Shift-X] Cutaway\n[Space] Pause | [1..8] Speed | [F10] Telemetry | [F11] Epochs"),
                         TextFont {
                             font_size: FontSize::Px(9.0),
                             ..default()

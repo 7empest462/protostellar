@@ -7,8 +7,8 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 
-use super::telemetry_format::{format_body_radius_display, format_mass_string};
 use super::HoverReticleBracket;
+use super::telemetry_format::{format_body_radius_display, format_mass_string};
 use crate::rendering::camera::{IgnoreUiPicking, PanOrbitCamera};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
@@ -275,16 +275,16 @@ pub fn collect_hover_badges(
         }
     }
 
-    if let Some(diff) = opt_diff {
-        if diff.magnetic_field_gauss >= 0.25 {
-            badges.push("🧲 Magnetosphere");
-        }
+    if let Some(diff) = opt_diff
+        && diff.magnetic_field_gauss >= 0.25
+    {
+        badges.push("🧲 Magnetosphere");
     }
 
-    if let Some(tide) = opt_tide {
-        if tide.is_tidally_locked {
-            badges.push("🔒 Tidally Locked");
-        }
+    if let Some(tide) = opt_tide
+        && tide.is_tidally_locked
+    {
+        badges.push("🔒 Tidally Locked");
     }
 
     if opt_rings.is_some() {
@@ -362,7 +362,7 @@ pub fn update_hover_card_ui(
         mass,
         rad,
         temp,
-        _comp,
+        comp,
         body,
         opt_diff,
         opt_tide,
@@ -416,7 +416,7 @@ pub fn update_hover_card_ui(
     let title_str = body.name.clone();
     let subhead_str = format!("[ {} ]", resolve_body_type_label(body.body_type));
     let metrics_str = format_hover_metrics(pos.0, vel.0, mass.0, rad.0, temp.0);
-    let badges_str = collect_hover_badges(
+    let mut badges_str = collect_hover_badges(
         opt_climate,
         opt_bio,
         opt_volc,
@@ -426,6 +426,13 @@ pub fn update_hover_card_ui(
         opt_satellite,
         opt_probe.is_some(),
     );
+    if super::telemetry_format::has_deep_core_envelope_outgassing(comp, body.body_type) {
+        if badges_str == "✨ Stable Orbit" {
+            badges_str = "🔥 Core-Envelope Upwelling".to_string();
+        } else {
+            badges_str.push_str("  •  🔥 Core-Envelope Upwelling");
+        }
+    }
 
     for (field, mut text) in &mut text_query {
         match field {

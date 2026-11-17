@@ -3,8 +3,8 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use protostellar::game::ui::{
-    update_quick_bar_highlights, update_scenario_contextual_ui, HudButton, InspectorExoticHeader,
-    InspectorSection, QuickBarButtonBaseColor, UiButtonAction,
+    HudButton, InspectorExoticHeader, InspectorSection, QuickBarButtonBaseColor, UiButtonAction,
+    update_quick_bar_highlights, update_scenario_contextual_ui,
 };
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::PlayerInteractionState;
@@ -489,7 +489,7 @@ fn test_hover_card_screen_clamping() {
 
 #[test]
 fn test_hover_card_ui_system_visibility_and_text_sync() {
-    use protostellar::game::ui::hover_card::{update_hover_card_ui, HoverCardField, HoverCardRoot};
+    use protostellar::game::ui::hover_card::{HoverCardField, HoverCardRoot, update_hover_card_ui};
     use protostellar::rendering::camera::PanOrbitCamera;
 
     let mut app = App::new();

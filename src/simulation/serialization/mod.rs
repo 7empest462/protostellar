@@ -479,7 +479,7 @@ fn restore_simulation_resources(
     energy_monitor.relative_energy_drift = 0.0;
     energy_monitor.initialized = false;
 
-    if let Some(ref mut theia) = theia_state {
+    if let Some(theia) = theia_state {
         theia.intercept_active = false;
         theia.moon_formed = save_data.event_flags.theia_moon_formed;
         theia.intercept_start_year = None;
@@ -488,7 +488,7 @@ fn restore_simulation_resources(
         theia.target_primary = None;
     }
 
-    if let Some(ref mut lhb) = lhb_state {
+    if let Some(lhb) = lhb_state {
         lhb.is_active = save_data.event_flags.lhb_active;
         lhb.resonance_crossed = save_data.event_flags.lhb_resonance_crossed;
     }
@@ -559,7 +559,7 @@ fn apply_loaded_scenario_and_camera(
     primary_ent: Option<Entity>,
     camera_query: &mut Query<&mut crate::rendering::camera::PanOrbitCamera>,
 ) {
-    if let Some(ref mut s_state) = scenario_state {
+    if let Some(s_state) = scenario_state {
         s_state.current_preset = detected_preset;
         s_state.scenario_time_years = save_data.timestamp_epoch_yr;
         s_state.migration_active = false;
@@ -762,10 +762,10 @@ pub fn handle_clipboard_seed_export_events(
 
         match encode_system_seed_json(&save_data) {
             Ok(seed) => {
-                if let Some(ref mut clip) = clipboard {
-                    if let Err(e) = clip.set_text(seed) {
-                        warn!("Failed to copy seed to system clipboard: {e:?}");
-                    }
+                if let Some(ref mut clip) = clipboard
+                    && let Err(e) = clip.set_text(seed)
+                {
+                    warn!("Failed to copy seed to system clipboard: {e:?}");
                 }
                 if let Some(ref mut t) = toast {
                     t.message = format!(

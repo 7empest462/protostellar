@@ -7,7 +7,7 @@ use protostellar::utils::constants::*;
 
 fn setup_surface_camera_app() -> (App, Entity, Entity) {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::simulation::resources::*;
 
     let mut app = App::new();
@@ -412,7 +412,7 @@ fn test_3d_planetary_surface_ecs_lifecycle() {
 fn test_landed_rover_scale_shrinking_and_radius_formatting() {
     use protostellar::game::ui::telemetry_format::format_body_radius_display;
     use protostellar::simulation::probes::{
-        sync_probe_transforms, FlightComputer, ProbeStatus, ProbeType, SpaceProbe,
+        FlightComputer, ProbeStatus, ProbeType, SpaceProbe, sync_probe_transforms,
     };
     use protostellar::simulation::resources::SimulationConfig;
 
@@ -688,10 +688,11 @@ fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
     let mut sched = Schedule::default();
     sched.add_systems(update_surface_horizon_camera);
 
-    assert!(!app
-        .world()
-        .entity(camera_ent)
-        .contains::<AtmosphereSettings>());
+    assert!(
+        !app.world()
+            .entity(camera_ent)
+            .contains::<AtmosphereSettings>()
+    );
     assert!(!app.world().entity(camera_ent).contains::<ContactShadows>());
 
     // 1. Enter Surface Horizon mode on Earth (has atmosphere: 1.013 bar)
@@ -829,9 +830,9 @@ fn test_surface_terrain_cleans_up_root_on_destroyed_host() {
 fn test_surface_terrain_zero_radius_guard_and_ring_cleanup_and_picking_ui_guard() {
     use bevy::input::mouse::{MouseMotion, MouseWheel};
     use protostellar::game::ui::types::HudVisibilityState;
-    use protostellar::rendering::bodies::structures::{sync_planetary_rings, VisualRingChild};
+    use protostellar::rendering::bodies::structures::{VisualRingChild, sync_planetary_rings};
     use protostellar::rendering::bodies::{VisualAssets, VisualBody};
-    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
     use protostellar::rendering::materials::RingMaterial;
     use protostellar::rendering::surface_terrain::generate_surface_terrain_mesh;
     use protostellar::simulation::resources::{PlayerInteractionState, SimTime, SimulationConfig};

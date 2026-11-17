@@ -182,14 +182,14 @@ pub fn update_impact_shockwaves(
         sw.timer += dt;
         let progress = sw.timer / sw.max_timer;
         sw.radius = sw.max_radius * progress.sqrt();
-        if let Some(ent) = sw.primary_entity {
-            if let Ok((_, p_pos, _, p_tf)) = bodies_query.get(ent) {
-                let p_center = p_tf.map_or(
-                    Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-                    |tf| tf.translation,
-                );
-                sw.position = p_center + sw.local_position;
-            }
+        if let Some(ent) = sw.primary_entity
+            && let Ok((_, p_pos, _, p_tf)) = bodies_query.get(ent)
+        {
+            let p_center = p_tf.map_or(
+                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                |tf| tf.translation,
+            );
+            sw.position = p_center + sw.local_position;
         }
         sw.timer < sw.max_timer
     });

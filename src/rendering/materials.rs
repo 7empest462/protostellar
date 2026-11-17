@@ -590,9 +590,9 @@ pub struct VolumetricNebulaUniforms {
 impl Default for VolumetricNebulaUniforms {
     fn default() -> Self {
         Self {
-            box_min: Vec3::splat(-550.0),
+            box_min: Vec3::splat(-1100.0),
             step_count: 96,
-            box_max: Vec3::splat(550.0),
+            box_max: Vec3::splat(1100.0),
             absorption_coefficient: 0.025,
             scattering_albedo: 0.85,
             phase_g: 0.65,

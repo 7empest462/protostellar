@@ -264,17 +264,15 @@ pub fn update_supernova_explosions(
             ev.ejected_metals_solar,
         );
 
-        if is_gmc {
-            if let Some(exp) = pool.explosions.last_mut() {
-                let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
-                    SupernovaType::Hypernova => (16.0, 24.0),
-                    SupernovaType::TypeII => (12.0, 18.0),
-                    SupernovaType::TypeIa => (9.0, 14.0),
-                    SupernovaType::PlanetaryNebula => (3.0, 8.0),
-                };
-                exp.blast_speed_au_s = scaled_blast_speed;
-                exp.max_radius_au = scaled_max_r;
-            }
+        if is_gmc && let Some(exp) = pool.explosions.last_mut() {
+            let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
+                SupernovaType::Hypernova => (16.0, 24.0),
+                SupernovaType::TypeII => (12.0, 18.0),
+                SupernovaType::TypeIa => (9.0, 14.0),
+                SupernovaType::PlanetaryNebula => (3.0, 8.0),
+            };
+            exp.blast_speed_au_s = scaled_blast_speed;
+            exp.max_radius_au = scaled_max_r;
         }
     }
 
@@ -307,17 +305,15 @@ pub fn update_supernova_explosions(
                     &mut pool, entity, center, mass.0, remnant_m, remnant, metals,
                 );
 
-                if is_gmc {
-                    if let Some(exp) = pool.explosions.last_mut() {
-                        let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
-                            SupernovaType::Hypernova => (16.0, 24.0),
-                            SupernovaType::TypeII => (12.0, 18.0),
-                            SupernovaType::TypeIa => (9.0, 14.0),
-                            SupernovaType::PlanetaryNebula => (3.0, 8.0),
-                        };
-                        exp.blast_speed_au_s = scaled_blast_speed;
-                        exp.max_radius_au = scaled_max_r;
-                    }
+                if is_gmc && let Some(exp) = pool.explosions.last_mut() {
+                    let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
+                        SupernovaType::Hypernova => (16.0, 24.0),
+                        SupernovaType::TypeII => (12.0, 18.0),
+                        SupernovaType::TypeIa => (9.0, 14.0),
+                        SupernovaType::PlanetaryNebula => (3.0, 8.0),
+                    };
+                    exp.blast_speed_au_s = scaled_blast_speed;
+                    exp.max_radius_au = scaled_max_r;
                 }
             }
         }
@@ -479,15 +475,15 @@ fn apply_celestial_blast(
                 tail.tail_length_au = (2.5 / dist.sqrt()).clamp(0.5, 4.0) as f32;
                 tail.loss_rate_m_earth_per_myr = 15.0;
                 tail.ion_color = Color::srgba(1.0, 0.45, 0.20, 0.90);
-            } else if !b_body.body_type.is_star_or_remnant() {
-                if let Ok(mut cmd) = commands.get_entity(b_ent) {
-                    cmd.insert(AtmosphericEscapeTail {
-                        loss_rate_m_earth_per_myr: 15.0,
-                        tail_length_au: 2.0,
-                        ion_color: Color::srgba(1.0, 0.45, 0.20, 0.90),
-                        is_active: true,
-                    });
-                }
+            } else if !b_body.body_type.is_star_or_remnant()
+                && let Ok(mut cmd) = commands.get_entity(b_ent)
+            {
+                cmd.insert(AtmosphericEscapeTail {
+                    loss_rate_m_earth_per_myr: 15.0,
+                    tail_length_au: 2.0,
+                    ion_color: Color::srgba(1.0, 0.45, 0.20, 0.90),
+                    is_active: true,
+                });
             }
         }
     }
@@ -669,7 +665,7 @@ fn upsert_supernova_visual_shell(
     scale_r: f32,
     uniforms: SupernovaUniforms,
 ) {
-    if let Some((_, ref mut trans, ref mat_handle)) = existing_shells.get_mut(&star_entity) {
+    if let Some(&mut (_, ref mut trans, ref mat_handle)) = existing_shells.get_mut(&star_entity) {
         trans.translation = center;
         trans.scale = Vec3::splat(scale_r);
 
@@ -757,10 +753,10 @@ pub fn sync_supernova_visuals(
 
     // Despawn visual shells for explosions and remnants that completed
     for (star_ent, (e, _, _)) in existing_shells {
-        if !active_stars.contains(&star_ent) {
-            if let Ok(mut cmd) = commands.get_entity(e) {
-                cmd.try_despawn();
-            }
+        if !active_stars.contains(&star_ent)
+            && let Ok(mut cmd) = commands.get_entity(e)
+        {
+            cmd.try_despawn();
         }
     }
 }

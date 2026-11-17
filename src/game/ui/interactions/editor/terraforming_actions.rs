@@ -18,52 +18,49 @@ pub fn handle_shatter_and_life(
 ) -> bool {
     match action {
         UiButtonAction::ShatterIntoRings => {
-            if let Some(ent) = player_state.selected_entity {
-                if let Ok((_, _, _, _, _, _, body, is_star, ..)) = selected_query.get(ent) {
-                    if is_star.is_some() {
-                        toast.message =
-                            "⚠️ Cannot form planetary rings around the central star!".to_string();
-                        toast.timer = 3.5;
-                    } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
-                        p_cmd.insert(PlanetaryRingSystem {
-                            inner_radius_au: 0.0008,
-                            outer_radius_au: 0.0028,
-                            ring_mass_earth: 0.0002,
-                            optical_depth: 0.88,
-                            ice_fraction: 0.95,
-                            silicate_fraction: 0.05,
-                        });
-                        toast.message =
-                            format!("🪐 Formed Luminous Ring System around {}!", body.name);
-                        toast.timer = 5.0;
-                    }
+            if let Some(ent) = player_state.selected_entity
+                && let Ok((_, _, _, _, _, _, body, is_star, ..)) = selected_query.get(ent)
+            {
+                if is_star.is_some() {
+                    toast.message =
+                        "⚠️ Cannot form planetary rings around the central star!".to_string();
+                    toast.timer = 3.5;
+                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                    p_cmd.insert(PlanetaryRingSystem {
+                        inner_radius_au: 0.0008,
+                        outer_radius_au: 0.0028,
+                        ring_mass_earth: 0.0002,
+                        optical_depth: 0.88,
+                        ice_fraction: 0.95,
+                        silicate_fraction: 0.05,
+                    });
+                    toast.message = format!("🪐 Formed Luminous Ring System around {}!", body.name);
+                    toast.timer = 5.0;
                 }
             }
             true
         }
 
         UiButtonAction::AdvanceCivilization => {
-            if let Some(ent) = player_state.selected_entity {
-                if let Ok((_, _, _, _, _, mut _comp, _body, is_star, ..)) =
+            if let Some(ent) = player_state.selected_entity
+                && let Ok((_, _, _, _, _, mut _comp, _body, is_star, ..)) =
                     selected_query.get_mut(ent)
-                {
-                    if is_star.is_some() {
-                        toast.message = "⚠️ Civilization cannot survive on a star.".to_string();
-                        toast.timer = 3.5;
-                    } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
-                        p_cmd.insert(BiosphereState {
-                            habitability_score: 0.95,
-                            biomass_coverage_frac: 0.85,
-                            oxygen_fraction: 0.21,
-                            emergence_year: Some(0.0),
-                            technosignature: 1.0,
-                            bioluminescence_intensity: 0.35,
-                            ..Default::default()
-                        });
-                        toast.message =
-                            "🏙️ Civilization Emerged! Observe the night side.".to_string();
-                        toast.timer = 5.0;
-                    }
+            {
+                if is_star.is_some() {
+                    toast.message = "⚠️ Civilization cannot survive on a star.".to_string();
+                    toast.timer = 3.5;
+                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                    p_cmd.insert(BiosphereState {
+                        habitability_score: 0.95,
+                        biomass_coverage_frac: 0.85,
+                        oxygen_fraction: 0.21,
+                        emergence_year: Some(0.0),
+                        technosignature: 1.0,
+                        bioluminescence_intensity: 0.35,
+                        ..Default::default()
+                    });
+                    toast.message = "🏙️ Civilization Emerged! Observe the night side.".to_string();
+                    toast.timer = 5.0;
                 }
             }
             true
@@ -80,50 +77,49 @@ pub fn handle_shatter_and_life(
             true
         }
         UiButtonAction::SeedLife => {
-            if let Some(ent) = player_state.selected_entity {
-                if let Ok((_, _, _, _, _, mut comp, body, is_star, ..)) =
+            if let Some(ent) = player_state.selected_entity
+                && let Ok((_, _, _, _, _, mut comp, body, is_star, ..)) =
                     selected_query.get_mut(ent)
-                {
-                    if is_star.is_some() {
-                        toast.message =
-                            "⚠️ Cannot seed life onto a stellar plasma furnace!".to_string();
-                        toast.timer = 3.5;
-                    } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
-                        p_cmd.insert((
-                            VolatileInventory {
-                                delivered_water_m_earth: 0.002,
-                                ocean_coverage_frac: 0.70,
-                                atmospheric_pressure_bar: 1.0,
-                                cometary_impact_count: 12,
-                            },
-                            BiosphereState {
-                                habitability_score: 0.95,
-                                biomass_coverage_frac: 0.65,
-                                oxygen_fraction: 0.21,
-                                emergence_year: Some(sim_time_years),
-                                technosignature: 0.0,
-                                bioluminescence_intensity: 0.25,
-                                ..Default::default()
-                            },
-                            PlanetaryClimate {
-                                surface_temperature_k: 288.0,
-                                equilibrium_temperature_k: 255.0,
-                                greenhouse_delta_k: 33.0,
-                                albedo: 0.30,
-                                ice_coverage_frac: 0.10,
-                                cloud_coverage_frac: 0.55,
-                                climate_regime: ClimateRegime::TemperateHabitable,
-                                polar_ice_cap_latitude_deg: 75.0,
-                            },
-                        ));
-                        comp.ice_frac = 0.08;
-                        comp.gas_frac = 0.02;
-                        toast.message = format!(
-                            "🌱 Seeded Photosynthetic Biosphere & Oceans on {}!",
-                            body.name
-                        );
-                        toast.timer = 5.0;
-                    }
+            {
+                if is_star.is_some() {
+                    toast.message =
+                        "⚠️ Cannot seed life onto a stellar plasma furnace!".to_string();
+                    toast.timer = 3.5;
+                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                    p_cmd.insert((
+                        VolatileInventory {
+                            delivered_water_m_earth: 0.002,
+                            ocean_coverage_frac: 0.70,
+                            atmospheric_pressure_bar: 1.0,
+                            cometary_impact_count: 12,
+                        },
+                        BiosphereState {
+                            habitability_score: 0.95,
+                            biomass_coverage_frac: 0.65,
+                            oxygen_fraction: 0.21,
+                            emergence_year: Some(sim_time_years),
+                            technosignature: 0.0,
+                            bioluminescence_intensity: 0.25,
+                            ..Default::default()
+                        },
+                        PlanetaryClimate {
+                            surface_temperature_k: 288.0,
+                            equilibrium_temperature_k: 255.0,
+                            greenhouse_delta_k: 33.0,
+                            albedo: 0.30,
+                            ice_coverage_frac: 0.10,
+                            cloud_coverage_frac: 0.55,
+                            climate_regime: ClimateRegime::TemperateHabitable,
+                            polar_ice_cap_latitude_deg: 75.0,
+                        },
+                    ));
+                    comp.ice_frac = 0.08;
+                    comp.gas_frac = 0.02;
+                    toast.message = format!(
+                        "🌱 Seeded Photosynthetic Biosphere & Oceans on {}!",
+                        body.name
+                    );
+                    toast.timer = 5.0;
                 }
             }
             true
@@ -262,29 +258,28 @@ pub fn handle_tidal_lock(
     commands: &mut Commands,
     toast: &mut NotificationToast,
 ) {
-    if let Some(ent) = player_state.selected_entity {
-        if let Ok((_, _, _, pos, _, _, body, ..)) = selected_query.get(ent) {
-            if !body.body_type.is_star_or_remnant() {
-                let r_au = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.01);
-                let p_yr = (r_au.powi(3) / star_mass.max(0.01)).sqrt();
-                let p_hours = (p_yr * YEAR_SECONDS / 3600.0).clamp(1.0, 50000.0);
-                if let Ok(mut cmd) = commands.get_entity(ent) {
-                    cmd.try_insert((
-                        SpinState {
-                            spin_vector: DVec3::new(0.0, 1.0, 0.0),
-                            rotation_period_hours: p_hours,
-                            axial_tilt_degrees: 0.0,
-                        },
-                        crate::simulation::tides::TidalState::new_locked(1.0),
-                    ));
-                }
-                toast.message = format!(
-                    "⚡ {} Synchronously Tidally Locked (Period: {:.1}h, Tilt: 0.0°)",
-                    body.name, p_hours
-                );
-                toast.timer = 4.0;
-            }
+    if let Some(ent) = player_state.selected_entity
+        && let Ok((_, _, _, pos, _, _, body, ..)) = selected_query.get(ent)
+        && !body.body_type.is_star_or_remnant()
+    {
+        let r_au = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.01);
+        let p_yr = (r_au.powi(3) / star_mass.max(0.01)).sqrt();
+        let p_hours = (p_yr * YEAR_SECONDS / 3600.0).clamp(1.0, 50000.0);
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            cmd.try_insert((
+                SpinState {
+                    spin_vector: DVec3::new(0.0, 1.0, 0.0),
+                    rotation_period_hours: p_hours,
+                    axial_tilt_degrees: 0.0,
+                },
+                crate::simulation::tides::TidalState::new_locked(1.0),
+            ));
         }
+        toast.message = format!(
+            "⚡ {} Synchronously Tidally Locked (Period: {:.1}h, Tilt: 0.0°)",
+            body.name, p_hours
+        );
+        toast.timer = 4.0;
     }
 }
 

@@ -194,17 +194,17 @@ fn handle_star_interaction_actions(
             trigger_star_ignition_or_flare(commands, entity, body, ignition, shift, toast);
         }
     }
-    if keyboard.just_pressed(KeyCode::KeyN) && body.body_type.is_star() {
-        if let Some(ref mut ignition) = ignition_opt {
-            if !ignition.is_ignited {
-                ignition.core_temperature = 1.0e7;
-                ignition.is_ignited = true;
-                ignition.fusion_fraction = 1.0;
-                ignition.shockwave_radius = 1.6;
-                body.body_type = BodyType::MainSequenceStar;
-                body.name = "The Star (Main Sequence)".to_string();
-            }
-        }
+    if keyboard.just_pressed(KeyCode::KeyN)
+        && body.body_type.is_star()
+        && let Some(ref mut ignition) = ignition_opt
+        && !ignition.is_ignited
+    {
+        ignition.core_temperature = 1.0e7;
+        ignition.is_ignited = true;
+        ignition.fusion_fraction = 1.0;
+        ignition.shockwave_radius = 1.6;
+        body.body_type = BodyType::MainSequenceStar;
+        body.name = "The Star (Main Sequence)".to_string();
     }
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if let Some(qs) = opt_quasi {
@@ -363,50 +363,51 @@ fn handle_planet_interaction_actions(
         player_state.selected_entity = None;
     }
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-    if !is_shift && keyboard.just_pressed(KeyCode::KeyX) {
-        if let Ok(mut cmd) = commands.get_entity(entity) {
-            cmd.insert(PlanetaryRingSystem {
-                inner_radius_au: 0.0008,
-                outer_radius_au: 0.0028,
-                ring_mass_earth: 0.0002,
-                optical_depth: 0.88,
-                ice_fraction: 0.95,
-                silicate_fraction: 0.05,
-            });
-        }
+    if !is_shift
+        && keyboard.just_pressed(KeyCode::KeyX)
+        && let Ok(mut cmd) = commands.get_entity(entity)
+    {
+        cmd.insert(PlanetaryRingSystem {
+            inner_radius_au: 0.0008,
+            outer_radius_au: 0.0028,
+            ring_mass_earth: 0.0002,
+            optical_depth: 0.88,
+            ice_fraction: 0.95,
+            silicate_fraction: 0.05,
+        });
     }
-    if keyboard.just_pressed(KeyCode::KeyE) {
-        if let Ok(mut cmd) = commands.get_entity(entity) {
-            cmd.insert((
-                VolatileInventory {
-                    delivered_water_m_earth: 0.002,
-                    ocean_coverage_frac: 0.70,
-                    atmospheric_pressure_bar: 1.0,
-                    cometary_impact_count: 12,
-                },
-                BiosphereState {
-                    habitability_score: 0.95,
-                    biomass_coverage_frac: 0.65,
-                    oxygen_fraction: 0.21,
-                    emergence_year: Some(0.0),
-                    technosignature: 0.0,
-                    bioluminescence_intensity: 0.25,
-                    ..Default::default()
-                },
-                PlanetaryClimate {
-                    surface_temperature_k: 288.0,
-                    equilibrium_temperature_k: 255.0,
-                    greenhouse_delta_k: 33.0,
-                    albedo: 0.30,
-                    ice_coverage_frac: 0.10,
-                    cloud_coverage_frac: 0.55,
-                    climate_regime: ClimateRegime::TemperateHabitable,
-                    polar_ice_cap_latitude_deg: 75.0,
-                },
-            ));
-            comp.ice_frac = 0.08;
-            comp.gas_frac = 0.02;
-        }
+    if keyboard.just_pressed(KeyCode::KeyE)
+        && let Ok(mut cmd) = commands.get_entity(entity)
+    {
+        cmd.insert((
+            VolatileInventory {
+                delivered_water_m_earth: 0.002,
+                ocean_coverage_frac: 0.70,
+                atmospheric_pressure_bar: 1.0,
+                cometary_impact_count: 12,
+            },
+            BiosphereState {
+                habitability_score: 0.95,
+                biomass_coverage_frac: 0.65,
+                oxygen_fraction: 0.21,
+                emergence_year: Some(0.0),
+                technosignature: 0.0,
+                bioluminescence_intensity: 0.25,
+                ..Default::default()
+            },
+            PlanetaryClimate {
+                surface_temperature_k: 288.0,
+                equilibrium_temperature_k: 255.0,
+                greenhouse_delta_k: 33.0,
+                albedo: 0.30,
+                ice_coverage_frac: 0.10,
+                cloud_coverage_frac: 0.55,
+                climate_regime: ClimateRegime::TemperateHabitable,
+                polar_ice_cap_latitude_deg: 75.0,
+            },
+        ));
+        comp.ice_frac = 0.08;
+        comp.gas_frac = 0.02;
     }
 }
 
@@ -504,8 +505,8 @@ pub fn handle_selected_body_tools(
     selected_query: &mut SelectedBodyQuery,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
-    if let Some(selected_ent) = player_state.selected_entity {
-        if let Ok((
+    if let Some(selected_ent) = player_state.selected_entity
+        && let Ok((
             entity,
             mut mass,
             mut radius,
@@ -520,39 +521,38 @@ pub fn handle_selected_body_tools(
             mut opt_quasi,
             _opt_star,
         )) = selected_query.get_mut(selected_ent)
-        {
-            apply_body_mass_and_orbit_edits(
-                keyboard,
-                star_mass,
-                star_pos,
-                star_vel,
-                &mut mass,
-                &mut radius,
-                &mut pos,
-                &mut vel,
-                &comp,
-                &body,
-                diff_opt.as_deref_mut(),
-                trans_opt.as_deref_mut(),
-            );
-            apply_body_interaction_actions(
-                commands,
-                keyboard,
-                star_mass,
-                star_pos,
-                star_vel,
-                entity,
-                &mass,
-                &mut radius,
-                &mut pos,
-                &mut vel,
-                &mut comp,
-                &mut body,
-                ignition_opt.as_deref_mut(),
-                opt_quasi.as_deref_mut(),
-                player_state,
-                toast,
-            );
-        }
+    {
+        apply_body_mass_and_orbit_edits(
+            keyboard,
+            star_mass,
+            star_pos,
+            star_vel,
+            &mut mass,
+            &mut radius,
+            &mut pos,
+            &mut vel,
+            &comp,
+            &body,
+            diff_opt.as_deref_mut(),
+            trans_opt.as_deref_mut(),
+        );
+        apply_body_interaction_actions(
+            commands,
+            keyboard,
+            star_mass,
+            star_pos,
+            star_vel,
+            entity,
+            &mass,
+            &mut radius,
+            &mut pos,
+            &mut vel,
+            &mut comp,
+            &mut body,
+            ignition_opt.as_deref_mut(),
+            opt_quasi.as_deref_mut(),
+            player_state,
+            toast,
+        );
     }
 }

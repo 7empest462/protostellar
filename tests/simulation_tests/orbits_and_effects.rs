@@ -8,8 +8,8 @@ use protostellar::utils::math::*;
 #[test]
 fn test_hyperbolic_orbit_points_generation() {
     use protostellar::utils::math::{
-        apsides_positions, generate_hyperbolic_orbit_points, position_at_true_anomaly,
-        OrbitalElements,
+        OrbitalElements, apsides_positions, generate_hyperbolic_orbit_points,
+        position_at_true_anomaly,
     };
 
     // Unbound interstellar flyby trajectory: e = 1.5, a = -3.0 AU (q = |a|(e - 1) = 1.5 AU)
@@ -66,7 +66,7 @@ fn test_hyperbolic_orbit_points_generation() {
 #[test]
 fn test_trailing_ribbon_points_elliptical_and_hyperbolic() {
     use protostellar::utils::math::{
-        generate_trailing_ribbon_points, position_at_true_anomaly, OrbitalElements,
+        OrbitalElements, generate_trailing_ribbon_points, position_at_true_anomaly,
     };
     use std::f64::consts::PI;
 
@@ -184,7 +184,7 @@ fn test_satellite_moon_orbit_anchoring_math() {
 #[test]
 fn test_planet_builder_preview_orbit_generation() {
     use protostellar::game::ui::PlanetBuilderState;
-    use protostellar::utils::math::{apsides_positions, generate_orbit_points, OrbitalElements};
+    use protostellar::utils::math::{OrbitalElements, apsides_positions, generate_orbit_points};
 
     let builder = PlanetBuilderState::default();
     assert_eq!(builder.semi_major_axis_au, 1.0);
@@ -394,7 +394,9 @@ fn test_draw_orbital_effects_and_gizmos_executes_cleanly() {
     sched.add_systems(protostellar::rendering::effects::draw_orbital_effects_and_gizmos);
     sched.run(app.world_mut());
 
-    println!("Successfully ran draw_orbital_effects_and_gizmos with resilient star query and adaptive reticles!");
+    println!(
+        "Successfully ran draw_orbital_effects_and_gizmos with resilient star query and adaptive reticles!"
+    );
 }
 
 #[test]
@@ -711,8 +713,8 @@ fn test_orbital_elements_disk_plane_zero_inclination() {
 
 #[test]
 fn test_gpu_readback_buffer_recycling() {
-    use protostellar::gpu::compute_node::GpuReadbackReceiver;
     use protostellar::gpu::GpuReadbackSender;
+    use protostellar::gpu::compute_node::GpuReadbackReceiver;
 
     let (tx, rx) = flume::bounded::<Vec<u8>>(2);
     let (recycle_tx, recycle_rx) = flume::bounded::<Vec<u8>>(2);

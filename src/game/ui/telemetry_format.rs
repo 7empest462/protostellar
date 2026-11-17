@@ -195,10 +195,45 @@ pub fn format_stellar_extra_telemetry(
             (1.0 - config.gas_density_scale) * 100.0
         )
     } else {
-        format!("Kelvin-Helmholtz Core Heating (Progress: {fusion_pct:.1}%)\nIgnition Threshold: 10.0 MK [Press 'I' or Click Button Below to Ignite]")
+        format!(
+            "Kelvin-Helmholtz Core Heating (Progress: {fusion_pct:.1}%)\nIgnition Threshold: 10.0 MK [Press 'I' or Click Button Below to Ignite]"
+        )
     };
 
-    format!("\nStellar Core Temp: {core_temp_mk:.2} MK | Fusion: {fusion_pct:.1}%\nStellar State: {status}")
+    format!(
+        "\nStellar Core Temp: {core_temp_mk:.2} MK | Fusion: {fusion_pct:.1}%\nStellar State: {status}"
+    )
+}
+
+/// Returns true when a planet retains a thick gas envelope (`gas_frac > 0.12`)
+/// atop a massive refractory rock/metal interior (`>= 60%`), producing deep core-envelope
+/// thermal outgassing and silicate/alkali upwelling clouds rather than vacuum umbrella plumes.
+pub fn has_deep_core_envelope_outgassing(comp: &Composition, body_type: BodyType) -> bool {
+    if body_type.is_star_or_remnant() {
+        return false;
+    }
+    let norm = comp.normalized();
+    let refractory_frac = norm.silicate_frac + norm.organics_frac + norm.metal_frac;
+    norm.gas_frac > 0.12 && refractory_frac >= 0.60
+}
+
+/// Formats telemetry describing deep core-envelope thermal outgassing for rocky-core gas giants.
+pub fn format_core_envelope_outgassing_telemetry(
+    comp: &Composition,
+    body_type: BodyType,
+    temp_k: f64,
+) -> String {
+    if !has_deep_core_envelope_outgassing(comp, body_type) {
+        return String::new();
+    }
+    let norm = comp.normalized();
+    let refractory_pct = (norm.silicate_frac + norm.organics_frac + norm.metal_frac) * 100.0;
+    let regime = if temp_k >= 800.0 {
+        "Hot Silicate-Alkali Upwelling Clouds (Convective Envelope)"
+    } else {
+        "Deep Mantle Outgassing into Primary Envelope (Suppressed Plumes)"
+    };
+    format!("\n▸ Core-Envelope Volcanism: {regime} ({refractory_pct:.0}% Refractory Interior)")
 }
 
 pub fn format_geology_and_volatiles_telemetry(
@@ -307,14 +342,15 @@ pub fn format_atmospheric_escape_telemetry(
                 esc.magnetic_shielding_factor * 100.0,
             );
         }
-    } else if let Some(tail) = opt_tail {
-        if tail.is_active && tail.tail_length_au > 0.01 {
-            let _ = write!(
-                out,
-                "\n▸ Photoevaporation: Active (Loss: {:.2} M_earth/Myr | Tail: {:.2} AU)",
-                tail.loss_rate_m_earth_per_myr, tail.tail_length_au
-            );
-        }
+    } else if let Some(tail) = opt_tail
+        && tail.is_active
+        && tail.tail_length_au > 0.01
+    {
+        let _ = write!(
+            out,
+            "\n▸ Photoevaporation: Active (Loss: {:.2} M_earth/Myr | Tail: {:.2} AU)",
+            tail.loss_rate_m_earth_per_myr, tail.tail_length_au
+        );
     }
     out
 }
@@ -416,45 +452,45 @@ pub fn format_climate_biosphere_telemetry(
 pub fn format_relativistic_telemetry(opt_rel: Option<&RelativisticState>) -> String {
     let mut out = String::new();
 
-    if let Some(rel) = opt_rel {
-        if rel.precession_rate_arcsec_century > 0.01 || rel.gw_luminosity_watts > 1.0 {
-            out.push_str("\n━━━ ⟪ GENERAL RELATIVITY & FIELDS ⟫ ━━━");
-            let advance_deg = rel.precession_advance_per_orbit_rad.to_degrees();
-            let prec_str = if advance_deg >= 0.01 {
-                format!("+{advance_deg:.2}°/orb")
-            } else {
-                format!("+{:.1}″/cy", rel.precession_rate_arcsec_century)
-            };
-            let status = if rel.is_coalescing {
-                "COALESCING"
-            } else {
-                "Stable"
-            };
+    if let Some(rel) = opt_rel
+        && (rel.precession_rate_arcsec_century > 0.01 || rel.gw_luminosity_watts > 1.0)
+    {
+        out.push_str("\n━━━ ⟪ GENERAL RELATIVITY & FIELDS ⟫ ━━━");
+        let advance_deg = rel.precession_advance_per_orbit_rad.to_degrees();
+        let prec_str = if advance_deg >= 0.01 {
+            format!("+{advance_deg:.2}°/orb")
+        } else {
+            format!("+{:.1}″/cy", rel.precession_rate_arcsec_century)
+        };
+        let status = if rel.is_coalescing {
+            "COALESCING"
+        } else {
+            "Stable"
+        };
+        let _ = write!(
+            out,
+            "\n▸ 1PN Precession: {} (+{:.3}° total) | Status: {}",
+            prec_str,
+            rel.accumulated_precession_rad.to_degrees(),
+            status
+        );
+        if rel.total_redshift_z > 1e-7 || rel.beta_v_over_c > 0.001 {
             let _ = write!(
                 out,
-                "\n▸ 1PN Precession: {} (+{:.3}° total) | Status: {}",
-                prec_str,
-                rel.accumulated_precession_rad.to_degrees(),
-                status
+                "\n▸ Relativity: z = {:.4e} | β = {:.2}% c",
+                rel.total_redshift_z,
+                rel.beta_v_over_c * 100.0
             );
-            if rel.total_redshift_z > 1e-7 || rel.beta_v_over_c > 0.001 {
-                let _ = write!(
-                    out,
-                    "\n▸ Relativity: z = {:.4e} | β = {:.2}% c",
-                    rel.total_redshift_z,
-                    rel.beta_v_over_c * 100.0
-                );
-            }
-            if rel.gw_luminosity_watts > 10.0 {
-                let _ = write!(
-                    out,
-                    "\n▸ Gravitational Waves: {:.2e} W (f_GW: {:.2e} Hz | h: {:.1e}) | Inspiral: {:.2e} yr",
-                    rel.gw_luminosity_watts,
-                    rel.gw_frequency_hz,
-                    rel.gw_strain,
-                    rel.inspiral_timescale_yr
-                );
-            }
+        }
+        if rel.gw_luminosity_watts > 10.0 {
+            let _ = write!(
+                out,
+                "\n▸ Gravitational Waves: {:.2e} W (f_GW: {:.2e} Hz | h: {:.1e}) | Inspiral: {:.2e} yr",
+                rel.gw_luminosity_watts,
+                rel.gw_frequency_hz,
+                rel.gw_strain,
+                rel.inspiral_timescale_yr
+            );
         }
     }
 
@@ -480,11 +516,16 @@ pub fn format_body_environment_telemetry(
     opt_kozai: Option<&KozaiLidovState>,
     rad: &Radius,
     temp: &Temperature,
+    comp: &Composition,
+    body_type: BodyType,
     config: &SimulationConfig,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format_geology_and_volatiles_telemetry(
         opt_diff, opt_vol, opt_rings,
+    ));
+    out.push_str(&format_core_envelope_outgassing_telemetry(
+        comp, body_type, temp.0,
     ));
     out.push_str(&format_climate_biosphere_telemetry(
         opt_climate,
@@ -574,11 +615,7 @@ pub fn append_quasi_star_telemetry(out: &mut String, qs: &BlackHoleStarState) {
     let _ = write!(
         out,
         "\n━━━ ⟪ JWST LITTLE RED DOT / QUASI-STAR ⟫ ━━━━━━━━━━\n  • BH Seed Mass:     {:>10.0} M☉\n  • Cocoon Mass:      {:>10.0} M☉\n  • Inflow Rate:      {:>10.1}x ({})\n  • Cocoon Status:    {}\n  • Redshift Epoch:   z ≈ 8.5 (Cosmic Dawn, 660 Myr)\n  • Controls:         [X] Accrete | [B] Blowout | [T] Pop-III TDE\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        qs.black_hole_mass_solar,
-        qs.cocoon_mass_solar,
-        qs.eddington_ratio,
-        acc_mode,
-        status,
+        qs.black_hole_mass_solar, qs.cocoon_mass_solar, qs.eddington_ratio, acc_mode, status,
     );
 }
 
@@ -676,4 +713,94 @@ pub fn append_sonification_telemetry(
         audio.stereo_pan,
         audio.status_line
     );
+}
+
+/// Appends the stripped solid/icy core diameter note when `Atmo: OFF` hides a gas envelope.
+pub fn append_stripped_core_view_note(
+    out: &mut String,
+    mass_solar: f64,
+    radius_au: f64,
+    body_type: BodyType,
+    comp: &Composition,
+    opt_diff: Option<&InternalDifferentiation>,
+    show_atmospheres: bool,
+) {
+    use std::fmt::Write;
+    if show_atmospheres || body_type.is_star_or_remnant() {
+        return;
+    }
+    let stripped_r = crate::rendering::bodies::view_overrides::stripped_interior_radius_au(
+        mass_solar, radius_au, body_type, comp, opt_diff,
+    );
+    if radius_au > 1e-12 && stripped_r < radius_au * 0.999 {
+        let core_disp = format_body_radius_display(stripped_r);
+        let pct = (stripped_r / radius_au) * 100.0;
+        let _ = write!(
+            out,
+            "\n▸ Stripped Core View (Atmo OFF): {core_disp} ({pct:.0}% of envelope radius)"
+        );
+    }
+}
+
+/// Appends autonomous space probe mission status and ground assay telemetry.
+pub fn append_probe_telemetry(
+    text: &mut String,
+    probe: &crate::simulation::probes::SpaceProbe,
+    comp: &crate::simulation::probes::FlightComputer,
+) {
+    use std::fmt::Write;
+    let type_label = match probe.probe_type {
+        crate::simulation::probes::ProbeType::Orbiter => "ORBITAL SURVEY PROBE",
+        crate::simulation::probes::ProbeType::Rover => "SURFACE EXPLORATION ROVER",
+    };
+    let status_label = match probe.status {
+        crate::simulation::probes::ProbeStatus::Transit => {
+            "EN ROUTE // AUTONOMOUS ION PROPULSION ACTIVE"
+        }
+        crate::simulation::probes::ProbeStatus::InOrbit => {
+            "STABLE ORBIT INSERTION // REMOTE SPECTROMETRY ACTIVE"
+        }
+        crate::simulation::probes::ProbeStatus::Landed => {
+            "SURFACE TOUCHDOWN // AUTONOMOUS GEODESIC TRAVERSE & CORE DRILLING"
+        }
+    };
+    let _ = write!(
+        text,
+        "\n\n>> AUTONOMOUS MISSION TELEMETRY <<\n\
+         Mission Type: {type_label}\n\
+         Destination World: {}\n\
+         Flight Status: {status_label}\n\
+         Range to Target: {:.3} AU ({:.0} km)\n\
+         Relative Speed: {:.1} km/s",
+        comp.target_name,
+        comp.distance_to_target,
+        comp.distance_to_target * AU_TO_KM,
+        comp.relative_speed * AU_PER_YR_TO_KM_PER_S
+    );
+
+    if probe.status == crate::simulation::probes::ProbeStatus::Landed {
+        if let Some((lat, lon)) = probe.surface_lat_lon_deg() {
+            let lat_hem = if lat >= 0.0 { 'N' } else { 'S' };
+            let lon_hem = if lon >= 0.0 { 'E' } else { 'W' };
+            let _ = write!(
+                text,
+                "\nSurface Coordinates: {:.2}° {lat_hem}, {:.2}° {lon_hem}\n\
+                 Traverse Distance: {:.1} km ({} Waypoints) | Core Samples: {}\n\
+                 Raman Assay: {}",
+                lat.abs(),
+                lon.abs(),
+                probe.distance_driven_km,
+                probe.traverse_trail_unspun.len(),
+                probe.samples_collected,
+                probe.latest_assay
+            );
+        }
+    } else if probe.status == crate::simulation::probes::ProbeStatus::InOrbit {
+        let _ = write!(
+            text,
+            "\nOrbital Surveys: {} Passes Completed\n\
+             Spectrometry: {}",
+            probe.samples_collected, probe.latest_assay
+        );
+    }
 }

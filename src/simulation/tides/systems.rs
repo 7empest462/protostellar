@@ -123,7 +123,7 @@ fn apply_geothermal_tidal_coupling(
     opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
     opt_temp: &mut Option<Mut<'_, Temperature>>,
 ) {
-    if let Some(ref mut diff) = opt_diff {
+    if let Some(diff) = opt_diff {
         // Specific heat capacity Cp ~ 1000 J/(kg*K)
         let m_kg = (body_mass_solar * SOLAR_MASS_KG).max(1e18);
         let energy_joules = power_watts * dt_yr * YEAR_SECONDS;
@@ -147,7 +147,7 @@ fn apply_geothermal_tidal_coupling(
         }
     }
 
-    if let Some(ref mut climate) = opt_climate {
+    if let Some(climate) = opt_climate {
         // Effective surface temperature boost from tidal dissipation flux
         if flux_w_m2 > 0.1 {
             let t_base =
@@ -155,10 +155,10 @@ fn apply_geothermal_tidal_coupling(
             let t4 = t_base.powi(4) + (flux_w_m2 / STEFAN_BOLTZMANN_SI);
             let new_surf_t = t4.powf(0.25).clamp(20.0, 3000.0);
             climate.surface_temperature_k = new_surf_t as f32;
-            if let Some(ref mut temp) = opt_temp {
-                if new_surf_t > temp.0 {
-                    temp.0 = new_surf_t;
-                }
+            if let Some(temp) = opt_temp
+                && new_surf_t > temp.0
+            {
+                temp.0 = new_surf_t;
             }
         }
     }
@@ -321,7 +321,7 @@ fn step_body_tidal_evolution(
         return;
     };
 
-    let mut tide = if let Some(ref t) = opt_tide {
+    let mut tide = if let &mut Some(ref t) = opt_tide {
         **t
     } else {
         TidalState::new_from_composition_and_type(comp, body.body_type)
@@ -408,7 +408,7 @@ fn step_body_tidal_evolution(
     tide.circularization_timescale_yr = tau_circ;
     tide.sync_timescale_yr = tau_sync;
 
-    if let Some(ref mut t) = opt_tide {
+    if let Some(t) = opt_tide {
         **t = tide;
     } else if let Ok(mut entity_cmd) = commands.get_entity(entity) {
         entity_cmd.try_insert(tide);
@@ -423,6 +423,11 @@ pub fn compute_volcanic_state(
     existing: Option<VolcanicState>,
 ) -> Option<VolcanicState> {
     let norm = comp.normalized();
+    // Vacuum umbrella plumes (Io/Enceladus style) cannot escape once a thick primary gas envelope forms;
+    // silicate/metal-rich gas giants express interior heat through deep core-envelope upwelling instead.
+    if norm.gas_frac > 0.12 {
+        return None;
+    }
 
     let is_io = crate::utils::math::contains_ascii_case_insensitive(name, "io");
     let is_enceladus = crate::utils::math::contains_ascii_case_insensitive(name, "enceladus");
@@ -480,11 +485,15 @@ fn update_body_volcanism(
     if let Some(state) =
         compute_volcanic_state(&body.name, comp, flux_w_m2, opt_volc.as_ref().map(|v| **v))
     {
-        if let Some(ref mut v) = opt_volc {
+        if let Some(v) = opt_volc {
             **v = state;
         } else if let Ok(mut entity_cmd) = commands.get_entity(entity) {
             entity_cmd.try_insert(state);
         }
+    } else if opt_volc.is_some()
+        && let Ok(mut entity_cmd) = commands.get_entity(entity)
+    {
+        entity_cmd.remove::<VolcanicState>();
     }
 }
 

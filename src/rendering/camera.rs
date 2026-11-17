@@ -12,8 +12,8 @@ use bevy::prelude::*;
 
 pub use crate::rendering::camera_picking::IgnoreUiPicking;
 use crate::rendering::camera_picking::{
-    handle_camera_target_picking, is_cursor_over_scroll_container, is_ui_interaction_blocking,
-    UiInteractionStateQuery, UiPickingNodesQuery,
+    UiInteractionStateQuery, UiPickingNodesQuery, handle_camera_target_picking,
+    is_cursor_over_scroll_container, is_ui_interaction_blocking,
 };
 use crate::rendering::post_processing::PostProcessingSettings;
 
@@ -220,7 +220,9 @@ pub fn setup_gizmo_configuration(mut config_store: ResMut<GizmoConfigStore>) {
     config.depth_bias = -1.0;
     config.line.width = 1.4;
     config.line.joints = GizmoLineJoint::Round(4);
-    info!("✅ setup_gizmo_configuration: depth_bias set to -1.0, line.width set to 1.4, line.joints set to Round(4)");
+    info!(
+        "✅ setup_gizmo_configuration: depth_bias set to -1.0, line.width set to 1.4, line.joints set to Round(4)"
+    );
 }
 
 #[inline]
@@ -239,6 +241,8 @@ pub(crate) type CameraTargetsQuery<'w, 's> = Query<
         &'static CelestialBody,
         &'static Mass,
         Option<&'static Transform>,
+        Option<&'static Composition>,
+        Option<&'static InternalDifferentiation>,
     ),
     Without<PanOrbitCamera>,
 >;
@@ -247,7 +251,7 @@ fn compute_system_min_orbit_r(targets_query: &CameraTargetsQuery) -> (Vec3, f32)
     let mut star_pos = Vec3::ZERO;
     let mut star_mass = -1.0_f64;
     let mut star_count = 0_usize;
-    for (_, pos, _, body, mass, _) in targets_query.iter() {
+    for (_, pos, _, body, mass, _, _, _) in targets_query.iter() {
         if body.body_type.is_star_or_remnant() {
             star_count += 1;
             if mass.0 > star_mass {
@@ -260,7 +264,7 @@ fn compute_system_min_orbit_r(targets_query: &CameraTargetsQuery) -> (Vec3, f32)
         return (star_pos, 1.0);
     }
     let mut min_r = f32::MAX;
-    for (_, pos, _, _, _, _) in targets_query.iter() {
+    for (_, pos, _, _, _, _, _, _) in targets_query.iter() {
         let p = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         let dist = (p - star_pos).length();
         if dist > 0.001 && dist < min_r {
@@ -270,11 +274,16 @@ fn compute_system_min_orbit_r(targets_query: &CameraTargetsQuery) -> (Vec3, f32)
     (star_pos, if min_r < f32::MAX { min_r } else { 1.0 })
 }
 
+#[allow(clippy::too_many_arguments, reason = "Camera radii helper")]
 #[inline]
 pub(crate) fn resolve_camera_body_radii(
     opt_t: Option<&Transform>,
     radius_au: f64,
     body_type: BodyType,
+    mass_solar: f64,
+    opt_comp: Option<&Composition>,
+    opt_diff: Option<&InternalDifferentiation>,
+    show_atmospheres: bool,
     r_orb: f32,
     min_orbit_r: f32,
     config: &SimulationConfig,
@@ -283,16 +292,19 @@ pub(crate) fn resolve_camera_body_radii(
         let sx = t.scale.x;
         let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && radius_au < 0.25;
         if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
-            let close_vis_r =
-                crate::rendering::bodies::transforms::compute_realistic_visual_radius(
-                    radius_au,
-                    body_type,
-                    r_orb,
-                    min_orbit_r,
-                    0.0,
-                    config,
-                )
-                .min(sx);
+            let close_vis_r = crate::rendering::bodies::transforms::compute_view_visual_radius(
+                radius_au,
+                body_type,
+                mass_solar,
+                opt_comp,
+                opt_diff,
+                show_atmospheres,
+                r_orb,
+                min_orbit_r,
+                0.0,
+                config,
+            )
+            .min(sx);
             return (sx, close_vis_r);
         }
     }
@@ -306,9 +318,12 @@ fn update_camera_min_zoom_bounds(
     targets_query: &CameraTargetsQuery,
     star_pos: Vec3,
     min_orbit_r: f32,
+    show_atmospheres: bool,
 ) {
     let focused_info = if let Some(target_ent) = camera.target_entity {
-        if let Ok((_, pos, radius, body, _mass, opt_t)) = targets_query.get(target_ent) {
+        if let Ok((_, pos, radius, body, mass, opt_t, opt_comp, opt_diff)) =
+            targets_query.get(target_ent)
+        {
             let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             camera.target_focus = target_vec;
             let is_lrd = is_little_red_dot(body);
@@ -316,6 +331,10 @@ fn update_camera_min_zoom_bounds(
                 opt_t,
                 radius.0,
                 body.body_type,
+                mass.0,
+                opt_comp,
+                opt_diff,
+                show_atmospheres,
                 (target_vec - star_pos).length(),
                 min_orbit_r,
                 config,
@@ -334,13 +353,17 @@ fn update_camera_min_zoom_bounds(
     } else {
         targets_query
             .iter()
-            .map(|(_, pos, radius, body, _, opt_t)| {
+            .map(|(_, pos, radius, body, mass, opt_t, opt_comp, opt_diff)| {
                 let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
                 let dist = camera.target_focus.distance(center);
                 let (curr_vis, close_vis) = resolve_camera_body_radii(
                     opt_t,
                     radius.0,
                     body.body_type,
+                    mass.0,
+                    opt_comp,
+                    opt_diff,
+                    show_atmospheres,
                     (center - star_pos).length(),
                     min_orbit_r,
                     config,
@@ -390,16 +413,22 @@ fn handle_camera_keyboard_flight(
 
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         if let Some(target) = player_state.selected_entity {
-            if let Ok((_, pos, radius, body, _, _opt_t)) = targets_query.get(target) {
+            if let Ok((_, pos, radius, body, mass, _opt_t, opt_comp, opt_diff)) =
+                targets_query.get(target)
+            {
                 let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
                 let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
                     let visual_radius =
                         config.calc_visual_radius_for_type(radius.0, body.body_type);
                     0.015f32.max(config.calc_camera_framing_radius(visual_radius))
                 } else {
-                    crate::rendering::bodies::transforms::compute_close_camera_framing_radius(
+                    crate::rendering::bodies::transforms::compute_close_view_camera_framing_radius(
                         radius.0,
                         body.body_type,
+                        mass.0,
+                        opt_comp,
+                        opt_diff,
+                        player_state.show_atmospheres(),
                         (target_vec - star_pos).length(),
                         min_orbit_r,
                         config,
@@ -415,36 +444,40 @@ fn handle_camera_keyboard_flight(
         }
     }
 
-    if keyboard_input.just_pressed(KeyCode::KeyR) {
+    let is_shift =
+        keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
+    if !is_shift && keyboard_input.just_pressed(KeyCode::KeyR) {
         camera.target_focus = Vec3::ZERO;
         camera.target_entity = None;
         player_state.selected_entity = None;
     }
 
-    let move_speed = (camera.target_radius * 0.025).clamp(0.1, 5.0);
-    if keyboard_input.pressed(KeyCode::KeyW) {
-        camera.target_focus += transform.rotation * -Vec3::Z * move_speed;
-        camera.target_entity = None;
-    }
-    if keyboard_input.pressed(KeyCode::KeyS) {
-        camera.target_focus += transform.rotation * Vec3::Z * move_speed;
-        camera.target_entity = None;
-    }
-    if keyboard_input.pressed(KeyCode::KeyA) {
-        camera.target_focus += transform.rotation * -Vec3::X * move_speed;
-        camera.target_entity = None;
-    }
-    if keyboard_input.pressed(KeyCode::KeyD) {
-        camera.target_focus += transform.rotation * Vec3::X * move_speed;
-        camera.target_entity = None;
-    }
-    if keyboard_input.pressed(KeyCode::KeyQ) {
-        camera.target_focus.y -= move_speed;
-        camera.target_entity = None;
-    }
-    if keyboard_input.pressed(KeyCode::KeyE) {
-        camera.target_focus.y += move_speed;
-        camera.target_entity = None;
+    if !is_shift {
+        let move_speed = (camera.target_radius * 0.025).clamp(0.1, 5.0);
+        if keyboard_input.pressed(KeyCode::KeyW) {
+            camera.target_focus += transform.rotation * -Vec3::Z * move_speed;
+            camera.target_entity = None;
+        }
+        if keyboard_input.pressed(KeyCode::KeyS) {
+            camera.target_focus += transform.rotation * Vec3::Z * move_speed;
+            camera.target_entity = None;
+        }
+        if keyboard_input.pressed(KeyCode::KeyA) {
+            camera.target_focus += transform.rotation * -Vec3::X * move_speed;
+            camera.target_entity = None;
+        }
+        if keyboard_input.pressed(KeyCode::KeyD) {
+            camera.target_focus += transform.rotation * Vec3::X * move_speed;
+            camera.target_entity = None;
+        }
+        if keyboard_input.pressed(KeyCode::KeyQ) {
+            camera.target_focus.y -= move_speed;
+            camera.target_entity = None;
+        }
+        if keyboard_input.pressed(KeyCode::KeyE) {
+            camera.target_focus.y += move_speed;
+            camera.target_entity = None;
+        }
     }
 }
 
@@ -558,7 +591,7 @@ fn adapt_camera_bloom_to_star_proximity(
     };
 
     let mut min_star_ratio = f32::MAX;
-    for (_, pos, rad, body, _, opt_trans) in targets_query.iter() {
+    for (_, pos, rad, body, _, opt_trans, _, _) in targets_query.iter() {
         if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
             if body.body_type == BodyType::BlackHole {
                 continue;
@@ -714,6 +747,26 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
     (translation, rot)
 }
 
+fn sync_camera_target_transition_state(camera: &mut PanOrbitCamera) {
+    if camera.target_entity == camera.previous_target_entity {
+        return;
+    }
+    if let Some(ent) = camera.target_entity {
+        let target_vec = camera.target_focus;
+        let target_rad = camera.target_radius;
+        camera.initiate_target_transition(ent, target_vec, target_rad);
+    } else {
+        if camera.focus_transition_progress < 1.0 {
+            let eye = camera.current_orbital_eye();
+            let back = camera.orbital_rotation() * Vec3::Z;
+            camera.focus = eye - back * camera.radius;
+            camera.target_focus = camera.focus;
+        }
+        camera.focus_transition_progress = 1.0;
+        camera.previous_target_entity = None;
+    }
+}
+
 /// Handles user mouse, keyboard camera control, and 3D raycast click selection of celestial bodies.
 #[allow(
     deprecated,
@@ -766,7 +819,14 @@ pub fn update_pan_orbit_camera(
         crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
 
     let (star_pos, min_orbit_r) = compute_system_min_orbit_r(&targets_query);
-    update_camera_min_zoom_bounds(&mut camera, &config, &targets_query, star_pos, min_orbit_r);
+    update_camera_min_zoom_bounds(
+        &mut camera,
+        &config,
+        &targets_query,
+        star_pos,
+        min_orbit_r,
+        player_state.show_atmospheres(),
+    );
 
     let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
 
@@ -788,22 +848,7 @@ pub fn update_pan_orbit_camera(
         return;
     }
 
-    if camera.target_entity != camera.previous_target_entity {
-        if let Some(ent) = camera.target_entity {
-            let target_vec = camera.target_focus;
-            let target_rad = camera.target_radius;
-            camera.initiate_target_transition(ent, target_vec, target_rad);
-        } else {
-            if camera.focus_transition_progress < 1.0 {
-                let eye = camera.current_orbital_eye();
-                let back = camera.orbital_rotation() * Vec3::Z;
-                camera.focus = eye - back * camera.radius;
-                camera.target_focus = camera.focus;
-            }
-            camera.focus_transition_progress = 1.0;
-            camera.previous_target_entity = None;
-        }
-    }
+    sync_camera_target_transition_state(&mut camera);
 
     let cursor_over_ui = ui_interaction_query
         .iter()

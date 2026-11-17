@@ -44,8 +44,9 @@ pub fn update_atmospheric_escape_evolution(
             &mut CelestialBody,
             Option<&mut AtmosphericEscapeTail>,
             Option<&mut VolatileInventory>,
-            Option<&InternalDifferentiation>,
+            Option<&mut InternalDifferentiation>,
             Option<&PlanetaryClimate>,
+            Option<&Temperature>,
             Option<&mut AtmosphericEscapeState>,
         ),
         (
@@ -79,8 +80,9 @@ pub fn update_atmospheric_escape_evolution(
         mut b_body,
         mut opt_tail,
         mut opt_vol,
-        opt_diff,
+        mut opt_diff,
         opt_climate,
+        opt_temp,
         mut opt_escape_state,
     ) in planets_query.iter_mut()
     {
@@ -90,34 +92,43 @@ pub fn update_atmospheric_escape_evolution(
 
         let dist_au = (p_pos.0 - star_pos.0).length().max(0.005);
         let r_hill_au = dist_au * (p_mass.0 / (3.0 * star_mass.0.max(1e-4))).cbrt();
+        let body_temp_k = opt_climate.map_or_else(
+            || opt_temp.map_or(280.0, |t| t.0),
+            |c| f64::from(c.surface_temperature_k),
+        );
 
-        let rates = evaluate_body_escape_rates(
-            &p_mass,
-            p_rad.0,
+        let rates = evaluate_body_escape_rates(&EscapeEvalInput {
+            body_type: b_body.body_type,
+            mass_solar: p_mass.0,
+            rad_au: p_rad.0,
             dist_au,
             r_hill_au,
             l_xuv_watts,
-            star_mass.0,
-            star_lum.0,
-            &comp,
-            opt_vol.as_deref(),
-            opt_diff,
-            opt_climate,
-            &escape_config,
-        );
+            star_mass_solar: star_mass.0,
+            star_lum_solar: star_lum.0,
+            body_temp_k,
+            comp: &comp,
+            opt_vol: opt_vol.as_deref(),
+            opt_diff: opt_diff.as_deref(),
+            escape_config: &escape_config,
+        });
 
         let was_gas_rich = comp.gas_frac > 0.005;
         apply_escape_mass_loss(
-            planet_ent,
+            &EscapeStepContext {
+                planet_ent,
+                body_temp_k,
+                total_loss_rate: rates.total_loss_rate,
+                was_gas_rich,
+                dt_yr,
+                sim_time_yr: sim_time.elapsed_years,
+            },
             &mut b_body,
             &mut p_rad,
             &mut p_mass,
             &mut comp,
             &mut opt_vol,
-            rates.total_loss_rate,
-            was_gas_rich,
-            dt_yr,
-            sim_time.elapsed_years,
+            &mut opt_diff,
             &mut stripped_events,
         );
 
@@ -156,43 +167,51 @@ struct EscapeRatesBundle {
     ion_color: Color,
 }
 
-fn evaluate_body_escape_rates(
-    p_mass: &Mass,
-    p_rad_au: f64,
+struct EscapeEvalInput<'a> {
+    body_type: BodyType,
+    mass_solar: f64,
+    rad_au: f64,
     dist_au: f64,
     r_hill_au: f64,
     l_xuv_watts: f64,
     star_mass_solar: f64,
     star_lum_solar: f64,
-    comp: &Composition,
-    opt_vol: Option<&VolatileInventory>,
-    opt_diff: Option<&InternalDifferentiation>,
-    opt_climate: Option<&PlanetaryClimate>,
-    escape_config: &AtmosphericEscapeConfig,
-) -> EscapeRatesBundle {
-    let xuv_flux_w_m2 = calculate_xuv_flux(l_xuv_watts, dist_au);
-    let (p_ram, _) = calculate_solar_wind_pressure(dist_au, star_mass_solar);
+    body_temp_k: f64,
+    comp: &'a Composition,
+    opt_vol: Option<&'a VolatileInventory>,
+    opt_diff: Option<&'a InternalDifferentiation>,
+    escape_config: &'a AtmosphericEscapeConfig,
+}
 
-    let b_gauss = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss);
-    let r_mp = calculate_magnetopause_radius(p_rad_au, b_gauss, p_ram);
-    let shielding = calculate_magnetic_shielding_factor(p_rad_au, r_mp);
-    let roche_fill_fraction = (p_rad_au / r_hill_au.max(1e-5)).clamp(0.0, 2.0) as f32;
+fn evaluate_body_escape_rates(input: &EscapeEvalInput<'_>) -> EscapeRatesBundle {
+    let xuv_flux_w_m2 = calculate_xuv_flux(input.l_xuv_watts, input.dist_au);
+    let (p_ram, _) = calculate_solar_wind_pressure(input.dist_au, input.star_mass_solar);
 
-    let has_gas = comp.gas_frac > 0.0001;
-    let has_atm = opt_vol.is_some_and(|v| v.atmospheric_pressure_bar > 0.001);
+    let b_gauss = input.opt_diff.map_or(0.0, |d| d.magnetic_field_gauss);
+    let r_mp = calculate_magnetopause_radius(input.rad_au, b_gauss, p_ram);
+    let shielding = calculate_magnetic_shielding_factor(input.rad_au, r_mp);
+    let roche_fill_fraction = (input.rad_au / input.r_hill_au.max(1e-5)).clamp(0.0, 2.0) as f32;
 
-    let photo_rate = if escape_config.enable_photoevaporation && (has_gas || has_atm) {
+    let has_gas = input.comp.gas_frac > 0.0001;
+    let p_bar = input
+        .opt_vol
+        .map_or(0.0, |v| f64::from(v.atmospheric_pressure_bar));
+    let has_atm = p_bar > 0.001;
+
+    let photo_rate = if input.escape_config.enable_photoevaporation && (has_gas || has_atm) {
         let base_photo = calculate_photoevaporation_rate(
-            p_mass.0,
-            p_rad_au,
+            input.mass_solar,
+            input.rad_au,
             xuv_flux_w_m2,
-            escape_config.photo_efficiency_eta,
-            r_hill_au,
+            input.escape_config.photo_efficiency_eta,
+            input.r_hill_au,
         );
-        // Secondary N2/CO2 atmospheres (without primordial H2/He gas envelopes) outside 0.25 AU
-        // radiatively cool via infrared emission and are protected by the magnetosphere.
-        if !has_gas && dist_au >= 0.25 {
+        // Massive secondary N2/CO2 worlds outside 0.25 AU radiatively cool via IR emission;
+        // low-gravity worlds (< 0.15 M_earth) lack deep gravity wells to halt H2O photolysis blow-off.
+        if !has_gas && input.dist_au >= 0.25 && input.mass_solar >= 0.15 * EARTH_MASS_SOLAR {
             base_photo * (1.0 - f64::from(shielding) * 0.95) * 0.02
+        } else if !has_gas {
+            base_photo * (1.0 - f64::from(shielding) * 0.90)
         } else {
             base_photo
         }
@@ -200,26 +219,51 @@ fn evaluate_body_escape_rates(
         0.0
     };
 
-    let wind_rate = if escape_config.enable_solar_wind_stripping && (has_gas || has_atm) {
-        calculate_solar_wind_stripping_rate(p_rad_au, p_ram, shielding, p_mass.0)
-            * escape_config.wind_efficiency
+    let wind_rate = if input.escape_config.enable_solar_wind_stripping && (has_gas || has_atm) {
+        calculate_solar_wind_stripping_rate(input.rad_au, p_ram, shielding, input.mass_solar)
+            * input.escape_config.wind_efficiency
     } else {
         0.0
     };
 
-    let jeans_rate = if escape_config.enable_jeans_escape && (has_gas || has_atm) {
-        let t_exo = opt_climate.map_or(300.0, |c| f64::from(c.surface_temperature_k) * 1.5);
-        let p_bar = opt_vol.map_or(0.0, |v| f64::from(v.atmospheric_pressure_bar));
-        // Primordial H2 envelopes have mu ~ 2.0 amu; secondary outgassed N2/CO2/H2O atmospheres have mu ~ 28.0 amu.
-        let mol_mass_amu = if has_gas { 2.0 } else { 28.0 };
-        let (_, j_rate) = calculate_jeans_escape(p_mass.0, p_rad_au, t_exo, mol_mass_amu, p_bar);
+    let jeans_rate = if input.escape_config.enable_jeans_escape && (has_gas || has_atm) {
+        let t_exo =
+            (input.body_temp_k * 1.5 + xuv_flux_w_m2.max(0.0).sqrt() * 220.0).clamp(50.0, 15_000.0);
+        let has_water = input.comp.ice_frac > 0.001
+            || input
+                .opt_vol
+                .is_some_and(|v| v.delivered_water_m_earth > 1e-6);
+        // UV photolysis breaks warm H2O vapor on low-gravity worlds into escaping atomic H / OH (mu_eff ~ 4 amu);
+        // massive dry N2/CO2 atmospheres remain dominated by heavy ~28 amu molecules.
+        let mol_mass_amu = if has_gas {
+            2.0
+        } else if has_water
+            && input.mass_solar < 0.15 * EARTH_MASS_SOLAR
+            && input.body_temp_k >= 175.0
+        {
+            4.0
+        } else {
+            28.0
+        };
+        let (_, j_rate) =
+            calculate_jeans_escape(input.mass_solar, input.rad_au, t_exo, mol_mass_amu, p_bar);
         j_rate
     } else {
         0.0
     };
 
-    let (comet_tail_len, comet_loss, comet_ion_col) =
-        calculate_cometary_sublimation(dist_au, star_lum_solar, comp.ice_frac);
+    let is_minor_sublimator = matches!(
+        input.body_type,
+        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+    ) || (input.mass_solar < 0.05 * EARTH_MASS_SOLAR
+        && input.body_temp_k >= 175.0
+        && p_bar < 0.02
+        && input.comp.ice_frac > 0.05);
+    let (comet_tail_len, comet_loss, comet_ion_col) = if is_minor_sublimator {
+        calculate_cometary_sublimation(input.dist_au, input.star_lum_solar, input.comp.ice_frac)
+    } else {
+        (0.0, 0.0, Color::srgba(0.3, 0.7, 1.0, 0.0))
+    };
 
     let total_loss_rate = photo_rate + wind_rate + jeans_rate + f64::from(comet_loss);
 
@@ -229,8 +273,8 @@ fn evaluate_body_escape_rates(
         jeans_rate,
         comet_loss,
         roche_fill_fraction,
-        dist_au,
-        comp,
+        input.dist_au,
+        input.comp,
         comet_tail_len,
         comet_ion_col,
     );
@@ -313,25 +357,33 @@ fn classify_escape_regime(
     )
 }
 
-fn apply_escape_mass_loss(
+struct EscapeStepContext {
     planet_ent: Entity,
+    body_temp_k: f64,
+    total_loss_rate: f64,
+    was_gas_rich: bool,
+    dt_yr: f64,
+    sim_time_yr: f64,
+}
+
+fn apply_escape_mass_loss(
+    step: &EscapeStepContext,
     body: &mut CelestialBody,
     p_rad: &mut Radius,
     p_mass: &mut Mass,
     comp: &mut Composition,
     opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
-    total_loss_rate: f64,
-    was_gas_rich: bool,
-    dt_yr: f64,
-    sim_time_yr: f64,
+    opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
     stripped_events: &mut MessageWriter<AtmosphericStrippedEvent>,
 ) {
-    if total_loss_rate <= 0.0 {
+    if step.total_loss_rate <= 0.0 {
         return;
     }
 
-    let delta_m_earth = total_loss_rate * (dt_yr / 1.0e6);
+    let delta_m_earth = step.total_loss_rate * (step.dt_yr / 1.0e6);
     let delta_m_solar = delta_m_earth * EARTH_MASS_SOLAR;
+    let prev_gas = comp.gas_frac;
+    let prev_ice = comp.ice_frac;
 
     if comp.gas_frac > 0.0 {
         let cur_gas_m = p_mass.0 * comp.gas_frac;
@@ -340,15 +392,9 @@ fn apply_escape_mass_loss(
 
         let new_gas_m = (cur_gas_m - stripped).max(0.0);
         comp.gas_frac = (new_gas_m / p_mass.0).clamp(0.0, 1.0);
+        *comp = comp.normalized();
 
-        let norm = comp.normalized();
-        comp.silicate_frac = norm.silicate_frac;
-        comp.metal_frac = norm.metal_frac;
-        comp.ice_frac = norm.ice_frac;
-        comp.organics_frac = norm.organics_frac;
-        comp.gas_frac = norm.gas_frac;
-
-        if was_gas_rich && comp.gas_frac < 0.001 {
+        if step.was_gas_rich && comp.gas_frac < 0.001 {
             body.body_type = crate::simulation::components::classify_body_by_mass_and_comp(
                 p_mass.0, comp, false,
             );
@@ -358,21 +404,73 @@ fn apply_escape_mass_loss(
             );
 
             stripped_events.write(AtmosphericStrippedEvent {
-                planet: planet_ent,
+                planet: step.planet_ent,
                 name: body.name.clone(),
                 remaining_mass_earth: p_mass.0 / EARTH_MASS_SOLAR,
-                time_yr: sim_time_yr,
+                time_yr: step.sim_time_yr,
             });
+        }
+    } else if step.body_temp_k >= 175.0
+        && p_mass.0 < 0.05 * EARTH_MASS_SOLAR
+        && comp.ice_frac > 0.05
+    {
+        // Sublimate exposed volatile ice above the ~175 K vacuum stability threshold;
+        // trace (< 5%) structurally bound hydroxyls remain in silicate minerals on rocky worlds.
+        let min_bound_ice = if body.body_type == BodyType::Comet {
+            0.0
+        } else {
+            0.05
+        };
+        let old_mass = p_mass.0;
+        let cur_ice_m = old_mass * comp.ice_frac;
+        let excess_ice_m = old_mass * (comp.ice_frac - min_bound_ice).max(0.0);
+        let sublimated = delta_m_solar.min(excess_ice_m);
+        if sublimated > 0.0 {
+            p_mass.0 = (old_mass - sublimated).max(1e-12);
+            let new_ice_m = (cur_ice_m - sublimated).max(0.0);
+            comp.ice_frac = (new_ice_m / p_mass.0).clamp(0.0, 1.0);
+            *comp = comp.normalized();
         }
     }
 
-    if let Some(ref mut vol) = opt_vol {
-        // delta_m_earth is already normalized by (dt_yr / 1.0e6) for M_earth/Myr rates
-        let pressure_loss = ((delta_m_earth * 2.0) as f32).min(vol.atmospheric_pressure_bar);
+    let comp_shifted =
+        (comp.gas_frac - prev_gas).abs() > 1e-5 || (comp.ice_frac - prev_ice).abs() > 1e-5;
+    if comp_shifted
+        && !matches!(
+            body.body_type,
+            BodyType::GasGiant | BodyType::IceGiant | BodyType::BrownDwarf
+        )
+    {
+        p_rad.0 = crate::simulation::accretion::impact_regimes::radius_from_mass_density(
+            p_mass.0,
+            comp.average_density(),
+        );
+        if let Some(diff) = opt_diff {
+            diff.recalculate(p_mass.0, p_rad.0, comp);
+        }
+    }
+
+    if let Some(vol) = opt_vol {
+        let is_thin_secondary = !step.was_gas_rich && comp.gas_frac <= 0.001;
+        // 1 bar on an Earth-like atmosphere is ~1e-6 M_earth; thin steam/secondary envelopes
+        // respond to volatile loss far faster than multi-bar H2/He gas giant envelopes.
+        let raw_pressure_loss = if is_thin_secondary {
+            (delta_m_earth / 1.0e-6).max(delta_m_earth * 2.0) as f32
+        } else {
+            (delta_m_earth * 2.0) as f32
+        };
+        let pressure_loss = raw_pressure_loss.min(vol.atmospheric_pressure_bar);
         vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - pressure_loss).max(0.0);
 
-        let water_loss = delta_m_earth * 0.02;
+        let water_loss = if is_thin_secondary {
+            delta_m_earth
+        } else {
+            delta_m_earth * 0.02
+        };
         vol.delivered_water_m_earth = (vol.delivered_water_m_earth - water_loss).max(0.0);
+        if vol.delivered_water_m_earth <= 1e-6 {
+            vol.ocean_coverage_frac = 0.0;
+        }
     }
 }
 
@@ -385,20 +483,18 @@ fn update_visual_tail(
     ion_color: Color,
     is_active: bool,
 ) {
-    if let Some(ref mut tail) = opt_tail {
+    if let Some(tail) = opt_tail {
         tail.tail_length_au = tail_length_au;
         tail.loss_rate_m_earth_per_myr = loss_rate;
         tail.ion_color = ion_color;
         tail.is_active = is_active;
-    } else if is_active {
-        if let Ok(mut entity_cmd) = commands.get_entity(planet_ent) {
-            entity_cmd.try_insert(AtmosphericEscapeTail {
-                loss_rate_m_earth_per_myr: loss_rate,
-                tail_length_au,
-                ion_color,
-                is_active: true,
-            });
-        }
+    } else if is_active && let Ok(mut entity_cmd) = commands.get_entity(planet_ent) {
+        entity_cmd.try_insert(AtmosphericEscapeTail {
+            loss_rate_m_earth_per_myr: loss_rate,
+            tail_length_au,
+            ion_color,
+            is_active: true,
+        });
     }
 }
 
@@ -411,7 +507,7 @@ fn write_escape_state(
 ) {
     let mass_lost_step = rates.total_loss_rate * (dt_yr / 1.0e6);
 
-    if let Some(ref mut st) = opt_escape_state {
+    if let Some(st) = opt_escape_state {
         st.photoevaporative_loss_rate_m_earth_per_myr = rates.photo_rate;
         st.solar_wind_stripping_rate_m_earth_per_myr = rates.wind_rate;
         st.jeans_escape_rate_m_earth_per_myr = rates.jeans_rate;

@@ -3,7 +3,7 @@
 use super::types::*;
 use super::update::{set_display_if_changed, set_text_if_changed};
 use crate::simulation::economy::{
-    ScienceData, TechNode, TechnologyCategory, UnlockedTechs, ALL_TECH_NODES,
+    ALL_TECH_NODES, ScienceData, TechNode, TechnologyCategory, UnlockedTechs,
 };
 use bevy::prelude::*;
 

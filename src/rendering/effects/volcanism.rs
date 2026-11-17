@@ -7,8 +7,8 @@ use bevy::prelude::*;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use super::orbits::{draw_occluded_circle, sphere_occlusion_fade};
-use crate::simulation::components::volcanism::{VolcanicActivityType, VolcanicState};
 use crate::simulation::components::SpinState;
+use crate::simulation::components::volcanism::{VolcanicActivityType, VolcanicState};
 
 /// Prominent active volcanic eruption centers on Io (Pele, Loki, Prometheus, Tvashtar).
 pub const IO_VENT_NORMALS: [Vec3; 4] = [

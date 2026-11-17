@@ -2,7 +2,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use protostellar::simulation::components::*;
 use protostellar::simulation::physics::{
-    compute_single_body_acc, grid_cell, GmcNearField, PhysicsBodyEntry,
+    GmcNearField, PhysicsBodyEntry, compute_single_body_acc, grid_cell,
 };
 use protostellar::simulation::resources::SimulationConfig;
 use protostellar::utils::constants::G_ASTRO;

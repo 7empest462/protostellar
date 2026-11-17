@@ -272,30 +272,31 @@ pub fn handle_slingshot_input(
     let star_pos = star_query.iter().next().map_or(DVec3::ZERO, |p| p.0);
 
     // 1. Mouse down: Start drag
-    if mouse_buttons.just_pressed(MouseButton::Left) && !cursor_over_ui {
-        if let Some(plane_pt) = hit_plane_coords {
-            let mut nearest_ent: Option<(Entity, DVec3)> = None;
-            let mut min_dist = 0.05f64;
+    if mouse_buttons.just_pressed(MouseButton::Left)
+        && !cursor_over_ui
+        && let Some(plane_pt) = hit_plane_coords
+    {
+        let mut nearest_ent: Option<(Entity, DVec3)> = None;
+        let mut min_dist = 0.05f64;
 
-            for (ent, pos, rad, _, _body) in bodies_query.iter() {
-                // Only target existing bodies if clicked directly on their visible surface
-                let hit_radius = (rad.0 * 1.5).clamp(0.02, 0.05);
-                let d = (pos.0 - plane_pt).length();
-                if d < hit_radius && d < min_dist {
-                    min_dist = d;
-                    nearest_ent = Some((ent, pos.0));
-                }
+        for (ent, pos, rad, _, _body) in bodies_query.iter() {
+            // Only target existing bodies if clicked directly on their visible surface
+            let hit_radius = (rad.0 * 1.5).clamp(0.02, 0.05);
+            let d = (pos.0 - plane_pt).length();
+            if d < hit_radius && d < min_dist {
+                min_dist = d;
+                nearest_ent = Some((ent, pos.0));
             }
+        }
 
-            if let Some((target_ent, target_pos)) = nearest_ent {
-                slingshot_state.target_entity = Some(target_ent);
-                slingshot_state.drag_origin = Some(target_pos);
-                slingshot_state.drag_current = Some(plane_pt);
-            } else {
-                slingshot_state.target_entity = None;
-                slingshot_state.drag_origin = Some(plane_pt);
-                slingshot_state.drag_current = Some(plane_pt);
-            }
+        if let Some((target_ent, target_pos)) = nearest_ent {
+            slingshot_state.target_entity = Some(target_ent);
+            slingshot_state.drag_origin = Some(target_pos);
+            slingshot_state.drag_current = Some(plane_pt);
+        } else {
+            slingshot_state.target_entity = None;
+            slingshot_state.drag_origin = Some(plane_pt);
+            slingshot_state.drag_current = Some(plane_pt);
         }
     }
 

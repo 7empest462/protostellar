@@ -442,7 +442,7 @@ fn test_high_time_warp_belt_formation() {
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::belts::BeltCensus;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_planetesimals,
     };
     use protostellar::simulation::disk::spawn_protoplanetary_disk;
     use protostellar::simulation::pebble_accretion::spawn_streaming_instability_minor_bodies;
@@ -522,7 +522,7 @@ fn test_guaranteed_minor_body_formation_to_capacity_limit() {
     use bevy::prelude::*;
     use protostellar::simulation::components::*;
     use protostellar::simulation::disk::planetesimals::{
-        auto_spawn_planetesimals, PlanetesimalSpawner,
+        PlanetesimalSpawner, auto_spawn_planetesimals,
     };
     use protostellar::simulation::pebble_accretion::spawn_streaming_instability_minor_bodies;
     use protostellar::simulation::resources::*;

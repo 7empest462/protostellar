@@ -31,25 +31,25 @@ pub mod tides;
 use bevy::prelude::*;
 
 pub use crate::simulation::geology::{
-    apply_epoch_to_world, calculate_continental_drift_phase, calculate_ocean_oxidation_progress,
+    EpochTargetPlanet, GeologicalEpoch, GeologicalState, TimelineScrubber, apply_epoch_to_world,
+    calculate_continental_drift_phase, calculate_ocean_oxidation_progress,
     calculate_oxygen_level_pal, calculate_supercontinent_aggregation,
-    calculate_vegetation_expansion, sync_geological_evolution_system, EpochTargetPlanet,
-    GeologicalEpoch, GeologicalState, TimelineScrubber,
+    calculate_vegetation_expansion, sync_geological_evolution_system,
 };
 pub use crate::simulation::space_weather::{
-    update_planetary_auroral_ovals_system, update_stellar_flares_system, AuroralOvalState,
-    CmeShockwaveEvent, GeomagneticStormLevel, StellarFlareState,
+    AuroralOvalState, CmeShockwaveEvent, GeomagneticStormLevel, StellarFlareState,
+    update_planetary_auroral_ovals_system, update_stellar_flares_system,
 };
 
 use crate::simulation::accretion::*;
 pub use crate::simulation::atmosphere_escape::{
-    update_atmospheric_escape_evolution, AtmosphericEscapeConfig, AtmosphericEscapeRegime,
-    AtmosphericEscapeState, AtmosphericStrippedEvent,
+    AtmosphericEscapeConfig, AtmosphericEscapeRegime, AtmosphericEscapeState,
+    AtmosphericStrippedEvent, update_atmospheric_escape_evolution,
 };
 pub use crate::simulation::campaign::{
-    create_mission_objectives, spawn_campaign_mission, CampaignMissionCompletedEvent,
-    CampaignMissionFailedEvent, CampaignMissionId, CampaignPlugin, CampaignState, MissionObjective,
-    MissionStatus, StartCampaignMissionEvent,
+    CampaignMissionCompletedEvent, CampaignMissionFailedEvent, CampaignMissionId, CampaignPlugin,
+    CampaignState, MissionObjective, MissionStatus, StartCampaignMissionEvent,
+    create_mission_objectives, spawn_campaign_mission,
 };
 use crate::simulation::components::*;
 use crate::simulation::disk::*;
@@ -60,24 +60,23 @@ pub use crate::simulation::events::{
     TonemappingDisplayMode, TriggerCosmicEvent,
 };
 pub use crate::simulation::kozai_lidov::{
-    detect_hierarchical_triples, update_kozai_lidov_evolution, KozaiDisruptionEvent,
-    KozaiLidovConfig, KozaiLidovState, KozaiRegime,
+    KozaiDisruptionEvent, KozaiLidovConfig, KozaiLidovState, KozaiRegime,
+    detect_hierarchical_triples, update_kozai_lidov_evolution,
 };
 pub use crate::simulation::naming::*;
 pub use crate::simulation::neutron_stars::{
+    AlfvenBlastWave, C_LIGHT_AU_YR, C_LIGHT_CGS, CRUST_SHEAR_MODULUS_CGS, CRUST_VOLUME_CGS,
+    MagnetarCrustStress, MagnetarStarquakeEvent, NEUTRON_STAR_INERTIA_CGS, NeutronStarPlugin,
+    PulsarGlitchEvent, PulsarGlitchState, TriggerManualGlitchOrStarquakeEvent,
     evaluate_dipole_spin_down_rate, evaluate_starquake_energy_erg, step_alfven_blast_waves_system,
     step_magnetar_crust_stress_and_starquakes_system, step_pulsar_glitches_system,
     step_single_pulsar_glitch, trigger_instantaneous_glitch, trigger_instantaneous_starquake,
-    AlfvenBlastWave, MagnetarCrustStress, MagnetarStarquakeEvent, NeutronStarPlugin,
-    PulsarGlitchEvent, PulsarGlitchState, TriggerManualGlitchOrStarquakeEvent,
-    CRUST_SHEAR_MODULUS_CGS, CRUST_VOLUME_CGS, C_LIGHT_AU_YR, C_LIGHT_CGS,
-    NEUTRON_STAR_INERTIA_CGS,
 };
 pub use crate::simulation::oort::{
+    GalacticTideState, OortCloudConfig, OortComet, OortCometInfallEvent, OortPlugin,
     apply_stellar_flyby_perturbation, compute_galactic_omega_sq,
     evaluate_galactic_tide_acceleration, evaluate_galactic_tide_secular_de,
     keplerian_elements_to_cartesian, solve_kepler_eccentric_anomaly, spawn_oort_cloud_swarm,
-    GalacticTideState, OortCloudConfig, OortComet, OortCometInfallEvent, OortPlugin,
 };
 use crate::simulation::pebble_accretion::{
     apply_pebble_accretion, spawn_streaming_instability_minor_bodies,
@@ -85,8 +84,8 @@ use crate::simulation::pebble_accretion::{
 use crate::simulation::physics::*;
 pub use crate::simulation::predictor::*;
 pub use crate::simulation::relativity::{
-    update_relativity_evolution, GravitationalWaveMergerEvent, KerrBlackHole, RelativisticState,
-    RelativityConfig,
+    GravitationalWaveMergerEvent, KerrBlackHole, RelativisticState, RelativityConfig,
+    update_relativity_evolution,
 };
 use crate::simulation::resources::*;
 pub use crate::simulation::resources::{HabitableZoneConfig, LagrangeOverlayConfig};
@@ -96,7 +95,7 @@ use crate::simulation::telemetry::*;
 pub use crate::simulation::terraforming::*;
 use crate::simulation::thermodynamics::*;
 pub use crate::simulation::tides::{
-    cryovolcanic_ring_feeding_system, update_tidal_evolution, TidalConfig, TidalState,
+    TidalConfig, TidalState, cryovolcanic_ring_feeding_system, update_tidal_evolution,
 };
 
 pub struct SimulationPlugin;

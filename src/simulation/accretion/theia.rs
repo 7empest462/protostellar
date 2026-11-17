@@ -204,10 +204,11 @@ fn locate_or_spawn_theia(
     if let Some(t) = theia_opt {
         // Despawn any redundant duplicate Theias in the world
         for (other_e, _, _, _, _, other_b, ..) in bodies_query.iter() {
-            if other_e != t && is_explicit_theia(other_b.name.as_str()) {
-                if let Ok(mut cmd) = commands.get_entity(other_e) {
-                    cmd.try_despawn();
-                }
+            if other_e != t
+                && is_explicit_theia(other_b.name.as_str())
+                && let Ok(mut cmd) = commands.get_entity(other_e)
+            {
+                cmd.try_despawn();
             }
         }
         t
@@ -268,25 +269,25 @@ fn resolve_giant_impact_moon(
     theia_state.intercept_active = false;
     theia_state.target_primary = None;
 
-    let p_pos = earth.1 .0;
-    let p_vel = earth.2 .0;
-    let p_mass = earth.3 .0;
-    let s_mass = theia.3 .0;
+    let p_pos = earth.1.0;
+    let p_vel = earth.2.0;
+    let p_mass = earth.3.0;
+    let s_mass = theia.3.0;
 
     // 1. Earth state update
     let total_primary_mass = p_mass + s_mass * 0.897; // ~90% mantle accretes
-    earth.3 .0 = total_primary_mass;
-    earth.4 .0 = EARTH_RADIUS_AU * 1.0;
+    earth.3.0 = total_primary_mass;
+    earth.4.0 = EARTH_RADIUS_AU * 1.0;
     earth.5.name = "Earth".to_string();
     earth.5.body_type = BodyType::TerrestrialPlanet;
 
     if let Some(ref mut diff) = earth.6 {
-        diff.recalculate(total_primary_mass, earth.4 .0, &Composition::rocky());
+        diff.recalculate(total_primary_mass, earth.4.0, &Composition::rocky());
         diff.has_theia_llsvp = true;
         diff.llsvp_density_contrast = 0.028;
     }
     if let Some(ref mut spin) = earth.7 {
-        spin.set_period_and_tilt(6.0, 23.4, total_primary_mass, earth.4 .0);
+        spin.set_period_and_tilt(6.0, 23.4, total_primary_mass, earth.4.0);
     }
 
     // 2. The Moon state update
@@ -309,27 +310,27 @@ fn resolve_giant_impact_moon(
         moon_tangent = -moon_tangent;
     }
 
-    theia.3 .0 = moon_mass;
-    theia.4 .0 = EARTH_RADIUS_AU * 0.272;
+    theia.3.0 = moon_mass;
+    theia.4.0 = EARTH_RADIUS_AU * 0.272;
     let rel_dir = if rel_pos.length_squared() > 1e-12 {
         rel_pos.normalize()
     } else {
         DVec3::new(1.0, 0.0, 0.0)
     };
-    theia.1 .0 = p_pos + rel_dir * orbit_dist_au;
-    theia.2 .0 = p_vel + moon_tangent * v_moon_circ;
+    theia.1.0 = p_pos + rel_dir * orbit_dist_au;
+    theia.2.0 = p_vel + moon_tangent * v_moon_circ;
     theia.5.name = "The Moon".to_string();
     theia.5.body_type = BodyType::Moon;
 
     if let Some(ref mut diff) = theia.6 {
-        diff.recalculate(moon_mass, theia.4 .0, &Composition::rocky());
+        diff.recalculate(moon_mass, theia.4.0, &Composition::rocky());
     }
     if let Some(ref mut spin) = theia.7 {
         spin.set_period_and_tilt(
             p_moon_yr * YEAR_SECONDS / 3600.0,
             1.54,
             moon_mass,
-            theia.4 .0,
+            theia.4.0,
         );
     }
 
@@ -347,7 +348,7 @@ fn resolve_giant_impact_moon(
         ));
     }
 
-    if let Some(ref mut t) = toast {
+    if let Some(t) = toast {
         t.message = "🌕 GIANT IMPACT MOON FORMATION // Theia collided with Earth! Silicate debris accreted into The Moon.".to_string();
         t.timer = 10.0;
     }
@@ -363,9 +364,9 @@ fn guide_theia_trajectory(
     r_contact: f64,
     dist: f64,
 ) {
-    let p_pos = earth.1 .0;
-    let p_vel = earth.2 .0;
-    let s_pos = theia.1 .0;
+    let p_pos = earth.1.0;
+    let p_vel = earth.2.0;
+    let s_pos = theia.1.0;
 
     let star_m = star_mass.max(0.1);
 
@@ -375,14 +376,14 @@ fn guide_theia_trajectory(
         let phi_e = (p_pos.z - star_pos.z).atan2(p_pos.x - star_pos.x);
         let phi_approach = phi_e + 0.08;
         let r_approach = r_e * 1.04;
-        theia.1 .0 = star_pos
+        theia.1.0 = star_pos
             + DVec3::new(
                 r_approach * phi_approach.cos(),
                 0.0,
                 r_approach * phi_approach.sin(),
             );
         let v_circ = (G_ASTRO * star_m / r_approach).sqrt();
-        theia.2 .0 = DVec3::new(
+        theia.2.0 = DVec3::new(
             -v_circ * phi_approach.sin(),
             0.0,
             v_circ * phi_approach.cos(),
@@ -402,7 +403,7 @@ fn guide_theia_trajectory(
     // Active rendezvous trajectory closing step
     let closing_speed = (dist / 0.15).clamp(0.5, 6.0);
     let step_dist = (closing_speed * dt.max(0.01)).min(dist * 0.50);
-    theia.1 .0 += to_aim_dir * step_dist;
+    theia.1.0 += to_aim_dir * step_dist;
 
     // Inward transfer velocity matching Earth's orbital motion plus closing speed
     let mut v_desired = p_vel + to_aim_dir * closing_speed;
@@ -411,7 +412,7 @@ fn guide_theia_trajectory(
         v_desired = v_desired.normalize_or_zero() * (v_esc_local * 1.1);
     }
     let blend = (dt / 0.08).clamp(0.1, 0.95);
-    theia.2 .0 = theia.2 .0.lerp(v_desired, blend);
+    theia.2.0 = theia.2.0.lerp(v_desired, blend);
 }
 
 /// Automatically activates intercept at T ~ 50-100 yr or upon on-demand trigger,
@@ -452,10 +453,10 @@ pub fn update_theia_rendezvous(
         theia_state.target_primary = None;
         // Purge any rogue extra Theias if The Moon already exists
         for (extra_e, _, _, _, _, extra_b, ..) in bodies_query.iter() {
-            if is_explicit_theia(extra_b.name.as_str()) {
-                if let Ok(mut cmd) = commands.get_entity(extra_e) {
-                    cmd.try_despawn();
-                }
+            if is_explicit_theia(extra_b.name.as_str())
+                && let Ok(mut cmd) = commands.get_entity(extra_e)
+            {
+                cmd.try_despawn();
             }
         }
         return;
@@ -513,13 +514,13 @@ pub fn update_theia_rendezvous(
         return;
     };
 
-    let p_pos = earth.1 .0;
-    let p_vel = earth.2 .0;
-    let p_rad = earth.4 .0;
+    let p_pos = earth.1.0;
+    let p_vel = earth.2.0;
+    let p_rad = earth.4.0;
 
-    let s_pos = theia.1 .0;
-    let s_vel = theia.2 .0;
-    let s_rad = theia.4 .0;
+    let s_pos = theia.1.0;
+    let s_vel = theia.2.0;
+    let s_rad = theia.4.0;
 
     let r_contact = (p_rad + s_rad).max(0.0045);
     let rel_pos = s_pos - p_pos;

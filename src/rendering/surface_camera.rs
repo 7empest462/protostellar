@@ -144,22 +144,30 @@ pub fn step_surface_horizon_controls(
             (camera.surface_altitude_scale * zoom_factor).clamp(0.004, 0.22);
     }
 
-    let mut forward_drive = 0.0f32;
-    let mut turn_drive = 0.0f32;
-    if keyboard_input.pressed(KeyCode::KeyW) || keyboard_input.pressed(KeyCode::ArrowUp) {
-        forward_drive += 0.012;
-    }
-    if keyboard_input.pressed(KeyCode::KeyS) || keyboard_input.pressed(KeyCode::ArrowDown) {
-        forward_drive -= 0.012;
-    }
-    if keyboard_input.pressed(KeyCode::KeyA) || keyboard_input.pressed(KeyCode::ArrowLeft) {
-        turn_drive -= 0.025;
-        camera.surface_azimuth -= 0.025;
-    }
-    if keyboard_input.pressed(KeyCode::KeyD) || keyboard_input.pressed(KeyCode::ArrowRight) {
-        turn_drive += 0.025;
-        camera.surface_azimuth += 0.025;
-    }
+    let no_shift = !keyboard_input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let axis_step =
+        |pos_k: KeyCode, arr_pos: KeyCode, neg_k: KeyCode, arr_neg: KeyCode, step: f32| {
+            let pos =
+                (no_shift && keyboard_input.pressed(pos_k)) || keyboard_input.pressed(arr_pos);
+            let neg =
+                (no_shift && keyboard_input.pressed(neg_k)) || keyboard_input.pressed(arr_neg);
+            (if pos { step } else { 0.0 }) - (if neg { step } else { 0.0 })
+        };
+    let forward_drive = axis_step(
+        KeyCode::KeyW,
+        KeyCode::ArrowUp,
+        KeyCode::KeyS,
+        KeyCode::ArrowDown,
+        0.012,
+    );
+    let turn_drive = axis_step(
+        KeyCode::KeyD,
+        KeyCode::ArrowRight,
+        KeyCode::KeyA,
+        KeyCode::ArrowLeft,
+        0.025,
+    );
+    camera.surface_azimuth += turn_drive;
 
     // Update virtual explorer lat/lon when standing directly on a planet/moon
     if forward_drive.abs() > 0.0 {
@@ -275,20 +283,20 @@ fn resolve_surface_vantage_point(
             return Some((comp.target_entity, Some(probe_ent), unspun, h));
         }
 
-        if let Ok((.., body, _, _, _)) = worlds_query.get(ent) {
-            if !body.body_type.is_star_or_remnant() {
-                for (probe_ent, probe, comp, _) in probes_query.iter() {
-                    if comp.target_entity == ent
-                        && probe.status == ProbeStatus::Landed
-                        && probe.probe_type == ProbeType::Rover
-                    {
-                        let (unspun, h) = extract_probe_surface_vectors(probe);
-                        return Some((ent, Some(probe_ent), unspun, h));
-                    }
+        if let Ok((.., body, _, _, _)) = worlds_query.get(ent)
+            && !body.body_type.is_star_or_remnant()
+        {
+            for (probe_ent, probe, comp, _) in probes_query.iter() {
+                if comp.target_entity == ent
+                    && probe.status == ProbeStatus::Landed
+                    && probe.probe_type == ProbeType::Rover
+                {
+                    let (unspun, h) = extract_probe_surface_vectors(probe);
+                    return Some((ent, Some(probe_ent), unspun, h));
                 }
-                let u = lat_lon_to_unspun_normal(surface_lat_lon.x, surface_lat_lon.y);
-                return Some((ent, None, u, Vec3::Y));
             }
+            let u = lat_lon_to_unspun_normal(surface_lat_lon.x, surface_lat_lon.y);
+            return Some((ent, None, u, Vec3::Y));
         }
     }
 
@@ -478,6 +486,7 @@ fn apply_surface_horizon_view(
     >,
     all_atmospheres: &Query<Entity, With<Atmosphere>>,
     atmosphere_media: Option<&SurfaceAtmosphereMedia>,
+    show_atmospheres: bool,
 ) {
     let (host, rover, unspun_norm, heading_unspun, pos, rad, temp, comp, body, spin, bio, t) =
         world;
@@ -515,6 +524,7 @@ fn apply_surface_horizon_view(
         atmospheres_query,
         all_atmospheres,
         atmosphere_media,
+        show_atmospheres,
     );
 }
 
@@ -640,6 +650,7 @@ pub fn update_surface_horizon_camera(
         &atmospheres_query,
         &all_atmospheres,
         atmosphere_media.as_deref(),
+        player_state.show_atmospheres(),
     );
 }
 
@@ -691,9 +702,6 @@ fn resolve_and_drive_surface_geometry(
             turn_drive,
             radius_au,
             vis_rad,
-            comp,
-            temp_k,
-            body_type,
             spin_rot_d,
             pos_au,
             &mut unspun_norm,
@@ -757,6 +765,7 @@ fn sync_surface_horizon_atmosphere_and_shadows(
     >,
     all_atmospheres: &Query<Entity, With<Atmosphere>>,
     atmosphere_media: Option<&SurfaceAtmosphereMedia>,
+    show_atmospheres: bool,
 ) {
     if !has_contact_shadows {
         commands.entity(cam_entity).insert(ContactShadows {
@@ -770,9 +779,10 @@ fn sync_surface_horizon_atmosphere_and_shadows(
         .get(host_ent)
         .unwrap_or((None, None, false));
 
-    let has_atmosphere = opt_volatiles.is_some_and(|v| v.atmospheric_pressure_bar >= 0.005)
-        || opt_climate.is_some()
-        || comp.gas_frac > 0.05;
+    let has_atmosphere = show_atmospheres
+        && (opt_volatiles.is_some_and(|v| v.atmospheric_pressure_bar >= 0.005)
+            || opt_climate.is_some()
+            || comp.gas_frac > 0.05);
 
     for ent in all_atmospheres.iter() {
         if ent != host_ent || !has_atmosphere {
@@ -786,21 +796,18 @@ fn sync_surface_horizon_atmosphere_and_shadows(
                 .entity(cam_entity)
                 .insert(AtmosphereSettings::default());
         }
-        if !has_atmosphere_comp {
-            if let Some(media) = atmosphere_media {
-                let medium = if comp.silicate_frac > 0.6 && comp.metal_frac > 0.2 && temp_k < 270.0
-                {
-                    media.mars.clone()
-                } else {
-                    media.earth.clone()
-                };
-                commands.entity(host_ent).insert(Atmosphere {
-                    inner_radius: effective_rad,
-                    outer_radius: effective_rad * 1.05,
-                    ground_albedo: Vec3::splat(opt_climate.map_or(0.3, |c| c.albedo)),
-                    medium,
-                });
-            }
+        if !has_atmosphere_comp && let Some(media) = atmosphere_media {
+            let medium = if comp.silicate_frac > 0.6 && comp.metal_frac > 0.2 && temp_k < 270.0 {
+                media.mars.clone()
+            } else {
+                media.earth.clone()
+            };
+            commands.entity(host_ent).insert(Atmosphere {
+                inner_radius: effective_rad,
+                outer_radius: effective_rad * 1.05,
+                ground_albedo: Vec3::splat(opt_climate.map_or(0.3, |c| c.albedo)),
+                medium,
+            });
         }
     } else if has_atmosphere_settings {
         commands.entity(cam_entity).remove::<AtmosphereSettings>();
@@ -886,9 +893,6 @@ fn sync_rover_surface_motion(
     turn_drive: f32,
     radius: f64,
     vis_rad: f32,
-    comp: &Composition,
-    temp_k: f64,
-    body_type: crate::simulation::components::BodyType,
     spin_rot_d: DQuat,
     planet_pos: DVec3,
     unspun_norm: &mut Vec3,
@@ -909,9 +913,7 @@ fn sync_rover_surface_motion(
         *unspun_norm = unspun_d.as_vec3();
         *heading_unspun = h_d.as_vec3();
         let spun_d = spin_rot_d * unspun_d;
-        let _ = (comp, temp_k, body_type);
-        let rover_lift = vis_rad * 1.008;
-        probe_pos.0 = planet_pos + spun_d * f64::from(rover_lift);
+        probe_pos.0 = planet_pos + spun_d * f64::from(vis_rad * 1.008);
     }
 }
 
@@ -968,21 +970,16 @@ pub fn draw_surface_horizon_environment_gizmos(
     let (east, up, north) = compute_surface_tangent_basis(world_up, world_heading);
 
     // Draw Holographic Surface Compass & Horizon Clinometer Ring on the planet's surface
-    let effective_rad = vis_rad;
-    let ground_center = planet_pos + up * (effective_rad * 1.002);
+    let ground_center = planet_pos + up * (vis_rad * 1.002);
     let compass_r = vis_rad * 0.045;
     let ring_rot = Quat::from_rotation_arc(Vec3::Z, up);
-    gizmos.circle(
-        Isometry3d::new(ground_center, ring_rot),
-        compass_r,
-        Color::srgba(0.25, 0.88, 1.0, 0.55),
-    );
-    gizmos.circle(
-        Isometry3d::new(ground_center, ring_rot),
-        compass_r * 0.45,
-        Color::srgba(0.25, 0.88, 1.0, 0.35),
-    );
-    // Forward heading arrow on ground compass
+    for (scale, alpha) in [(1.0, 0.55), (0.45, 0.35)] {
+        gizmos.circle(
+            Isometry3d::new(ground_center, ring_rot),
+            compass_r * scale,
+            Color::srgba(0.25, 0.88, 1.0, alpha),
+        );
+    }
     let look_dir = (north * camera.surface_azimuth.cos() + east * camera.surface_azimuth.sin())
         .normalize_or_zero();
     gizmos.line(

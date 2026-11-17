@@ -1,5 +1,5 @@
-use crate::simulation::components::{CelestialBody, Mass, Radius, SimPosition, SimVelocity};
 use crate::simulation::SupernovaEvent;
+use crate::simulation::components::{CelestialBody, Mass, Radius, SimPosition, SimVelocity};
 use bevy::prelude::*;
 
 /// Marks a star that is actively overflowing its Roche Lobe and transferring mass to a companion.
@@ -144,7 +144,10 @@ pub fn process_roche_lobe_overflow(
                 continue;
             };
             let Ok(
-                [(_, pos1, _vel1, mut mass1, r1, body1, _), (_, pos2, _vel2, mut mass2, r2, body2, _)],
+                [
+                    (_, pos1, _vel1, mut mass1, r1, body1, _),
+                    (_, pos2, _vel2, mut mass2, r2, body2, _),
+                ],
             ) = star_query.get_many_mut([e1, e2])
             else {
                 continue;
@@ -197,10 +200,10 @@ pub fn process_roche_lobe_overflow(
     }
 
     for ent in previously_overflowing {
-        if !active_donors.contains(&ent) {
-            if let Ok(mut ecmd) = commands.get_entity(ent) {
-                ecmd.remove::<RocheLobeOverflow>();
-            }
+        if !active_donors.contains(&ent)
+            && let Ok(mut ecmd) = commands.get_entity(ent)
+        {
+            ecmd.remove::<RocheLobeOverflow>();
         }
     }
 }
@@ -219,10 +222,8 @@ pub fn cleanup_roche_lobe_overflow(
             true // Companion despawned
         };
 
-        if should_remove {
-            if let Ok(mut ecmd) = commands.get_entity(entity) {
-                ecmd.remove::<RocheLobeOverflow>();
-            }
+        if should_remove && let Ok(mut ecmd) = commands.get_entity(entity) {
+            ecmd.remove::<RocheLobeOverflow>();
         }
     }
 }

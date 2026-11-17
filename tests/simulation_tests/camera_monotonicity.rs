@@ -7,7 +7,7 @@ use protostellar::rendering::bodies::sync_camera_adaptive_body_scales;
 use protostellar::rendering::bodies::transforms::{
     compute_close_camera_framing_radius, compute_realistic_visual_radius,
 };
-use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+use protostellar::rendering::camera::{PanOrbitCamera, update_pan_orbit_camera};
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
 use protostellar::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU, SOLAR_RADIUS_AU};

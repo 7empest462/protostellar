@@ -4,16 +4,16 @@
 //! `M☉`, `M⊕`, `θ`, `Γ`, `±`), editable text inputs (`TextInput`), continuous sliders (`Slider`),
 //! clipboard seed exchange, and `UiTransform` / gradient primitives.
 
-use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::input_focus::InputFocus;
-use bevy::picking::hover::Hovered;
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::picking::Pickable;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::text::{EditableText, FontSize, FontSource, TextCursorStyle};
 use bevy::ui::{BackgroundGradient, ColorStop, Gradient, LinearGradient, PositionType};
 use bevy::ui_widgets::{
-    slider_self_update, Activate, Slider, SliderDragState, SliderOrientation, SliderPrecision,
-    SliderRange, SliderStep, SliderValue, TextInput, TrackClick, ValueChange,
+    Activate, Slider, SliderDragState, SliderOrientation, SliderPrecision, SliderRange, SliderStep,
+    SliderValue, TextInput, TrackClick, ValueChange, slider_self_update,
 };
 
 /// Returns the universal HUD `FontSource::List` ensuring full fallback coverage across
@@ -100,13 +100,13 @@ pub fn on_hud_slider_value_change(
     slider_query: Query<&HudSlider>,
     mut pending: Option<ResMut<PendingSliderChanges>>,
 ) {
-    if let Some(ref mut pend) = pending {
-        if let Ok(hud_slider) = slider_query.get(trigger.source) {
-            if let Some(existing) = pend.0.iter_mut().find(|(k, _)| *k == hud_slider.0) {
-                existing.1 = trigger.value;
-            } else {
-                pend.0.push((hud_slider.0, trigger.value));
-            }
+    if let Some(ref mut pend) = pending
+        && let Ok(hud_slider) = slider_query.get(trigger.source)
+    {
+        if let Some(existing) = pend.0.iter_mut().find(|(k, _)| *k == hud_slider.0) {
+            existing.1 = trigger.value;
+        } else {
+            pend.0.push((hud_slider.0, trigger.value));
         }
     }
 }

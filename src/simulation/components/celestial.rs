@@ -229,6 +229,38 @@ impl BodyType {
     }
 }
 
+/// Classifies stellar mass (`>= 0.08 M_sun`) and composition into Morgan-Keenan / evolved spectral type and display label.
+pub fn classify_stellar_type_and_label(
+    mass_solar: f64,
+    comp: &Composition,
+) -> (BodyType, &'static str) {
+    if mass_solar >= 500.0 {
+        // Direct collapse beyond 500 M_sun into Intermediate-Mass Black Hole
+        (BodyType::BlackHole, "Intermediate-Mass Black Hole")
+    } else if comp.gas_frac >= 0.999 && comp.metal_frac < 0.0001 && mass_solar >= 30.0 {
+        // Pristine zero-metallicity primordial gas forms Population III hypergiants
+        (BodyType::PopulationIIIStar, "Pop-III Hypergiant")
+    } else if mass_solar < 0.08 {
+        (BodyType::BrownDwarf, "Brown Dwarf")
+    } else if mass_solar < 0.45 {
+        (BodyType::RedDwarf, "Red Dwarf")
+    } else if mass_solar < 0.80 {
+        (BodyType::OrangeDwarf, "Orange Dwarf")
+    } else if mass_solar < 1.04 {
+        (BodyType::YellowDwarf, "Yellow Dwarf")
+    } else if mass_solar < 1.40 {
+        (BodyType::YellowWhiteDwarf, "F-Type Star")
+    } else if mass_solar < 2.10 {
+        (BodyType::WhiteMainSequence, "A-Type White Star")
+    } else if mass_solar < 8.0 {
+        (BodyType::BlueGiant, "B-Type Blue Giant")
+    } else if mass_solar < 25.0 {
+        (BodyType::BlueSupergiant, "O-Type Blue Supergiant")
+    } else {
+        (BodyType::Hypergiant, "Luminous Hypergiant")
+    }
+}
+
 /// Centralized hydrostatic equilibrium and mass-dependent classification function.
 pub fn classify_body_by_mass_and_comp(
     mass_solar: f64,
@@ -239,34 +271,7 @@ pub fn classify_body_by_mass_and_comp(
     let mass_jupiter = mass_solar / crate::utils::constants::JUPITER_MASS_SOLAR;
 
     if is_central_star || mass_solar >= 0.08 {
-        if mass_solar >= 500.0 {
-            // Direct collapse beyond 500 M_sun into Intermediate-Mass Black Hole
-            BodyType::BlackHole
-        } else if comp.gas_frac >= 0.999 && comp.metal_frac < 0.0001 && mass_solar >= 30.0 {
-            // Pristine zero-metallicity primordial gas forms Population III hypergiants
-            BodyType::PopulationIIIStar
-        } else if mass_solar < 0.08 {
-            BodyType::BrownDwarf
-        } else if mass_solar < 0.45 {
-            BodyType::RedDwarf
-        } else if mass_solar < 0.80 {
-            BodyType::OrangeDwarf
-        } else if mass_solar < 1.04 {
-            BodyType::YellowDwarf
-        } else if mass_solar < 1.40 {
-            BodyType::YellowWhiteDwarf
-        } else if mass_solar < 2.10 {
-            BodyType::WhiteMainSequence
-        } else if mass_solar < 8.0 {
-            BodyType::BlueGiant
-        } else if mass_solar < 25.0 {
-            BodyType::BlueSupergiant
-        } else if mass_solar < 500.0 {
-            BodyType::Hypergiant
-        } else {
-            // Direct collapse beyond 500 M_sun into Intermediate-Mass Black Hole
-            BodyType::BlackHole
-        }
+        classify_stellar_type_and_label(mass_solar, comp).0
     } else {
         // Planetary / Minor body classification
         if mass_solar >= 0.0125 - 1e-7 {
@@ -808,10 +813,10 @@ impl InternalDifferentiation {
             self.core_radius_au =
                 total_radius_au * metal_vol_frac.cbrt() * f64::from(self.differentiation_fraction);
 
-            // Silicate rocky mantle
-            let rock_vol_frac = (((comp.metal_frac + comp.silicate_frac) * avg_density)
-                / DENSITY_ROCK_ASTRO)
-                .clamp(0.0, 1.0);
+            // Silicate rocky mantle enclosing core + silicate volume
+            let silicate_vol_frac =
+                (comp.silicate_frac * avg_density / DENSITY_ROCK_ASTRO).clamp(0.0, 1.0);
+            let rock_vol_frac = (metal_vol_frac + silicate_vol_frac).clamp(0.0, 1.0);
             self.mantle_radius_au = total_radius_au * rock_vol_frac.cbrt().min(1.0);
 
             // Surface crust and volatile oceans/ice

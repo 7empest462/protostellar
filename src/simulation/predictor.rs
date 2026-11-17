@@ -10,7 +10,7 @@ use crate::simulation::components::{
 };
 use crate::simulation::resources::{PlayerInteractionState, SlingshotState};
 use crate::utils::constants::{AU_TO_KM, EARTH_MASS_SOLAR, G_ASTRO};
-use crate::utils::math::{state_vectors_to_orbital_elements, OrbitalElements};
+use crate::utils::math::{OrbitalElements, state_vectors_to_orbital_elements};
 
 /// Velocity conversion factor: 1 AU/yr in km/s (~4.74047 km/s)
 pub const AU_PER_YR_TO_KM_S: f64 = AU_TO_KM / (365.25 * 86_400.0);
@@ -502,15 +502,13 @@ pub fn update_trajectory_predictor(
                 ));
             }
         }
-    } else if let Some(selected_ent) = player_state.selected_entity {
-        if let Ok((_, body, pos, vel, mass, rad)) = bodies_query.get(selected_ent) {
-            let rel_pos = pos.0 - star_pos.0;
-            let rel_vel = vel.0 - star_vel.0;
-            if let Some(el) =
-                state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, mass.0)
-            {
-                selected_source = Some((el, rad.0, body.name.clone()));
-            }
+    } else if let Some(selected_ent) = player_state.selected_entity
+        && let Ok((_, body, pos, vel, mass, rad)) = bodies_query.get(selected_ent)
+    {
+        let rel_pos = pos.0 - star_pos.0;
+        let rel_vel = vel.0 - star_vel.0;
+        if let Some(el) = state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, mass.0) {
+            selected_source = Some((el, rad.0, body.name.clone()));
         }
     }
 
@@ -562,12 +560,11 @@ pub fn update_trajectory_predictor(
         horizon,
     );
 
-    if let Some(ref mut enc) = encounter {
-        if enc.target_name.is_empty() {
-            if let Ok((_, body, _, _, _, _)) = bodies_query.get(enc.target_entity) {
-                enc.target_name.clone_from(&body.name);
-            }
-        }
+    if let Some(ref mut enc) = encounter
+        && enc.target_name.is_empty()
+        && let Ok((_, body, _, _, _, _)) = bodies_query.get(enc.target_entity)
+    {
+        enc.target_name.clone_from(&body.name);
     }
 
     predictor_state.trajectory_points = pts;

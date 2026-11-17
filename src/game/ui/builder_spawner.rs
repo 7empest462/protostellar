@@ -1,9 +1,9 @@
 //! Spawner routines and UI telemetry updates for the Interactive Planet Builder.
 
+use crate::game::ui::NotificationToast;
 use crate::game::ui::types::{
     BuilderPreset, PlanetBuilderInfoText, PlanetBuilderPanel, PlanetBuilderState,
 };
-use crate::game::ui::NotificationToast;
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::{DiskParameters, PlayerInteractionState};

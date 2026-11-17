@@ -38,7 +38,7 @@ pub fn update_tidal_disruption_streams(
 
         for k in 0..n_nodes {
             let s = k as f32 / (n_nodes as f32); // Infall parameter: 0 at outer tail, 1 at ISCO
-                                                 // Logarithmic spiral geodesic from r_tidal down to r_isco
+            // Logarithmic spiral geodesic from r_tidal down to r_isco
             let node_r = r_isco + (r_tidal - r_isco) * (1.0 - s).powf(1.4);
             // Multi-turn relativistic wrap (unwinds ~3.5 turns)
             let node_azimuth = base_azimuth + s * (TAU * 3.5);

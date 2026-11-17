@@ -477,69 +477,65 @@ pub fn draw_hyperbolic_trajectory(
     cam_pos: Option<Vec3>,
     primary_occluder: Option<(Vec3, f32)>,
 ) {
-    if elements.eccentricity >= 1.0 {
-        if let Some(p) = conic_semilatus_rectum(elements) {
-            let e = elements.eccentricity;
-            let nu_max = ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2);
+    if elements.eccentricity >= 1.0
+        && let Some(p) = conic_semilatus_rectum(elements)
+    {
+        let e = elements.eccentricity;
+        let nu_max = ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2);
 
-            let inv_hyp = 1.0 / (HYP_SAMPLES as f64);
-            let mut prev_hyp: Option<Vec3> = None;
-            let mut drawn_any = false;
-            for i in 0..=HYP_SAMPLES {
-                let frac = i as f64 * inv_hyp;
-                let nu = -nu_max + frac * 2.0 * nu_max;
+        let inv_hyp = 1.0 / (HYP_SAMPLES as f64);
+        let mut prev_hyp: Option<Vec3> = None;
+        let mut drawn_any = false;
+        for i in 0..=HYP_SAMPLES {
+            let frac = i as f64 * inv_hyp;
+            let nu = -nu_max + frac * 2.0 * nu_max;
+            if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
+                let world_pt = pt + anchor_vec;
+                if let Some(prev) = prev_hyp {
+                    let mid = prev.midpoint(world_pt);
+                    let occ = primary_occluder
+                        .map_or(1.0, |(c, r)| sphere_occlusion_fade(mid, cam_pos, c, r));
+                    let end_fade = (1.0 - (frac as f32 * 2.0 - 1.0).abs().powf(2.4)).max(0.15);
+                    let hyp_amb = Color::srgba(
+                        base_rgba.red,
+                        base_rgba.green,
+                        base_rgba.blue,
+                        0.42 * end_fade * occ,
+                    );
+                    gizmos.line(prev, world_pt, hyp_amb);
+                    drawn_any = true;
+                }
+                prev_hyp = Some(world_pt);
+            } else {
+                prev_hyp = None;
+            }
+        }
+
+        if drawn_any {
+            let inv_rib = 1.0 / (HYP_RIBBON_SAMPLES as f64);
+            let start_nu = elements.true_anomaly.clamp(-nu_max, nu_max);
+            let end_nu = (start_nu - 1.2 * std::f64::consts::PI).max(-nu_max);
+            let mut prev_rib: Option<(Vec3, f32)> = None;
+
+            for i in 0..=HYP_RIBBON_SAMPLES {
+                let t = i as f64 * inv_rib;
+                let nu = start_nu + t * (end_nu - start_nu);
                 if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
-                    let world_pt = pt + anchor_vec;
-                    if let Some(prev) = prev_hyp {
-                        let mid = prev.midpoint(world_pt);
+                    let a2 = (1.0 - t as f32).max(0.0);
+                    let p2_world = pt + anchor_vec;
+                    if let Some((p1_world, a1)) = prev_rib {
+                        let mid = p1_world.midpoint(p2_world);
                         let occ = primary_occluder
                             .map_or(1.0, |(c, r)| sphere_occlusion_fade(mid, cam_pos, c, r));
-                        let end_fade = (1.0 - (frac as f32 * 2.0 - 1.0).abs().powf(2.4)).max(0.15);
-                        let hyp_amb = Color::srgba(
-                            base_rgba.red,
-                            base_rgba.green,
-                            base_rgba.blue,
-                            0.42 * end_fade * occ,
-                        );
-                        gizmos.line(prev, world_pt, hyp_amb);
-                        drawn_any = true;
+                        let avg_a = f32::midpoint(a1, a2);
+                        let seg_alpha = avg_a.powf(0.8) * 0.90 * occ;
+                        let col =
+                            Color::srgba(base_rgba.red, base_rgba.green, base_rgba.blue, seg_alpha);
+                        gizmos.line(p1_world, p2_world, col);
                     }
-                    prev_hyp = Some(world_pt);
+                    prev_rib = Some((p2_world, a2));
                 } else {
-                    prev_hyp = None;
-                }
-            }
-
-            if drawn_any {
-                let inv_rib = 1.0 / (HYP_RIBBON_SAMPLES as f64);
-                let start_nu = elements.true_anomaly.clamp(-nu_max, nu_max);
-                let end_nu = (start_nu - 1.2 * std::f64::consts::PI).max(-nu_max);
-                let mut prev_rib: Option<(Vec3, f32)> = None;
-
-                for i in 0..=HYP_RIBBON_SAMPLES {
-                    let t = i as f64 * inv_rib;
-                    let nu = start_nu + t * (end_nu - start_nu);
-                    if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
-                        let a2 = (1.0 - t as f32).max(0.0);
-                        let p2_world = pt + anchor_vec;
-                        if let Some((p1_world, a1)) = prev_rib {
-                            let mid = p1_world.midpoint(p2_world);
-                            let occ = primary_occluder
-                                .map_or(1.0, |(c, r)| sphere_occlusion_fade(mid, cam_pos, c, r));
-                            let avg_a = f32::midpoint(a1, a2);
-                            let seg_alpha = avg_a.powf(0.8) * 0.90 * occ;
-                            let col = Color::srgba(
-                                base_rgba.red,
-                                base_rgba.green,
-                                base_rgba.blue,
-                                seg_alpha,
-                            );
-                            gizmos.line(p1_world, p2_world, col);
-                        }
-                        prev_rib = Some((p2_world, a2));
-                    } else {
-                        prev_rib = None;
-                    }
+                    prev_rib = None;
                 }
             }
         }

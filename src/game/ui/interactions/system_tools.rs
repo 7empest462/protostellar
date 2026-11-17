@@ -12,9 +12,9 @@ use crate::game::ui::widgets::SaveSlotUiState;
 use crate::simulation::resources::*;
 use crate::simulation::scenarios::ActiveScenarioState;
 use crate::simulation::serialization::{
+    CopySystemSeedClipboardEvent, LoadSystemEvent, PasteSystemSeedClipboardEvent, SaveSystemEvent,
     delete_save_slot_file, resolve_save_path_for_read, resolve_save_path_for_write,
-    sanitize_save_slot_name, suggest_next_slot_name, CopySystemSeedClipboardEvent, LoadSystemEvent,
-    PasteSystemSeedClipboardEvent, SaveSystemEvent,
+    sanitize_save_slot_name, suggest_next_slot_name,
 };
 
 fn set_toast(toast: &mut NotificationToast, msg: String, duration: f32) {
@@ -414,10 +414,10 @@ pub fn dispatch_system_and_tool_actions(
     if handle_telemetry_action(action, telemetry_panel_state, telemetry_history, toast) {
         return true;
     }
-    if let Some(ref mut hr) = opt_hr_diagram {
-        if super::super::hr_diagram_panel::handle_hr_diagram_action(action, hr, toast) {
-            return true;
-        }
+    if let Some(ref mut hr) = opt_hr_diagram
+        && super::super::hr_diagram_panel::handle_hr_diagram_action(action, hr, toast)
+    {
+        return true;
     }
     if matches!(action, UiButtonAction::ToggleLagrangePoints) {
         if let Some(ref mut lagrange) = opt_lagrange {

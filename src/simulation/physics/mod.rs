@@ -91,10 +91,10 @@ fn write_back_physics_results(
                 if let Some(mut s_comp) = opt_sat {
                     *s_comp = s_data;
                 }
-            } else if opt_sat.is_some() {
-                if let Ok(mut cmd) = commands.get_entity(e) {
-                    cmd.remove::<SatelliteOf>();
-                }
+            } else if opt_sat.is_some()
+                && let Ok(mut cmd) = commands.get_entity(e)
+            {
+                cmd.remove::<SatelliteOf>();
             }
         }
     }
@@ -613,14 +613,15 @@ fn compute_dynamical_dt_limit(
             if Some(idx) == star_index {
                 continue;
             }
-            if let Some(b) = body_data.get(idx) {
-                if b.body_type.is_star_or_remnant() && b.mass >= 1e-3 * star_mass {
-                    let r = (b.pos - star_pos).length().max(1e-4);
-                    let mu_bin = G_ASTRO * (star_mass + b.mass);
-                    let t_bin = 2.0 * std::f64::consts::PI * (r * r * r / mu_bin).sqrt();
-                    let step_cap = (0.02 * t_bin).max(1e-7);
-                    min_dt_limit = Some(min_dt_limit.map_or(step_cap, |c| c.min(step_cap)));
-                }
+            if let Some(b) = body_data.get(idx)
+                && b.body_type.is_star_or_remnant()
+                && b.mass >= 1e-3 * star_mass
+            {
+                let r = (b.pos - star_pos).length().max(1e-4);
+                let mu_bin = G_ASTRO * (star_mass + b.mass);
+                let t_bin = 2.0 * std::f64::consts::PI * (r * r * r / mu_bin).sqrt();
+                let step_cap = (0.02 * t_bin).max(1e-7);
+                min_dt_limit = Some(min_dt_limit.map_or(step_cap, |c| c.min(step_cap)));
             }
         }
     }
@@ -688,11 +689,10 @@ fn apply_player_velocity_impulse(
     if let (Some(target), Some(dv)) = (
         player_state.impulse_target_entity,
         player_state.impulse_delta_v,
-    ) {
-        if let Some(b) = body_data.iter_mut().find(|b| b.entity == target) {
-            b.vel += dv;
-            energy_monitor.request_rebaseline();
-        }
+    ) && let Some(b) = body_data.iter_mut().find(|b| b.entity == target)
+    {
+        b.vel += dv;
+        energy_monitor.request_rebaseline();
     }
 }
 

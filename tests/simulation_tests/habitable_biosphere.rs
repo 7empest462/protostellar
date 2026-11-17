@@ -147,7 +147,7 @@ fn test_habitability_tracking_multi_star_pigment_and_bioluminescence() {
     use bevy::math::DVec3;
     use bevy::prelude::*;
     use protostellar::simulation::biology::civilization::{
-        habitability_tracking_system, HabitabilityTimer,
+        HabitabilityTimer, habitability_tracking_system,
     };
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;

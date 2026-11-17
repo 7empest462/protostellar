@@ -235,17 +235,15 @@ pub fn apply_comet_delivery(
             }
         }
 
-        if !hit_occurred {
-            if let Some((t_pos, t_vel, dist_au, _)) = best_target {
-                let dir_to_target = (t_pos - comet_pos.0).normalize_or_zero();
-                let desired_closing = (dist_au * 8.0).clamp(4.5, 12.0);
-                let desired_vel = t_vel + dir_to_target * desired_closing;
-                if let Some(ref mut c_vel) = opt_comet_vel {
-                    let blend = (dt / 0.08).clamp(0.25, 0.85);
-                    c_vel.0 = c_vel.0.lerp(desired_vel, blend);
-                } else {
-                    comet_pos.0 += dir_to_target * (desired_closing * dt).min(dist_au * 0.9);
-                }
+        if !hit_occurred && let Some((t_pos, t_vel, dist_au, _)) = best_target {
+            let dir_to_target = (t_pos - comet_pos.0).normalize_or_zero();
+            let desired_closing = (dist_au * 8.0).clamp(4.5, 12.0);
+            let desired_vel = t_vel + dir_to_target * desired_closing;
+            if let Some(ref mut c_vel) = opt_comet_vel {
+                let blend = (dt / 0.08).clamp(0.25, 0.85);
+                c_vel.0 = c_vel.0.lerp(desired_vel, blend);
+            } else {
+                comet_pos.0 += dir_to_target * (desired_closing * dt).min(dist_au * 0.9);
             }
         }
     }

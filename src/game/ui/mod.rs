@@ -23,6 +23,7 @@ pub mod setup;
 pub mod tech_tree_panel;
 pub mod telemetry_format;
 pub mod telemetry_panel;
+pub mod tooltips;
 pub mod trophies_panel;
 pub mod types;
 pub mod update;
@@ -33,9 +34,9 @@ pub mod world_list;
 
 pub use widget_sync::{HoverReticleBracket, SurfaceCompassNeedle};
 pub use widgets::{
-    hud_font_source, is_text_input_focused, ActivatedHudButtons, HudSlider, HudSliderFill,
-    HudSliderKind, HudSliderReadout, HudSliderThumb, HudTextInput, HudTextInputKind,
-    HudTextInputWrapper, ModernHudWidgetsPlugin, PendingSliderChanges, SaveSlotUiState,
+    ActivatedHudButtons, HudSlider, HudSliderFill, HudSliderKind, HudSliderReadout, HudSliderThumb,
+    HudTextInput, HudTextInputKind, HudTextInputWrapper, ModernHudWidgetsPlugin,
+    PendingSliderChanges, SaveSlotUiState, hud_font_source, is_text_input_focused,
 };
 
 pub use builder_panel::spawn_planet_builder_panel;
@@ -45,7 +46,7 @@ pub use epoch_scrubber::{
     handle_epoch_scrubber_action, spawn_epoch_scrubber_panel, update_epoch_scrubber_ui,
 };
 pub use hazards_panel::{
-    spawn_hazards_panel, update_hazards_ui, HazardsPanelElement, HazardsPanelState,
+    HazardsPanelElement, HazardsPanelState, spawn_hazards_panel, update_hazards_ui,
 };
 pub use hover_card::{spawn_hover_card, update_hover_card_ui};
 pub use hr_diagram_panel::{
@@ -53,10 +54,10 @@ pub use hr_diagram_panel::{
 };
 pub use inspector_panel::{format_composition_water_ice, spawn_bottom_left_inspector_panel};
 pub use interactions::handle_ui_button_interactions;
-pub use modal_manager::{close_conflicting_modals, ActiveModalKind, ModalPanelStates};
+pub use modal_manager::{ActiveModalKind, ModalPanelStates, close_conflicting_modals};
 pub use navigation_panel::spawn_bottom_right_controls_panel;
 pub use presets_panel::{spawn_scenario_presets_panel, spawn_scenario_presets_pill};
-pub use saves_panel::{spawn_saves_panel, update_saves_panel, SavesPanelElement, SavesPanelState};
+pub use saves_panel::{SavesPanelElement, SavesPanelState, spawn_saves_panel, update_saves_panel};
 pub use sci_fi_theme::{SciFiPanelMaterial, SciFiUiThemePlugin};
 pub use scroll::{handle_inspector_scroll, reset_inspector_scroll_on_target_change};
 pub use selector::{
@@ -69,8 +70,6 @@ pub use telemetry_panel::{
     handle_telemetry_action, spawn_telemetry_panel, update_telemetry_graph_ui,
 };
 pub use types::{
-    collect_sorted_system_worlds, create_button, create_compact_button,
-    create_compact_selectable_button, is_canonical_major_planet, is_embryo_body, is_major_body,
     BeltZone, BuilderPreset, CosmicEventEntry, CosmicEventLog, EpochQuickButton,
     EpochScrubberBodyTitleText, EpochScrubberMetricsText, EpochScrubberPanel,
     EpochScrubberStatusText, HudActionTooltipText, HudBodiesQuery, HudBottomTimerText, HudButton,
@@ -80,7 +79,9 @@ pub use types::{
     PlanetBuilderState, QuickBarButtonBaseColor, QuickBarState, QuickBodySelectorBar,
     ScrollableInspector, SystemWorld, TelemetryExportStatusText, TelemetryGraphBodyTitleText,
     TelemetryGraphPanel, TelemetryGraphReadoutText, TelemetryGraphSparklineText,
-    TelemetryMetricButton, TelemetryPanelState, UiButtonAction,
+    TelemetryMetricButton, TelemetryPanelState, UiButtonAction, collect_sorted_system_worlds,
+    create_button, create_compact_button, create_compact_selectable_button,
+    is_canonical_major_planet, is_embryo_body, is_major_body,
 };
 pub use update::{handle_cosmic_event_toasts, handle_roche_disruption_toasts, update_hud};
 pub use visibility::{update_hud_visibility, update_scenario_contextual_ui};

@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::rendering::camera::{resolve_camera_body_radii, CameraTargetsQuery, PanOrbitCamera};
+use crate::rendering::camera::{CameraTargetsQuery, PanOrbitCamera, resolve_camera_body_radii};
 use crate::simulation::resources::*;
 
 /// Marker component for UI elements (such as floating holographic hover cards) that should not
@@ -205,12 +205,17 @@ pub(crate) fn handle_camera_target_picking(
     let mut best_score = f32::MAX;
 
     if let Ok(ray) = camera_comp.viewport_to_world(global_transform, cursor_pos) {
-        for (entity, pos, rad, body, _mass, opt_t) in targets_query.iter() {
+        let show_atmospheres = player_state.show_atmospheres();
+        for (entity, pos, rad, body, mass, opt_t, opt_comp, opt_diff) in targets_query.iter() {
             let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let (vis_r, _) = resolve_camera_body_radii(
                 opt_t,
                 rad.0,
                 body.body_type,
+                mass.0,
+                opt_comp,
+                opt_diff,
+                show_atmospheres,
                 (center - star_pos).length(),
                 min_orbit_r,
                 config,
@@ -231,7 +236,7 @@ pub(crate) fn handle_camera_target_picking(
 
     if best_target.is_none() {
         let mut min_screen_dist = 42.0f32;
-        for (entity, pos, _rad, _body, _mass, _opt_t) in targets_query.iter() {
+        for (entity, pos, _rad, _body, _mass, _opt_t, _, _) in targets_query.iter() {
             let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             if let Ok(screen_pos) = camera_comp.world_to_viewport(global_transform, center) {
                 let dist = cursor_pos.distance(screen_pos);
@@ -254,16 +259,22 @@ pub(crate) fn handle_camera_target_picking(
     if let Some(hit_entity) = best_target.or(player_state.hovered_entity) {
         player_state.selected_entity = Some(hit_entity);
         if camera.target_entity != Some(hit_entity) {
-            if let Ok((_, pos, radius, body, _, _opt_t)) = targets_query.get(hit_entity) {
+            if let Ok((_, pos, radius, body, mass, _opt_t, opt_comp, opt_diff)) =
+                targets_query.get(hit_entity)
+            {
                 let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
                 let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
                     let visual_radius =
                         config.calc_visual_radius_for_type(radius.0, body.body_type);
                     0.015f32.max(config.calc_camera_framing_radius(visual_radius))
                 } else {
-                    crate::rendering::bodies::transforms::compute_close_camera_framing_radius(
+                    crate::rendering::bodies::transforms::compute_close_view_camera_framing_radius(
                         radius.0,
                         body.body_type,
+                        mass.0,
+                        opt_comp,
+                        opt_diff,
+                        player_state.show_atmospheres(),
                         (target_vec - star_pos).length(),
                         min_orbit_r,
                         config,

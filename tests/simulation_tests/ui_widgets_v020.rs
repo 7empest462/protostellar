@@ -10,12 +10,12 @@ use bevy::ui_widgets::{SliderRange, SliderValue};
 
 use protostellar::game::ui::types::PlanetBuilderState;
 use protostellar::game::ui::widget_sync::{
-    animate_hud_ui_transforms, apply_hud_slider_changes, sync_hud_sliders, sync_hud_text_inputs,
-    HoverReticleBracket, SurfaceCompassNeedle,
+    HoverReticleBracket, SurfaceCompassNeedle, animate_hud_ui_transforms, apply_hud_slider_changes,
+    sync_hud_sliders, sync_hud_text_inputs,
 };
 use protostellar::game::ui::widgets::{
-    hud_font_source, is_text_input_focused, spawn_hud_slider, upgrade_hud_default_fonts, HudSlider,
-    HudSliderKind, HudTextInput, HudTextInputKind, PendingSliderChanges,
+    HudSlider, HudSliderKind, HudTextInput, HudTextInputKind, PendingSliderChanges,
+    hud_font_source, is_text_input_focused, spawn_hud_slider, upgrade_hud_default_fonts,
 };
 use protostellar::simulation::components::celestial::SpinState;
 use protostellar::simulation::components::*;
@@ -469,9 +469,9 @@ fn test_ui_transform_smooth_rotation_animation() {
 
 #[test]
 fn test_hud_slider_self_update_fill_and_derived_mass_sync() {
-    use bevy::ui_widgets::{slider_self_update, SliderDragState, ValueChange};
+    use bevy::ui_widgets::{SliderDragState, ValueChange, slider_self_update};
     use protostellar::game::ui::widgets::{
-        on_hud_slider_value_change, HudSliderFill, HudSliderThumb,
+        HudSliderFill, HudSliderThumb, on_hud_slider_value_change,
     };
     use protostellar::utils::constants::EARTH_RADIUS_AU;
 
@@ -603,7 +603,7 @@ fn test_hud_slider_self_update_fill_and_derived_mass_sync() {
 
 #[test]
 fn test_cosmic_event_log_bounding_and_event_toasts() {
-    use protostellar::game::ui::{handle_cosmic_event_toasts, CosmicEventLog, NotificationToast};
+    use protostellar::game::ui::{CosmicEventLog, NotificationToast, handle_cosmic_event_toasts};
     use protostellar::simulation::accretion::{MoonFormationEvent, TidalDisruptionEvent};
     use protostellar::simulation::atmosphere_escape::AtmosphericStrippedEvent;
     use protostellar::simulation::kozai_lidov::KozaiDisruptionEvent;
@@ -682,10 +682,10 @@ fn test_cosmic_event_log_bounding_and_event_toasts() {
 
 #[test]
 fn test_physical_telemetry_milestone_and_trophy_unlocks() {
-    use protostellar::game::audio::{compute_body_sonification_snapshot, CosmicAudioMode};
+    use protostellar::game::audio::{CosmicAudioMode, compute_body_sonification_snapshot};
     use protostellar::game::phases::{
-        monitor_phase_transitions, GlobalTrophies, LateHeavyBombardmentState, MilestoneId,
-        PhaseManager, SystemPhase,
+        GlobalTrophies, LateHeavyBombardmentState, MilestoneId, PhaseManager, SystemPhase,
+        monitor_phase_transitions,
     };
     use protostellar::game::ui::telemetry_format::append_sonification_telemetry;
     use protostellar::simulation::neutron_stars::types::MagnetarCrustStress;
@@ -750,9 +750,11 @@ fn test_physical_telemetry_milestone_and_trophy_unlocks() {
 
     let trophies = app.world().resource::<GlobalTrophies>();
     assert!(trophies.unlocked.contains(&MilestoneId::MagnetarSuperflare));
-    assert!(trophies
-        .unlocked
-        .contains(&MilestoneId::GeomagneticSuperstorm));
+    assert!(
+        trophies
+            .unlocked
+            .contains(&MilestoneId::GeomagneticSuperstorm)
+    );
     assert!(trophies.unlocked.contains(&MilestoneId::BinaryInspiral));
 
     let body = CelestialBody {
@@ -779,9 +781,9 @@ fn test_audio_mute_button_visible_by_default_and_toggles_sound() {
     use protostellar::game::audio::CosmicAudioState;
     use protostellar::game::phases::{LateHeavyBombardmentState, SystemPhase};
     use protostellar::game::ui::{
-        handle_ui_button_interactions, setup_hud, update_hud_visibility, ActivatedHudButtons,
-        HudDynamicText, HudPanelElement, HudVisibilityState, NotificationToast, PlanetBuilderState,
-        QuickBarState, TelemetryPanelState, UiButtonAction,
+        ActivatedHudButtons, HudDynamicText, HudPanelElement, HudVisibilityState,
+        NotificationToast, PlanetBuilderState, QuickBarState, TelemetryPanelState, UiButtonAction,
+        handle_ui_button_interactions, setup_hud, update_hud_visibility,
     };
     use protostellar::simulation::telemetry::SimulationTelemetryHistory;
 
@@ -849,11 +851,12 @@ fn test_audio_mute_button_visible_by_default_and_toggles_sound() {
         app.world().resource::<CosmicAudioState>().enabled,
         "Clicking the Sound button must unmute audio"
     );
-    assert!(app
-        .world()
-        .resource::<NotificationToast>()
-        .message
-        .contains("Unmuted"));
+    assert!(
+        app.world()
+            .resource::<NotificationToast>()
+            .message
+            .contains("Unmuted")
+    );
     let unmuted_label = app
         .world_mut()
         .query::<(&Text, &HudDynamicText)>()

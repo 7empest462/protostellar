@@ -7,9 +7,9 @@ use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMat
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::RenderApp;
 use bevy::render::extract_component::ExtractComponent;
 use bevy::render::render_resource::*;
-use bevy::render::RenderApp;
 use bevy::shader::ShaderRef;
 
 use crate::rendering::camera::PanOrbitCamera;

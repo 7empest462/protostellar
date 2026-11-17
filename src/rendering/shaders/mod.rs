@@ -5,7 +5,7 @@
 //! avoiding `mem::forget` on `Handle<Shader>` drop semantics.
 
 use bevy::app::{App, Plugin};
-use bevy::asset::{embedded_asset, load_embedded_asset, Handle};
+use bevy::asset::{Handle, embedded_asset, load_embedded_asset};
 use bevy::ecs::resource::Resource;
 use bevy_shader::Shader;
 

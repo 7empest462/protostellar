@@ -12,8 +12,8 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp};
 use bytemuck::{Pod, Zeroable};
 use rustc_hash::FxHashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::simulation::components::*;
 use crate::simulation::resources::TimeWarp;

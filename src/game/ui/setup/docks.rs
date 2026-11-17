@@ -2,8 +2,8 @@
 
 use bevy::prelude::*;
 
-use crate::game::ui::types::*;
 use crate::game::ui::SurfaceCompassNeedle;
+use crate::game::ui::types::*;
 
 pub(crate) fn spawn_bottom_center_toast_panel(bottom_row: &mut ChildSpawnerCommands) {
     bottom_row

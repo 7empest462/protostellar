@@ -6,8 +6,8 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
-/// Domain size of the GMC Eulerian fluid grid in AU (1100 AU).
-pub const GMC_DOMAIN_SIZE_AU: f32 = 1100.0;
+/// Domain size of the GMC Eulerian fluid grid in AU (2200 AU).
+pub const GMC_DOMAIN_SIZE_AU: f32 = 2200.0;
 
 /// Number of cells per axis in the 3D Eulerian grid (96^3).
 pub const GMC_GRID_DIM: u32 = 96;
@@ -101,9 +101,9 @@ pub struct VolumetricNebulaUniform {
 impl Default for VolumetricNebulaUniform {
     fn default() -> Self {
         Self {
-            box_min: [-550.0, -550.0, -550.0],
+            box_min: [-1100.0, -1100.0, -1100.0],
             step_count: 128,
-            box_max: [550.0, 550.0, 550.0],
+            box_max: [1100.0, 1100.0, 1100.0],
             absorption_coefficient: 0.015,
             scattering_albedo: 0.85,
             phase_g: 0.65,

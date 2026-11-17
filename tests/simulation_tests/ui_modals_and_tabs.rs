@@ -9,8 +9,8 @@ use protostellar::game::ui::hazards_panel::HazardsPanelState;
 use protostellar::game::ui::types::*;
 use protostellar::game::ui::visibility::update_scenario_contextual_ui;
 use protostellar::game::ui::{
-    close_conflicting_modals, ActiveModalKind, ModalPanelStates, NotificationToast,
-    PlanetBuilderState, TelemetryPanelState,
+    ActiveModalKind, ModalPanelStates, NotificationToast, PlanetBuilderState, TelemetryPanelState,
+    close_conflicting_modals,
 };
 use protostellar::rendering::camera::PanOrbitCamera;
 use protostellar::simulation::components::*;
@@ -647,7 +647,7 @@ fn test_saves_panel_multi_slot_actions() {
     use protostellar::game::ui::widgets::SaveSlotUiState;
     use protostellar::simulation::scenarios::ScenarioPreset;
     use protostellar::simulation::serialization::{
-        save_system_to_file, LoadSystemEvent, SaveSystemEvent,
+        LoadSystemEvent, SaveSystemEvent, save_system_to_file,
     };
 
     let test_dir = "target/test_multi_saves_ui";
@@ -713,4 +713,122 @@ fn test_saves_panel_multi_slot_actions() {
         "SaveNewScenarioSlot should name slot with scenario slug, got {generated_slot}"
     );
     let _ = std::fs::remove_dir_all(test_dir);
+}
+
+#[test]
+fn test_saves_modal_absorbs_clicks_and_button_spawns_ui_click_cue_when_unmuted() {
+    use protostellar::game::audio::{
+        CosmicAmbientPlayer, CosmicAudioHandles, CosmicAudioState, setup_cosmic_audio_assets,
+    };
+    use protostellar::game::phases::{LateHeavyBombardmentState, SystemPhase};
+    use protostellar::game::ui::{
+        ActivatedHudButtons, HudButton, HudVisibilityState, NotificationToast, PlanetBuilderState,
+        QuickBarState, SavesPanelElement, TelemetryPanelState, UiButtonAction,
+        handle_ui_button_interactions, setup_hud,
+    };
+    use protostellar::simulation::telemetry::SimulationTelemetryHistory;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<SystemPhase>();
+    app.init_resource::<Assets<AudioSource>>();
+    app.init_resource::<CosmicAudioHandles>();
+    app.init_resource::<CosmicAudioState>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.init_resource::<ActivatedHudButtons>();
+    app.init_resource::<LateHeavyBombardmentState>();
+    app.init_resource::<QuickBarState>();
+    app.init_resource::<PlanetBuilderState>();
+    app.init_resource::<TelemetryPanelState>();
+    app.init_resource::<protostellar::game::ui::types::TrophiesPanelState>();
+    app.init_resource::<HudVisibilityState>();
+    app.init_resource::<NotificationToast>();
+    app.init_resource::<SimulationTelemetryHistory>();
+    app.add_plugins(protostellar::simulation::SimulationPlugin);
+    app.add_systems(Startup, (setup_hud, setup_cosmic_audio_assets));
+    app.add_systems(Update, handle_ui_button_interactions);
+    app.update();
+
+    // 1. Saves modal container must carry FocusPolicy::Block + Hovered (not Pickable::IGNORE) to absorb clicks
+    let mut saves_q = app.world_mut().query::<(
+        &SavesPanelElement,
+        Option<&bevy::ui::FocusPolicy>,
+        Has<bevy::picking::hover::Hovered>,
+        Option<&Pickable>,
+    )>();
+    let (_, opt_focus, has_hovered, opt_pickable) = saves_q
+        .iter(app.world())
+        .find(|(elem, ..)| matches!(elem, SavesPanelElement::Container))
+        .expect("SavesPanelElement::Container must be spawned");
+    assert_eq!(
+        opt_focus,
+        Some(&bevy::ui::FocusPolicy::Block),
+        "Saves modal container must block pointer propagation"
+    );
+    assert!(
+        has_hovered,
+        "Saves modal container must track Hovered state so viewport picking yields to modal"
+    );
+    assert_ne!(
+        opt_pickable,
+        Some(&Pickable::IGNORE),
+        "Saves modal container must not ignore pointer picking"
+    );
+
+    // 2. While audio is muted, pressing a HUD button must NOT spawn a one-shot UI click AudioPlayer
+    let any_btn = app
+        .world_mut()
+        .query_filtered::<(Entity, &UiButtonAction), With<HudButton>>()
+        .iter(app.world())
+        .find(|(_, act)| matches!(act, UiButtonAction::ToggleTopLeftPanel))
+        .map(|(e, _)| e)
+        .expect("HUD button must exist");
+    app.world_mut()
+        .entity_mut(any_btn)
+        .insert(bevy::ui::Pressed);
+    app.world_mut()
+        .resource_mut::<ActivatedHudButtons>()
+        .0
+        .push(any_btn);
+    app.update();
+    let muted_cues = app
+        .world_mut()
+        .query_filtered::<Entity, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>()
+        .iter(app.world())
+        .count();
+    assert_eq!(muted_cues, 0, "Muted UI must not spawn click audio");
+
+    // 3. When audio is enabled, pressing a HUD button spawns a DESPAWN one-shot cue at 0.25 * master_volume
+    {
+        let mut audio = app.world_mut().resource_mut::<CosmicAudioState>();
+        audio.enabled = true;
+        audio.master_volume = 0.8;
+    }
+    app.world_mut()
+        .entity_mut(any_btn)
+        .insert(bevy::ui::Pressed);
+    app.world_mut()
+        .resource_mut::<ActivatedHudButtons>()
+        .0
+        .push(any_btn);
+    app.update();
+
+    let mut cue_q = app
+        .world_mut()
+        .query_filtered::<&PlaybackSettings, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>();
+    let cue_settings: Vec<&PlaybackSettings> = cue_q.iter(app.world()).collect();
+    assert_eq!(
+        cue_settings.len(),
+        1,
+        "Unmuted button click must spawn 1 UI click cue"
+    );
+    assert!(matches!(
+        cue_settings[0].mode,
+        bevy::audio::PlaybackMode::Despawn
+    ));
+    assert_eq!(
+        cue_settings[0].volume,
+        bevy::audio::Volume::Linear(0.8 * 0.25)
+    );
 }

@@ -426,10 +426,10 @@ pub fn update_telemetry_graph_ui(
     }
 
     // 5. Update Export Feedback Text
-    if let Ok(mut export_text) = export_status_query.single_mut() {
-        if let Some(ref status) = telemetry_history.last_export_status {
-            set_text_str_if_changed(&mut export_text, status);
-        }
+    if let Ok(mut export_text) = export_status_query.single_mut()
+        && let Some(ref status) = telemetry_history.last_export_status
+    {
+        set_text_str_if_changed(&mut export_text, status);
     }
 }
 

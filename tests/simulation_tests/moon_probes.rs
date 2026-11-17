@@ -11,7 +11,7 @@ use protostellar::utils::constants::*;
 fn test_rover_accurately_intercepts_and_lands_on_the_moon() {
     use protostellar::simulation::physics::step_physics_simulation;
     use protostellar::simulation::probes::{
-        navigation::probe_navigation_system, FlightComputer, ProbeStatus, ProbeType, SpaceProbe,
+        FlightComputer, ProbeStatus, ProbeType, SpaceProbe, navigation::probe_navigation_system,
     };
 
     let mut app = App::new();

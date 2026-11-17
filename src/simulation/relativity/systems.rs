@@ -404,23 +404,21 @@ fn apply_relativistic_coalescence_outcome(
         }
     }
 
-    if !updated_body_in_place {
-        if let Ok(mut host_cmd) = commands.get_entity(host_entity) {
-            host_cmd.insert((
-                Mass(remnant_mass),
-                Radius(new_radius),
-                CelestialBody {
-                    name: merged_name,
-                    body_type: remnant_type,
-                },
-            ));
-        }
+    if !updated_body_in_place && let Ok(mut host_cmd) = commands.get_entity(host_entity) {
+        host_cmd.insert((
+            Mass(remnant_mass),
+            Radius(new_radius),
+            CelestialBody {
+                name: merged_name,
+                body_type: remnant_type,
+            },
+        ));
     }
 
-    if let Some(ref mut ps) = player_state {
-        if ps.selected_entity == Some(companion_entity) || ps.selected_entity.is_none() {
-            ps.selected_entity = Some(host_entity);
-        }
+    if let Some(ps) = player_state
+        && (ps.selected_entity == Some(companion_entity) || ps.selected_entity.is_none())
+    {
+        ps.selected_entity = Some(host_entity);
     }
 }
 

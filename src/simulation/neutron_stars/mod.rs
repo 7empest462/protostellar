@@ -12,13 +12,13 @@ pub mod types;
 use bevy::prelude::*;
 
 pub use alfven::{
-    evaluate_starquake_energy_erg, step_alfven_blast_waves_system,
-    step_magnetar_crust_stress_and_starquakes_system, trigger_instantaneous_starquake,
-    CRUST_SHEAR_MODULUS_CGS, CRUST_VOLUME_CGS, C_LIGHT_AU_YR,
+    C_LIGHT_AU_YR, CRUST_SHEAR_MODULUS_CGS, CRUST_VOLUME_CGS, evaluate_starquake_energy_erg,
+    step_alfven_blast_waves_system, step_magnetar_crust_stress_and_starquakes_system,
+    trigger_instantaneous_starquake,
 };
 pub use glitches::{
-    evaluate_dipole_spin_down_rate, step_pulsar_glitches_system, step_single_pulsar_glitch,
-    trigger_instantaneous_glitch, C_LIGHT_CGS, NEUTRON_STAR_INERTIA_CGS,
+    C_LIGHT_CGS, NEUTRON_STAR_INERTIA_CGS, evaluate_dipole_spin_down_rate,
+    step_pulsar_glitches_system, step_single_pulsar_glitch, trigger_instantaneous_glitch,
 };
 pub use types::{
     AlfvenBlastWave, MagnetarCrustStress, MagnetarStarquakeEvent, PulsarGlitchEvent,

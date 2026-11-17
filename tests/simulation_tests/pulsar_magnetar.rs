@@ -7,7 +7,7 @@ use protostellar::simulation::resources::*;
 
 #[test]
 fn test_pulsar_scenario_preset() {
-    use protostellar::simulation::scenarios::{spawn_pulsar_system_scenario, ScenarioPreset};
+    use protostellar::simulation::scenarios::{ScenarioPreset, spawn_pulsar_system_scenario};
 
     assert_eq!(
         ScenarioPreset::PulsarSystem.display_name(),
@@ -64,7 +64,7 @@ fn test_pulsar_scenario_preset() {
 
 #[test]
 fn test_magnetar_scenario_preset() {
-    use protostellar::simulation::scenarios::{spawn_magnetar_outburst_scenario, ScenarioPreset};
+    use protostellar::simulation::scenarios::{ScenarioPreset, spawn_magnetar_outburst_scenario};
 
     assert_eq!(
         ScenarioPreset::MagnetarOutburst.display_name(),
@@ -165,7 +165,7 @@ fn test_magnetar_preserves_identity_and_quark_magnetar_classification() {
 
 fn setup_pulsar_magnetar_app() -> App {
     use protostellar::rendering::bodies::{
-        sync_magnetar_structures, sync_pulsar_beams, VisualAssets,
+        VisualAssets, sync_magnetar_structures, sync_pulsar_beams,
     };
 
     let mut app = App::new();
@@ -342,7 +342,7 @@ fn test_pulsar_and_magnetar_visual_structures_lifecycle() {
 #[test]
 fn test_magnetar_scenario_orbital_stability_and_field_attachment() {
     use protostellar::rendering::bodies::{
-        sync_magnetar_structures, MagnetarStructureRoot, VisualAssets,
+        MagnetarStructureRoot, VisualAssets, sync_magnetar_structures,
     };
     use protostellar::simulation::physics::step_physics_simulation;
     use protostellar::simulation::scenarios::spawn_magnetar_outburst_scenario;

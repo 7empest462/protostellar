@@ -1,7 +1,7 @@
 [package]
 name = "protostellar"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Tempest"]
 description = "Scientifically accurate solar system formation simulator in Rust"
 
@@ -23,6 +23,9 @@ opt-level = 3
 
 [package.metadata.cargo-machete]
 ignored = ["glam"]
+
+[lints.cargo]
+unused_dependencies = "warn"
 
 [lints.clippy]
 # Keep the important groups

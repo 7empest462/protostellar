@@ -508,15 +508,13 @@ fn update_growing_body_physics(
                 | BodyType::TerrestrialPlanet
                 | BodyType::SuperEarth
         )
+        && let Some(ref mut vol) = opt_vol
     {
-        if let Some(ref mut vol) = opt_vol {
-            let water_gain =
-                compute_endogenous_water_m_earth(actual_delta_mass, comp, r_au, gas_scale);
-            vol.delivered_water_m_earth += water_gain;
-            if water_gain > 0.0 && vol.atmospheric_pressure_bar < 1.0 {
-                vol.atmospheric_pressure_bar =
-                    (vol.atmospheric_pressure_bar + (water_gain / 0.0005) as f32 * 0.85).min(1.0);
-            }
+        let water_gain = compute_endogenous_water_m_earth(actual_delta_mass, comp, r_au, gas_scale);
+        vol.delivered_water_m_earth += water_gain;
+        if water_gain > 0.0 && vol.atmospheric_pressure_bar < 1.0 {
+            vol.atmospheric_pressure_bar =
+                (vol.atmospheric_pressure_bar + (water_gain / 0.0005) as f32 * 0.85).min(1.0);
         }
     }
 }
@@ -653,10 +651,10 @@ pub fn build_spatial_hash_bins(data: &mut ParticleSwarmData, disk_params: &DiskP
         let r_norm = ((r - r_min) / r_span).clamp(0.0, 0.999);
         let phi_norm = (phi / (2.0 * PI as f32)).clamp(0.0, 0.999);
         let bin_idx = ((r_norm * 64.0) as usize) * 64 + ((phi_norm * 64.0) as usize);
-        if let Some(&head) = data.bin_heads.get(bin_idx) {
-            if let Some(next) = data.bin_next.get_mut(i) {
-                *next = head;
-            }
+        if let Some(&head) = data.bin_heads.get(bin_idx)
+            && let Some(next) = data.bin_next.get_mut(i)
+        {
+            *next = head;
         }
         #[allow(clippy::cast_possible_wrap, reason = "index wrapping is safe here")]
         let i_i32 = i as i32;
@@ -689,87 +687,83 @@ pub fn process_particle_collisions_and_sticking(
                         data.masses.get(idx_a).copied(),
                         data.masses.get(idx_b).copied(),
                     );
-                    if let (Some(m_a), Some(m_b)) = (m_a_opt, m_b_opt) {
-                        if m_a > 0.0 && m_b > 0.0 {
-                            let (pos_a_opt, pos_b_opt) = (
-                                data.positions.get(idx_a).copied(),
-                                data.positions.get(idx_b).copied(),
-                            );
-                            if let (Some(pos_a), Some(pos_b)) = (pos_a_opt, pos_b_opt) {
-                                let dx = pos_a[0] - pos_b[0];
-                                let dy = pos_a[1] - pos_b[1];
-                                let dz = pos_a[2] - pos_b[2];
-                                let dist_sq = dx * dx + dy * dy + dz * dz;
+                    if let (Some(m_a), Some(m_b)) = (m_a_opt, m_b_opt)
+                        && m_a > 0.0
+                        && m_b > 0.0
+                    {
+                        let (pos_a_opt, pos_b_opt) = (
+                            data.positions.get(idx_a).copied(),
+                            data.positions.get(idx_b).copied(),
+                        );
+                        if let (Some(pos_a), Some(pos_b)) = (pos_a_opt, pos_b_opt) {
+                            let dx = pos_a[0] - pos_b[0];
+                            let dy = pos_a[1] - pos_b[1];
+                            let dz = pos_a[2] - pos_b[2];
+                            let dist_sq = dx * dx + dy * dy + dz * dz;
 
-                                let r_body = (pos_a[0] * pos_a[0] + pos_a[2] * pos_a[2]).sqrt();
-                                let is_beyond_snowline = r_body > disk_params.snow_line_au as f32;
+                            let r_body = (pos_a[0] * pos_a[0] + pos_a[2] * pos_a[2]).sqrt();
+                            let is_beyond_snowline = r_body > disk_params.snow_line_au as f32;
 
-                                let comp_a_val = data.compositions.get(idx_a).copied();
-                                let dist_to_snow = (r_body - disk_params.snow_line_au as f32).abs();
-                                let snow_trap_boost = if dist_to_snow < 0.45 {
-                                    2.2 * (1.0 - dist_to_snow / 0.45)
-                                } else {
-                                    0.0
-                                };
-                                let inner_electrostatic_boost = if r_body < 2.0 {
-                                    // Warm dense inner disk: electrostatic dipole sticking and high silicate/iron surface energy
-                                    2.4 * (1.0 - (r_body / 2.0).clamp(0.0, 1.0)) + 1.2
-                                } else {
-                                    0.0
-                                };
-                                let sticky_boost = if is_beyond_snowline {
-                                    2.5 * (1.0
-                                        + comp_a_val.map_or(0.0, |c| c.ice_frac as f32) * 1.5)
-                                        + snow_trap_boost
-                                } else {
-                                    1.0 + snow_trap_boost + inner_electrostatic_boost
-                                };
-                                let r_body_safe = if r_body.is_finite() && r_body > 0.0 {
-                                    r_body
-                                } else {
-                                    1.0
-                                };
-                                let zone_boost = if r_body_safe < 2.0 {
-                                    (2.0 / r_body_safe).powf(0.35).clamp(1.2, 2.5)
-                                } else {
-                                    (r_body_safe / 1.0).powf(0.55).clamp(1.0, 4.5)
-                                };
-                                let m_a_safe = if m_a.is_finite() && m_a > 0.0 {
-                                    m_a
-                                } else {
-                                    b_mass
-                                };
-                                let mass_factor = (m_a_safe / b_mass).cbrt().clamp(1.0, 6.0);
-                                let speed_mult_safe = if speed_mult.is_finite() && speed_mult > 0.0
-                                {
-                                    speed_mult
-                                } else {
-                                    1.0
-                                };
-                                let warp_stick_boost =
-                                    (1.0 + speed_mult_safe.log10().max(0.0) * 0.22).min(1.8);
-                                let raw_acc = 0.012
-                                    * sticky_boost
-                                    * zone_boost
-                                    * mass_factor
-                                    * warp_stick_boost;
-                                let r_acc = if raw_acc.is_finite() {
-                                    raw_acc.clamp(0.005, 0.080)
-                                } else {
-                                    0.012
-                                };
+                            let comp_a_val = data.compositions.get(idx_a).copied();
+                            let dist_to_snow = (r_body - disk_params.snow_line_au as f32).abs();
+                            let snow_trap_boost = if dist_to_snow < 0.45 {
+                                2.2 * (1.0 - dist_to_snow / 0.45)
+                            } else {
+                                0.0
+                            };
+                            let inner_electrostatic_boost = if r_body < 2.0 {
+                                // Warm dense inner disk: electrostatic dipole sticking and high silicate/iron surface energy
+                                2.4 * (1.0 - (r_body / 2.0).clamp(0.0, 1.0)) + 1.2
+                            } else {
+                                0.0
+                            };
+                            let sticky_boost = if is_beyond_snowline {
+                                2.5 * (1.0 + comp_a_val.map_or(0.0, |c| c.ice_frac as f32) * 1.5)
+                                    + snow_trap_boost
+                            } else {
+                                1.0 + snow_trap_boost + inner_electrostatic_boost
+                            };
+                            let r_body_safe = if r_body.is_finite() && r_body > 0.0 {
+                                r_body
+                            } else {
+                                1.0
+                            };
+                            let zone_boost = if r_body_safe < 2.0 {
+                                (2.0 / r_body_safe).powf(0.35).clamp(1.2, 2.5)
+                            } else {
+                                (r_body_safe / 1.0).powf(0.55).clamp(1.0, 4.5)
+                            };
+                            let m_a_safe = if m_a.is_finite() && m_a > 0.0 {
+                                m_a
+                            } else {
+                                b_mass
+                            };
+                            let mass_factor = (m_a_safe / b_mass).cbrt().clamp(1.0, 6.0);
+                            let speed_mult_safe = if speed_mult.is_finite() && speed_mult > 0.0 {
+                                speed_mult
+                            } else {
+                                1.0
+                            };
+                            let warp_stick_boost =
+                                (1.0 + speed_mult_safe.log10().max(0.0) * 0.22).min(1.8);
+                            let raw_acc =
+                                0.012 * sticky_boost * zone_boost * mass_factor * warp_stick_boost;
+                            let r_acc = if raw_acc.is_finite() {
+                                raw_acc.clamp(0.005, 0.080)
+                            } else {
+                                0.012
+                            };
 
-                                if dist_sq < r_acc * r_acc {
-                                    try_merge_particles(
-                                        data,
-                                        idx_a,
-                                        idx_b,
-                                        m_a,
-                                        m_b,
-                                        b_mass,
-                                        is_beyond_snowline,
-                                    );
-                                }
+                            if dist_sq < r_acc * r_acc {
+                                try_merge_particles(
+                                    data,
+                                    idx_a,
+                                    idx_b,
+                                    m_a,
+                                    m_b,
+                                    b_mass,
+                                    is_beyond_snowline,
+                                );
                             }
                         }
                     }

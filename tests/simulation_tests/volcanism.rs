@@ -536,3 +536,228 @@ fn test_quick_bar_moon_isolation_and_super_jupiter_labeling() {
     let (jup_bg, _) = body_to_button_colors("Super-Jupiter (1.5 M_J)", BodyType::GasGiant, false);
     assert_ne!(moon_bg, jup_bg);
 }
+
+#[test]
+fn test_gas_giant_volcanism_gated_when_envelope_thick() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::resources::{SimTime, SimulationConfig, TimeWarp};
+    use protostellar::simulation::tides::{TidalConfig, update_tidal_evolution};
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    // 64% Rock | 20% Metal | 16% Gas giant should NOT spawn vacuum Io umbrella plumes
+    let rocky_giant_comp = Composition {
+        silicate_frac: 0.64,
+        ice_frac: 0.0,
+        metal_frac: 0.20,
+        organics_frac: 0.0,
+        gas_frac: 0.16,
+    };
+    assert!(
+        compute_volcanic_state("PLANET-5AU", &rocky_giant_comp, 693.0, None).is_none(),
+        "Thick gas envelope (gas_frac > 0.12) must suppress vacuum umbrella plumes"
+    );
+
+    // Once photoevaporation thins the envelope to <= 12%, vacuum volcanism can emerge
+    let thinned_comp = Composition {
+        silicate_frac: 0.68,
+        ice_frac: 0.0,
+        metal_frac: 0.22,
+        organics_frac: 0.0,
+        gas_frac: 0.10,
+    };
+    let active = compute_volcanic_state("PLANET-5AU", &thinned_comp, 1.5, None)
+        .expect("Exposed silicate body (gas_frac <= 0.12) with high tidal flux should erupt");
+    assert_eq!(
+        active.activity_type,
+        VolcanicActivityType::IoSulfurVolcanism
+    );
+
+    // Verify ECS tidal update removes stale VolcanicState if gas_frac exceeds 0.12
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<SimTime>();
+    app.insert_resource(TimeWarp {
+        is_paused: false,
+        ..Default::default()
+    });
+    app.insert_resource(TidalConfig {
+        is_enabled: true,
+        ..Default::default()
+    });
+    app.add_systems(Update, update_tidal_evolution);
+
+    let star = app
+        .world_mut()
+        .spawn((
+            CentralStar,
+            CelestialBody {
+                name: "Host Star".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            Mass(1.56),
+            Radius(0.005),
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            Temperature(5800.0),
+            Composition::solar_gas(),
+        ))
+        .id();
+
+    let planet = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "PLANET-5AU".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            Mass(122.5 * EARTH_MASS_SOLAR),
+            Radius(0.0004),
+            SimPosition(DVec3::new(0.19, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 16.0)),
+            Temperature(1022.0),
+            rocky_giant_comp,
+            SpinState::default(),
+            VolcanicState::io(),
+        ))
+        .id();
+    let _ = star;
+
+    {
+        let mut st = app.world_mut().resource_mut::<SimTime>();
+        st.current_dt_yr = 0.01;
+    }
+    app.update();
+
+    assert!(
+        app.world().get::<VolcanicState>(planet).is_none(),
+        "update_tidal_evolution must remove vacuum VolcanicState once gas_frac > 0.12"
+    );
+}
+
+#[test]
+fn test_rocky_core_gas_giant_outgassing_telemetry() {
+    use protostellar::game::ui::telemetry_format::{
+        format_core_envelope_outgassing_telemetry, has_deep_core_envelope_outgassing,
+    };
+
+    let comp_5au = Composition {
+        silicate_frac: 0.64,
+        ice_frac: 0.0,
+        metal_frac: 0.20,
+        organics_frac: 0.0,
+        gas_frac: 0.16,
+    };
+    assert!(has_deep_core_envelope_outgassing(
+        &comp_5au,
+        BodyType::GasGiant
+    ));
+    let line = format_core_envelope_outgassing_telemetry(&comp_5au, BodyType::GasGiant, 1022.0);
+    assert!(line.contains("Core-Envelope Volcanism"));
+    assert!(line.contains("Upwelling Clouds"));
+
+    // Standard H/He-rich Jupiter does not report rocky-core outgassing
+    assert!(!has_deep_core_envelope_outgassing(
+        &Composition::solar_gas(),
+        BodyType::GasGiant
+    ));
+    assert_eq!(
+        format_core_envelope_outgassing_telemetry(
+            &Composition::solar_gas(),
+            BodyType::GasGiant,
+            165.0
+        ),
+        ""
+    );
+}
+
+#[test]
+fn test_atmosphere_and_cloud_toggles_and_badges() {
+    use bevy::prelude::*;
+    use protostellar::game::ui::interactions::time_and_panels::handle_instrument_action;
+    use protostellar::game::ui::types::{
+        HudDynamicText, HudVisibilityState, NotificationToast, PlanetBuilderState,
+        TelemetryPanelState, UiButtonAction,
+    };
+    use protostellar::game::ui::visibility::update_hud_visibility;
+    use protostellar::simulation::resources::PlayerInteractionState;
+
+    let mut player_state = PlayerInteractionState::default();
+    assert!(player_state.show_atmospheres());
+    assert!(player_state.show_clouds());
+
+    let mut toast = NotificationToast::default();
+    assert!(handle_instrument_action(
+        &UiButtonAction::ToggleAtmospheres,
+        &mut player_state,
+        &mut toast,
+        None,
+        None,
+    ));
+    assert!(!player_state.show_atmospheres());
+    assert!(player_state.show_clouds());
+
+    assert!(handle_instrument_action(
+        &UiButtonAction::ToggleClouds,
+        &mut player_state,
+        &mut toast,
+        None,
+        None,
+    ));
+    assert!(!player_state.show_atmospheres());
+    assert!(!player_state.show_clouds());
+
+    // Verify dynamic badges update in ECS
+    let mut app = App::new();
+    app.init_resource::<HudVisibilityState>();
+    app.insert_resource(player_state);
+    app.init_resource::<PlanetBuilderState>();
+    app.init_resource::<TelemetryPanelState>();
+    app.add_systems(Update, update_hud_visibility);
+
+    let atmo_badge = app
+        .world_mut()
+        .spawn((Text::new("init"), HudDynamicText::AtmospheresBadge))
+        .id();
+    let cloud_badge = app
+        .world_mut()
+        .spawn((Text::new("init"), HudDynamicText::CloudsBadge))
+        .id();
+
+    app.update();
+    assert!(
+        app.world()
+            .get::<Text>(atmo_badge)
+            .unwrap()
+            .0
+            .contains("OFF")
+    );
+    assert!(
+        app.world()
+            .get::<Text>(cloud_badge)
+            .unwrap()
+            .0
+            .contains("OFF")
+    );
+
+    {
+        let mut ps = app.world_mut().resource_mut::<PlayerInteractionState>();
+        ps.hide_atmospheres = false;
+        ps.hide_clouds = false;
+    }
+    app.update();
+    assert!(
+        app.world()
+            .get::<Text>(atmo_badge)
+            .unwrap()
+            .0
+            .contains("ON")
+    );
+    assert!(
+        app.world()
+            .get::<Text>(cloud_badge)
+            .unwrap()
+            .0
+            .contains("ON")
+    );
+}

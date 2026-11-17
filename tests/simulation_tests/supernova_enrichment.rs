@@ -12,7 +12,7 @@ use protostellar::rendering::effects::supernova::SupernovaType;
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
 use protostellar::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
-use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
 
 #[test]
 fn test_massive_star_supernova_evolution_in_gmc_cluster() {

@@ -835,6 +835,24 @@ pub struct PlayerInteractionState {
     pub just_selected_via_ui: bool,
     /// Whether 3D internal planetary cutaway / cross-section mode is active for selected or inspected bodies.
     pub cutaway_mode: bool,
+    /// Visual view toggle: strips planetary atmospheres and primary gas envelopes to reveal solid/molten cores & terrain underneath.
+    pub hide_atmospheres: bool,
+    /// Visual view toggle: hides cloud decks and opaque haze shrouds while retaining underlying atmospheres and Rayleigh/Chapman scattering.
+    pub hide_clouds: bool,
+}
+
+impl PlayerInteractionState {
+    /// Returns true when planetary atmospheres and gas envelopes should be rendered.
+    #[must_use]
+    pub const fn show_atmospheres(&self) -> bool {
+        !self.hide_atmospheres
+    }
+
+    /// Returns true when cloud decks should be rendered atop planets.
+    #[must_use]
+    pub const fn show_clouds(&self) -> bool {
+        !self.hide_clouds
+    }
 }
 
 impl PlayerInteractionState {

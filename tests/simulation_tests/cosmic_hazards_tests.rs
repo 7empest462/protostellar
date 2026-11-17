@@ -333,8 +333,10 @@ fn test_hazard_resolution_records_discovery_and_science_bounty() {
     let science = app.world().resource::<ScienceData>();
     let grb_bounty = CosmicEventType::GammaRayBurst.science_bounty();
     assert_eq!(science.points, initial_points + grb_bounty);
-    assert!(science
-        .discoveries
-        .iter()
-        .any(|d| d.title.contains("Gamma-Ray Burst")));
+    assert!(
+        science
+            .discoveries
+            .iter()
+            .any(|d| d.title.contains("Gamma-Ray Burst"))
+    );
 }

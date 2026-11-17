@@ -771,24 +771,24 @@ fn resolve_terrain_vantage(
             return Some((comp.target_entity, u));
         }
 
-        if let Ok((.., body, _, _, _, _)) = worlds_query.get(ent) {
-            if !body.body_type.is_star_or_remnant() {
-                for (_, probe, comp, _) in probes_query.iter() {
-                    if comp.target_entity == ent
-                        && probe.status == ProbeStatus::Landed
-                        && probe.probe_type == ProbeType::Rover
-                    {
-                        let u = probe
-                            .landed_unspun_pos
-                            .unwrap_or(bevy::math::DVec3::Y)
-                            .as_vec3()
-                            .normalize_or_zero();
-                        return Some((ent, u));
-                    }
+        if let Ok((.., body, _, _, _, _)) = worlds_query.get(ent)
+            && !body.body_type.is_star_or_remnant()
+        {
+            for (_, probe, comp, _) in probes_query.iter() {
+                if comp.target_entity == ent
+                    && probe.status == ProbeStatus::Landed
+                    && probe.probe_type == ProbeType::Rover
+                {
+                    let u = probe
+                        .landed_unspun_pos
+                        .unwrap_or(bevy::math::DVec3::Y)
+                        .as_vec3()
+                        .normalize_or_zero();
+                    return Some((ent, u));
                 }
-                let u = lat_lon_to_unspun_normal(surface_lat_lon.x, surface_lat_lon.y);
-                return Some((ent, u));
             }
+            let u = lat_lon_to_unspun_normal(surface_lat_lon.x, surface_lat_lon.y);
+            return Some((ent, u));
         }
     }
 

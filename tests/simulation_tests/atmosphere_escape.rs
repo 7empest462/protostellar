@@ -410,3 +410,82 @@ fn test_atmospheric_escape_ecs_system_integration() {
         "Close-in planet should classify into an active escape regime"
     );
 }
+
+#[test]
+fn test_warm_low_gravity_moon_loses_transient_steam_to_space() {
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<AtmosphericEscapeConfig>()
+        .add_message::<AtmosphericStrippedEvent>();
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Genesis Protostar".to_string(),
+            body_type: BodyType::TTauriStar,
+        },
+        SimPosition(DVec3::ZERO),
+        Mass(1.56),
+        Radius(SOLAR_RADIUS_AU * 1.42),
+        Luminosity(10.0),
+        IgnitionState::default(),
+    ));
+
+    let moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Super-Jupiter XXIV (Moon)".to_string(),
+                body_type: BodyType::Moon,
+            },
+            SimPosition(DVec3::new(3.16, 0.0, 0.0)),
+            Mass(0.0081 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.333),
+            Temperature(281.0),
+            Composition {
+                silicate_frac: 0.69,
+                ice_frac: 0.05,
+                metal_frac: 0.27,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            }
+            .normalized(),
+            VolatileInventory {
+                delivered_water_m_earth: 5.0e-6,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 0.0105,
+                cometary_impact_count: 1,
+            },
+        ))
+        .id();
+
+    app.world_mut().resource_mut::<SimTime>().current_dt_yr = 250_000.0;
+    app.add_systems(Update, update_atmospheric_escape_evolution);
+    app.update();
+
+    let moon_ref = app.world().entity(moon);
+    let state = moon_ref
+        .get::<AtmosphericEscapeState>()
+        .expect("Escape state must be recorded on warm low-gravity moon");
+    assert!(
+        state.jeans_escape_rate_m_earth_per_myr > 0.0
+            && state.total_loss_rate_m_earth_per_myr > 0.0,
+        "Warm unshielded 0.0081 M_earth moon must suffer Jeans/photolytic steam escape (jeans={}, total={})",
+        state.jeans_escape_rate_m_earth_per_myr,
+        state.total_loss_rate_m_earth_per_myr
+    );
+
+    let vol = moon_ref.get::<VolatileInventory>().unwrap();
+    assert!(
+        vol.atmospheric_pressure_bar < 0.001,
+        "Transient steam atmosphere must escape into space (got {} bar)",
+        vol.atmospheric_pressure_bar
+    );
+    assert!(
+        vol.delivered_water_m_earth < 1.0e-6,
+        "Surface water reservoir must boil off and escape (got {} M_earth)",
+        vol.delivered_water_m_earth
+    );
+}

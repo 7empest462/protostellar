@@ -2,7 +2,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use protostellar::rendering::bodies::VisualAssets;
 use protostellar::rendering::effects::remnants::{
-    update_persistent_remnants, PersistentRemnantPool, PersistentSupernovaRemnant,
+    PersistentRemnantPool, PersistentSupernovaRemnant, update_persistent_remnants,
 };
 use protostellar::rendering::effects::supernova::*;
 use protostellar::rendering::materials::{SupernovaMaterial, SupernovaUniforms};
@@ -31,14 +31,18 @@ fn test_supernova_explosion_classification_and_layer_generation() {
     assert_eq!(hyper.blast_speed_au_s, 75.0);
     assert_eq!(hyper.max_radius_au, 150.0);
     assert_eq!(hyper.fragments.len(), 160);
-    assert!(hyper
-        .fragments
-        .iter()
-        .any(|f| f.layer == EjectaLayer::RelativisticJetBreakout));
-    assert!(hyper
-        .fragments
-        .iter()
-        .any(|f| f.layer == EjectaLayer::CoreNickelIron));
+    assert!(
+        hyper
+            .fragments
+            .iter()
+            .any(|f| f.layer == EjectaLayer::RelativisticJetBreakout)
+    );
+    assert!(
+        hyper
+            .fragments
+            .iter()
+            .any(|f| f.layer == EjectaLayer::CoreNickelIron)
+    );
 
     // 2. Type II Core-Collapse (Mass 8 - 25 M_sun -> Pulsar / Neutron Star)
     pool.clear();
@@ -57,14 +61,18 @@ fn test_supernova_explosion_classification_and_layer_generation() {
     assert_eq!(type_ii.blast_speed_au_s, 45.0);
     assert_eq!(type_ii.max_radius_au, 110.0);
     assert_eq!(type_ii.fragments.len(), 128);
-    assert!(type_ii
-        .fragments
-        .iter()
-        .any(|f| f.layer == EjectaLayer::MantleOxygenSilicon));
-    assert!(type_ii
-        .fragments
-        .iter()
-        .any(|f| f.layer == EjectaLayer::OuterEnvelopeHydrogen));
+    assert!(
+        type_ii
+            .fragments
+            .iter()
+            .any(|f| f.layer == EjectaLayer::MantleOxygenSilicon)
+    );
+    assert!(
+        type_ii
+            .fragments
+            .iter()
+            .any(|f| f.layer == EjectaLayer::OuterEnvelopeHydrogen)
+    );
 
     // 3. Planetary Nebula (Mass 0.5 - 8 M_sun -> White Dwarf)
     pool.clear();

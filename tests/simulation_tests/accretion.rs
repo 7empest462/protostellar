@@ -149,7 +149,7 @@ fn classify_saturn_encounter(
     v_rel: f64,
     v_esc: f64,
 ) -> protostellar::simulation::accretion::impact_regimes::ImpactRegime {
-    use protostellar::simulation::accretion::impact_regimes::{classify_impact, ImpactParams};
+    use protostellar::simulation::accretion::impact_regimes::{ImpactParams, classify_impact};
     use protostellar::simulation::components::BodyType;
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
 
@@ -202,7 +202,7 @@ fn test_saturn_system_impact_regime_classifications() {
 #[test]
 fn test_inner_terrestrial_hit_and_run_classification() {
     use protostellar::simulation::accretion::impact_regimes::{
-        classify_impact, ImpactParams, ImpactRegime,
+        ImpactParams, ImpactRegime, classify_impact,
     };
     use protostellar::simulation::components::BodyType;
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
@@ -354,7 +354,7 @@ fn test_dry_or_scorching_planets_have_zero_ice_caps() {
 fn test_interpenetrating_bodies_unconditionally_merge() {
     use protostellar::simulation::accretion::collisions::is_physically_interpenetrating;
     use protostellar::simulation::accretion::impact_regimes::{
-        classify_impact, ImpactParams, ImpactRegime,
+        ImpactParams, ImpactRegime, classify_impact,
     };
     use protostellar::simulation::components::BodyType;
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
@@ -446,7 +446,7 @@ fn test_dry_planet_zero_ice_zero_ocean_coverage() {
 #[test]
 fn test_dry_super_earth_classification_and_volatiles() {
     use protostellar::simulation::components::{
-        classify_body_by_mass_and_comp, BodyType, Composition, VolatileInventory,
+        BodyType, Composition, VolatileInventory, classify_body_by_mass_and_comp,
     };
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
 
@@ -632,7 +632,7 @@ fn test_kdtree_broadphase_matches_exhaustive_pair_search() {
     use bevy::math::DVec3;
     use bevy::prelude::Entity;
     use protostellar::simulation::accretion::collisions::{
-        build_kdtree_broadphase_candidates, BodySnapshot,
+        BodySnapshot, build_kdtree_broadphase_candidates,
     };
     use protostellar::simulation::components::*;
     use protostellar::utils::constants::*;
@@ -695,8 +695,8 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
     use protostellar::simulation::components::*;
     use protostellar::simulation::resources::*;
     use protostellar::simulation::serialization::{
-        deserialize_system_postcard, serialize_system_postcard, CelestialBodySave, ConfigSave,
-        EventFlagsSave, SystemSaveData, TimeWarpSave,
+        CelestialBodySave, ConfigSave, EventFlagsSave, SystemSaveData, TimeWarpSave,
+        deserialize_system_postcard, serialize_system_postcard,
     };
     use protostellar::utils::constants::*;
 
@@ -815,8 +815,9 @@ fn test_terrestrial_ocean_and_cloud_shader_thresholds() {
         .expect("TerrestrialPlanet fragment branch must exist in planet.wesl");
 
     assert!(
-        !terrestrial_block
-            .contains("if (has_water_or_ice_oceans && elev < sea_level) {\n            elev = sea_level"),
+        !terrestrial_block.contains(
+            "if (has_water_or_ice_oceans && elev < sea_level) {\n            elev = sea_level"
+        ),
         "TerrestrialPlanet fragment shader must NOT overwrite elev = sea_level, which makes underwater bathymetry unreachable"
     );
     assert!(

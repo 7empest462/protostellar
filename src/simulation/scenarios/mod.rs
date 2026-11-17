@@ -76,7 +76,9 @@ impl ScenarioPreset {
 
     pub fn description(&self) -> &'static str {
         match self {
-            ScenarioPreset::GalacticCollision => "Witness the collision of two massive 100,000 N-body star clusters bound by dark matter.",
+            ScenarioPreset::GalacticCollision => {
+                "Witness the collision of two massive 100,000 N-body star clusters bound by dark matter."
+            }
             ScenarioPreset::SolarNebulaMmsn => {
                 "Default 4.5 Gyr Hayashi Minimum Mass Solar Nebula (MMSN) with central protostar and 10 protoplanetary embryos."
             }
@@ -114,7 +116,7 @@ impl ScenarioPreset {
                 "Supermassive black hole Sgr A* (4.3×10⁶ M☉) with the relativistic S-star cluster (S2, S4714 at 8% c, S62, S29, S38) and the tidally sheared G2 cloud."
             }
             ScenarioPreset::MolecularCloudCluster => {
-                "Cold pre-stellar molecular cloud core (24 M☉, 550 AU) undergoing turbulent Jeans instability collapse, birthing an open cluster of protostellar seeds and infalling binaries."
+                "Cold pre-stellar molecular cloud core (24 M☉, 1100 AU) undergoing turbulent Jeans instability collapse, birthing an open cluster of protostellar seeds and galactic spiral arms."
             }
             ScenarioPreset::TidalDisruptionEvent => {
                 "A doomed red giant star on a highly elliptical orbit plunges inside the Roche limit of a Supermassive Black Hole, triggering a violent Tidal Disruption Event (TDE)."
@@ -194,7 +196,7 @@ pub fn scenario_preset_camera_pose(preset: ScenarioPreset) -> (f32, f32, f32) {
         ScenarioPreset::RelativisticBinary => (0.04, 0.785, 0.70),
         ScenarioPreset::KozaiLidovTriple => (15.0, 0.785, 0.65),
         ScenarioPreset::SagittariusAStar => (1200.0, 0.785, 0.65),
-        ScenarioPreset::MolecularCloudCluster => (850.0, 0.785, 0.65),
+        ScenarioPreset::MolecularCloudCluster => (1650.0, 0.785, 0.65),
         ScenarioPreset::TidalDisruptionEvent => (250.0, 0.785, 0.65),
     }
 }
@@ -261,7 +263,7 @@ fn reset_scenario_simulation_state(
     player_state: &mut PlayerInteractionState,
     opt_scrubber: &mut Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
 ) {
-    if let Some(ref mut scrubber) = opt_scrubber {
+    if let Some(scrubber) = opt_scrubber {
         **scrubber = crate::simulation::geology::types::TimelineScrubber::default();
     }
     player_state.hovered_entity = None;
@@ -341,12 +343,12 @@ pub fn update_scenario_system_phase(
             crate::game::phases::default_milestones(),
         ),
     };
-    if let Some(ref mut pm) = phase_mgr {
+    if let Some(pm) = phase_mgr {
         pm.current_phase = target_phase;
         pm.phase_description = desc;
         pm.milestones = milestones;
     }
-    if let Some(ref mut np) = next_phase {
+    if let Some(np) = next_phase {
         np.set(target_phase);
     }
 }
@@ -385,7 +387,7 @@ fn configure_scenario_particles_and_swarm(
         };
     }
 
-    if let Some(ref mut swarm_data) = swarm {
+    if let Some(swarm_data) = swarm {
         crate::rendering::particle_swarm::reseed_particle_swarm(swarm_data, disk_params, config);
     }
 }

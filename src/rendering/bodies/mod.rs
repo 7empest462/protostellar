@@ -8,22 +8,24 @@ pub mod magnetospheres;
 pub mod materials_sync;
 pub mod meshes;
 pub mod palettes;
+pub mod scaling;
 pub mod shadows;
 pub mod spawner;
 pub mod structures;
 pub mod transforms;
+pub mod view_overrides;
 
 use bevy::prelude::*;
 
-pub use atmospheres::{sync_planetary_atmospheres, VisualAtmosphereChild};
+pub use atmospheres::{VisualAtmosphereChild, sync_planetary_atmospheres};
 pub use circumstellar::{
-    compute_circumstellar_uniforms, resolve_circumstellar_profile, sync_circumstellar_environments,
-    VisualCircumstellarChild,
+    VisualCircumstellarChild, compute_circumstellar_uniforms, resolve_circumstellar_profile,
+    sync_circumstellar_environments,
 };
-pub use comets::{sync_cometary_tails, CometComaPart, CometTailPart, CometTailRoot};
-pub use jets::{sync_relativistic_jets, RelativisticJetPart, RelativisticJetRoot};
+pub use comets::{CometComaPart, CometTailPart, CometTailRoot, sync_cometary_tails};
+pub use jets::{RelativisticJetPart, RelativisticJetRoot, sync_relativistic_jets};
 pub use magnetospheres::{
-    sync_magnetic_field_overlays, MagneticFieldLoopsPart, MagneticFieldOverlayRoot,
+    MagneticFieldLoopsPart, MagneticFieldOverlayRoot, sync_magnetic_field_overlays,
 };
 pub use meshes::{
     generate_irregular_asteroid_mesh, generate_magnetar_field_loops_mesh,
@@ -40,15 +42,15 @@ pub use shadows::{
 };
 pub use spawner::spawn_missing_visuals;
 pub use structures::{
-    sync_black_hole_accretion_disks, sync_magnetar_structures, sync_planetary_rings,
-    sync_pulsar_beams, sync_quasar_beams, MagnetarStructurePart, MagnetarStructureRoot,
-    PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart, QuasarBeamRoot, VisualBlackHoleDiskChild,
-    VisualRingChild,
+    MagnetarStructurePart, MagnetarStructureRoot, PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart,
+    QuasarBeamRoot, VisualBlackHoleDiskChild, VisualRingChild, sync_black_hole_accretion_disks,
+    sync_magnetar_structures, sync_planetary_rings, sync_pulsar_beams, sync_quasar_beams,
 };
 pub use transforms::{
     compute_magma_incandescence, compute_magma_ocean_crust_fraction, resolve_star_direction,
     sync_camera_adaptive_body_scales, sync_celestial_transforms,
 };
+pub use view_overrides::{stripped_core_display_temp_k, stripped_interior_composition};
 
 /// Marker for an entity that has its visual mesh and material spawned.
 #[derive(Component, Debug, Clone, Copy, Default)]

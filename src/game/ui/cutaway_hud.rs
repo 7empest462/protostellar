@@ -270,6 +270,7 @@ pub fn update_cutaway_hud_ui(
         Option<&InternalDifferentiation>,
         Option<&Composition>,
         Option<&Transform>,
+        Option<&Mass>,
     )>,
 ) {
     let Some(window) = windows.iter().next() else {
@@ -282,7 +283,7 @@ pub fn update_cutaway_hud_ui(
     let target_entity = resolve_active_cutaway_target(&player_state, opt_pan);
     let target_data = target_entity.and_then(|ent| bodies_query.get(ent).ok());
 
-    let Some((sim_pos, radius, body, opt_diff, _opt_comp, opt_tf)) = target_data else {
+    let Some((sim_pos, radius, body, opt_diff, opt_comp, opt_tf, opt_mass)) = target_data else {
         // Hide all 4 callout cards
         for (_, _, mut node, _) in &mut pill_query {
             node.display = Display::None;
@@ -292,19 +293,43 @@ pub fn update_cutaway_hud_ui(
 
     let body_vec = Vec3::new(sim_pos.x as f32, sim_pos.y as f32, sim_pos.z as f32);
     let cam_dist = cam_tf.translation.distance(body_vec);
-    let visual_r = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
-        opt_tf,
-        radius.0,
-        body.body_type,
-        body_vec.length(),
-        cam_dist,
-        &config,
+    let show_atmospheres = player_state.show_atmospheres();
+    let (eff_rad, eff_type) = if let (Some(comp), Some(mass)) = (opt_comp, opt_mass) {
+        crate::rendering::bodies::view_overrides::resolve_view_body_radius_and_type(
+            mass.0,
+            radius.0,
+            body.body_type,
+            comp,
+            opt_diff,
+            show_atmospheres,
+        )
+    } else {
+        (radius.0, body.body_type)
+    };
+    let mut eff_body = body.clone();
+    eff_body.body_type = eff_type;
+    let visual_r = opt_tf.map_or_else(
+        || {
+            crate::rendering::bodies::transforms::compute_view_visual_radius(
+                radius.0,
+                body.body_type,
+                opt_mass.map_or(0.0, |m| m.0),
+                opt_comp,
+                opt_diff,
+                show_atmospheres,
+                body_vec.length(),
+                1.0,
+                cam_dist,
+                &config,
+            )
+        },
+        |tf| tf.scale.x,
     );
     let strata = crate::rendering::effects::planetary::resolve_cutaway_strata_with_visual_radius(
-        body, radius.0, visual_r, opt_diff,
+        &eff_body, eff_rad, visual_r, opt_diff,
     );
     let anchors = compute_cutaway_anchors(body_vec, cam_tf.rotation, &strata);
-    let labels = resolve_cutaway_labels(body, radius.0, opt_diff);
+    let labels = resolve_cutaway_labels(&eff_body, eff_rad, opt_diff);
 
     for (pill_ent, pill, mut node, mut border_col) in &mut pill_query {
         sync_cutaway_pill_card(

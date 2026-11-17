@@ -110,7 +110,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         return out;
     }
 
-    let march_dist = min(t_far - t_near, 1100.0);
+    let march_dist = min(t_far - t_near, length(neb.box_max - neb.box_min));
     // Dynamic step count: fewer steps for long marches inside the volume
     let max_steps = select(64u, 40u, t_near <= 0.0);
     let steps = clamp(neb.step_count, 16u, max_steps);
@@ -132,27 +132,27 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let r_core = length(sample_pos);
 
         // Ambient dense cold molecular cloud core profile (dense Plummer sphere)
-        let core_profile = 1.0 / pow(1.0 + (r_core / 240.0) * (r_core / 240.0), 1.25);
+        let core_profile = 1.0 / pow(1.0 + (r_core / 460.0) * (r_core / 460.0), 1.25);
 
-        // Lin-Shu logarithmic spiral galaxy density wave profile
+        // Lin-Shu logarithmic spiral galaxy density wave profile (matched to 2200 AU domain)
         let r_cyl = max(length(sample_pos.xz), 0.1);
         let phi = atan2(sample_pos.z + 1e-5, sample_pos.x + 1e-5);
-        let pattern_angle = 0.00045 * neb.elapsed_years;
-        let r_norm_spiral = max(r_cyl / 60.0, 0.20);
-        let xi = 4.0 * (phi - pattern_angle) - 6.16 * log(r_norm_spiral);
+        let pattern_angle = 0.00028 * neb.elapsed_years;
+        let r_norm_spiral = max(r_cyl / 110.0, 0.20);
+        let xi = 4.0 * (phi - pattern_angle) - 7.2 * log(r_norm_spiral);
         let spiral_modulation = 0.5 + 0.5 * cos(xi);
-        let z_disk = exp(-abs(sample_pos.y) / 36.0);
+        let z_disk = exp(-abs(sample_pos.y) / 60.0);
 
         // Galactic nucleus bulge smoothly transitions into sweeping spiral arms
-        let bulge_profile = exp(-r_core / 45.0) * 1.6;
-        let arm_weight = smoothstep(20.0, 60.0, r_cyl);
-        let arm_profile = exp(-r_cyl / 250.0) * z_disk * (0.08 + 2.50 * pow(spiral_modulation, 2.2));
+        let bulge_profile = exp(-r_core / 85.0) * 1.65;
+        let arm_weight = smoothstep(35.0, 120.0, r_cyl);
+        let arm_profile = exp(-r_cyl / 520.0) * z_disk * (0.06 + 2.60 * pow(spiral_modulation, 2.3));
         let spiral_composite = mix(bulge_profile, arm_profile, arm_weight);
 
         // Smooth evolution over cosmic time from turbulent collapse into rotating spiral galaxy,
-        // with a spherical boundary fade so density vanishes cleanly before the 550 AU cube faces.
+        // with a spherical boundary fade so density vanishes cleanly before the 1100 AU cube faces.
         let t_spiral = clamp((neb.elapsed_years - 600.0) / 1400.0, 0.0, 1.0);
-        let boundary_fade = 1.0 - smoothstep(360.0, 515.0, r_core);
+        let boundary_fade = 1.0 - smoothstep(760.0, 1040.0, r_core);
         let eff_profile = mix(core_profile, spiral_composite, t_spiral) * boundary_fade;
         
         var density = 0.0;
@@ -160,7 +160,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
         // Early exit optimization for empty space
         if (eff_profile > 0.015) {
-            fbm_turb = fbm3(sample_pos * 0.008);
+            fbm_turb = fbm3(sample_pos * 0.0045);
             density = eff_profile * (0.35 + 0.90 * fbm_turb);
         }
 

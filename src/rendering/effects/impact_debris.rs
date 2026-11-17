@@ -61,11 +61,7 @@ pub fn p_surf_to_world_normal(p_surf_dir: Vec3, spin_axis_vec4: Vec4, spin_angle
     let p_tilted = Vec3::new(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
     let world_n = s_tangent_x * p_tilted.x + s_axis * p_tilted.y + s_tangent_z * p_tilted.z;
     let norm = world_n.normalize_or_zero();
-    if norm == Vec3::ZERO {
-        dir
-    } else {
-        norm
-    }
+    if norm == Vec3::ZERO { dir } else { norm }
 }
 
 /// Resolves the 3D world-space impact normal for a planet entity, aligning with its rendered shader crater if available.
@@ -447,11 +443,7 @@ fn collect_collision_bounce_ejecta(
 
         let spray_dir = {
             let d = (p2 - p1).normalize_or_zero();
-            if d == Vec3::ZERO {
-                Vec3::X
-            } else {
-                d
-            }
+            if d == Vec3::ZERO { Vec3::X } else { d }
         };
         let up = if spray_dir.y.abs() < 0.9 {
             Vec3::Y

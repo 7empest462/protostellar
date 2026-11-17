@@ -114,17 +114,17 @@ pub fn habitability_tracking_system(
         } else if conditions_met {
             if let Some(mut timer) = habitability_timer {
                 timer.0 += dt;
-                if timer.0 > 100_000.0 {
-                    if let Ok(mut ecmd) = commands.get_entity(entity) {
-                        ecmd.insert(BiosphereState {
-                            habitability_score: 0.1,
-                            emergence_year: Some(elapsed_years),
-                            flora_pigment: adapted_pigment,
-                            bioluminescence_intensity: if is_tidally_locked { 0.35 } else { 0.15 },
-                            ..Default::default()
-                        });
-                        ecmd.remove::<HabitabilityTimer>();
-                    }
+                if timer.0 > 100_000.0
+                    && let Ok(mut ecmd) = commands.get_entity(entity)
+                {
+                    ecmd.insert(BiosphereState {
+                        habitability_score: 0.1,
+                        emergence_year: Some(elapsed_years),
+                        flora_pigment: adapted_pigment,
+                        bioluminescence_intensity: if is_tidally_locked { 0.35 } else { 0.15 },
+                        ..Default::default()
+                    });
+                    ecmd.remove::<HabitabilityTimer>();
                 }
             } else if let Ok(mut ecmd) = commands.get_entity(entity) {
                 ecmd.insert(HabitabilityTimer(0.0));

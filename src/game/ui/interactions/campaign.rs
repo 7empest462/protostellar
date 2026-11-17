@@ -48,21 +48,19 @@ pub fn handle_campaign_action(
             true
         }
         UiButtonAction::ClaimCampaignReward => {
-            if let (Some(camp_state), Some(science)) = (opt_campaign_state, opt_science) {
-                if camp_state.status == crate::simulation::campaign::MissionStatus::Victory
-                    && !camp_state.reward_claimed
-                {
-                    if let Some(mission) = camp_state.active_mission {
-                        let bounty = f64::from(mission.science_reward());
-                        science.add_science(bounty);
-                        camp_state.reward_claimed = true;
-                        toast.message = format!(
-                            "🏆 Claimed +{} Science Data bounty!",
-                            mission.science_reward()
-                        );
-                        toast.timer = 4.0;
-                    }
-                }
+            if let (Some(camp_state), Some(science)) = (opt_campaign_state, opt_science)
+                && camp_state.status == crate::simulation::campaign::MissionStatus::Victory
+                && !camp_state.reward_claimed
+                && let Some(mission) = camp_state.active_mission
+            {
+                let bounty = f64::from(mission.science_reward());
+                science.add_science(bounty);
+                camp_state.reward_claimed = true;
+                toast.message = format!(
+                    "🏆 Claimed +{} Science Data bounty!",
+                    mission.science_reward()
+                );
+                toast.timer = 4.0;
             }
             true
         }

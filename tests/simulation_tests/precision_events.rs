@@ -7,7 +7,7 @@ use protostellar::simulation::accretion::collisions::process_accretion_and_colli
 use protostellar::simulation::accretion::events::{
     AccretionMergeEvent, CollisionBounceEvent, MoonFormationEvent, RocheDisruptionEvent,
 };
-use protostellar::simulation::accretion::theia::{update_theia_rendezvous, TheiaImpactState};
+use protostellar::simulation::accretion::theia::{TheiaImpactState, update_theia_rendezvous};
 use protostellar::simulation::components::*;
 use protostellar::simulation::resources::*;
 use protostellar::utils::constants::*;

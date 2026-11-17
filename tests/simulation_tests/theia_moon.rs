@@ -6,7 +6,7 @@ use protostellar::simulation::accretion::collisions::process_accretion_and_colli
 use protostellar::simulation::accretion::events::{
     AccretionMergeEvent, CollisionBounceEvent, MoonFormationEvent, RocheDisruptionEvent,
 };
-use protostellar::simulation::accretion::theia::{update_theia_rendezvous, TheiaImpactState};
+use protostellar::simulation::accretion::theia::{TheiaImpactState, update_theia_rendezvous};
 use protostellar::simulation::components::*;
 use protostellar::simulation::disk::planetesimals::auto_spawn_delayed_proto_earth;
 use protostellar::simulation::resources::*;
@@ -676,8 +676,8 @@ fn test_trappist_scenario_does_not_auto_spawn_proto_earth_or_theia() {
 
 #[test]
 fn test_the_moon_retains_spherical_planet_mesh_under_gas_and_pebble_accretion() {
-    use protostellar::rendering::bodies::meshes::select_body_mesh;
     use protostellar::rendering::bodies::VisualAssets;
+    use protostellar::rendering::bodies::meshes::select_body_mesh;
     use protostellar::simulation::accretion::gas::direct_nebular_gas_accretion;
     use protostellar::simulation::pebble_accretion::apply_pebble_accretion;
 

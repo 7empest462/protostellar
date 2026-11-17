@@ -194,26 +194,26 @@ pub fn handle_planet_builder_click_spawn(
             return;
         };
 
-        if let Some(cursor_pos) = window.cursor_position() {
-            if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) {
-                // Intersect ray with the orbital disk plane Y = 0
-                if ray.direction.y.abs() > 1e-5 {
-                    let t = -ray.origin.y / ray.direction.y;
-                    if t > 0.0 {
-                        let hit = ray.origin + *ray.direction * t;
-                        let spawn_coords = DVec3::new(f64::from(hit.x), 0.0, f64::from(hit.z));
-                        crate::game::ui::spawn_custom_builder_world(
-                            &mut commands,
-                            &builder_state,
-                            disk_params.central_star_mass,
-                            Some(spawn_coords),
-                            &mut player_state,
-                            &mut pan_orbit_query,
-                            &mut toast,
-                        );
-                        // Exit click-to-spawn mode after placement
-                        builder_state.click_to_spawn_mode = false;
-                    }
+        if let Some(cursor_pos) = window.cursor_position()
+            && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos)
+        {
+            // Intersect ray with the orbital disk plane Y = 0
+            if ray.direction.y.abs() > 1e-5 {
+                let t = -ray.origin.y / ray.direction.y;
+                if t > 0.0 {
+                    let hit = ray.origin + *ray.direction * t;
+                    let spawn_coords = DVec3::new(f64::from(hit.x), 0.0, f64::from(hit.z));
+                    crate::game::ui::spawn_custom_builder_world(
+                        &mut commands,
+                        &builder_state,
+                        disk_params.central_star_mass,
+                        Some(spawn_coords),
+                        &mut player_state,
+                        &mut pan_orbit_query,
+                        &mut toast,
+                    );
+                    // Exit click-to-spawn mode after placement
+                    builder_state.click_to_spawn_mode = false;
                 }
             }
         }

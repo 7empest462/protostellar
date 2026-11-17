@@ -134,11 +134,7 @@ fn calculate_gas_growth_step(
     };
 
     let max_annual_growth_rate = if env.is_massive_disk {
-        if m >= 10.0 {
-            0.015
-        } else {
-            0.04
-        }
+        if m >= 10.0 { 0.015 } else { 0.04 }
     } else if r_au < 2.7 {
         0.005
     } else {
@@ -224,10 +220,10 @@ fn apply_gas_accretion_to_body(
 
     update_gas_accretion_body_name(body, updated_type, new_mass, r_au);
 
-    if updated_type != BodyType::BlackHole {
-        if let Some(temp) = opt_temp {
-            update_stellar_surface_temp(&mut temp.0, new_mass);
-        }
+    if updated_type != BodyType::BlackHole
+        && let Some(temp) = opt_temp
+    {
+        update_stellar_surface_temp(&mut temp.0, new_mass);
     }
     if let Some(diff) = opt_diff {
         diff.recalculate(new_mass, new_radius, comp);

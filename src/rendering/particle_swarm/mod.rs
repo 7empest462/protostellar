@@ -21,9 +21,9 @@ pub use material::{ParticleSwarmMaterial, ParticleSwarmUniforms};
 pub use promotions::{check_clump_promotions, replenish_cleared_particles, spawn_promoted_bodies};
 pub use setup::{create_soft_particle_texture, reseed_particle_swarm, setup_particle_swarm};
 pub use simulation::{
-    apply_particle_accretion_to_bodies, build_spatial_hash_bins, compute_gas_aerodynamic_drift,
-    integrate_particles_and_collect_accretions, process_particle_collisions_and_sticking,
-    ParticleIntegrationParams,
+    ParticleIntegrationParams, apply_particle_accretion_to_bodies, build_spatial_hash_bins,
+    compute_gas_aerodynamic_drift, integrate_particles_and_collect_accretions,
+    process_particle_collisions_and_sticking,
 };
 
 /// Marker component for the 50,000 particle visual swarm mesh.
@@ -59,10 +59,10 @@ fn sync_swarm_material_render_scale(
         return;
     };
     for handle in mat_query.iter() {
-        if let Some(mat) = materials.get(&handle.0) {
-            if (mat.uniforms.params.x - render_scale).abs() <= 1e-5 {
-                continue;
-            }
+        if let Some(mat) = materials.get(&handle.0)
+            && (mat.uniforms.params.x - render_scale).abs() <= 1e-5
+        {
+            continue;
         }
         if let Some(mut mat) = materials.get_mut(&handle.0) {
             mat.uniforms.params.x = render_scale;
@@ -75,11 +75,11 @@ fn flush_dirty_mesh_if_paused(
     disk_params: &DiskParameters,
     meshes: &mut Assets<Mesh>,
 ) {
-    if let Some(ref mut data) = swarm {
-        if data.is_dirty {
-            update_gpu_billboard_mesh(data, disk_params, meshes);
-            data.is_dirty = false;
-        }
+    if let Some(data) = swarm
+        && data.is_dirty
+    {
+        update_gpu_billboard_mesh(data, disk_params, meshes);
+        data.is_dirty = false;
     }
 }
 

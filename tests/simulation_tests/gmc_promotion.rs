@@ -53,10 +53,120 @@ fn test_gmc_promotion_toast_formatting() {
         .unwrap();
 
     assert_eq!(
-        toast_res.message, "Protostar Jeans-3: disk attached (3 embryos)",
+        toast_res.message, "Protostar Jeans-3: ignited (3 worlds formed)",
         "Toast must match user visible handoff format"
     );
     assert!(toast_res.timer > 0.0);
+    assert!(
+        app.world().get::<CircumstellarDisk>(star_ent).is_none(),
+        "GMC star must not attach a CircumstellarDisk"
+    );
+    assert!(
+        app.world().get::<PlanetaryRingSystem>(star_ent).is_none(),
+        "GMC star must not attach a PlanetaryRingSystem"
+    );
+    assert!(
+        app.world().get::<GmcPromotedSystem>(star_ent).is_some(),
+        "GMC star must be marked GmcPromotedSystem"
+    );
+}
+
+#[test]
+fn test_gmc_brown_dwarf_promotes_through_stellar_classes_and_imbh_collapse() {
+    let mut app = App::new();
+    app.insert_resource(ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    });
+    app.insert_resource(SimulationConfig {
+        enable_accretion: true,
+        gas_density_scale: 1.0,
+        ..Default::default()
+    });
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+
+    // Regression case: A GasGiant/Super-Jupiter that promoted to BrownDwarf without IgnitionState
+    let brown_dwarf_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Super-Jupiter (8.4 M_J)".to_string(),
+                body_type: BodyType::BrownDwarf,
+            },
+            Mass(0.079),
+            SimPosition(bevy::math::DVec3::new(20.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, 1.0)),
+            Radius(0.0007),
+            Temperature(458.0),
+            Composition::solar_gas(),
+        ))
+        .id();
+
+    app.add_systems(Update, gmc_cluster_gas_accretion);
+
+    // Step across 0.08 M_sun threshold via Bondi-Hoyle cloud accretion
+    for _ in 0..8 {
+        app.world_mut().resource_mut::<SimTime>().current_dt_yr = 2.0;
+        app.update();
+        let body = app.world().get::<CelestialBody>(brown_dwarf_ent).unwrap();
+        let mass = app.world().get::<Mass>(brown_dwarf_ent).unwrap().0;
+        if mass >= 0.08 && body.body_type != BodyType::BrownDwarf {
+            break;
+        }
+    }
+
+    let body = app.world().get::<CelestialBody>(brown_dwarf_ent).unwrap();
+    let mass = app.world().get::<Mass>(brown_dwarf_ent).unwrap().0;
+    let temp = app.world().get::<Temperature>(brown_dwarf_ent).unwrap().0;
+    assert!(
+        mass >= 0.08,
+        "Sub-stellar Brown Dwarf must accrete past hydrogen ignition threshold"
+    );
+    assert_ne!(
+        body.body_type,
+        BodyType::BrownDwarf,
+        "Brown Dwarf above 0.08 M_sun must promote into a hydrogen-burning star, not stay BrownDwarf (mass={mass:.3})"
+    );
+    assert!(
+        !body.name.contains("Super-Jupiter"),
+        "Promoted star name must replace stale Super-Jupiter label (got '{}')",
+        body.name
+    );
+    assert!(
+        temp > 2500.0,
+        "Promoted star must heat from 458 K up to stellar photospheric temperature (got {temp:.0} K)"
+    );
+    assert!(
+        app.world().get::<IgnitionState>(brown_dwarf_ent).is_some(),
+        "Promoted star must receive IgnitionState for radiation feedback and stellar evolution"
+    );
+    assert!(
+        app.world()
+            .get::<StellarEvolutionState>(brown_dwarf_ent)
+            .is_some(),
+        "Promoted star must receive StellarEvolutionState"
+    );
+
+    // Also verify high-mass direct collapse above 500 M_sun produces BlackHole
+    {
+        let mut m_mut = app.world_mut().get_mut::<Mass>(brown_dwarf_ent).unwrap();
+        m_mut.0 = 550.0;
+    }
+    app.world_mut().resource_mut::<SimTime>().current_dt_yr = 0.5;
+    app.update();
+
+    let collapsed_body = app.world().get::<CelestialBody>(brown_dwarf_ent).unwrap();
+    assert_eq!(
+        collapsed_body.body_type,
+        BodyType::BlackHole,
+        "Mass >= 500 M_sun must collapse directly to Intermediate-Mass Black Hole"
+    );
+    assert!(
+        collapsed_body.name.contains("Black Hole"),
+        "Collapsed remnant must update name to Black Hole (got '{}')",
+        collapsed_body.name
+    );
 }
 
 #[test]
@@ -391,8 +501,8 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
     use protostellar::game::ui::interactions::editor::terraforming_actions::handle_bombardment_trigger;
     use protostellar::game::ui::types::*;
     use protostellar::simulation::terraforming::{
-        update_guided_bombardment_projectiles, BombardmentEvent, BombardmentProjectile,
-        BombardmentType,
+        BombardmentEvent, BombardmentProjectile, BombardmentType,
+        update_guided_bombardment_projectiles,
     };
 
     let mut app = App::new();

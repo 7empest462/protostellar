@@ -695,7 +695,7 @@ fn setup_cooled_earth_comet_impact_app() -> (App, Entity, Entity) {
     use protostellar::simulation::components::{
         IgnitionState, Luminosity, PlanetaryEngulfmentEvent, SupernovaEvent,
     };
-    use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+    use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
 
     let mut app = App::new();
     app.init_resource::<SimTime>();
