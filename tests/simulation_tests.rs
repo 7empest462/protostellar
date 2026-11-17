@@ -2,6 +2,8 @@
 
 #[path = "simulation_tests/accretion.rs"]
 mod accretion;
+#[path = "simulation_tests/accretion_collisions.rs"]
+mod accretion_collisions;
 #[path = "simulation_tests/atmosphere_escape.rs"]
 mod atmosphere_escape;
 #[path = "simulation_tests/atmospheres.rs"]
@@ -38,6 +40,10 @@ mod gmc_far_field;
 mod gmc_promotion;
 #[path = "simulation_tests/gpu_and_particles.rs"]
 mod gpu_and_particles;
+#[path = "simulation_tests/gpu_swarm_tiers.rs"]
+mod gpu_swarm_tiers;
+#[path = "simulation_tests/habitable_biosphere.rs"]
+mod habitable_biosphere;
 #[path = "simulation_tests/habitable_zone_and_lagrange.rs"]
 mod habitable_zone_and_lagrange;
 #[path = "simulation_tests/impact_debris.rs"]
@@ -60,6 +66,8 @@ mod mechanics;
 mod molecular_cloud;
 #[path = "simulation_tests/molecular_cloud_adversarial.rs"]
 mod molecular_cloud_adversarial;
+#[path = "simulation_tests/moon_probes.rs"]
+mod moon_probes;
 #[path = "simulation_tests/neutron_stars.rs"]
 mod neutron_stars;
 #[path = "simulation_tests/oort_cloud.rs"]
@@ -84,6 +92,8 @@ mod relativity;
 mod save_load;
 #[path = "simulation_tests/scenarios.rs"]
 mod scenarios;
+#[path = "simulation_tests/scenarios_circumbinary.rs"]
+mod scenarios_circumbinary;
 #[path = "simulation_tests/shader_guardrails.rs"]
 mod shader_guardrails;
 #[path = "simulation_tests/shadows_and_eclipses.rs"]
@@ -116,6 +126,8 @@ mod time_warp;
 mod ui;
 #[path = "simulation_tests/ui_contextual.rs"]
 mod ui_contextual;
+#[path = "simulation_tests/ui_hud_panels.rs"]
+mod ui_hud_panels;
 #[path = "simulation_tests/ui_modals_and_tabs.rs"]
 mod ui_modals_and_tabs;
 #[path = "simulation_tests/ui_widgets_v020.rs"]

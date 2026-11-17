@@ -41,7 +41,7 @@ impl From<&PlanetMaterialExtension> for PlanetPipelineKey {
     }
 }
 
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct PlanetUniforms {
     pub planet_type: u32,
     pub temperature: f32,
@@ -183,7 +183,7 @@ impl MaterialExtension for PlanetMaterialExtension {
 
 pub type PlanetMaterial = ExtendedMaterial<StandardMaterial, PlanetMaterialExtension>;
 
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct AtmosphereUniforms {
     /// x, y, z: Rayleigh scattering coefficients beta_R (RGB), w: scale height H_R
     pub rayleigh_params: Vec4,

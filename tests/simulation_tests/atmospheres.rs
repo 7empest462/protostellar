@@ -24,8 +24,7 @@ fn test_rayleigh_cross_section_wavelength_dependency() {
     let blue_to_red_ratio = sigma_blue / sigma_red;
     assert!(
         blue_to_red_ratio > 3.0 && blue_to_red_ratio < 4.0,
-        "Rayleigh blue/red scattering ratio should be ~3.5x, got {:.2}",
-        blue_to_red_ratio
+        "Rayleigh blue/red scattering ratio should be ~3.5x, got {blue_to_red_ratio:.2}"
     );
 
     let comp = Composition::rocky();
@@ -63,9 +62,11 @@ fn test_spectral_profiles_by_archetype() {
     );
 
     // 2. Titan analog (cold, volatile ice and organics)
-    let mut comp_titan = Composition::default();
-    comp_titan.organics_frac = 0.35;
-    comp_titan.ice_frac = 0.50;
+    let comp_titan = Composition {
+        organics_frac: 0.35,
+        ice_frac: 0.50,
+        ..Default::default()
+    };
     let prof_titan = compute_atmosphere_spectral_profile(
         BodyType::TerrestrialPlanet,
         &comp_titan,
@@ -147,15 +148,11 @@ fn test_mie_phase_forward_scattering_peak() {
 
     assert!(
         forward > side * 15.0,
-        "Forward Mie scattering ({:.2}) must dwarf side scattering ({:.2})",
-        forward,
-        side
+        "Forward Mie scattering ({forward:.2}) must dwarf side scattering ({side:.2})"
     );
     assert!(
         forward > backward * 50.0,
-        "Forward Mie scattering ({:.2}) must vastly exceed backscattering ({:.2})",
-        forward,
-        backward
+        "Forward Mie scattering ({forward:.2}) must vastly exceed backscattering ({backward:.2})"
     );
 }
 
@@ -327,8 +324,7 @@ fn test_atmosphere_and_planet_shader_sources_validity() {
     let melt_glow_count = planet_src.matches("let melt_glow = ").count();
     assert_eq!(
         melt_glow_count, 1,
-        "planet.wgsl must declare `let melt_glow = ` exactly once, got {}",
-        melt_glow_count
+        "planet.wgsl must declare `let melt_glow = ` exactly once, got {melt_glow_count}"
     );
 
     // Verify minor bodies (planet_type == 4u) have a dedicated branch before terrestrial planets
@@ -355,8 +351,7 @@ fn test_atmosphere_and_planet_shader_sources_validity() {
     assert!(
         planet_src.contains("chapman_spherical_airmass")
             && std::fs::read_to_string("src/rendering/shaders/scattering.wesl")
-                .map(|s| s.contains("fn chapman_spherical_airmass("))
-                .unwrap_or(false),
+                .is_ok_and(|s| s.contains("fn chapman_spherical_airmass(")),
         "planet.wesl must import and use chapman_spherical_airmass"
     );
     assert!(
@@ -501,7 +496,7 @@ fn test_giant_planets_do_not_spawn_atmosphere_shells() {
             },
             SimPosition(bevy::math::DVec3::new(5.2, 0.0, 0.0)),
             Mass(317.8 * EARTH_MASS_SOLAR),
-            Radius(0.000477),
+            Radius(0.000_477),
             Temperature(165.0),
             Composition::solar_gas(),
             Transform::from_translation(Vec3::new(5.2, 0.0, 0.0)),
@@ -519,7 +514,7 @@ fn test_giant_planets_do_not_spawn_atmosphere_shells() {
             },
             SimPosition(bevy::math::DVec3::new(30.1, 0.0, 0.0)),
             Mass(17.15 * EARTH_MASS_SOLAR),
-            Radius(0.000165),
+            Radius(0.000_165),
             Temperature(72.0),
             Composition {
                 gas_frac: 0.30,
@@ -571,8 +566,7 @@ fn test_stellar_corona_uniforms_and_impact_blackbody_cooling() {
     );
     assert!(
         sun_scale > 2.2,
-        "Solar corona shell scale must extend well beyond photosphere, got {}",
-        sun_scale
+        "Solar corona shell scale must extend well beyond photosphere, got {sun_scale}"
     );
 
     let (o_uniforms, _o_scale) = compute_stellar_corona_uniforms(

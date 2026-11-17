@@ -279,7 +279,7 @@ pub fn generate_surface_terrain_mesh(
             let edge_blend = (1.0 - (r_sq - 0.72) / 0.28).clamp(0.0, 1.0);
 
             let tangent_offset = (u_east * u + u_north * v) * patch_radius;
-            let sphere_dir = (u_up + tangent_offset / vis_rad).normalize_or_zero();
+            let sphere_dir = (u_up + tangent_offset / vis_rad.max(1e-5)).normalize_or_zero();
 
             let raw_h = evaluate_surface_elevation(sphere_dir, comp, temp_k, body_type, vis_rad);
             let h = raw_h * edge_blend;
@@ -689,12 +689,22 @@ pub fn sync_surface_terrain_system(
         &worlds_query,
         &probes_query,
     ) else {
+        if let Some(root_ent) = terrain_state.root_entity.take() {
+            despawn_terrain_root(&mut commands, root_ent, &children_query);
+        }
+        terrain_state.active_host = None;
+        terrain_state.baked_vis_rad = 0.0;
         return;
     };
 
     let Ok((_, pos, radius, _mass, _temp, _comp, body, opt_spin, _opt_bio, _opt_vol, opt_t)) =
         worlds_query.get(host_ent)
     else {
+        if let Some(root_ent) = terrain_state.root_entity.take() {
+            despawn_terrain_root(&mut commands, root_ent, &children_query);
+        }
+        terrain_state.active_host = None;
+        terrain_state.baked_vis_rad = 0.0;
         return;
     };
 

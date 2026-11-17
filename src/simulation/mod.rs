@@ -166,10 +166,19 @@ impl Plugin for SimulationPlugin {
                     update_simulation_visual_time,
                     step_physics_simulation,
                     process_accretion_and_collisions.after(step_physics_simulation),
-                    apply_pebble_accretion.after(step_physics_simulation),
-                    spawn_streaming_instability_minor_bodies.after(step_physics_simulation),
-                    direct_nebular_gas_accretion.after(step_physics_simulation),
-                    update_thermodynamics.after(step_physics_simulation),
+                    apply_pebble_accretion
+                        .after(step_physics_simulation)
+                        .after(process_accretion_and_collisions),
+                    spawn_streaming_instability_minor_bodies
+                        .after(step_physics_simulation)
+                        .after(process_accretion_and_collisions),
+                    direct_nebular_gas_accretion
+                        .after(step_physics_simulation)
+                        .after(apply_pebble_accretion),
+                    update_thermodynamics
+                        .after(step_physics_simulation)
+                        .after(process_accretion_and_collisions)
+                        .after(direct_nebular_gas_accretion),
                     update_impact_basin_relaxation.after(step_physics_simulation),
                     update_atmospheric_escape_evolution.after(update_thermodynamics),
                     auto_spawn_planetesimals.after(step_physics_simulation),
@@ -190,16 +199,22 @@ impl Plugin for SimulationPlugin {
                     crate::simulation::accretion::black_holes::update_black_hole_accretion_jets
                         .after(process_accretion_and_collisions),
                     update_guided_bombardment_projectiles.after(step_physics_simulation),
-                    update_terraforming_atmospheres.after(update_thermodynamics),
+                    update_tidal_evolution
+                        .after(process_accretion_and_collisions)
+                        .after(update_thermodynamics),
+                    update_terraforming_atmospheres
+                        .after(update_thermodynamics)
+                        .after(update_tidal_evolution),
                     update_trajectory_predictor,
-                    update_tidal_evolution.after(process_accretion_and_collisions),
                     cryovolcanic_ring_feeding_system.after(update_tidal_evolution),
                     update_relativity_evolution.after(process_accretion_and_collisions),
                     detect_hierarchical_triples.after(step_physics_simulation),
                     update_kozai_lidov_evolution
                         .after(detect_hierarchical_triples)
                         .after(update_tidal_evolution),
-                    sync_geological_evolution_system.after(update_thermodynamics),
+                    sync_geological_evolution_system
+                        .after(update_thermodynamics)
+                        .after(update_terraforming_atmospheres),
                     update_stellar_flares_system.after(step_physics_simulation),
                     update_planetary_auroral_ovals_system.after(update_stellar_flares_system),
                     crate::simulation::naming::update_auto_generated_names
@@ -207,8 +222,6 @@ impl Plugin for SimulationPlugin {
                     crate::simulation::biology::civilization::habitability_tracking_system
                         .after(step_physics_simulation),
                     process_roche_lobe_overflow.after(process_accretion_and_collisions),
-                    crate::simulation::accretion::roche::cleanup_roche_lobe_overflow
-                        .after(process_roche_lobe_overflow),
                     process_classical_novae.after(process_roche_lobe_overflow),
                 ),
             )

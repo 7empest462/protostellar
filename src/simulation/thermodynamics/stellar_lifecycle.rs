@@ -51,8 +51,10 @@ pub fn step_protostar_ignition_and_limits(
             config.gas_density_scale = config.gas_density_scale.min(time_decay);
         }
     } else {
+        // Extend Genesis Hayashi contraction (~5,000 yr at 1.33 M_sun from 6.8e6 K to 1.0e7 K)
+        // so particles have an extended accretion window before protostellar ignition sweeps the inner disk.
         let heating_rate_per_yr = if is_genesis {
-            2.0e5 * mass.0 * 0.04
+            2.0e5 * mass.0 * 0.0024
         } else {
             2.0e5 * mass.0
         };
@@ -99,7 +101,7 @@ pub fn step_protostar_ignition_and_limits(
         };
 
         let should_ignite = if is_genesis {
-            ignition.core_temperature >= ignition_threshold || elapsed_years >= 350.0
+            ignition.core_temperature >= ignition_threshold || elapsed_years >= 6_000.0
         } else {
             ignition.core_temperature >= ignition_threshold || elapsed_years >= 30.0
         };
@@ -645,14 +647,17 @@ fn step_red_supergiant_evolution(
 
     let rsg_limit = if is_gmc { 600.0 } else { 2000.0 };
     if evo.phase_timer_years > rsg_limit {
+        let is_black_hole = mass.0 >= 25.0;
+        let is_fast_rotator = body.name.contains("Fast")
+            || body.name.contains("Magnetar")
+            || evo.phase_timer_years < 1000.0
+            || (mass.0 >= 18.0 && mass.0 < 25.0);
+
         evo.phase = StellarEvolutionPhase::SupernovaExplosion;
         evo.phase_timer_years = 0.0;
         evo.nebula_expansion_radius_au = (radius.0 * 1.2) as f32;
         evo.nebula_opacity = 1.0;
         ignition.is_ignited = false;
-
-        let is_black_hole = mass.0 >= 25.0;
-        let is_fast_rotator = body.name.contains("Fast") || evo.phase_timer_years < 1000.0;
 
         let remnant_type = if is_black_hole {
             BodyType::BlackHole
@@ -677,6 +682,8 @@ fn step_red_supergiant_evolution(
                 // Standard core-collapse black hole
                 (mass.0 * 0.35).clamp(3.5, 25.0)
             }
+        } else if remnant_type == BodyType::Magnetar {
+            1.65
         } else {
             1.44
         };
@@ -762,16 +769,16 @@ fn step_stellar_remnant_evolution(
                     lum.0 = 0.0;
                 } else if body.body_type == BodyType::Magnetar {
                     evo.phase = StellarEvolutionPhase::MagnetarRemnant;
+                    mass.0 = mass.0.max(1.65);
                     body.name = format!("Magnetar Remnant ({:.2} M☉)", mass.0);
-                    mass.0 = 1.65;
                     radius.0 = 0.0001;
                     temp.0 = 2_000_000.0;
                     lum.0 = 150.0;
                 } else {
                     evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
                     body.body_type = BodyType::Pulsar;
+                    mass.0 = mass.0.max(1.44);
                     body.name = format!("Pulsar Remnant ({:.2} M☉)", mass.0);
-                    mass.0 = 1.44;
                     radius.0 = 0.0001;
                     temp.0 = 1_000_000.0;
                     lum.0 = 100.0;
@@ -783,8 +790,12 @@ fn step_stellar_remnant_evolution(
             evo.nebula_expansion_radius_au += expand_rate_au_per_yr * dt_yr as f32;
             evo.nebula_opacity = (1.0 - (evo.nebula_expansion_radius_au / 80.0)).clamp(0.0, 1.0);
 
-            let shed_frac = (evo.phase_timer_years / 3000.0).clamp(0.0, 1.0);
-            mass.0 = (1.0 - 0.45 * shed_frac).max(0.55);
+            let target_wd_mass = (0.47 + 0.08 * mass.0).clamp(0.50, 1.20);
+            if mass.0 > target_wd_mass {
+                let remaining_yr = (3000.0 - (evo.phase_timer_years - dt_yr).max(0.0)).max(dt_yr);
+                let step_frac = (dt_yr / remaining_yr).clamp(0.0, 1.0);
+                mass.0 = (mass.0 - (mass.0 - target_wd_mass) * step_frac).max(target_wd_mass);
+            }
 
             if evo.nebula_expansion_radius_au >= 80.0 || evo.phase_timer_years >= 6000.0 {
                 evo.phase = StellarEvolutionPhase::WhiteDwarf;

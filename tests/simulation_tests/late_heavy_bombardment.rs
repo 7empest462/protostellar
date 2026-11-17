@@ -44,8 +44,8 @@ fn test_late_heavy_bombardment_cascade_with_1024_bodies() {
 
     // Spawn 100 minor bodies in the asteroid belt (exceeds the old 64-body cap)
     for i in 0..100 {
-        let r = 2.4 + (i as f64 * 0.02);
-        let phi = i as f64 * 0.1;
+        let r = 2.4 + (f64::from(i) * 0.02);
+        let phi = f64::from(i) * 0.1;
         let v_circ = (G_ASTRO * 1.0 / r).sqrt();
         app.world_mut().spawn((
             SimPosition(DVec3::new(r * phi.cos(), 0.0, r * phi.sin())),
@@ -54,7 +54,7 @@ fn test_late_heavy_bombardment_cascade_with_1024_bodies() {
             Mass(0.00001 * EARTH_MASS_SOLAR),
             Radius(EARTH_RADIUS_AU * 0.05),
             CelestialBody {
-                name: format!("Asteroid-{}", i),
+                name: format!("Asteroid-{i}"),
                 body_type: BodyType::Asteroid,
             },
         ));
@@ -155,8 +155,10 @@ fn test_impact_basin_relaxation_gas_and_ice_giant_rapid_atmospheric_healing() {
 
     let mut app = App::new();
     app.insert_resource(TimeWarp::default());
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 3.0; // 3 years of simulation time
+    let sim_time = SimTime {
+        current_dt_yr: 3.0, // 3 years of simulation time
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let basin = ImpactBasin {
@@ -262,8 +264,10 @@ fn test_impact_basin_relaxation_icy_world_timescale() {
 
     let mut app = App::new();
     app.insert_resource(TimeWarp::default());
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 150.0;
+    let sim_time = SimTime {
+        current_dt_yr: 150.0,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let basin = ImpactBasin {
@@ -325,14 +329,11 @@ fn test_impact_basin_relaxation_icy_world_timescale() {
     // Icy crust relaxes faster than airless rock due to lower yield strength (300 yr vs 600 yr)
     assert!(
         icy_scar < rocky_scar,
-        "Icy lithosphere must relax faster ({:.3}) than airless silicate rock ({:.3})",
-        icy_scar,
-        rocky_scar
+        "Icy lithosphere must relax faster ({icy_scar:.3}) than airless silicate rock ({rocky_scar:.3})"
     );
     assert!(
         (icy_scar - 0.50).abs() < 0.05,
-        "Icy scar after 150 yr with tau=300 yr should be ~0.50 (got {:.3})",
-        icy_scar
+        "Icy scar after 150 yr with tau=300 yr should be ~0.50 (got {icy_scar:.3})"
     );
 }
 

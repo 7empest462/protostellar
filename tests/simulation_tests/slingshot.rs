@@ -214,7 +214,7 @@ fn test_slingshot_placement_in_inner_system_does_not_snap_to_sun_or_planets() {
         let mut min_dist = 0.05f64;
 
         for (ent, pos, rad, _body) in query.iter(app.world()) {
-            let hit_radius = (rad.0 * 1.5).max(0.02).min(0.05);
+            let hit_radius = (rad.0 * 1.5).clamp(0.02, 0.05);
             let d = (pos.0 - click_pt).length();
             if d < hit_radius && d < min_dist {
                 min_dist = d;
@@ -224,8 +224,7 @@ fn test_slingshot_placement_in_inner_system_does_not_snap_to_sun_or_planets() {
 
         assert_eq!(
             nearest, expected_target,
-            "Click at {:?} should resolve to {:?}, got {:?}",
-            click_pt, expected_target, nearest
+            "Click at {click_pt:?} should resolve to {expected_target:?}, got {nearest:?}"
         );
     }
 }

@@ -13,9 +13,9 @@ struct FarFieldUniforms {
     near_sq: f32,
     g_const: f32,
     softening_sq: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
+    star_pos_x: f32,
+    star_pos_y: f32,
+    star_pos_z: f32,
 };
 
 @group(0) @binding(0) var<storage, read> sources: array<vec4<f32>>;   // xyz = pos (AU), w = mass
@@ -49,10 +49,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let inv_d3 = 1.0 / (dist_sq * sqrt(dist_sq));
         acc = acc + d * (u.g_const * s.w * inv_d3);
 
-        // Indirect term (frame anchored on the central star at the origin).
-        let src_sq = dot(s.xyz, s.xyz) + u.softening_sq;
+        // Indirect term (frame anchored on the central star's current position).
+        let star_pos = vec3<f32>(u.star_pos_x, u.star_pos_y, u.star_pos_z);
+        let s_rel = s.xyz - star_pos;
+        let src_sq = dot(s_rel, s_rel) + u.softening_sq;
         let inv_s3 = 1.0 / (src_sq * sqrt(src_sq));
-        acc = acc - s.xyz * (u.g_const * s.w * inv_s3);
+        acc = acc - s_rel * (u.g_const * s.w * inv_s3);
     }
 
     out_acc[idx] = vec4<f32>(acc, 0.0);

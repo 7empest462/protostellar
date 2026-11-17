@@ -61,6 +61,8 @@ chunks_exact_to_as_chunks  = "allow"
 # Bevy 0.20.1 Engine
 bevy = { version = "0.20.1", default-features = false, features = [
     "bevy_asset",
+    "bevy_audio",
+    "wav",
     "bevy_core_pipeline",
     "bevy_pbr",
     "bevy_render",

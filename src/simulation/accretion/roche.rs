@@ -14,7 +14,7 @@ pub struct RocheLobeOverflow {
 }
 
 /// Marks an accreting white dwarf in a binary system capable of Classical Nova eruptions.
-#[derive(Component, Debug, Clone, Default)]
+#[derive(Component, Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct CataclysmicVariable {
     /// Accumulated hydrogen mass on the surface (in Solar Masses)
     pub accreted_hydrogen_mass: f64,
@@ -129,57 +129,70 @@ pub fn process_roche_lobe_overflow(
         }
     }
 
-    let mut combinations = star_query.iter_combinations_mut();
-    while let Some(
-        [(e1, pos1, _vel1, mut mass1, r1, body1, _), (e2, pos2, _vel2, mut mass2, r2, body2, _)],
-    ) = combinations.fetch_next()
-    {
-        if !body1.body_type.is_star_or_remnant() || !body2.body_type.is_star_or_remnant() {
+    let star_entities: smallvec::SmallVec<[Entity; 16]> = star_query
+        .iter()
+        .filter(|(_, _, _, _, _, body, _)| body.body_type.is_star_or_remnant())
+        .map(|(ent, ..)| ent)
+        .collect();
+
+    for i in 0..star_entities.len() {
+        let Some(&e1) = star_entities.get(i) else {
             continue;
-        }
+        };
+        for j in (i + 1)..star_entities.len() {
+            let Some(&e2) = star_entities.get(j) else {
+                continue;
+            };
+            let Ok(
+                [(_, pos1, _vel1, mut mass1, r1, body1, _), (_, pos2, _vel2, mut mass2, r2, body2, _)],
+            ) = star_query.get_many_mut([e1, e2])
+            else {
+                continue;
+            };
 
-        let dist_sq = pos1.0.distance_squared(pos2.0);
-        if dist_sq > 64.0 || dist_sq < 1e-8 {
-            continue;
-        }
-        let a = dist_sq.sqrt();
-        let m1 = mass1.0;
-        let m2 = mass2.0;
+            let dist_sq = pos1.0.distance_squared(pos2.0);
+            if dist_sq > 64.0 || dist_sq < 1e-8 {
+                continue;
+            }
+            let a = dist_sq.sqrt();
+            let m1 = mass1.0;
+            let m2 = mass2.0;
 
-        if let Some((r_l1, m_dot)) =
-            compute_eggleton_roche_overflow(m1, m2, r1.0, a, body2.body_type)
-        {
-            active_donors.insert(e1);
-            apply_roche_mass_transfer(
-                &mut commands,
-                &mut cv_query,
-                e1,
-                e2,
-                &mut mass1,
-                &mut mass2,
-                body2.body_type,
-                r_l1,
-                m_dot,
-                dt_yr,
-            );
-        }
+            if let Some((r_l1, m_dot)) =
+                compute_eggleton_roche_overflow(m1, m2, r1.0, a, body2.body_type)
+            {
+                active_donors.insert(e1);
+                apply_roche_mass_transfer(
+                    &mut commands,
+                    &mut cv_query,
+                    e1,
+                    e2,
+                    &mut mass1,
+                    &mut mass2,
+                    body2.body_type,
+                    r_l1,
+                    m_dot,
+                    dt_yr,
+                );
+            }
 
-        if let Some((r_l2, m_dot)) =
-            compute_eggleton_roche_overflow(m2, m1, r2.0, a, body1.body_type)
-        {
-            active_donors.insert(e2);
-            apply_roche_mass_transfer(
-                &mut commands,
-                &mut cv_query,
-                e2,
-                e1,
-                &mut mass2,
-                &mut mass1,
-                body1.body_type,
-                r_l2,
-                m_dot,
-                dt_yr,
-            );
+            if let Some((r_l2, m_dot)) =
+                compute_eggleton_roche_overflow(m2, m1, r2.0, a, body1.body_type)
+            {
+                active_donors.insert(e2);
+                apply_roche_mass_transfer(
+                    &mut commands,
+                    &mut cv_query,
+                    e2,
+                    e1,
+                    &mut mass2,
+                    &mut mass1,
+                    body1.body_type,
+                    r_l2,
+                    m_dot,
+                    dt_yr,
+                );
+            }
         }
     }
 
@@ -234,7 +247,7 @@ pub fn process_classical_novae(
             cv.nova_count += 1;
 
             // Blow off the accreted shell
-            mass.0 -= critical_mass;
+            mass.0 = (mass.0 - critical_mass).max(0.05);
 
             // We can reuse the SupernovaEvent struct but mark it as a Nova
             supernova_events.write(SupernovaEvent {

@@ -1,5 +1,6 @@
 //! Game Plugin bundling phase state machine, player tools, time controls, and HUD overlay.
 
+pub mod audio;
 pub mod interaction;
 pub mod phases;
 pub mod slingshot;
@@ -7,6 +8,8 @@ pub mod time_control;
 pub mod ui;
 
 use bevy::prelude::*;
+
+use crate::game::audio::*;
 
 use crate::game::interaction::*;
 use crate::game::phases::*;
@@ -31,9 +34,13 @@ impl Plugin for GamePlugin {
             .init_resource::<crate::game::ui::types::CampaignPanelState>()
             .init_resource::<crate::game::ui::hazards_panel::HazardsPanelState>()
             .init_resource::<crate::game::ui::types::HrDiagramPanelState>()
+            .init_resource::<crate::game::ui::SavesPanelState>()
             .init_resource::<HudVisibilityState>()
+            .init_resource::<CosmicEventLog>()
+            .init_resource::<CosmicAudioState>()
+            .init_resource::<CosmicAudioHandles>()
             .add_plugins((SciFiUiThemePlugin, ModernHudWidgetsPlugin))
-            .add_systems(Startup, setup_hud)
+            .add_systems(Startup, (setup_hud, setup_cosmic_audio_assets))
             .add_systems(
                 Update,
                 (
@@ -59,7 +66,10 @@ impl Plugin for GamePlugin {
                     update_hazards_ui,
                     update_epoch_scrubber_ui,
                     update_hr_diagram_ui,
+                    update_saves_panel.after(handle_ui_button_interactions),
                     handle_roche_disruption_toasts,
+                    handle_cosmic_event_toasts,
+                    update_cosmic_audio_system,
                 ),
             )
             .add_systems(

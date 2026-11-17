@@ -107,18 +107,17 @@ fn challenge_1a_multiple_protostars_simultaneous_ignition() {
 
     // Verification 1: All 11 stars must ignite simultaneously
     for &(ent, mass_val, ref original_name) in &star_entities {
-        let ign = app.world().get::<IgnitionState>(ent).unwrap_or_else(|| {
-            panic!("Entity {:?} ({}) missing IgnitionState", ent, original_name)
-        });
+        let ign = app
+            .world()
+            .get::<IgnitionState>(ent)
+            .unwrap_or_else(|| panic!("Entity {ent:?} ({original_name}) missing IgnitionState"));
         assert!(
             ign.is_ignited,
-            "Star {:?} ({}) with mass {:.2} M_sun must be ignited",
-            ent, original_name, mass_val
+            "Star {ent:?} ({original_name}) with mass {mass_val:.2} M_sun must be ignited"
         );
         assert_eq!(
             ign.fusion_fraction, 1.0,
-            "Star {:?} fusion fraction must be 1.0",
-            ent
+            "Star {ent:?} fusion fraction must be 1.0"
         );
 
         // Verification 2: Each star must have valid Luminosity and Temperature
@@ -136,8 +135,7 @@ fn challenge_1a_multiple_protostars_simultaneous_ignition() {
         // Verification 3: ElectromagneticFieldState inserted on all
         assert!(
             app.world().get::<ElectromagneticFieldState>(ent).is_some(),
-            "ElectromagneticFieldState must be attached to ignited star {:?}",
-            ent
+            "ElectromagneticFieldState must be attached to ignited star {ent:?}"
         );
     }
 
@@ -158,9 +156,7 @@ fn challenge_1a_multiple_protostars_simultaneous_ignition() {
     for &(ent, _, ref name) in &star_entities {
         assert!(
             emitted_entities.contains(&ent),
-            "StarIgnitionEvent must be emitted for {:?} ({})",
-            ent,
-            name
+            "StarIgnitionEvent must be emitted for {ent:?} ({name})"
         );
     }
 
@@ -172,7 +168,7 @@ fn challenge_1a_multiple_protostars_simultaneous_ignition() {
         names.push(body.name.clone());
     }
     // Record empirical observation: names become generic "The Star (...)"
-    println!("Empirical star names after ignition: {:?}", names);
+    println!("Empirical star names after ignition: {names:?}");
 }
 
 #[test]
@@ -196,7 +192,7 @@ fn challenge_1b_pure_cluster_64_stars_without_central_star() {
             .world_mut()
             .spawn((
                 CelestialBody {
-                    name: format!("Cluster Protostar #{:02}", i),
+                    name: format!("Cluster Protostar #{i:02}"),
                     body_type: BodyType::Protostar,
                 },
                 Mass(m),
@@ -236,7 +232,7 @@ fn challenge_1b_pure_cluster_64_stars_without_central_star() {
 
     for &ent in &spawned {
         let ign = app.world().get::<IgnitionState>(ent).unwrap();
-        assert!(ign.is_ignited, "Protostar {:?} must be ignited", ent);
+        assert!(ign.is_ignited, "Protostar {ent:?} must be ignited");
     }
 }
 
@@ -246,6 +242,14 @@ fn challenge_1b_pure_cluster_64_stars_without_central_star() {
 
 #[test]
 fn challenge_2a_rapid_scenario_switching_state_leaks() {
+    fn load_scenario(app: &mut App, preset: ScenarioPreset) {
+        app.world_mut()
+            .resource_mut::<Messages<LoadScenarioEvent>>()
+            .write(LoadScenarioEvent(preset));
+        app.update();
+        app.update(); // Flush NextState transition in Bevy State machine
+    }
+
     let mut app = App::new();
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.init_state::<SystemPhase>();
@@ -262,15 +266,6 @@ fn challenge_2a_rapid_scenario_switching_state_leaks() {
     app.init_resource::<PlanetesimalSpawner>();
     app.add_message::<LoadScenarioEvent>();
     app.add_systems(Update, handle_load_scenario_events);
-
-    // Helper closure to trigger scenario load
-    fn load_scenario(app: &mut App, preset: ScenarioPreset) {
-        app.world_mut()
-            .resource_mut::<Messages<LoadScenarioEvent>>()
-            .write(LoadScenarioEvent(preset));
-        app.update();
-        app.update(); // Flush NextState transition in Bevy State machine
-    }
 
     // Step 1: Load SolarNebulaMmsn
     load_scenario(&mut app, ScenarioPreset::SolarNebulaMmsn);
@@ -336,10 +331,7 @@ fn challenge_2a_rapid_scenario_switching_state_leaks() {
 
     load_scenario(&mut app, ScenarioPreset::MolecularCloudCluster);
     let gas_gmc = app.world().resource::<SimulationConfig>().gas_density_scale;
-    println!(
-        "Empirical gas_density_scale after Trappist1 -> GMC: {}",
-        gas_gmc
-    );
+    println!("Empirical gas_density_scale after Trappist1 -> GMC: {gas_gmc}");
 
     // Step 4: Rapid consecutive switching stress (10 switches)
     let presets = [
@@ -420,10 +412,7 @@ fn challenge_2b_planetesimal_spawning_freeze_after_scenario_reset() {
 
     // If last_spawn_yr was 490.0 and elapsed is 10.0, time_since_last is -480.0 < 25.0
     // Planetesimals will be completely frozen from spawning!
-    println!(
-        "Spawned bodies when last_spawn_yr=490 and t=10: {}",
-        body_count
-    );
+    println!("Spawned bodies when last_spawn_yr=490 and t=10: {body_count}");
     assert_eq!(
         body_count, 0,
         "Demonstrates stale last_spawn_yr freezes planetesimal spawning until t >= 490.0!"
@@ -578,7 +567,7 @@ fn challenge_3a_protostar_at_0_01_au_deep_engulfment_and_drag_bypass() {
     println!("Companion body name after ignition: '{}'", body.name);
     // Note: If name contains "The Star", its specific name was clobbered by ignition naming
     let name_preserved = body.name == "Close Companion Protostar (0.01 AU)";
-    println!("Was original companion name preserved? {}", name_preserved);
+    println!("Was original companion name preserved? {name_preserved}");
 }
 
 #[test]
@@ -815,12 +804,11 @@ fn challenge_3d_close_protostars_collision_system() {
 
     let companion_survived = app.world().get_entity(companion_ent).is_ok();
     println!(
-        "Empirical outcome of companion protostar at 0.01 AU under collision system: survived={}",
-        companion_survived
+        "Empirical outcome of companion protostar at 0.01 AU under collision system: survived={companion_survived}"
     );
     let merge_events = app.world().resource::<Messages<AccretionMergeEvent>>();
     let merge_count = merge_events.iter_current_update_messages().count();
-    println!("AccretionMergeEvents emitted: {}", merge_count);
+    println!("AccretionMergeEvents emitted: {merge_count}");
 }
 
 // ============================================================================
@@ -891,8 +879,6 @@ fn challenge_4a_pebble_accretion_guarded_and_reenabled() {
     let mass_solar = app.world().get::<Mass>(planet_ent).unwrap().0;
     assert!(
         mass_solar > initial_mass,
-        "Pebble accretion must re-enable when switching back to SolarNebulaMmsn (got {:.6e} vs {:.6e})",
-        mass_solar,
-        initial_mass
+        "Pebble accretion must re-enable when switching back to SolarNebulaMmsn (got {mass_solar:.6e} vs {initial_mass:.6e})"
     );
 }

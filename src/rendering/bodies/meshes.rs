@@ -582,26 +582,26 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let star_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(6)
-            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(64, 48)),
+            .ico(5)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 32)),
     );
     let star_mesh_hires = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(8)
-            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(256, 192)),
+            .ico(6)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(96, 64)),
     );
     let planet_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(7)
-            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(128, 96)),
+            .ico(5)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 32)),
     );
     let planet_mesh_hires = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(8)
-            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(256, 192)),
+            .ico(6)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(96, 64)),
     );
     let particle_mesh = meshes.add(
         Sphere::new(1.0)
@@ -662,8 +662,8 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let atmosphere_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(6)
-            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 36)),
+            .ico(4)
+            .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(32, 24)),
     );
     let pulsar_beam_mesh = meshes.add(generate_pulsar_beam_mesh());
     let magnetar_ring_mesh = meshes.add(generate_magnetar_ring_mesh());
@@ -708,25 +708,16 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
 
 /// Selects an asteroid mesh based on canonical astronomical morphology or deterministic name hash.
 pub fn select_asteroid_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<Mesh> {
-    let lower = name.to_lowercase();
-    if lower.contains("vesta")
-        || lower.contains("pallas")
-        || lower.contains("hygiea")
-        || lower.contains("ceres")
-    {
+    use crate::utils::math::contains_any_ignore_ascii_case;
+    if contains_any_ignore_ascii_case(name, &["vesta", "pallas", "hygiea", "ceres"]) {
         visual_assets.asteroid_cratered_spheroid_mesh.clone()
-    } else if lower.contains("psyche") || lower.contains("hector") {
+    } else if contains_any_ignore_ascii_case(name, &["psyche", "hector"]) {
         visual_assets.asteroid_oblate_pancake_mesh.clone()
-    } else if lower.contains("bennu")
-        || lower.contains("ryugu")
-        || lower.contains("mathilde")
-        || lower.contains("didymos")
-    {
+    } else if contains_any_ignore_ascii_case(name, &["bennu", "ryugu", "mathilde", "didymos"]) {
         visual_assets.asteroid_rubble_mesh.clone()
-    } else if lower.contains("kleopatra") || lower.contains("itokawa") || lower.contains("castalia")
-    {
+    } else if contains_any_ignore_ascii_case(name, &["kleopatra", "itokawa", "castalia"]) {
         visual_assets.asteroid_contact_binary_mesh.clone()
-    } else if lower.contains("eros") || lower.contains("ida") || lower.contains("gaspra") {
+    } else if contains_any_ignore_ascii_case(name, &["eros", "ida", "gaspra"]) {
         visual_assets.asteroid_potato_mesh.clone()
     } else {
         let hash: usize = name.bytes().fold(0usize, |acc, b| {
@@ -745,17 +736,16 @@ pub fn select_asteroid_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<
 
 /// Selects a comet nucleus mesh based on canonical astronomical morphology or deterministic name hash.
 pub fn select_comet_mesh(name: &str, visual_assets: &VisualAssets) -> Handle<Mesh> {
-    let lower = name.to_lowercase();
-    if lower.contains("67p") || lower.contains("churyumov") || lower.contains("arrokoth") {
+    use crate::utils::math::contains_any_ignore_ascii_case;
+    if contains_any_ignore_ascii_case(name, &["67p", "churyumov", "arrokoth"]) {
         visual_assets.comet_bilobate_mesh.clone()
-    } else if lower.contains("encke") || lower.contains("hartley") || lower.contains("borrelly") {
+    } else if contains_any_ignore_ascii_case(name, &["encke", "hartley", "borrelly"]) {
         visual_assets.comet_bowling_pin_mesh.clone()
-    } else if lower.contains("halley") || lower.contains("tempel") || lower.contains("hale-bopp") {
+    } else if contains_any_ignore_ascii_case(name, &["halley", "tempel", "hale-bopp"]) {
         visual_assets.comet_cratered_nucleus_mesh.clone()
-    } else if lower.contains("borisov") || lower.contains("oumuamua") || lower.contains("shoemaker")
-    {
+    } else if contains_any_ignore_ascii_case(name, &["borisov", "oumuamua", "shoemaker"]) {
         visual_assets.comet_jagged_splinter_mesh.clone()
-    } else if lower.contains("wild") || lower.contains("swift") {
+    } else if contains_any_ignore_ascii_case(name, &["wild", "swift"]) {
         visual_assets.comet_irregular_ellipsoid_mesh.clone()
     } else {
         let hash: usize = name.bytes().fold(0usize, |acc, b| {
@@ -777,12 +767,14 @@ pub fn select_body_mesh(
     radius_au: f64,
     visual_assets: &VisualAssets,
 ) -> Handle<Mesh> {
+    use crate::utils::math::{
+        contains_any_ignore_ascii_case, contains_ignore_ascii_case, starts_with_ignore_ascii_case,
+    };
     if body.body_type.is_star_or_remnant() {
         visual_assets.star_mesh.clone()
-    } else if body.body_type == BodyType::Moon || body.name.to_lowercase().contains("moon") {
+    } else if body.body_type == BodyType::Moon || contains_ignore_ascii_case(&body.name, "moon") {
         visual_assets.planet_mesh.clone()
     } else {
-        let lower = body.name.to_lowercase();
         let is_explicit_minor = matches!(
             body.body_type,
             BodyType::Asteroid
@@ -797,37 +789,42 @@ pub fn select_body_mesh(
         let is_spherical_planet = !is_explicit_minor
             && (radius_au >= 0.000_003
                 || body.body_type.is_planet()
-                || lower.starts_with("planet ")
-                || lower.starts_with("planet-")
-                || lower.starts_with("planet_")
-                || lower == "planet"
-                || lower.starts_with("embryo")
-                || lower.starts_with("protoplanet")
-                || lower.starts_with("proto-")
-                || lower.contains("earth")
-                || lower.contains("ceres"));
+                || starts_with_ignore_ascii_case(&body.name, "planet ")
+                || starts_with_ignore_ascii_case(&body.name, "planet-")
+                || starts_with_ignore_ascii_case(&body.name, "planet_")
+                || body.name.eq_ignore_ascii_case("planet")
+                || starts_with_ignore_ascii_case(&body.name, "embryo")
+                || starts_with_ignore_ascii_case(&body.name, "protoplanet")
+                || starts_with_ignore_ascii_case(&body.name, "proto-")
+                || contains_ignore_ascii_case(&body.name, "earth")
+                || contains_ignore_ascii_case(&body.name, "ceres"));
 
         let is_hydrostatic_minor = is_explicit_minor && radius_au >= 0.000_003;
 
         if is_spherical_planet || is_hydrostatic_minor {
             visual_assets.planet_mesh.clone()
         } else {
-            let is_comet_name = lower.contains("comet")
-                || lower.contains("halley")
-                || lower.contains("encke")
-                || lower.contains("67p")
-                || lower.contains("churyumov")
-                || lower.contains("bopp")
-                || lower.contains("borisov")
-                || lower.contains("oumuamua")
-                || lower.contains("wild");
+            let is_comet_name = contains_any_ignore_ascii_case(
+                &body.name,
+                &[
+                    "comet",
+                    "halley",
+                    "encke",
+                    "67p",
+                    "churyumov",
+                    "bopp",
+                    "borisov",
+                    "oumuamua",
+                    "wild",
+                ],
+            );
 
             if body.body_type == BodyType::Comet || is_comet_name {
                 select_comet_mesh(&body.name, visual_assets)
             } else if body.body_type == BodyType::Asteroid
                 || body.body_type == BodyType::Planetesimal
             {
-                if lower.contains("icy") || lower.contains("ice") {
+                if contains_any_ignore_ascii_case(&body.name, &["icy", "ice"]) {
                     select_comet_mesh(&body.name, visual_assets)
                 } else {
                     select_asteroid_mesh(&body.name, visual_assets)
@@ -841,9 +838,9 @@ pub fn select_body_mesh(
     }
 }
 
-/// Dynamically upgrades the focused/selected celestial body to an ultra-dense `ico(8)`
-/// mesh (1,310,720 triangles) for razor-smooth silhouettes on close-up worlds, while
-/// preserving lightweight `ico(6)`/`ico(7)` meshes for all distant worlds.
+/// Dynamically upgrades the focused/selected celestial body to a higher-subdivision `ico(6)`
+/// mesh (81,920 triangles) for smooth silhouettes on close-up worlds, while
+/// preserving lightweight `ico(5)` meshes for all distant worlds.
 pub fn sync_selected_body_mesh_lod(
     player_state: Option<Res<crate::simulation::resources::PlayerInteractionState>>,
     visual_assets: Option<Res<VisualAssets>>,

@@ -530,7 +530,7 @@ fn test_future_epoch_ocean_stability_no_oscillations() {
             .unwrap()
             .ocean_coverage_frac;
         assert!(
-            ocean >= 0.35 && ocean <= 0.55,
+            (0.35..=0.55).contains(&ocean),
             "Future ocean must remain stable and not oscillate or sink to zero! Frame {frame} got {ocean}"
         );
     }

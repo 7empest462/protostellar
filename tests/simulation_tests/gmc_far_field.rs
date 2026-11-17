@@ -18,7 +18,7 @@ fn star(entity: Entity, pos: DVec3, central: bool) -> PhysicsBodyEntry {
         body_type: BodyType::YellowDwarf,
         satellite: None,
         is_central_star: central,
-        name: "S".to_string(),
+        role_flags: 0,
     }
 }
 
@@ -32,8 +32,8 @@ fn test_near_field_grid_plus_far_field_matches_all_pairs() {
     let mut seed = 12345_u64;
     let mut rnd = || {
         seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         ((seed >> 33) as f64 / (1u64 << 31) as f64) - 0.5
     };
     for i in 0..120 {

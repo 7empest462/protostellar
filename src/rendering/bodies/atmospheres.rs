@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use crate::rendering::materials::*;
 use crate::simulation::components::*;
+use crate::simulation::thermodynamics::retained_gas_envelope_bar;
 
 use super::{VisualAssets, VisualBody};
 
@@ -370,24 +371,8 @@ fn derive_auroral_params(
     opt_aurora: Option<&crate::simulation::space_weather::AuroralOvalState>,
     opt_diff: Option<&InternalDifferentiation>,
 ) -> Vec4 {
-    opt_aurora.map_or_else(
-        || {
-            let b_gauss = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
-            if b_gauss > 0.1 {
-                Vec4::new(0.315, 0.065, (b_gauss * 0.8).clamp(0.2, 2.5), 1.5)
-            } else {
-                Vec4::ZERO
-            }
-        },
-        |a| {
-            Vec4::new(
-                a.oval_colatitude_rad,
-                a.oval_width_rad,
-                a.auroral_intensity,
-                a.geomagnetic_kp_index,
-            )
-        },
-    )
+    let b_gauss = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
+    crate::simulation::space_weather::calculate_aurora_shader_uniforms(opt_aurora, b_gauss)
 }
 
 fn update_atmosphere_child_mesh(
@@ -406,11 +391,19 @@ fn update_atmosphere_child_mesh(
         if let Ok((mut transform, mat_handle)) = atmo_children_query.get_mut(child) {
             found_child = true;
             if has_atmosphere {
-                transform.scale = Vec3::splat(shell_scale);
-                if let Some(mut mat) = atmo_materials.get_mut(&mat_handle.0) {
-                    mat.uniforms = uniforms.clone();
+                let target_scale = Vec3::splat(shell_scale);
+                if transform.scale.distance_squared(target_scale) > 1e-10 {
+                    transform.scale = target_scale;
                 }
-            } else {
+                let needs_mat_update = atmo_materials
+                    .get(&mat_handle.0)
+                    .is_some_and(|existing| existing.uniforms != *uniforms);
+                if needs_mat_update {
+                    if let Some(mut mat) = atmo_materials.get_mut(&mat_handle.0) {
+                        mat.uniforms = uniforms.clone();
+                    }
+                }
+            } else if transform.scale != Vec3::ZERO {
                 transform.scale = Vec3::ZERO;
             }
         }
@@ -476,6 +469,7 @@ fn build_planet_atmosphere_uniforms(
     visual_r: f32,
     body: &CelestialBody,
     comp: &Composition,
+    mass_solar: f64,
     temp: &Temperature,
     opt_climate: Option<&PlanetaryClimate>,
     opt_vol: Option<&VolatileInventory>,
@@ -487,11 +481,16 @@ fn build_planet_atmosphere_uniforms(
     star_lum: f32,
 ) -> (AtmosphereUniforms, bool, f32) {
     let norm = comp.normalized();
-    let pressure_bar = opt_vol.map_or((norm.gas_frac as f32 * 2.0).max(0.0), |v| {
-        v.atmospheric_pressure_bar
-    });
+    let gas_envelope_bar = retained_gas_envelope_bar(mass_solar, norm.gas_frac as f32);
+    let pressure_bar = opt_vol
+        .map_or((norm.gas_frac as f32 * 2.0).max(0.0), |v| {
+            v.atmospheric_pressure_bar
+        })
+        .max(gas_envelope_bar);
     let raw_cloud = opt_climate.map_or(0.0, |c| c.cloud_coverage_frac);
-    let gas_cloud = if pressure_bar >= 0.02 || norm.gas_frac > 0.005 {
+    let gas_cloud = if pressure_bar > 15.0 {
+        ((pressure_bar - 15.0) / 60.0).clamp(0.45, 0.95)
+    } else if pressure_bar >= 0.02 || norm.gas_frac > 0.005 {
         (norm.gas_frac as f32 * 10.0).clamp(0.0, 0.68)
     } else {
         0.0
@@ -502,7 +501,7 @@ fn build_planet_atmosphere_uniforms(
     let is_ice_giant =
         body.body_type == BodyType::IceGiant || (norm.gas_frac > 0.20 && norm.ice_frac > 0.20);
     let has_atmosphere =
-        !is_gas_giant && !is_ice_giant && (pressure_bar >= 0.005 || norm.gas_frac > 0.02);
+        !is_gas_giant && !is_ice_giant && (pressure_bar >= 0.005 || norm.gas_frac >= 0.015);
 
     let planet_world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
     let star_vector = (star_pos - planet_world_pos).normalize_or_zero();
@@ -712,6 +711,7 @@ pub fn sync_planetary_atmospheres(
             &Transform,
             &CelestialBody,
             &Composition,
+            &Mass,
             &Temperature,
             Option<&MeshMaterial3d<PlanetMaterial>>,
             Option<&PlanetaryClimate>,
@@ -748,6 +748,7 @@ pub fn sync_planetary_atmospheres(
         p_trans,
         body,
         comp,
+        mass,
         temp,
         opt_p_mat_handle,
         opt_climate,
@@ -788,6 +789,7 @@ pub fn sync_planetary_atmospheres(
                     visual_r,
                     body,
                     comp,
+                    mass.0,
                     temp,
                     opt_climate,
                     opt_vol,

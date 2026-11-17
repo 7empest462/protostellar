@@ -60,6 +60,7 @@ fn test_system_save_data_serialization_round_trip() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     };
 
     let moon_save = CelestialBodySave {
@@ -94,6 +95,7 @@ fn test_system_save_data_serialization_round_trip() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     };
 
     let save_data = SystemSaveData {
@@ -129,7 +131,7 @@ fn test_system_save_data_serialization_round_trip() {
     assert_eq!(restored.version, 1);
     assert_eq!(restored.timestamp_epoch_yr, 4_500_000.0);
     assert_eq!(restored.bodies.len(), 2);
-    assert_eq!(restored.bodies.get(0).unwrap().name, "Earth");
+    assert_eq!(restored.bodies.first().unwrap().name, "Earth");
     assert_eq!(restored.bodies.get(1).unwrap().name, "Moon");
 
     let moon = restored.bodies.get(1).unwrap();
@@ -173,6 +175,7 @@ fn test_save_and_load_file_io() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     };
 
     let save_data = SystemSaveData {
@@ -193,7 +196,7 @@ fn test_save_and_load_file_io() {
     let loaded = load_system_from_file(file_path).expect("Failed to read test save file");
     assert_eq!(loaded.timestamp_epoch_yr, 12345.0);
     assert_eq!(loaded.bodies.len(), 1);
-    assert_eq!(loaded.bodies.get(0).unwrap().name, "Test World");
+    assert_eq!(loaded.bodies.first().unwrap().name, "Test World");
 
     let _ = std::fs::remove_file(file_path);
     let _ = std::fs::remove_dir(test_dir);
@@ -294,6 +297,7 @@ fn make_satellite_test_earth_save() -> CelestialBodySave {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     }
 }
 
@@ -330,6 +334,7 @@ fn make_satellite_test_moon_save() -> CelestialBodySave {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     }
 }
 
@@ -502,6 +507,7 @@ fn test_infer_scenario_preset_differentiation() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     };
 
     // 1. Solar MMSN with 500 planetesimals: MUST infer SolarNebulaMmsn (not GMC Cluster!)
@@ -630,6 +636,176 @@ fn test_space_probe_excluded_from_serialization_and_despawn() {
         1,
         "Only the planet should be serialized"
     );
+
+    let _ = std::fs::remove_file(save_path);
+}
+
+fn spawn_extended_subsystems_test_body(
+    world: &mut World,
+) -> (
+    VolcanicState,
+    AtmosphericStormState,
+    protostellar::simulation::relativity::kerr::KerrBlackHole,
+) {
+    use protostellar::simulation::geology::{GeologicalEpoch, GeologicalState};
+    use protostellar::simulation::neutron_stars::{MagnetarCrustStress, PulsarGlitchState};
+    use protostellar::simulation::oort::OortComet;
+    use protostellar::simulation::relativity::kerr::KerrBlackHole;
+    use protostellar::simulation::space_weather::{
+        AuroralOvalState, GeomagneticStormLevel, StellarFlareState,
+    };
+    use protostellar::simulation::terraforming::TerraformingAtmosphere;
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU};
+
+    let geo = GeologicalState::new_for_epoch(GeologicalEpoch::Proterozoic);
+    let terra = TerraformingAtmosphere {
+        co2_pressure_bar: 1.25,
+        nitrogen_pressure_bar: 0.65,
+        ..Default::default()
+    };
+    let volc = VolcanicState::io();
+    let storm = AtmosphericStormState::jupiter();
+    let kerr = KerrBlackHole::sagittarius_a();
+    let glitch = PulsarGlitchState {
+        total_glitches_occurred: 3,
+        ..Default::default()
+    };
+    let stress = MagnetarCrustStress {
+        total_starquakes_count: 2,
+        ..Default::default()
+    };
+    let oort = OortComet {
+        semi_major_axis_au: 4200.0,
+        is_infall_trajectory: true,
+        ..Default::default()
+    };
+    let flare = StellarFlareState {
+        cme_active: true,
+        current_flare_intensity: 6.0,
+        ..Default::default()
+    };
+    let aurora = AuroralOvalState {
+        geomagnetic_kp_index: 7.5,
+        storm_level: GeomagneticStormLevel::SevereStorm,
+        ..Default::default()
+    };
+    let cv = protostellar::simulation::accretion::CataclysmicVariable {
+        accreted_hydrogen_mass: 2.5e-5,
+        nova_count: 4,
+    };
+
+    let mut ent = world.spawn((
+        CelestialBody {
+            body_type: BodyType::SuperEarth,
+            name: "Extended-Subsystems-World".to_string(),
+        },
+        Mass(EARTH_MASS_SOLAR * 2.0),
+        SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+        SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
+        Radius(EARTH_RADIUS_AU * 1.3),
+        Temperature(310.0),
+        Composition::rocky(),
+        Luminosity(0.0),
+        SpinState::default(),
+    ));
+    ent.insert((
+        geo, terra, volc, storm, kerr, glitch, stress, oort, flare, aurora, cv,
+    ));
+    (volc, storm, kerr)
+}
+
+#[test]
+fn test_extended_subsystem_serialization_roundtrip() {
+    use protostellar::simulation::geology::{GeologicalEpoch, GeologicalState};
+    use protostellar::simulation::neutron_stars::{MagnetarCrustStress, PulsarGlitchState};
+    use protostellar::simulation::oort::OortComet;
+    use protostellar::simulation::relativity::kerr::KerrBlackHole;
+    use protostellar::simulation::space_weather::{
+        AuroralOvalState, GeomagneticStormLevel, StellarFlareState,
+    };
+    use protostellar::simulation::terraforming::TerraformingAtmosphere;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<DiskParameters>()
+        .init_resource::<SimTime>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<SimulationConfig>()
+        .add_message::<SaveSystemEvent>()
+        .add_message::<LoadSystemEvent>()
+        .add_systems(
+            Update,
+            (handle_save_system_events, handle_load_system_events).chain(),
+        );
+
+    let (volc, storm, kerr) = spawn_extended_subsystems_test_body(app.world_mut());
+
+    let save_path = "target/test_saves_bevy/extended_roundtrip_test.json";
+    app.world_mut()
+        .resource_mut::<Messages<SaveSystemEvent>>()
+        .write(SaveSystemEvent {
+            filename: save_path.to_string(),
+        });
+    app.update();
+
+    let saved = load_system_from_file(save_path).expect("Load saved file");
+    let seed = encode_system_seed_json(&saved).expect("Encode seed");
+    assert!(seed.starts_with(SEED_PREFIX));
+    let decoded = decode_system_seed_json(&seed).expect("Decode seed");
+    assert_eq!(decoded.bodies.len(), 1);
+
+    app.world_mut()
+        .resource_mut::<Messages<LoadSystemEvent>>()
+        .write(LoadSystemEvent {
+            filename: save_path.to_string(),
+        });
+    app.update();
+
+    let mut q = app.world_mut().query::<(
+        &CelestialBody,
+        &GeologicalState,
+        &TerraformingAtmosphere,
+        &VolcanicState,
+        &AtmosphericStormState,
+        &KerrBlackHole,
+        &PulsarGlitchState,
+        &MagnetarCrustStress,
+        &OortComet,
+        &StellarFlareState,
+        &AuroralOvalState,
+        &protostellar::simulation::accretion::CataclysmicVariable,
+    )>();
+    let (
+        body,
+        r_geo,
+        r_terra,
+        r_volc,
+        r_storm,
+        r_kerr,
+        r_glitch,
+        r_stress,
+        r_oort,
+        r_flare,
+        r_aurora,
+        r_cv,
+    ) = q
+        .single(app.world())
+        .expect("All extended subsystem components must round-trip across save/load");
+    assert_eq!(body.name, "Extended-Subsystems-World");
+    assert_eq!(r_geo.epoch, GeologicalEpoch::Proterozoic);
+    assert!((r_terra.co2_pressure_bar - 1.25).abs() < 1e-6);
+    assert_eq!(r_volc.active_plumes, volc.active_plumes);
+    assert!((r_storm.great_spot_size - storm.great_spot_size).abs() < 1e-6);
+    assert!((r_kerr.spin_param - kerr.spin_param).abs() < 1e-9);
+    assert_eq!(r_glitch.total_glitches_occurred, 3);
+    assert_eq!(r_stress.total_starquakes_count, 2);
+    assert!((r_oort.semi_major_axis_au - 4200.0).abs() < 1e-6);
+    assert!(r_flare.cme_active);
+    assert_eq!(r_aurora.storm_level, GeomagneticStormLevel::SevereStorm);
+    assert_eq!(r_cv.nova_count, 4);
+    assert!((r_cv.accreted_hydrogen_mass - 2.5e-5).abs() < 1e-12);
 
     let _ = std::fs::remove_file(save_path);
 }

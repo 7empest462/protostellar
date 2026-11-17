@@ -675,7 +675,7 @@ fn test_dynamic_galactic_nucleus_handoff_to_growing_black_hole() {
             body_type: BodyType::Protostar,
             satellite: None,
             is_central_star: true,
-            name: "Protostar Alpha".to_string(),
+            role_flags: 0,
         },
         PhysicsBodyEntry {
             entity: growing_bh_ent,
@@ -687,7 +687,7 @@ fn test_dynamic_galactic_nucleus_handoff_to_growing_black_hole() {
             body_type: BodyType::BlackHole,
             satellite: None,
             is_central_star: false,
-            name: "Intermediate-Mass Black Hole (180.0 M☉)".to_string(),
+            role_flags: 0,
         },
         PhysicsBodyEntry {
             entity: companion_ent,
@@ -699,7 +699,7 @@ fn test_dynamic_galactic_nucleus_handoff_to_growing_black_hole() {
             body_type: BodyType::MainSequenceStar,
             satellite: None,
             is_central_star: false,
-            name: "Companion Star Beta".to_string(),
+            role_flags: 0,
         },
     ];
 

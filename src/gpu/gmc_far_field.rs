@@ -14,7 +14,6 @@ use bytemuck::{Pod, Zeroable};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::TimeWarp;
@@ -25,8 +24,9 @@ use crate::utils::constants::G_ASTRO;
 pub const GMC_FAR_FIELD_MIN_BODIES: usize = 600;
 /// Pairs closer than this are integrated exactly on the CPU; farther pairs come from the GPU.
 pub const GMC_FAR_FIELD_NEAR_RADIUS_AU: f64 = 50.0;
-/// Minimum mass (M_sun) for a non-stellar body to act as a far-field gravity source.
-const FAR_FIELD_MIN_SOURCE_MASS: f64 = 0.001;
+/// Minimum mass (M_sun) for a non-stellar body to act as a far-field gravity source
+/// (matches CPU `massive_indices` threshold of ~0.1 M_earth).
+const FAR_FIELD_MIN_SOURCE_MASS: f64 = 3.0e-7;
 /// Plummer softening used by the CPU cluster kernel (1.5 AU).
 const CLUSTER_SOFTENING_SQ: f32 = 2.25;
 
@@ -61,6 +61,7 @@ struct GmcFarFieldExtracted {
     entities: Vec<Entity>,
     targets: Vec<[f32; 4]>,
     sources: Vec<[f32; 4]>,
+    star_pos: [f32; 3],
 }
 
 #[derive(Resource)]
@@ -77,7 +78,7 @@ struct FarFieldUniforms {
     near_sq: f32,
     g_const: f32,
     softening_sq: f32,
-    pad: [f32; 3],
+    star_pos: [f32; 3],
 }
 
 /// Registers the far-field channel, extraction, dispatch and receive systems.
@@ -166,13 +167,19 @@ fn extract_gmc_far_field(
     let mut entities = Vec::with_capacity(count);
     let mut targets = Vec::with_capacity(count);
     let mut sources = Vec::new();
+    let mut star_pos = [0.0f32; 3];
     for (entity, pos, mass, body, is_central) in bodies.iter() {
         let p = [pos.0.x as f32, pos.0.y as f32, pos.0.z as f32];
+        if is_central {
+            star_pos = p;
+        }
         entities.push(entity);
         targets.push([p[0], p[1], p[2], 0.0]);
         // The central star is always handled exactly on the CPU.
         let is_source = !is_central
-            && (body.body_type.is_star_or_remnant() || mass.0 >= FAR_FIELD_MIN_SOURCE_MASS);
+            && (body.body_type.is_star_or_remnant()
+                || body.body_type.is_planet()
+                || mass.0 >= FAR_FIELD_MIN_SOURCE_MASS);
         if is_source {
             sources.push([p[0], p[1], p[2], mass.0 as f32]);
         }
@@ -181,6 +188,7 @@ fn extract_gmc_far_field(
         entities,
         targets,
         sources,
+        star_pos,
     });
 }
 
@@ -237,20 +245,99 @@ fn create_far_field_pipeline(device: &wgpu::Device) -> GmcFarFieldPipeline {
     GmcFarFieldPipeline { layout, pipeline }
 }
 
-fn buffer_init(
+#[derive(Resource)]
+struct GmcFarFieldGpuState {
+    src_buf: wgpu::Buffer,
+    tgt_buf: wgpu::Buffer,
+    out_buf: wgpu::Buffer,
+    staging_buf: wgpu::Buffer,
+    uniform_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    src_cap: usize,
+    tgt_cap: usize,
+}
+
+fn create_far_field_gpu_state(
     device: &wgpu::Device,
-    label: &str,
-    contents: &[u8],
-    usage: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents,
-        usage,
-    })
+    layout: &wgpu::BindGroupLayout,
+    src_cap: usize,
+    tgt_cap: usize,
+) -> GmcFarFieldGpuState {
+    let vec4_bytes = std::mem::size_of::<[f32; 4]>() as u64;
+    let src_bytes = (src_cap.max(1) as u64) * vec4_bytes;
+    let tgt_bytes = (tgt_cap.max(1) as u64) * vec4_bytes;
+
+    let src_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Far Field Sources"),
+        size: src_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let tgt_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Far Field Targets"),
+        size: tgt_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Far Field Output"),
+        size: tgt_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Far Field Staging"),
+        size: tgt_bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Far Field Uniforms"),
+        size: std::mem::size_of::<FarFieldUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("GMC Far Field Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: src_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: tgt_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: uniform_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    GmcFarFieldGpuState {
+        src_buf,
+        tgt_buf,
+        out_buf,
+        staging_buf,
+        uniform_buf,
+        bind_group,
+        src_cap: src_cap.max(1),
+        tgt_cap: tgt_cap.max(1),
+    }
 }
 
 /// Render world: run one far-field job (if idle) and asynchronously read back the result.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Render-world compute pass coordinates persistent GPU buffers and async readback"
+)]
 fn step_gmc_far_field(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -259,6 +346,7 @@ fn step_gmc_far_field(
     busy: Res<FarFieldBusy>,
     extracted: Option<Res<GmcFarFieldExtracted>>,
     pipeline: Option<Res<GmcFarFieldPipeline>>,
+    gpu_state: Option<ResMut<GmcFarFieldGpuState>>,
 ) {
     let Some(extracted) = extracted else {
         return;
@@ -285,70 +373,41 @@ fn step_gmc_far_field(
     }
 
     let device = render_device.wgpu_device();
+    let n_src = extracted.sources.len();
     let n_tgt = extracted.targets.len();
     let out_size = (n_tgt * std::mem::size_of::<[f32; 4]>()) as u64;
 
-    let src_buf = buffer_init(
-        device,
-        "GMC Far Field Sources",
-        bytemuck::cast_slice(&extracted.sources),
-        wgpu::BufferUsages::STORAGE,
-    );
-    let tgt_buf = buffer_init(
-        device,
-        "GMC Far Field Targets",
-        bytemuck::cast_slice(&extracted.targets),
-        wgpu::BufferUsages::STORAGE,
-    );
-    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("GMC Far Field Output"),
-        size: out_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("GMC Far Field Staging"),
-        size: out_size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
+    let mut gpu_state = gpu_state;
+    let mut created_state = None;
+    let state: &GmcFarFieldGpuState = if let Some(existing) = gpu_state.as_deref_mut() {
+        if n_src > existing.src_cap || n_tgt > existing.tgt_cap {
+            let new_src_cap = n_src.max(existing.src_cap).next_power_of_two().max(64);
+            let new_tgt_cap = n_tgt.max(existing.tgt_cap).next_power_of_two().max(64);
+            *existing =
+                create_far_field_gpu_state(device, &pipeline.layout, new_src_cap, new_tgt_cap);
+        }
+        existing
+    } else {
+        created_state.insert(create_far_field_gpu_state(
+            device,
+            &pipeline.layout,
+            n_src.next_power_of_two().max(64),
+            n_tgt.next_power_of_two().max(64),
+        ))
+    };
+
     let uniforms = FarFieldUniforms {
-        n_src: extracted.sources.len() as u32,
+        n_src: n_src as u32,
         n_tgt: n_tgt as u32,
         near_sq: (GMC_FAR_FIELD_NEAR_RADIUS_AU * GMC_FAR_FIELD_NEAR_RADIUS_AU) as f32,
         g_const: G_ASTRO as f32,
         softening_sq: CLUSTER_SOFTENING_SQ,
-        pad: [0.0; 3],
+        star_pos: extracted.star_pos,
     };
-    let uniform_buf = buffer_init(
-        device,
-        "GMC Far Field Uniforms",
-        bytemuck::bytes_of(&uniforms),
-        wgpu::BufferUsages::UNIFORM,
-    );
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("GMC Far Field Bind Group"),
-        layout: &pipeline.layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: src_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: tgt_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: out_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: uniform_buf.as_entire_binding(),
-            },
-        ],
-    });
+    render_queue.write_buffer(&state.src_buf, 0, bytemuck::cast_slice(&extracted.sources));
+    render_queue.write_buffer(&state.tgt_buf, 0, bytemuck::cast_slice(&extracted.targets));
+    render_queue.write_buffer(&state.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("GMC Far Field Encoder"),
@@ -359,22 +418,23 @@ fn step_gmc_far_field(
             timestamp_writes: None,
         });
         pass.set_pipeline(&pipeline.pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_bind_group(0, &state.bind_group, &[]);
         pass.dispatch_workgroups((n_tgt as u32).div_ceil(64), 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&out_buf, 0, &staging, 0, out_size);
+    encoder.copy_buffer_to_buffer(&state.out_buf, 0, &state.staging_buf, 0, out_size);
     render_queue.submit(Some(encoder.finish()));
 
     let entities = extracted.entities.clone();
     let tx = sender.tx.clone();
     let busy_flag = busy.0.clone();
-    let staging_cb = staging.clone();
-    staging
-        .slice(..)
+    let staging_cb = state.staging_buf.clone();
+    state
+        .staging_buf
+        .slice(..out_size)
         .map_async(wgpu::MapMode::Read, move |result| {
             if result.is_ok() {
                 let accs: Option<Vec<[f32; 4]>> = staging_cb
-                    .slice(..)
+                    .slice(..out_size)
                     .get_mapped_range()
                     .ok()
                     .map(|data| bytemuck::pod_collect_to_vec::<u8, [f32; 4]>(&data));
@@ -386,4 +446,8 @@ fn step_gmc_far_field(
             busy_flag.store(false, Ordering::Release);
         });
     let _ = render_device.poll(wgpu::PollType::Poll);
+
+    if let Some(state_to_insert) = created_state {
+        commands.insert_resource(state_to_insert);
+    }
 }

@@ -144,14 +144,14 @@ fn test_planets_passing_halfway_through_each_other_trigger_collision_damage_and_
     let bounce_events = app.world().resource::<Messages<CollisionBounceEvent>>();
 
     // The collision MUST be detected and resolved (either merge or bounce) — never ghost through each other
-    let collision_occurred = merge_events.len() > 0 || bounce_events.len() > 0;
+    let collision_occurred = !merge_events.is_empty() || !bounce_events.is_empty();
     assert!(
         collision_occurred,
         "Planets passing halfway through each other visually must collide and cause damage"
     );
 
     // If merged, one body is absorbed into the primary, resulting in 1 surviving entity with combined mass
-    if merge_events.len() > 0 {
+    if !merge_events.is_empty() {
         assert!(
             app.world().get_entity(p2).is_err(),
             "Secondary planet must be merged away"

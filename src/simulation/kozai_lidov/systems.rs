@@ -6,24 +6,37 @@ use bevy::prelude::*;
 use super::physics::*;
 use super::types::*;
 use crate::simulation::components::*;
+use crate::simulation::probes::SpaceProbe;
 use crate::simulation::resources::{SimTime, TimeWarp};
 use crate::simulation::tides::TidalState;
 use crate::utils::math::state_vectors_to_orbital_elements;
 
 /// System that automatically scans the system for hierarchical triples (inner body + outer massive perturber)
 /// and initializes or updates `KozaiLidovState` components.
+#[allow(
+    clippy::type_complexity,
+    reason = "Hierarchical triple detection requires multiple spatial and orbital filters"
+)]
 pub fn detect_hierarchical_triples(
     mut commands: Commands,
+    time_warp: Option<Res<TimeWarp>>,
     primary_query: Query<
         (Entity, &SimPosition, &SimVelocity, &Mass),
         (With<CentralStar>, With<CelestialBody>),
     >,
     all_bodies_query: Query<
         (Entity, &SimPosition, &SimVelocity, &Mass, &CelestialBody),
-        Without<CentralStar>,
+        (Without<CentralStar>, Without<SpaceProbe>),
     >,
-    existing_state_query: Query<Entity, With<KozaiLidovState>>,
+    existing_state_query: Query<&KozaiLidovState>,
 ) {
+    if time_warp
+        .as_deref()
+        .is_some_and(|tw| tw.is_paused && !tw.step_once)
+    {
+        return;
+    }
+
     let Some((_primary_ent, p_pos, p_vel, p_mass)) = primary_query.iter().next() else {
         return;
     };
@@ -32,25 +45,37 @@ pub fn detect_hierarchical_triples(
         return;
     }
 
+    let has_uninitialized_inner = all_bodies_query.iter().any(|(ent, _, _, _, body)| {
+        !body.body_type.is_star_or_remnant()
+            && existing_state_query
+                .get(ent)
+                .map_or(true, |s| s.perturber_entity.is_none())
+    });
+    if !has_uninitialized_inner {
+        return;
+    }
+
     // Collect outer perturber candidates: must have substantial mass (> 1e-5 M_sun, ~3 M_earth)
-    let candidates: Vec<(
-        Entity,
-        f64,
-        f64,
-        String,
-        bevy::math::DVec3,
-        bevy::math::DVec3,
-    )> = all_bodies_query
-        .iter()
-        .filter(|(_, _, _, mass, _)| mass.0 >= 1e-5)
-        .map(|(ent, pos, vel, mass, body)| {
-            let dist = (pos.0 - p_pos.0).length();
-            (ent, mass.0, dist, body.name.clone(), pos.0, vel.0)
-        })
-        .collect();
+    let candidates: Vec<(Entity, f64, f64, &str, bevy::math::DVec3, bevy::math::DVec3)> =
+        all_bodies_query
+            .iter()
+            .filter(|(_, _, _, mass, _)| mass.0 >= 1e-5)
+            .map(|(ent, pos, vel, mass, body)| {
+                let dist = (pos.0 - p_pos.0).length();
+                (ent, mass.0, dist, body.name.as_str(), pos.0, vel.0)
+            })
+            .collect();
+
+    if candidates.is_empty() {
+        return;
+    }
 
     for (inner_ent, pos, vel, _mass, body) in all_bodies_query.iter() {
-        if body.body_type.is_star_or_remnant() {
+        if body.body_type.is_star_or_remnant()
+            || existing_state_query
+                .get(inner_ent)
+                .is_ok_and(|s| s.perturber_entity.is_some())
+        {
             continue;
         }
 
@@ -64,7 +89,9 @@ pub fn detect_hierarchical_triples(
         let mut best_perturber = None;
         let mut max_quadrupole_strength = 0.0;
 
-        for &(cand_ent, cand_mass, cand_dist, ref cand_name, cand_pos, cand_vel) in &candidates {
+        for (cand_idx, &(cand_ent, cand_mass, cand_dist, _, cand_pos, cand_vel)) in
+            candidates.iter().enumerate()
+        {
             if cand_ent == inner_ent || cand_dist < 2.5 * inner_dist {
                 continue;
             }
@@ -72,51 +99,43 @@ pub fn detect_hierarchical_triples(
             let strength = cand_mass / cand_dist.powi(3);
             if strength > max_quadrupole_strength {
                 max_quadrupole_strength = strength;
-                best_perturber = Some((
-                    cand_ent,
-                    cand_name.clone(),
-                    cand_dist,
-                    cand_pos,
-                    cand_vel,
-                    cand_mass,
-                ));
+                best_perturber =
+                    Some((cand_idx, cand_ent, cand_dist, cand_pos, cand_vel, cand_mass));
             }
         }
 
-        if let Some((pert_ent, pert_name, pert_dist, pert_pos, pert_vel, pert_mass)) =
-            best_perturber
+        if let Some((cand_idx, pert_ent, pert_dist, pert_pos, pert_vel, pert_mass)) = best_perturber
         {
-            if !existing_state_query.contains(inner_ent) {
-                // Initialize new state
-                let h_inner = (pos.0 - p_pos.0).cross(vel.0 - p_vel.0);
-                let h_outer = (pert_pos - p_pos.0).cross(pert_vel - p_vel.0);
-                let i_mut_rad = compute_mutual_inclination(h_inner, h_outer);
-                let is_res = is_in_kozai_resonance(i_mut_rad);
-                let e_max = compute_max_eccentricity(0.01, i_mut_rad);
-                let q_min = compute_min_periastron(inner_dist, e_max);
-                let tau_kl =
-                    compute_kozai_timescale(inner_dist, pert_dist, p_mass.0, pert_mass, 0.0);
+            let pert_name = candidates
+                .get(cand_idx)
+                .map_or_else(String::new, |c| c.3.to_string());
+            let h_inner = (pos.0 - p_pos.0).cross(vel.0 - p_vel.0);
+            let h_outer = (pert_pos - p_pos.0).cross(pert_vel - p_vel.0);
+            let i_mut_rad = compute_mutual_inclination(h_inner, h_outer);
+            let is_res = is_in_kozai_resonance(i_mut_rad);
+            let e_max = compute_max_eccentricity(0.01, i_mut_rad);
+            let q_min = compute_min_periastron(inner_dist, e_max);
+            let tau_kl = compute_kozai_timescale(inner_dist, pert_dist, p_mass.0, pert_mass, 0.0);
 
-                if let Ok(mut cmd) = commands.get_entity(inner_ent) {
-                    cmd.try_insert(KozaiLidovState {
-                        perturber_entity: Some(pert_ent),
-                        perturber_name: pert_name,
-                        mutual_inclination_deg: i_mut_rad.to_degrees(),
-                        critical_inclination_deg: super::types::KOZAI_CRITICAL_ANGLE_DEG,
-                        is_in_resonance: is_res,
-                        max_eccentricity_forecast: e_max,
-                        min_periastron_au: q_min,
-                        kozai_period_years: tau_kl,
-                        gr_precession_ratio: 0.0,
-                        is_gr_suppressed: false,
-                        regime: if is_res {
-                            KozaiRegime::Circulation
-                        } else {
-                            KozaiRegime::Inactive
-                        },
-                        cycle_phase: 0.0,
-                    });
-                }
+            if let Ok(mut cmd) = commands.get_entity(inner_ent) {
+                cmd.try_insert(KozaiLidovState {
+                    perturber_entity: Some(pert_ent),
+                    perturber_name: pert_name,
+                    mutual_inclination_deg: i_mut_rad.to_degrees(),
+                    critical_inclination_deg: super::types::KOZAI_CRITICAL_ANGLE_DEG,
+                    is_in_resonance: is_res,
+                    max_eccentricity_forecast: e_max,
+                    min_periastron_au: q_min,
+                    kozai_period_years: tau_kl,
+                    gr_precession_ratio: 0.0,
+                    is_gr_suppressed: false,
+                    regime: if is_res {
+                        KozaiRegime::Circulation
+                    } else {
+                        KozaiRegime::Inactive
+                    },
+                    cycle_phase: 0.0,
+                });
             }
         }
     }
@@ -131,13 +150,16 @@ pub fn detect_hierarchical_triples(
 pub fn update_kozai_lidov_evolution(
     config: Res<KozaiLidovConfig>,
     time_warp: Res<TimeWarp>,
-    _sim_time: Res<SimTime>,
+    sim_time: Res<SimTime>,
     primary_query: Query<
         (Entity, &SimPosition, &SimVelocity, &Mass, &Radius),
         (With<CentralStar>, With<CelestialBody>),
     >,
     mut bodies_params: ParamSet<(
-        Query<(Entity, &SimPosition, &SimVelocity, &Mass, &CelestialBody), Without<CentralStar>>,
+        Query<
+            (Entity, &SimPosition, &SimVelocity, &Mass, &CelestialBody),
+            (Without<CentralStar>, Without<SpaceProbe>),
+        >,
         Query<
             (
                 Entity,
@@ -149,12 +171,12 @@ pub fn update_kozai_lidov_evolution(
                 &mut KozaiLidovState,
                 Option<&mut TidalState>,
             ),
-            Without<CentralStar>,
+            (Without<CentralStar>, Without<SpaceProbe>),
         >,
     )>,
     mut disruption_events: MessageWriter<KozaiDisruptionEvent>,
 ) {
-    if !config.enable_kozai_lidov || time_warp.is_paused {
+    if !config.enable_kozai_lidov || (time_warp.is_paused && !time_warp.step_once) {
         return;
     }
 
@@ -162,13 +184,30 @@ pub fn update_kozai_lidov_evolution(
         return;
     };
 
-    let dt_years = time_warp.multiplier * (1.0 / 365.25) * config.secular_time_scale;
+    let base_dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        time_warp.multiplier * (1.0 / 365.25)
+    };
+    let dt_years = base_dt_yr * config.secular_time_scale;
+
+    let need_names = bodies_params
+        .p1()
+        .iter()
+        .any(|(_, _, _, _, _, _, state, _)| state.perturber_entity.is_none());
 
     let perturber_snapshots: Vec<(Entity, String, bevy::math::DVec3, bevy::math::DVec3, f64)> =
         bodies_params
             .p0()
             .iter()
-            .map(|(e, pos, vel, mass, body)| (e, body.name.clone(), pos.0, vel.0, mass.0))
+            .map(|(e, pos, vel, mass, body)| {
+                let name = if need_names {
+                    body.name.clone()
+                } else {
+                    String::new()
+                };
+                (e, name, pos.0, vel.0, mass.0)
+            })
             .collect();
 
     let primary = PrimaryContext {
@@ -191,6 +230,8 @@ pub fn update_kozai_lidov_evolution(
         let Some((pert_ent, pert_pos, pert_vel, pert_mass)) = perturber_opt else {
             state.regime = KozaiRegime::Inactive;
             state.is_in_resonance = false;
+            state.perturber_entity = None;
+            state.perturber_name.clear();
             continue;
         };
 
@@ -243,7 +284,7 @@ fn evolve_body_resonance(
     perturber: &PerturberContext,
     inner_ent: Entity,
     pos: bevy::math::DVec3,
-    mut vel: Mut<SimVelocity>,
+    vel: Mut<SimVelocity>,
     mass: f64,
     rad: f64,
     name: &str,
@@ -309,6 +350,7 @@ fn evolve_body_resonance(
     let danger_radius_au = roche_radius_au.max(primary.radius);
 
     // Classify regime
+    let prev_regime = state.regime;
     state.regime = classify_kozai_regime(
         state.is_in_resonance,
         state.is_gr_suppressed,
@@ -319,21 +361,24 @@ fn evolve_body_resonance(
 
     // Disruption detection: if current periastron breaches the stellar surface or Roche limit
     if orb_in.periapsis <= danger_radius_au {
-        disruption_events.write(KozaiDisruptionEvent {
-            disrupted_entity: inner_ent,
-            central_entity: primary.entity,
-            perturber_entity: Some(perturber.entity),
-            body_name: name.to_string(),
-            peak_eccentricity: orb_in.eccentricity,
-            periastron_au: orb_in.periapsis,
-            roche_limit_au: danger_radius_au,
-            position: pos,
-        });
+        state.regime = KozaiRegime::TidalDisruptionRisk;
+        if prev_regime != KozaiRegime::TidalDisruptionRisk {
+            disruption_events.write(KozaiDisruptionEvent {
+                disrupted_entity: inner_ent,
+                central_entity: primary.entity,
+                perturber_entity: Some(perturber.entity),
+                body_name: name.to_string(),
+                peak_eccentricity: orb_in.eccentricity,
+                periastron_au: orb_in.periapsis,
+                roche_limit_au: danger_radius_au,
+                position: pos,
+            });
+        }
     }
 
     // Secular evolution and tidal coupling
     apply_secular_evolution_and_tides(
-        config, dt_years, orb_in, tau_kl, i_mut_rad, tau_gr, &mut vel, &mut state, opt_tide,
+        config, dt_years, orb_in, tau_kl, i_mut_rad, tau_gr, rad, &mut state, opt_tide,
     );
 }
 
@@ -364,7 +409,7 @@ fn apply_secular_evolution_and_tides(
     tau_kl: f64,
     i_mut_rad: f64,
     tau_gr: f64,
-    vel: &mut Mut<SimVelocity>,
+    rad_au: f64,
     state: &mut Mut<KozaiLidovState>,
     mut opt_tide: Option<Mut<TidalState>>,
 ) {
@@ -381,7 +426,7 @@ fn apply_secular_evolution_and_tides(
     };
 
     // Secular stepping
-    let (new_e, _new_i, _) = evaluate_secular_kozai_step(
+    let (new_e, new_i, _) = evaluate_secular_kozai_step(
         orb_in.eccentricity,
         i_mut_rad,
         orb_in.argument_of_periapsis,
@@ -389,6 +434,9 @@ fn apply_secular_evolution_and_tides(
         dt_years,
         gr_rate,
     );
+    if new_i.is_finite() {
+        state.mutual_inclination_deg = new_i.to_degrees();
+    }
 
     // Couple with high-eccentricity tidal dissipation if enabled
     if config.enable_tidal_circularization {
@@ -400,17 +448,15 @@ fn apply_secular_evolution_and_tides(
                     ((1.0 + 3.75 * new_e * new_e) / one_minus_e2.powf(7.5)).clamp(1.0, 1e5);
                 tide.tidal_heating_power_watts =
                     (tide.tidal_heating_power_watts * tidal_boost).min(1e24);
+                tide.tidal_heating_flux_w_m2 = crate::simulation::tides::calculate_tidal_heat_flux(
+                    tide.tidal_heating_power_watts,
+                    rad_au,
+                );
                 let boosted_decay = (tide.circularization_rate_per_myr.abs()
                     * tidal_boost.min(1e4))
                 .clamp(1e-2, 1e4);
                 tide.circularization_rate_per_myr = -boosted_decay;
             }
         }
-    }
-
-    // Gentle velocity modulation towards secular eccentricity at high time warp
-    if dt_years > 0.05 && new_e.is_finite() && (new_e - orb_in.eccentricity).abs() > 1e-4 {
-        let e_factor = (new_e / orb_in.eccentricity.max(1e-3)).clamp(0.9, 1.1);
-        vel.0 *= 1.0 + (e_factor - 1.0) * (dt_years / tau_kl.max(10.0)).min(0.05);
     }
 }

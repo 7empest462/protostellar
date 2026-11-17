@@ -13,6 +13,10 @@ pub fn receive_gmc_collapse_events(
     existing_bodies: Query<(&SimPosition, &CelestialBody, Option<&Mass>)>,
     mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
+    if receiver.rx.is_empty() {
+        return;
+    }
+
     let Some(state) = scenario_state.as_ref() else {
         while receiver.rx.try_recv().is_ok() {}
         return;

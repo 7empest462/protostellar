@@ -24,7 +24,10 @@ impl Plugin for CosmicEventsPlugin {
                     systems::cosmic_event_scheduler_system,
                     systems::cosmic_event_lifecycle_system
                         .after(systems::cosmic_event_scheduler_system)
-                        .after(crate::simulation::physics::step_physics_simulation),
+                        .after(crate::simulation::physics::step_physics_simulation)
+                        .after(
+                            crate::simulation::space_weather::update_planetary_auroral_ovals_system,
+                        ),
                     systems::cosmic_event_sensory_system
                         .after(systems::cosmic_event_lifecycle_system),
                 ),

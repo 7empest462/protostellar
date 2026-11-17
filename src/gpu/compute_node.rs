@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::Extract;
+use rayon::prelude::*;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -28,6 +29,7 @@ pub struct GpuParticleOrbitEngine {
     pub uniform_buffer: wgpu::Buffer,
     pub staging_buffers: [wgpu::Buffer; 2],
     pub staging_states: [Arc<AtomicU8>; 2],
+    pub staging_counts: [u32; 2],
     pub current_staging_idx: usize,
     pub bind_group: wgpu::BindGroup,
     pub pipeline: wgpu::ComputePipeline,
@@ -91,7 +93,15 @@ pub fn extract_gpu_sim_data(
             With<CentralStar>,
         >,
     >,
-    massive_query: Extract<Query<(&SimPosition, &Mass, &CelestialBody), Without<CentralStar>>>,
+    massive_query: Extract<
+        Query<
+            (Entity, &SimPosition, &Mass, &CelestialBody),
+            (
+                Without<CentralStar>,
+                Without<crate::simulation::probes::SpaceProbe>,
+            ),
+        >,
+    >,
     scenario_state: Extract<Option<Res<crate::simulation::scenarios::ActiveScenarioState>>>,
 ) {
     if let Some(scenario_state) = scenario_state.as_ref() {
@@ -134,14 +144,18 @@ pub fn extract_gpu_sim_data(
         shockwave_radius = ignition.shockwave_radius as f32;
     }
 
-    for (pos, mass, _body) in massive_query.iter() {
+    let mut sorted_bodies: Vec<(Entity, &SimPosition, &Mass)> = massive_query
+        .iter()
+        .map(|(ent, pos, mass, _body)| (ent, pos, mass))
+        .collect();
+    sorted_bodies.sort_by(|a, b| b.2 .0.total_cmp(&a.2 .0).then_with(|| a.0.cmp(&b.0)));
+
+    for (_ent, pos, mass) in sorted_bodies.into_iter().take(32) {
         if let Some(target) = massive_bodies.get_mut(num_bodies) {
             *target = MassiveBodyGpu {
                 pos_mass: [pos.x as f32, pos.y as f32, pos.z as f32, mass.0 as f32],
             };
             num_bodies += 1;
-        } else {
-            break;
         }
     }
 
@@ -380,6 +394,7 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, 
         uniform_buffer,
         staging_buffers: [staging_buffer_0, staging_buffer_1],
         staging_states,
+        staging_counts: [0, 0],
         current_staging_idx: 0,
         bind_group,
         pipeline,
@@ -500,13 +515,28 @@ fn drain_mapped_staging_buffers(
             if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
                 if let Some(sender) = sender {
                     if let Ok(mapped) = staging_buf.slice(..).get_mapped_range() {
-                        let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
-                        if buf.capacity() < mapped.len() {
-                            buf.reserve_exact(mapped.len().saturating_sub(buf.capacity()));
+                        let count = engine
+                            .staging_counts
+                            .get(i)
+                            .copied()
+                            .unwrap_or(0)
+                            .min(MAX_GPU_PARTICLES);
+                        let active_bytes = usize::try_from(count).unwrap_or(0)
+                            * std::mem::size_of::<GpuParticle>();
+                        let copy_len = if active_bytes == 0 {
+                            mapped.len()
+                        } else {
+                            active_bytes.min(mapped.len())
+                        };
+                        if let Some(slice) = mapped.get(..copy_len) {
+                            let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
+                            if buf.capacity() < copy_len {
+                                buf.reserve_exact(copy_len.saturating_sub(buf.capacity()));
+                            }
+                            buf.clear();
+                            buf.extend_from_slice(slice);
+                            let _ = sender.tx.try_send(buf);
                         }
-                        buf.clear();
-                        buf.extend_from_slice(&mapped);
-                        let _ = sender.tx.try_send(buf);
                     }
                 }
                 staging_buf.unmap();
@@ -552,9 +582,12 @@ fn dispatch_compute_and_stage(
             )
             .is_ok()
         {
-            let buf_size =
-                u64::from(engine.num_particles) * std::mem::size_of::<GpuParticle>() as u64;
+            let particle_count = engine.num_particles.min(MAX_GPU_PARTICLES);
+            let buf_size = u64::from(particle_count) * std::mem::size_of::<GpuParticle>() as u64;
             encoder.copy_buffer_to_buffer(&engine.particle_buffer, 0, write_buf, 0, buf_size);
+            if let Some(slot) = engine.staging_counts.get_mut(write_idx) {
+                *slot = particle_count;
+            }
             copy_initiated = true;
         }
 
@@ -645,12 +678,22 @@ fn adjust_particle_count(
     target_count: usize,
     data: &mut crate::rendering::particle_swarm::ParticleSwarmData,
 ) {
-    if target_count == 0 || target_count == data.count {
+    let min_count = if data.positions.len() >= 50_000 {
+        50_000
+    } else {
+        1
+    };
+    let new_count = target_count
+        .clamp(min_count, MAX_GPU_PARTICLES as usize)
+        .min(data.positions.len());
+    if new_count == 0 || new_count == data.count {
         return;
     }
     let old_count = data.count;
-    let new_count = target_count.min(data.positions.len());
     data.count = new_count;
+    if old_count > 0 && data.base_mass > 0.0 {
+        data.base_mass *= (old_count as f32) / (new_count as f32);
+    }
     if new_count < old_count {
         for i in new_count..old_count {
             if let Some(m) = data.masses.get_mut(i) {
@@ -683,6 +726,35 @@ fn adjust_particle_count(
         }
     }
     data.is_dirty = true;
+}
+
+fn sync_dormant_particle_color(
+    comp_slot: &mut Composition,
+    color_slot: &mut [f32; 4],
+    raw_comp: [f32; 4],
+    temp: f32,
+) {
+    if color_slot[3] > 0.0 {
+        return;
+    }
+    let s = f64::from(raw_comp[0]);
+    let ice = f64::from(raw_comp[1]);
+    let m = f64::from(raw_comp[2]);
+    let g = f64::from(raw_comp[3]);
+    let total = s + ice + m + g;
+    let comp = Composition {
+        silicate_frac: s,
+        ice_frac: ice,
+        metal_frac: m,
+        gas_frac: g,
+        organics_frac: if total > 0.0 {
+            (1.0 - total).max(0.0)
+        } else {
+            0.0
+        },
+    };
+    *comp_slot = comp;
+    *color_slot = crate::rendering::particle_swarm::setup::calculate_particle_color(&comp, temp);
 }
 
 /// Main-world system that receives GPU readback data and updates ParticleSwarmData positions.
@@ -723,6 +795,10 @@ pub fn receive_gpu_readback(
 
     {
         let particles: &[GpuParticle] = bytemuck::cast_slice(&bytes);
+        if particles.len() != data.count {
+            let _ = receiver.recycle_tx.try_send(bytes);
+            return;
+        }
         if let Some(first_active) = particles.iter().find(|p| p.pos_mass[3] > 0.0) {
             let is_galaxy_buf = first_active.pos_mass[3] >= 0.5;
             let is_galaxy_swarm = data.base_mass >= 0.5;
@@ -731,70 +807,132 @@ pub fn receive_gpu_readback(
                 return;
             }
         }
-        let n = data.count.min(particles.len());
         let is_scenario_start = sim_time.is_some_and(|t| t.elapsed_years < 0.005);
-        let crate::rendering::particle_swarm::ParticleSwarmData {
-            masses,
-            positions,
-            velocities,
-            temperatures,
-            pending_gpu_accretions,
-            ..
-        } = &mut **data;
-
-        for (i, p) in particles.iter().enumerate().take(n) {
-            let [px, py, pz, pm] = p.pos_mass;
-            let [vx, vy, vz, vt] = p.vel_temp;
-            let Some(mass) = masses.get_mut(i) else {
-                continue;
-            };
-
-            // Never resurrect a particle that the CPU has already accreted/killed
-            if !is_scenario_start && *mass <= 0.0 {
-                continue;
-            }
-
-            // If GPU marked particle as dead/accreted, record its mass before zeroing
-            if pm <= 0.0 {
-                if *mass > 0.0 {
-                    let m = *mass;
-                    let code = -pm;
-                    if (0.99..=33.5).contains(&code) {
-                        let body_idx = (code - 1.0).round() as usize;
-                        pending_gpu_accretions.push((body_idx, m));
-                    }
-                    *mass = 0.0;
-                    if let Some(pos) = positions.get_mut(i) {
-                        *pos = [0.0, -5000.0, 0.0];
-                    }
-                }
-                continue;
-            }
-
-            if let Some(pos) = positions.get_mut(i) {
-                *pos = [px, py, pz];
-            }
-            if let Some(vel) = velocities.get_mut(i) {
-                *vel = [vx, vy, vz];
-            }
-            *mass = pm;
-            if let Some(temp) = temperatures.get_mut(i) {
-                *temp = vt;
-            }
-        }
+        let active = unpack_gpu_readback_particles(particles, data, is_scenario_start);
         data.is_dirty = true;
 
         if let Some(ref mut cfg) = config {
             cfg.gpu_compute_active = true;
-            let mut active = 0u32;
-            for p in particles.iter().take(n) {
-                if p.pos_mass[3] > 0.0 {
-                    active += 1;
-                }
-            }
             cfg.active_particles = active;
         }
     }
 
     let _ = receiver.recycle_tx.try_send(bytes);
+}
+
+fn unpack_gpu_readback_particles(
+    particles: &[GpuParticle],
+    data: &mut crate::rendering::particle_swarm::ParticleSwarmData,
+    is_scenario_start: bool,
+) -> u32 {
+    let n = data
+        .count
+        .min(particles.len())
+        .min(data.masses.len())
+        .min(data.positions.len())
+        .min(data.velocities.len())
+        .min(data.temperatures.len())
+        .min(data.compositions.len())
+        .min(data.colors.len());
+    let crate::rendering::particle_swarm::ParticleSwarmData {
+        masses,
+        positions,
+        velocities,
+        compositions,
+        temperatures,
+        colors,
+        pending_gpu_accretions,
+        ..
+    } = data;
+
+    let (
+        Some(masses_slice),
+        Some(pos_slice),
+        Some(vel_slice),
+        Some(temp_slice),
+        Some(comp_slice),
+        Some(col_slice),
+        Some(p_slice),
+    ) = (
+        masses.get_mut(..n),
+        positions.get_mut(..n),
+        velocities.get_mut(..n),
+        temperatures.get_mut(..n),
+        compositions.get_mut(..n),
+        colors.get_mut(..n),
+        particles.get(..n),
+    )
+    else {
+        return 0;
+    };
+
+    let (chunk_accretions, active): (Vec<(usize, f32)>, u32) = masses_slice
+        .par_chunks_mut(4096)
+        .zip(pos_slice.par_chunks_mut(4096))
+        .zip(vel_slice.par_chunks_mut(4096))
+        .zip(temp_slice.par_chunks_mut(4096))
+        .zip(comp_slice.par_chunks_mut(4096))
+        .zip(col_slice.par_chunks_mut(4096))
+        .zip(p_slice.par_chunks(4096))
+        .map(
+            |(
+                (((((m_chunk, pos_chunk), vel_chunk), temp_chunk), comp_chunk), col_chunk),
+                p_chunk,
+            )| {
+                let mut local_accretions = Vec::new();
+                let mut local_active = 0u32;
+                for ((((((mass, pos), vel), temp), comp), col), p) in m_chunk
+                    .iter_mut()
+                    .zip(pos_chunk.iter_mut())
+                    .zip(vel_chunk.iter_mut())
+                    .zip(temp_chunk.iter_mut())
+                    .zip(comp_chunk.iter_mut())
+                    .zip(col_chunk.iter_mut())
+                    .zip(p_chunk.iter())
+                {
+                    let [px, py, pz, pm] = p.pos_mass;
+                    let [vx, vy, vz, vt] = p.vel_temp;
+
+                    if pm > 0.0 && (*mass > 0.0 || is_scenario_start) {
+                        local_active += 1;
+                    }
+
+                    // Never resurrect a particle that the CPU has already accreted/killed
+                    if !is_scenario_start && *mass <= 0.0 {
+                        continue;
+                    }
+
+                    // If GPU marked particle as dead/accreted, record its mass before zeroing
+                    if pm <= 0.0 {
+                        if *mass > 0.0 {
+                            let m = *mass;
+                            let code = -pm;
+                            if (0.99..=33.5).contains(&code) {
+                                let body_idx = (code - 1.0).round() as usize;
+                                local_accretions.push((body_idx, m));
+                            }
+                            *mass = 0.0;
+                            *pos = [0.0, -5000.0, 0.0];
+                        }
+                        continue;
+                    }
+
+                    *pos = [px, py, pz];
+                    *vel = [vx, vy, vz];
+                    *mass = pm;
+                    *temp = vt;
+                    sync_dormant_particle_color(comp, col, p.composition, vt);
+                }
+                (local_accretions, local_active)
+            },
+        )
+        .reduce(
+            || (Vec::new(), 0u32),
+            |(mut acc_a, cnt_a), (acc_b, cnt_b)| {
+                acc_a.extend(acc_b);
+                (acc_a, cnt_a + cnt_b)
+            },
+        );
+    pending_gpu_accretions.extend(chunk_accretions);
+    active
 }

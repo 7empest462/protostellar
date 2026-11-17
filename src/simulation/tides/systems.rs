@@ -121,6 +121,7 @@ fn apply_geothermal_tidal_coupling(
     dt_yr: f64,
     opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
     opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
+    opt_temp: &mut Option<Mut<'_, Temperature>>,
 ) {
     if let Some(ref mut diff) = opt_diff {
         // Specific heat capacity Cp ~ 1000 J/(kg*K)
@@ -152,7 +153,13 @@ fn apply_geothermal_tidal_coupling(
             let t_base =
                 f64::from(climate.equilibrium_temperature_k + climate.greenhouse_delta_k).max(2.7);
             let t4 = t_base.powi(4) + (flux_w_m2 / STEFAN_BOLTZMANN_SI);
-            climate.surface_temperature_k = t4.powf(0.25).clamp(20.0, 3000.0) as f32;
+            let new_surf_t = t4.powf(0.25).clamp(20.0, 3000.0);
+            climate.surface_temperature_k = new_surf_t as f32;
+            if let Some(ref mut temp) = opt_temp {
+                if new_surf_t > temp.0 {
+                    temp.0 = new_surf_t;
+                }
+            }
         }
     }
 }
@@ -183,6 +190,7 @@ pub fn update_tidal_evolution(
             Option<&SatelliteOf>,
             Option<&mut InternalDifferentiation>,
             Option<&mut PlanetaryClimate>,
+            Option<&mut Temperature>,
             Option<&mut TidalState>,
             Option<&mut VolcanicState>,
         ),
@@ -226,6 +234,7 @@ pub fn update_tidal_evolution(
         opt_sat,
         mut opt_diff,
         mut opt_climate,
+        mut opt_temp,
         mut opt_tide,
         mut opt_volc,
     ) in bodies_query.iter_mut()
@@ -254,6 +263,7 @@ pub fn update_tidal_evolution(
             valid_sat,
             &mut opt_diff,
             &mut opt_climate,
+            &mut opt_temp,
             &mut opt_tide,
             &mut opt_volc,
             star_opt,
@@ -281,6 +291,7 @@ fn step_body_tidal_evolution(
     opt_sat: Option<&SatelliteOf>,
     opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
     opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
+    opt_temp: &mut Option<Mut<'_, Temperature>>,
     opt_tide: &mut Option<Mut<'_, TidalState>>,
     opt_volc: &mut Option<Mut<'_, VolcanicState>>,
     star_opt: Option<(Entity, DVec3, DVec3, f64)>,
@@ -289,6 +300,20 @@ fn step_body_tidal_evolution(
     effective_dt_yr: f64,
 ) {
     if body.body_type.is_star_or_remnant() {
+        return;
+    }
+    if opt_sat.is_none()
+        && opt_tide.is_none()
+        && opt_volc.is_none()
+        && matches!(
+            body.body_type,
+            crate::simulation::components::BodyType::Planetesimal
+                | crate::simulation::components::BodyType::Asteroid
+                | crate::simulation::components::BodyType::Comet
+                | crate::simulation::components::BodyType::DustGrain
+                | crate::simulation::components::BodyType::DebrisRing
+        )
+    {
         return;
     }
 
@@ -368,6 +393,7 @@ fn step_body_tidal_evolution(
             dt_yr,
             opt_diff,
             opt_climate,
+            opt_temp,
         );
     }
 
@@ -396,12 +422,11 @@ pub fn compute_volcanic_state(
     flux_w_m2: f64,
     existing: Option<VolcanicState>,
 ) -> Option<VolcanicState> {
-    let lower = name.to_lowercase();
     let norm = comp.normalized();
 
-    let is_io = lower.contains("io");
-    let is_enceladus = lower.contains("enceladus");
-    let is_europa = lower.contains("europa");
+    let is_io = crate::utils::math::contains_ascii_case_insensitive(name, "io");
+    let is_enceladus = crate::utils::math::contains_ascii_case_insensitive(name, "enceladus");
+    let is_europa = crate::utils::math::contains_ascii_case_insensitive(name, "europa");
 
     let is_hyperactive_sulfur =
         is_io || (norm.silicate_frac > 0.45 && norm.ice_frac < 0.10 && flux_w_m2 > 0.4);

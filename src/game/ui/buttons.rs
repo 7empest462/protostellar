@@ -74,7 +74,7 @@ pub fn create_compact_selectable_button(
                 border: base_border,
             },
             Node {
-                padding: UiRect::new(Val::Px(7.0), Val::Px(6.0), Val::Px(2.5), Val::Px(2.5)),
+                padding: UiRect::new(Val::Px(8.0), Val::Px(7.0), Val::Px(4.0), Val::Px(4.0)),
                 margin: UiRect::all(Val::Px(1.5)),
                 border: UiRect::new(Val::Px(2.5), Val::Px(0.5), Val::Px(0.5), Val::Px(0.5)),
                 border_radius: BorderRadius {
@@ -117,7 +117,7 @@ pub fn create_compact_button(
             HudButton,
             action,
             Node {
-                padding: UiRect::new(Val::Px(7.0), Val::Px(6.0), Val::Px(2.5), Val::Px(2.5)),
+                padding: UiRect::new(Val::Px(8.0), Val::Px(7.0), Val::Px(4.0), Val::Px(4.0)),
                 margin: UiRect::all(Val::Px(1.5)),
                 border: UiRect::new(Val::Px(2.5), Val::Px(0.5), Val::Px(0.5), Val::Px(0.5)),
                 border_radius: BorderRadius {

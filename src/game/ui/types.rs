@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
     Node,
     bevy::ui::FocusPolicy::Block,
     bevy::ui_widgets::Button,
+    bevy::ui_widgets::ActivateOnPress,
     bevy::picking::hover::Hovered
 )]
 pub struct HudButton;
@@ -286,6 +287,7 @@ pub enum HudPanelElement {
     TrajectoryPredictorBadge,
     LagrangePointsBadge,
     HabitableZoneBadge,
+    AudioMuteBadge,
     ParticleDensityBadge,
     QuickBarContainer,
 }
@@ -305,6 +307,7 @@ pub enum HudDynamicText {
     TrajectoryPredictorBadge,
     LagrangePointsBadge,
     HabitableZoneBadge,
+    AudioMuteBadge,
 }
 
 /// Discriminant component for action categories within the Target Inspector toolbar.
@@ -515,6 +518,7 @@ pub enum UiButtonAction {
     TriggerCosmicHazard(crate::simulation::events::CosmicEventType),
     ToggleAutoHazards,
     CycleTonemappingMode,
+    ToggleAudioMute,
     // Live Celestial Body Editor
     IncreaseMass,
     DecreaseMass,
@@ -596,6 +600,14 @@ pub enum UiButtonAction {
     LoadNamedSlot,
     CopySystemSeedClipboard,
     PasteSystemSeedClipboard,
+    ToggleSavesPanel,
+    RefreshSaveSlots,
+    SaveNewScenarioSlot,
+    ToggleSavesScenarioFilter,
+    LoadSaveSlot(usize),
+    OverwriteSaveSlot(usize),
+    SelectSaveSlot(usize),
+    DeleteSaveSlot(usize),
     ClearQuickBarFilter,
     // Inspector Tab Switching
     SelectInspectorTab(InspectorTab),
@@ -749,6 +761,14 @@ impl UiButtonAction {
             UiButtonAction::LoadNamedSlot => "Load solar system state from the named save slot.",
             UiButtonAction::CopySystemSeedClipboard => "Copy active system state as a compact seed to the clipboard.",
             UiButtonAction::PasteSystemSeedClipboard => "Import and restore system seed from the clipboard.",
+            UiButtonAction::ToggleSavesPanel => "Open or close the Multi-Save & Scenario Slot Manager.",
+            UiButtonAction::RefreshSaveSlots => "Rescan the saves/ directory for saved systems.",
+            UiButtonAction::SaveNewScenarioSlot => "Create a new numbered save slot tagged for the active scenario.",
+            UiButtonAction::ToggleSavesScenarioFilter => "Toggle filtering the save list to only the currently active scenario.",
+            UiButtonAction::LoadSaveSlot(_) => "Load this saved solar system state from disk.",
+            UiButtonAction::OverwriteSaveSlot(_) => "Overwrite this save slot with the current solar system state.",
+            UiButtonAction::SelectSaveSlot(_) => "Load this slot name into the active Save Slot input box.",
+            UiButtonAction::DeleteSaveSlot(_) => "Delete this save file from disk (click twice to confirm).",
             UiButtonAction::ClearQuickBarFilter => "Clear active quick bar search filter.",
             UiButtonAction::SelectInspectorTab(tab) => match tab {
                 InspectorTab::Overview => "Switch to the Overview inspector tab (orbital parameters, mass, and bulk composition).",
@@ -758,6 +778,7 @@ impl UiButtonAction {
             UiButtonAction::AdvanceCivilization => "Advance civilization: spawns a high-tech biosphere and activates city lights on the night side.",
             UiButtonAction::LaunchProbe => "Launch a Space Probe: sends an Orbiter or Rover from a technologically advanced world (or star) to explore the selected target.",
             UiButtonAction::ToggleListSortMode => "Toggle whether the list of celestial bodies is sorted by distance from the central star or by descending mass.",
+            UiButtonAction::ToggleAudioMute => "[M]: Mute or unmute procedural cosmic sonification audio (muted by default).",
             _ => "",
         }
     }
@@ -809,3 +830,40 @@ pub enum TechTreePanelElement {
     Summary,
 }
 pub use super::campaign_panel::{CampaignPanelElement, CampaignPanelState};
+
+/// A single astrophysical event recorded for UI history and timeline inspection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CosmicEventEntry {
+    pub timestamp_yr: f64,
+    pub icon: &'static str,
+    pub headline: String,
+    pub target_entity: Option<Entity>,
+}
+
+/// Bounded ring-buffer resource tracking the 32 most recent major astrophysical events.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct CosmicEventLog {
+    pub entries: std::collections::VecDeque<CosmicEventEntry>,
+}
+
+impl CosmicEventLog {
+    pub const MAX_ENTRIES: usize = 32;
+
+    pub fn push(
+        &mut self,
+        timestamp_yr: f64,
+        icon: &'static str,
+        headline: String,
+        target_entity: Option<Entity>,
+    ) {
+        if self.entries.len() >= Self::MAX_ENTRIES {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(CosmicEventEntry {
+            timestamp_yr,
+            icon,
+            headline,
+            target_entity,
+        });
+    }
+}

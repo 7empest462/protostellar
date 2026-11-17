@@ -77,7 +77,7 @@ pub fn compile_and_validate_wesl_shader(shader_path: &str, extra_defs: &[ShaderD
     let source = std::fs::read_to_string(shader_path)
         .unwrap_or_else(|e| panic!("{shader_path} must exist: {e:?}"));
 
-    let mut cache: ShaderCache<String, ()> = ShaderCache::new((), |_, src, _| match src {
+    let mut cache: ShaderCache<String, ()> = ShaderCache::new((), |(), src, _| match src {
         ShaderCacheSource::Wgsl(wgsl) => Ok(wgsl),
         ShaderCacheSource::SpirV(_) => panic!("Expected WGSL output from WESL compilation"),
     });
@@ -132,7 +132,7 @@ pub fn compile_and_validate_wesl_shader(shader_path: &str, extra_defs: &[ShaderD
 
 #[test]
 fn test_embedded_astrophysics_wesl_libraries_compilation_and_import() {
-    let test_src = r#"
+    let test_src = r"
 import protostellar::rendering::shaders::noise::{noise, fbm, hash3};
 import protostellar::rendering::shaders::scattering::{dual_lobe_mie_phase, chapman_spherical_airmass};
 import protostellar::rendering::shaders::blackbody::{blackbody_temperature_to_rgb, doppler_shift_temperature};
@@ -151,9 +151,9 @@ fn fs_main() -> @location(0) vec4<f32> {
     let val = n + f + h + mie + airmass + t_shifted * 0.0001;
     return vec4<f32>(star_rgb * val, 1.0);
 }
-"#;
+";
 
-    let mut cache: ShaderCache<String, ()> = ShaderCache::new((), |_, src, _| match src {
+    let mut cache: ShaderCache<String, ()> = ShaderCache::new((), |(), src, _| match src {
         ShaderCacheSource::Wgsl(wgsl) => Ok(wgsl),
         ShaderCacheSource::SpirV(_) => panic!("Expected WGSL output from WESL compilation"),
     });
@@ -255,8 +255,8 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
     }
 
     assert_eq!(
-        checked_wesl_shaders, 14,
-        "Expected 14 non-UI .wesl material shaders (plus sci_fi_panel.wesl = 15 total)"
+        checked_wesl_shaders, 15,
+        "Expected 15 non-UI .wesl material shaders (plus sci_fi_panel.wesl = 16 total)"
     );
     assert_eq!(
         checked_raw_wgsl_shaders, 5,
@@ -272,6 +272,7 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
         "assets/shaders/circumstellar.wesl",
         "assets/shaders/comet_tail.wesl",
         "assets/shaders/gas_cloud.wesl",
+        "assets/shaders/particle_swarm.wesl",
         "assets/shaders/planet.wesl",
         "assets/shaders/planetary_rings.wesl",
         "assets/shaders/post_processing.wesl",
@@ -287,6 +288,17 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
     for shader_path in wesl_shaders {
         compile_and_validate_wesl_shader(shader_path, &[]);
     }
+
+    // Validate GPU-billboarded particle swarm vertex + fragment permutations with full vertex attrs
+    compile_and_validate_wesl_shader(
+        "assets/shaders/particle_swarm.wesl",
+        &[
+            ShaderDefVal::Bool("VERTEX_POSITIONS".into(), true),
+            ShaderDefVal::Bool("VERTEX_NORMALS".into(), true),
+            ShaderDefVal::Bool("VERTEX_UVS_A".into(), true),
+            ShaderDefVal::Bool("VERTEX_COLORS".into(), true),
+        ],
+    );
 
     // Also validate planet.wesl under PREPASS_PIPELINE + DEFERRED_PREPASS
     compile_and_validate_wesl_shader(
@@ -383,11 +395,11 @@ fn test_roche_stream_wgsl_naga_validation() {
 }
 
 fn validate_wgsl_compute_shader_with_naga(shader_path: &str) {
-    let source = std::fs::read_to_string(shader_path)
-        .unwrap_or_else(|_| panic!("{} must exist", shader_path));
+    let source =
+        std::fs::read_to_string(shader_path).unwrap_or_else(|_| panic!("{shader_path} must exist"));
     let res = wgpu::naga::front::wgsl::parse_str(&source);
     if let Err(ref err) = res {
-        eprintln!("{} WGSL Parse Error: {:?}", shader_path, err);
+        eprintln!("{shader_path} WGSL Parse Error: {err:?}");
     }
     assert!(
         res.is_ok(),
@@ -590,7 +602,7 @@ fn test_planet_wgsl_ocean_hypsometry_guardrails() {
                 "planet.wgsl must guard ice cap rendering by in_ice_cap",
             ),
             (
-                "let boil_steam_factor = clamp((temp - 345.0) / 35.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles",
+                "let boil_steam_factor = clamp((temp - 380.0) / 45.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles",
                 "planet.wgsl must strictly require has_water_volatiles before activating boiling-ocean steam clouds",
             ),
         ],

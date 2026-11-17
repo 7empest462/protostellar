@@ -87,7 +87,7 @@ pub fn pebble_isolation_mass_solar(r_au: f64) -> f64 {
     if (2.10..=3.45).contains(&r_au) {
         // Asteroid belt: Jupiter Kirkwood resonance perturbation barrier
         0.002 * EARTH_MASS_SOLAR
-    } else if r_au < 2.0 {
+    } else if r_au < 2.10 {
         // Inner terrestrial zone: dry silicate pebble stall
         0.85 * EARTH_MASS_SOLAR
     } else {
@@ -174,26 +174,77 @@ fn update_promoted_name(name: &mut String, old_type: BodyType, new_type: BodyTyp
             .replace("Planetesimal", "Embryo")
             .replace("Asteroid", "Embryo");
     } else if new_type == BodyType::TerrestrialPlanet {
-        let lower = name.to_lowercase();
-        let is_named = lower.contains("earth")
-            || lower.contains("theia")
-            || lower.contains("mars")
-            || lower.contains("venus")
-            || lower.contains("mercury")
-            || lower.contains("moon")
-            || lower.contains("ceres")
-            || lower.contains("vesta")
-            || lower.contains("psyche")
-            || lower.contains("pluto")
-            || lower.contains("jupiter")
-            || lower.contains("saturn")
-            || lower.contains("uranus")
-            || lower.contains("neptune")
+        const CANONICAL_NAMES: [&str; 14] = [
+            "earth", "theia", "mars", "venus", "mercury", "moon", "ceres", "vesta", "psyche",
+            "pluto", "jupiter", "saturn", "uranus", "neptune",
+        ];
+        let is_named = crate::utils::math::contains_any_ignore_ascii_case(name, &CANONICAL_NAMES)
             || name.starts_with("Planet");
         if !is_named {
             *name = format!("Planet ({name})");
         }
     }
+}
+
+fn compute_hydrated_pebble_water_fraction(r_au: f64, snow_line_au: f64) -> f64 {
+    if r_au <= 0.35 {
+        return 0.0;
+    }
+    if r_au >= snow_line_au {
+        0.35
+    } else {
+        let dr = (snow_line_au - r_au).max(0.0);
+        // Carbonaceous chondrite phyllosilicate & wet icy pebble drift fraction inside snowline (~3.5% at 1 AU)
+        ((-dr / 1.4).exp() * 0.08 + 0.012).clamp(0.008, 0.09)
+    }
+}
+
+/// Computes Earth-masses of H2O delivered during a pebble accretion step, including
+/// fine hydrated carbonaceous dust drifting inward through the pebble isolation bump.
+fn compute_pebble_water_delivery_m_earth(
+    mass_solar: f64,
+    dm_solar: f64,
+    r_au: f64,
+    star_mass: f64,
+    gas_scale: f64,
+    snow_line_au: f64,
+    dt_yr: f64,
+    body_type: BodyType,
+    comp: &Composition,
+) -> f64 {
+    if r_au <= 0.35 || gas_scale <= 0.001 {
+        return 0.0;
+    }
+    let dm_earth = dm_solar / EARTH_MASS_SOLAR;
+    let pebble_h2o_frac = compute_hydrated_pebble_water_fraction(r_au, snow_line_au);
+    let endogenous = compute_endogenous_water_m_earth(dm_solar, comp, r_au, gas_scale as f32);
+    let mut water_gain = endogenous + dm_earth * pebble_h2o_frac;
+
+    // Fine hydrated carbonaceous grains (< 100 um) stay coupled to gas inward drift across the
+    // mm-pebble isolation barrier so Earth-sized terrestrial worlds continue accumulating oceans.
+    let m_iso = pebble_isolation_mass_solar(r_au);
+    if r_au < snow_line_au
+        && mass_solar >= m_iso
+        && matches!(
+            body_type,
+            BodyType::Protoplanet | BodyType::TerrestrialPlanet | BodyType::SuperEarth
+        )
+    {
+        let unthrottled_fine_rate = pebble_accretion_rate(
+            m_iso.min(mass_solar),
+            r_au,
+            star_mass,
+            gas_scale,
+            snow_line_au,
+            body_type,
+        );
+        let over = ((mass_solar / m_iso) - 1.0).clamp(0.0, 10.0);
+        let fine_bypass_frac = 0.04 * (-over * 0.5).exp();
+        let fine_dm_earth = (unthrottled_fine_rate * fine_bypass_frac * dt_yr) / EARTH_MASS_SOLAR;
+        water_gain += fine_dm_earth * pebble_h2o_frac;
+    }
+
+    water_gain.max(0.0)
 }
 
 /// Bevy system: grow cores, planetesimals, asteroids, and comets by sweeping pebbles.
@@ -202,6 +253,7 @@ fn update_promoted_name(name: &mut String, old_type: BodyType, new_type: BodyTyp
     reason = "Bevy Query mirrors direct_nebular_gas_accretion"
 )]
 pub fn apply_pebble_accretion(
+    mut commands: Commands,
     config: Res<SimulationConfig>,
     time_warp: Res<TimeWarp>,
     sim_time: Res<SimTime>,
@@ -209,12 +261,14 @@ pub fn apply_pebble_accretion(
     scenario_state: Option<Res<ActiveScenarioState>>,
     mut bodies_query: Query<
         (
+            Entity,
             &mut Mass,
             &SimPosition,
             &mut Radius,
             &mut Composition,
             &mut CelestialBody,
             Option<&mut InternalDifferentiation>,
+            Option<&mut VolatileInventory>,
         ),
         (
             Without<CentralStar>,
@@ -239,11 +293,18 @@ pub fn apply_pebble_accretion(
         return;
     }
 
-    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(50.0);
+    let raw_dt = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
+    };
+    let dt_yr = raw_dt.min(50.0);
     let star_mass = disk_params.central_star_mass;
     let snow = disk_params.snow_line_au;
 
-    for (mut mass, pos, mut rad, mut comp, mut body, mut opt_diff) in bodies_query.iter_mut() {
+    for (entity, mut mass, pos, mut rad, mut comp, mut body, mut opt_diff, mut opt_vol) in
+        bodies_query.iter_mut()
+    {
         if !is_pebble_target(body.body_type) {
             continue;
         }
@@ -254,76 +315,168 @@ pub fn apply_pebble_accretion(
         }
 
         let mdot = pebble_accretion_rate(mass.0, r_au, star_mass, gas_scale, snow, body.body_type);
-        if mdot <= 0.0 {
-            continue;
-        }
-
         let dm = mdot * dt_yr;
-        if dm < 1e-16 {
+        if mdot <= 0.0 || dm < 1e-16 {
             continue;
         }
 
-        let new_mass = mass.0 + dm;
-        mass.0 = new_mass;
+        apply_single_body_pebble_accretion(
+            &mut commands,
+            entity,
+            &mut mass,
+            r_au,
+            &mut rad,
+            &mut comp,
+            &mut body,
+            &mut opt_diff,
+            &mut opt_vol,
+            dm,
+            star_mass,
+            gas_scale,
+            snow,
+            dt_yr,
+        );
+    }
+}
 
-        if r_au >= snow {
-            let ice_add = 0.55;
-            let rock_add = 0.35;
-            let metal_add = 0.10;
-            let total = ice_add + rock_add + metal_add;
-            let w_old = mass.0 - dm;
-            let w_new = dm;
-            comp.ice_frac = (comp.ice_frac * w_old + ice_add / total * w_new) / new_mass;
-            comp.silicate_frac = (comp.silicate_frac * w_old + rock_add / total * w_new) / new_mass;
-            comp.metal_frac = (comp.metal_frac * w_old + metal_add / total * w_new) / new_mass;
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Per-body pebble accretion helper"
+)]
+fn apply_single_body_pebble_accretion(
+    commands: &mut Commands,
+    entity: Entity,
+    mass: &mut Mass,
+    r_au: f64,
+    rad: &mut Radius,
+    comp: &mut Composition,
+    body: &mut CelestialBody,
+    opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
+    opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
+    dm: f64,
+    star_mass: f64,
+    gas_scale: f64,
+    snow: f64,
+    dt_yr: f64,
+) {
+    let prev_mass = mass.0;
+
+    let m_iso = pebble_isolation_mass_solar(r_au);
+    let fine_dm_solar = if r_au > 0.35
+        && r_au < snow
+        && gas_scale > 0.001
+        && prev_mass >= m_iso
+        && matches!(
+            body.body_type,
+            BodyType::Protoplanet | BodyType::TerrestrialPlanet | BodyType::SuperEarth
+        ) {
+        let unthrottled_fine_rate = pebble_accretion_rate(
+            m_iso.min(prev_mass),
+            r_au,
+            star_mass,
+            gas_scale,
+            snow,
+            body.body_type,
+        );
+        let over = ((prev_mass / m_iso) - 1.0).clamp(0.0, 10.0);
+        let fine_bypass_frac = 0.04 * (-over * 0.5).exp();
+        (unthrottled_fine_rate * fine_bypass_frac * dt_yr).max(0.0)
+    } else {
+        0.0
+    };
+
+    let total_dm = dm + fine_dm_solar;
+    let new_mass = prev_mass + total_dm;
+    mass.0 = new_mass;
+
+    let water_gain_m_earth = compute_pebble_water_delivery_m_earth(
+        prev_mass,
+        dm,
+        r_au,
+        star_mass,
+        gas_scale,
+        snow,
+        dt_yr,
+        body.body_type,
+        comp,
+    );
+
+    if r_au >= snow {
+        let ice_add = 0.55;
+        let rock_add = 0.35;
+        let metal_add = 0.10;
+        let total = ice_add + rock_add + metal_add;
+        comp.ice_frac = (comp.ice_frac * prev_mass + ice_add / total * total_dm) / new_mass;
+        comp.silicate_frac =
+            (comp.silicate_frac * prev_mass + rock_add / total * total_dm) / new_mass;
+        comp.metal_frac = (comp.metal_frac * prev_mass + metal_add / total * total_dm) / new_mass;
+        comp.organics_frac = (comp.organics_frac * prev_mass) / new_mass;
+        comp.gas_frac = (comp.gas_frac * prev_mass) / new_mass;
+    } else {
+        let wet_ice_add = if r_au > 0.35 {
+            compute_hydrated_pebble_water_fraction(r_au, snow).min(0.03)
         } else {
-            let rock_add = 0.70;
-            let metal_add = 0.30;
-            let w_old = mass.0 - dm;
-            let w_new = dm;
-            comp.silicate_frac = (comp.silicate_frac * w_old + rock_add * w_new) / new_mass;
-            comp.metal_frac = (comp.metal_frac * w_old + metal_add * w_new) / new_mass;
-        }
-
-        let sum = comp.ice_frac
-            + comp.silicate_frac
-            + comp.metal_frac
-            + comp.organics_frac
-            + comp.gas_frac;
-        if sum > 1e-12 {
-            comp.ice_frac /= sum;
-            comp.silicate_frac /= sum;
-            comp.metal_frac /= sum;
-            comp.organics_frac /= sum;
-            comp.gas_frac /= sum;
-        }
-
-        let density = comp.average_density();
-        let physical_radius = ((3.0 * new_mass / density.max(1e-30)) / (4.0 * PI)).cbrt();
-        let new_radius = match body.body_type {
-            BodyType::Protoplanet
-            | BodyType::TerrestrialPlanet
-            | BodyType::SuperEarth
-            | BodyType::GasGiant
-            | BodyType::IceGiant => physical_radius.max(EARTH_RADIUS_AU * 0.05),
-            _ => physical_radius.max(1e-8),
+            0.0
         };
-        rad.0 = new_radius;
+        let rock_add = 0.70 - wet_ice_add * 0.70;
+        let metal_add = 0.30 - wet_ice_add * 0.30;
+        comp.ice_frac = (comp.ice_frac * prev_mass + wet_ice_add * total_dm) / new_mass;
+        comp.silicate_frac = (comp.silicate_frac * prev_mass + rock_add * total_dm) / new_mass;
+        comp.metal_frac = (comp.metal_frac * prev_mass + metal_add * total_dm) / new_mass;
+        comp.organics_frac = (comp.organics_frac * prev_mass) / new_mass;
+        comp.gas_frac = (comp.gas_frac * prev_mass) / new_mass;
+    }
 
-        let new_type = if body.body_type == BodyType::Moon {
-            BodyType::Moon
-        } else {
-            classify_body_by_mass_and_comp(new_mass, &comp, false)
-        };
-        if new_type != body.body_type {
-            let old_type = body.body_type;
-            body.body_type = new_type;
-            update_promoted_name(&mut body.name, old_type, new_type);
+    if water_gain_m_earth > 0.0 {
+        if let Some(ref mut vol) = opt_vol {
+            vol.delivered_water_m_earth += water_gain_m_earth;
+            if vol.atmospheric_pressure_bar < 1.0 {
+                vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
+                    + (water_gain_m_earth / 0.0005) as f32 * 0.45)
+                    .min(1.0);
+            }
+        } else if matches!(
+            body.body_type,
+            BodyType::Protoplanet | BodyType::TerrestrialPlanet | BodyType::SuperEarth
+        ) {
+            commands.entity(entity).insert(VolatileInventory {
+                delivered_water_m_earth: water_gain_m_earth,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: ((water_gain_m_earth / 0.0005) as f32 * 0.45).min(1.0),
+                cometary_impact_count: 0,
+            });
         }
+    }
 
-        if let Some(ref mut diff) = opt_diff {
-            diff.recalculate(new_mass, new_radius, &comp);
+    *comp = comp.normalized();
+
+    let density = comp.average_density();
+    let physical_radius = ((3.0 * new_mass / density.max(1e-30)) / (4.0 * PI)).cbrt();
+    let new_radius = match body.body_type {
+        BodyType::GasGiant | BodyType::BrownDwarf => {
+            (0.000_477 * (new_mass / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085)
         }
+        BodyType::Protoplanet
+        | BodyType::TerrestrialPlanet
+        | BodyType::SuperEarth
+        | BodyType::IceGiant => physical_radius.max(EARTH_RADIUS_AU * 0.05),
+        _ => physical_radius.max(1e-8),
+    };
+    rad.0 = new_radius;
+
+    let new_type = if body.body_type == BodyType::Moon {
+        BodyType::Moon
+    } else {
+        classify_body_by_mass_and_comp(new_mass, comp, false)
+    };
+    if new_type != body.body_type {
+        let old_type = body.body_type;
+        body.body_type = new_type;
+        update_promoted_name(&mut body.name, old_type, new_type);
+    }
+
+    if let Some(ref mut diff) = opt_diff {
+        diff.recalculate(new_mass, new_radius, comp);
     }
 }
 

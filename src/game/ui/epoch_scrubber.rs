@@ -656,7 +656,17 @@ pub fn update_epoch_scrubber_ui(
         Without<EpochScrubberPanel>,
     >,
     geo_query: Query<(Entity, &CelestialBody, &GeologicalState)>,
+    mut last_sig: Local<
+        Option<(
+            Option<Entity>,
+            EpochTargetPlanet,
+            GeologicalEpoch,
+            bool,
+            u64,
+        )>,
+    >,
 ) {
+    use super::update::{set_display_if_changed, set_text_if_changed, set_text_str_if_changed};
     let Some(ref mut scrubber) = opt_scrubber else {
         return;
     };
@@ -665,46 +675,39 @@ pub fn update_epoch_scrubber_ui(
     };
 
     if !scrubber.is_open {
-        panel_node.display = Display::None;
+        set_display_if_changed(&mut panel_node, Display::None);
         return;
     }
-    panel_node.display = Display::Flex;
+    set_display_if_changed(&mut panel_node, Display::Flex);
 
-    let Some((_ent, body, geo)) =
+    let Some((target_ent, body, geo)) =
         resolve_epoch_scrubber_target(scrubber, &player_state, &geo_query)
     else {
         if let Ok(mut title) = body_title_query.single_mut() {
-            title.0 = "🪐 Target: No Terrestrial Worlds Found".to_string();
+            set_text_str_if_changed(&mut title, "🪐 Target: No Terrestrial Worlds Found");
         }
+        *last_sig = None;
         return;
     };
 
-    // 2. Toggle button groups for the active planet timeline
-    for (group, mut node) in button_group_query.iter_mut() {
-        if group.0 == scrubber.target_planet {
-            node.display = Display::Flex;
-        } else {
-            node.display = Display::None;
-        }
+    let current_sig = (
+        Some(target_ent),
+        scrubber.target_planet,
+        scrubber.active_epoch,
+        scrubber.auto_advance,
+        compute_epoch_scrubber_data_hash(geo),
+    );
+    if last_sig.as_ref() == Some(&current_sig) {
+        return;
     }
+    *last_sig = Some(current_sig);
 
-    // 3. Highlight active planet tab
-    for (tab, mut border) in planet_tab_query.iter_mut() {
-        if tab.0 == scrubber.target_planet {
-            *border = BorderColor::all(Color::srgb(1.0, 0.85, 0.40));
-        } else {
-            *border = BorderColor::all(Color::srgba(0.35, 0.55, 0.75, 0.45));
-        }
-    }
-
-    // 4. Highlight active epoch button
-    for (btn, mut border) in epoch_btn_query.iter_mut() {
-        if btn.0 == scrubber.active_epoch {
-            *border = BorderColor::all(Color::srgb(1.0, 0.85, 0.40));
-        } else {
-            *border = BorderColor::all(Color::srgba(0.35, 0.55, 0.75, 0.45));
-        }
-    }
+    sync_epoch_scrubber_buttons(
+        scrubber,
+        &mut button_group_query,
+        &mut planet_tab_query,
+        &mut epoch_btn_query,
+    );
 
     let type_label = match body.body_type {
         BodyType::TerrestrialPlanet => "Terrestrial Planet",
@@ -715,9 +718,12 @@ pub fn update_epoch_scrubber_ui(
 
     // 5. Update body title
     if let Ok(mut title) = body_title_query.single_mut() {
-        title.0 = format!(
-            "🪐 Target: {} ({}) | Age: {:.3} Ga",
-            body.name, type_label, geo.geological_age_gyr
+        set_text_if_changed(
+            &mut title,
+            format!(
+                "🪐 Target: {} ({}) | Age: {:.3} Ga",
+                body.name, type_label, geo.geological_age_gyr
+            ),
         );
     }
 
@@ -728,20 +734,86 @@ pub fn update_epoch_scrubber_ui(
         } else {
             "HOLD"
         };
-        status.0 = format!(
-            "AGE: {:.3} Ga | Epoch: {} [{}]\nGEOLOGY: {} (Wilson/Tectonic Cycle: {:.2}, Clustered: {:.0}%)",
-            geo.geological_age_gyr,
-            geo.epoch.name(),
-            clock_mode,
-            geo.epoch.supercontinent_name(),
-            geo.continental_drift_phase,
-            geo.supercontinent_aggregation * 100.0
+        set_text_if_changed(
+            &mut status,
+            format!(
+                "AGE: {:.3} Ga | Epoch: {} [{}]\nGEOLOGY: {} (Wilson/Tectonic Cycle: {:.2}, Clustered: {:.0}%)",
+                geo.geological_age_gyr,
+                geo.epoch.name(),
+                clock_mode,
+                geo.epoch.supercontinent_name(),
+                geo.continental_drift_phase,
+                geo.supercontinent_aggregation * 100.0
+            ),
         );
     }
 
     // 7. Update planet-specific telemetry metrics text
     if let Ok(mut metrics) = metrics_query.single_mut() {
-        metrics.0 = format_epoch_telemetry_metrics(scrubber.target_planet, geo);
+        set_text_if_changed(
+            &mut metrics,
+            format_epoch_telemetry_metrics(scrubber.target_planet, geo),
+        );
+    }
+}
+
+fn compute_epoch_scrubber_data_hash(geo: &GeologicalState) -> u64 {
+    u64::from(geo.geological_age_gyr.to_bits())
+        ^ (u64::from(geo.ocean_oxidation_progress.to_bits()) << 1)
+        ^ (u64::from(geo.oxygen_level_pal.to_bits()) << 2)
+        ^ (u64::from(geo.terrestrial_vegetation_fraction.to_bits()) << 3)
+        ^ (u64::from(geo.volcanic_orogeny_activity.to_bits()) << 4)
+        ^ (u64::from(geo.continental_drift_phase.to_bits()) << 5)
+        ^ (u64::from(geo.supercontinent_aggregation.to_bits()) << 6)
+        ^ (geo.epoch as u64).wrapping_mul(0x9E37_79B9)
+}
+
+#[allow(
+    clippy::type_complexity,
+    reason = "Updates button group visibility and active border highlights for epoch scrubber"
+)]
+fn sync_epoch_scrubber_buttons(
+    scrubber: &TimelineScrubber,
+    button_group_query: &mut Query<
+        (&EpochPlanetButtonGroup, &mut Node),
+        Without<EpochScrubberPanel>,
+    >,
+    planet_tab_query: &mut Query<
+        (&EpochPlanetTabButton, &mut BorderColor),
+        Without<EpochQuickButton>,
+    >,
+    epoch_btn_query: &mut Query<(&EpochQuickButton, &mut BorderColor)>,
+) {
+    use super::update::{set_border_color_if_changed, set_display_if_changed};
+    for (group, mut node) in button_group_query.iter_mut() {
+        let disp = if group.0 == scrubber.target_planet {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        set_display_if_changed(&mut node, disp);
+    }
+    let active = BorderColor::all(Color::srgb(1.0, 0.85, 0.40));
+    let inactive = BorderColor::all(Color::srgba(0.35, 0.55, 0.75, 0.45));
+    for (tab, mut border) in planet_tab_query.iter_mut() {
+        set_border_color_if_changed(
+            &mut border,
+            if tab.0 == scrubber.target_planet {
+                active
+            } else {
+                inactive
+            },
+        );
+    }
+    for (btn, mut border) in epoch_btn_query.iter_mut() {
+        set_border_color_if_changed(
+            &mut border,
+            if btn.0 == scrubber.active_epoch {
+                active
+            } else {
+                inactive
+            },
+        );
     }
 }
 

@@ -155,9 +155,7 @@ fn test_continuous_collision_detection_tunneling_defense() {
     // CCD successfully intercepts the impact at 0.005 AU!
     assert!(
         min_distance < planet_radius,
-        "CCD must intercept the closest approach (min_dist = {}, radius = {})",
-        min_distance,
-        planet_radius
+        "CCD must intercept the closest approach (min_dist = {min_distance}, radius = {planet_radius})"
     );
     assert!(
         (min_distance - 0.005).abs() < 1e-6,
@@ -178,8 +176,7 @@ fn test_little_red_dot_circum_nuclear_period_and_energy() {
 
     assert!(
         period_inner > 1.10 && period_inner < 1.25,
-        "85 AU orbital period should be ~1.17 years, got {}",
-        period_inner
+        "85 AU orbital period should be ~1.17 years, got {period_inner}"
     );
     assert!(
         specific_energy_inner < -100_000.0,
@@ -193,8 +190,7 @@ fn test_little_red_dot_circum_nuclear_period_and_energy() {
 
     assert!(
         period_outer > 5.2 && period_outer < 5.6,
-        "235 AU orbital period should be ~5.37 years, got {}",
-        period_outer
+        "235 AU orbital period should be ~5.37 years, got {period_outer}"
     );
     assert!(specific_energy_outer < specific_energy_inner.abs());
 }
@@ -327,8 +323,7 @@ fn test_little_red_dot_stable_keplerian_orbit() {
     let rel_diff = (a_centripetal - acc_grav).abs() / a_centripetal;
     assert!(
         rel_diff < 1e-7,
-        "Gravitational pull must match centripetal acceleration exactly, rel_diff: {}",
-        rel_diff
+        "Gravitational pull must match centripetal acceleration exactly, rel_diff: {rel_diff}"
     );
 
     // Symplectic Leapfrog test: Integrate orbit for 1.5 years (> 1 full orbit: P = 1.38 yr)
@@ -401,11 +396,12 @@ fn test_asteroid_mesh_isotropic_harmonics_and_planetesimal_sphere() {
 
 #[test]
 fn test_pop_iii_eddington_mass_ceiling() {
+    const POP_III_MAX_STELLAR_MASS: f64 = 150.0;
+
     // Verifies that stellar accretion in supermassive disks (Little Red Dot)
     // is strictly bounded by the astrophysical Eddington radiation ceiling (150 M_sun),
     // preventing the catastrophic 423-billion-solar-mass runaway explosion.
     let mut star_mass = 60.0; // 60 M_sun Pop-III star seed
-    const POP_III_MAX_STELLAR_MASS: f64 = 150.0;
 
     // Simulate 50,000 particle accretion events (each gaining dust mass)
     let particle_gain = 0.005; // 0.005 M_sun per swarm particle in a 500 M_sun disk
@@ -551,9 +547,9 @@ fn test_little_red_dot_scenario_initial_orbit_stability() {
     let satellites = [
         ("Micro-Quasar alpha", 88.0, 12.0),
         ("Star alpha", 120.0, 60.0),
-        ("Prime-b", 155.0, 0.000045),
+        ("Prime-b", 155.0, 0.000_045),
         ("Star beta", 190.0, 35.0),
-        ("Prime-c", 225.0, 0.000030),
+        ("Prime-c", 225.0, 0.000_030),
         ("Star gamma", 260.0, 20.0),
     ];
 
@@ -597,15 +593,13 @@ fn test_stellar_photosphere_shader_coverage() {
     assert!(
         shader_src.contains("voronoi3")
             && std::fs::read_to_string("src/rendering/shaders/noise.wesl")
-                .map(|s| s.contains("fn voronoi3("))
-                .unwrap_or(false),
+                .is_ok_and(|s| s.contains("fn voronoi3(")),
         "planet.wesl must import and use 3D Voronoi cellular noise engine"
     );
     assert!(
         shader_src.contains("hash3_vec")
             && std::fs::read_to_string("src/rendering/shaders/noise.wesl")
-                .map(|s| s.contains("fn hash3_vec("))
-                .unwrap_or(false),
+                .is_ok_and(|s| s.contains("fn hash3_vec(")),
         "planet.wesl must import and use 3D vector hash function"
     );
 
@@ -707,9 +701,9 @@ fn test_stellar_subtype_mapping_and_palettes() {
     let col_brown_dwarf = compute_stellar_palette(BodyType::BrownDwarf, 1600.0);
     let col_red_giant = compute_stellar_palette(BodyType::RedGiant, 3200.0);
     let col_blue_hyper = compute_stellar_palette(BodyType::Hypergiant, 35000.0);
-    let col_neutron = compute_stellar_palette(BodyType::NeutronStar, 100000.0);
-    let col_pulsar = compute_stellar_palette(BodyType::Pulsar, 200000.0);
-    let col_magnetar = compute_stellar_palette(BodyType::Magnetar, 500000.0);
+    let col_neutron = compute_stellar_palette(BodyType::NeutronStar, 100_000.0);
+    let col_pulsar = compute_stellar_palette(BodyType::Pulsar, 200_000.0);
+    let col_magnetar = compute_stellar_palette(BodyType::Magnetar, 500_000.0);
     let col_white_dwarf = compute_stellar_palette(BodyType::WhiteDwarf, 15000.0);
     let col_quasi = compute_stellar_palette(BodyType::QuasiStar, 4000.0);
 
@@ -755,7 +749,7 @@ fn test_quasistar_photosphere_and_blowout_states() {
     assert_eq!(qs_state.eddington_ratio, 3.5);
 
     // Archetype when intact should be 7 (dedicated Quasi-Star photosphere)
-    let p_type_intact = if !qs_state.is_blown_out { 7u32 } else { 5u32 };
+    let p_type_intact = if qs_state.is_blown_out { 5u32 } else { 7u32 };
     assert_eq!(
         p_type_intact, 7u32,
         "Intact quasi-star must use planet_type 7"
@@ -766,7 +760,7 @@ fn test_quasistar_photosphere_and_blowout_states() {
     assert!(qs_state.is_blown_out, "Quasi-star must be marked blown out");
 
     // Archetype when blown out should be 5 (naked black hole singularity with photon ring)
-    let p_type_blown = if !qs_state.is_blown_out { 7u32 } else { 5u32 };
+    let p_type_blown = if qs_state.is_blown_out { 5u32 } else { 7u32 };
     assert_eq!(
         p_type_blown, 5u32,
         "Blown out quasi-star must transition to planet_type 5 (Black Hole)"

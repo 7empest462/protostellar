@@ -84,10 +84,11 @@ pub fn update_body_terraforming_climate(
         climate.cloud_coverage_frac = (0.75 + (p_steam / 2.0).clamp(0.0, 0.23)).min(0.98);
         climate.albedo = 0.72;
     } else if climate.surface_temperature_k < 260.0 {
+        let has_water_or_ice = total_water > 1e-6 || comp.ice_frac > 0.001;
         climate.climate_regime = ClimateRegime::SnowballIceAge;
-        climate.albedo = 0.65;
-        climate.ice_coverage_frac = 1.0;
-        climate.cloud_coverage_frac = 0.25;
+        climate.albedo = if has_water_or_ice { 0.65 } else { 0.30 };
+        climate.ice_coverage_frac = if has_water_or_ice { 1.0 } else { 0.0 };
+        climate.cloud_coverage_frac = if has_water_or_ice { 0.25 } else { 0.05 };
     } else {
         climate.climate_regime = ClimateRegime::TemperateHabitable;
         climate.albedo = 0.30;

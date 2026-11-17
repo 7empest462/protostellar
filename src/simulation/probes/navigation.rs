@@ -245,7 +245,9 @@ pub fn compute_planet_spin_frame(opt_spin: Option<&SpinState>, elapsed_years: f6
 
     let spin_dir = if let Some(spin) = opt_spin {
         if spin.spin_vector.length_squared() > 1e-12
-            && (spin.spin_vector.x.abs() > 1e-6 || spin.spin_vector.z.abs() > 1e-6)
+            && (spin.spin_vector.x.abs() > 1e-6
+                || spin.spin_vector.z.abs() > 1e-6
+                || spin.spin_vector.y < 0.0)
         {
             spin.spin_vector.normalize()
         } else {

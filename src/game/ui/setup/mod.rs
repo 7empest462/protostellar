@@ -8,16 +8,22 @@ pub(crate) use docks::*;
 
 use bevy::prelude::*;
 
+use crate::rendering::camera::IgnoreUiPicking;
+
 use super::types::*;
 use super::widgets::*;
 
 fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
     top_row
-        .spawn(Node {
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexStart,
-            ..default()
-        })
+        .spawn((
+            IgnoreUiPicking,
+            Pickable::IGNORE,
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                ..default()
+            },
+        ))
         .with_children(|left_col| {
             left_col
                 .spawn((
@@ -103,18 +109,21 @@ fn spawn_top_left_stats_panel(top_row: &mut ChildSpawnerCommands) {
 
 fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
     top_row
-        .spawn(Node {
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            max_width: Val::Px(640.0),
-            ..default()
-        })
+        .spawn((
+            IgnoreUiPicking,
+            Pickable::IGNORE,
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                max_width: Val::Px(640.0),
+                ..default()
+            },
+        ))
         .with_children(|center_col| {
             center_col
                 .spawn((
                     HudPanelElement::QuickBarContainer,
                     ScrollPosition::default(),
-                    bevy::picking::hover::Hovered::default(),
                     Node {
                         flex_direction: FlexDirection::Column,
                         width: Val::Px(640.0), // Force width so children can wrap correctly during measurement
@@ -131,6 +140,8 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                     // Search and filter row for celestial bodies
                     scroll_container
                         .spawn((
+                            IgnoreUiPicking,
+                            Pickable::IGNORE,
                             Node {
                                 flex_direction: FlexDirection::Row,
                                 align_items: AlignItems::Center,
@@ -151,6 +162,7 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                                     ..default()
                                 },
                                 TextColor(Color::srgb(0.4, 0.85, 1.0)),
+                                Pickable::IGNORE,
                             ));
                             spawn_hud_text_input(
                                 filter_row,
@@ -164,7 +176,7 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                                     HudButton,
                                     UiButtonAction::ClearQuickBarFilter,
                                     Node {
-                                        padding: UiRect::axes(Val::Px(5.0), Val::Px(2.0)),
+                                        padding: UiRect::axes(Val::Px(6.0), Val::Px(3.5)),
                                         border: UiRect::all(Val::Px(1.0)),
                                         border_radius: BorderRadius::all(Val::Px(3.0)),
                                         ..default()
@@ -181,12 +193,15 @@ fn spawn_top_center_quick_bar(top_row: &mut ChildSpawnerCommands) {
                                             ..default()
                                         },
                                         TextColor(Color::srgb(0.7, 0.85, 1.0)),
+                                        Pickable::IGNORE,
                                     ));
                                 });
                         });
 
                     scroll_container.spawn((
                         QuickBodySelectorBar,
+                        IgnoreUiPicking,
+                        Pickable::IGNORE,
                         Node {
                             flex_direction: FlexDirection::Row,
                             width: Val::Percent(100.0),
@@ -208,6 +223,8 @@ pub fn setup_hud(mut commands: Commands) {
     commands
         .spawn((
             HudPanelElement::RootContainer,
+            IgnoreUiPicking,
+            Pickable::IGNORE,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
@@ -222,86 +239,115 @@ pub fn setup_hud(mut commands: Commands) {
         ))
         .with_children(|root| {
             // TOP LEFT: Telemetry & Stats
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(10.0),
-                left: Val::Px(10.0),
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(10.0),
+                    left: Val::Px(10.0),
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 spawn_top_left_stats_panel(wrapper);
             });
 
             // TOP CENTER: Quick Selector Bar & Scenarios
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(10.0),
-                left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-320.0)), // Center offset for 640px width
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(10.0),
+                    left: Val::Percent(50.0),
+                    margin: UiRect::left(Val::Px(-320.0)), // Center offset for 640px width
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 spawn_top_center_quick_bar(wrapper);
             });
 
             // TOP RIGHT: Simulation Metrics
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(10.0),
-                right: Val::Px(10.0),
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(10.0),
+                    right: Val::Px(10.0),
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 spawn_simulation_metrics_column(wrapper);
             });
 
             // MIDDLE RIGHT: Controls & Badges
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                top: Val::Vh(40.0), // Safely below top right
-                right: Val::Px(10.0),
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Vh(40.0), // Safely below top right
+                    right: Val::Px(10.0),
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 spawn_top_controls_card(wrapper);
             });
 
             // BOTTOM LEFT: Target Inspector
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(10.0),
-                left: Val::Px(10.0),
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(10.0),
+                    left: Val::Px(10.0),
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 super::inspector_panel::spawn_bottom_left_inspector_panel(wrapper);
             });
 
             // BOTTOM CENTER: Toast & Playbar
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(10.0),
-                left: Val::Percent(45.0), // Shifted left per user request
-                margin: UiRect::left(Val::Px(-260.0)), // Center offset for 520px width
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(10.0),
+                    left: Val::Percent(45.0), // Shifted left per user request
+                    margin: UiRect::left(Val::Px(-260.0)), // Center offset for 520px width
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 spawn_bottom_center_toast_panel(wrapper);
             });
 
             // BOTTOM RIGHT: Navigation Help
-            root.spawn(Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(10.0),
-                right: Val::Px(10.0),
-                ..default()
-            })
+            root.spawn((
+                IgnoreUiPicking,
+                Pickable::IGNORE,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(10.0),
+                    right: Val::Px(10.0),
+                    ..default()
+                },
+            ))
             .with_children(|wrapper| {
                 super::navigation_panel::spawn_bottom_right_controls_panel(wrapper);
             });
 
             // MODAL DRAWERS (Absolute by default inside their spawn functions)
             super::presets_panel::spawn_scenario_presets_panel(root);
+            super::saves_panel::spawn_saves_panel(root);
             super::builder_panel::spawn_planet_builder_panel(root);
             super::telemetry_panel::spawn_telemetry_panel(root);
             super::trophies_panel::spawn_trophies_panel(root);

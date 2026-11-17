@@ -83,7 +83,7 @@ fn test_system_worlds_numerical_ordering_and_reindexing() {
             },
             SimPosition(DVec3::new(0.387, 0.0, 0.0)),
             Mass(0.055 * EARTH_MASS_SOLAR),
-            Radius(0.000016),
+            Radius(0.000_016),
         ))
         .id();
 
@@ -96,7 +96,7 @@ fn test_system_worlds_numerical_ordering_and_reindexing() {
             },
             SimPosition(DVec3::new(0.723, 0.0, 0.0)),
             Mass(0.815 * EARTH_MASS_SOLAR),
-            Radius(0.000040),
+            Radius(0.000_040),
         ))
         .id();
 
@@ -109,7 +109,7 @@ fn test_system_worlds_numerical_ordering_and_reindexing() {
             },
             SimPosition(DVec3::new(1.000, 0.0, 0.0)),
             Mass(EARTH_MASS_SOLAR),
-            Radius(0.0000426),
+            Radius(0.000_042_6),
         ))
         .id();
 
@@ -203,9 +203,8 @@ fn test_trappist1_compact_disk_particle_sampling() {
     for _ in 0..10_000 {
         let (r, comp) = protostellar::simulation::disk::sample_disk_radius(&mut rng, &disk_params);
         assert!(
-            (0.005..=0.150001).contains(&r),
-            "Sampled radius {} out of bounds [0.005, 0.15]",
-            r
+            (0.005..=0.150_001).contains(&r),
+            "Sampled radius {r} out of bounds [0.005, 0.15]"
         );
         if r < min_r {
             min_r = r;
@@ -247,14 +246,12 @@ fn test_earth_spawns_at_1_earth_mass_in_solar_nebula() {
             let m_earth = mass.0 / EARTH_MASS_SOLAR;
             assert!(
                 (m_earth - 1.00).abs() < 1e-4,
-                "Earth must spawn at 1.00 M_earth, got {:.4}",
-                m_earth
+                "Earth must spawn at 1.00 M_earth, got {m_earth:.4}"
             );
             let r_earth = radius.0 / EARTH_RADIUS_AU;
             assert!(
                 (r_earth - 1.00).abs() < 1e-4,
-                "Earth radius must be 1.00 R_earth, got {:.4}",
-                r_earth
+                "Earth radius must be 1.00 R_earth, got {r_earth:.4}"
             );
         }
     }
@@ -362,13 +359,11 @@ fn test_inner_planet_nebular_gas_and_atmosphere_accretion() {
     let m_earth = mass.0 / EARTH_MASS_SOLAR;
     assert!(
         m_earth > 1.0001,
-        "Earth must accumulate nebular gas mass from circumstellar gas cloud! Got {:.6}",
-        m_earth
+        "Earth must accumulate nebular gas mass from circumstellar gas cloud! Got {m_earth:.6}"
     );
     assert!(
         m_earth < 1.05,
-        "Earth should not undergo runaway gas accumulation into a gas giant! Got {:.6}",
-        m_earth
+        "Earth should not undergo runaway gas accumulation into a gas giant! Got {m_earth:.6}"
     );
     assert!(
         comp.gas_frac > 0.0001 && comp.gas_frac <= 0.035,
@@ -539,7 +534,7 @@ fn test_minor_bodies_mesh_variety_and_spectral_classification() {
             name,
             body_type: BodyType::Asteroid,
         };
-        let handle = select_body_mesh(&body, 0.0000001, assets);
+        let handle = select_body_mesh(&body, 0.000_000_1, assets);
         if !asteroid_handles.contains(&handle) {
             asteroid_handles.push(handle);
         }
@@ -558,7 +553,7 @@ fn test_minor_bodies_mesh_variety_and_spectral_classification() {
             name,
             body_type: BodyType::Comet,
         };
-        let handle = select_body_mesh(&body, 0.0000001, assets);
+        let handle = select_body_mesh(&body, 0.000_000_1, assets);
         if !comet_handles.contains(&handle) {
             comet_handles.push(handle);
         }
@@ -601,7 +596,7 @@ fn test_planetesimal_and_comet_mesh_fallback_never_smooth_sphere() {
             name: name.to_string(),
             body_type,
         };
-        let handle = select_body_mesh(&body, 0.0000001, assets);
+        let handle = select_body_mesh(&body, 0.000_000_1, assets);
         assert_ne!(
             handle, assets.planet_mesh,
             "Minor body '{name}' of type {body_type:?} must never use smooth hydrostatic planet_mesh!"
@@ -874,20 +869,22 @@ fn test_sync_celestial_transforms_freezes_planet_and_star_shader_time_when_pause
     app.init_resource::<Assets<PlanetMaterial>>();
     app.init_resource::<Assets<Mesh>>();
 
-    let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
-    let default_mesh = meshes.add(Sphere::new(1.0).mesh().ico(5).unwrap());
-    drop(meshes);
+    let default_mesh = {
+        let mut meshes = app.world_mut().resource_mut::<Assets<Mesh>>();
+        meshes.add(Sphere::new(1.0).mesh().ico(5).unwrap())
+    };
 
     app.insert_resource(VisualAssets::dummy(default_mesh.clone()));
 
-    let mut materials = app.world_mut().resource_mut::<Assets<PlanetMaterial>>();
-    let mat_handle = materials.add(ExtendedMaterial {
-        base: StandardMaterial::default(),
-        extension: PlanetMaterialExtension {
-            uniforms: PlanetUniforms::default(),
-        },
-    });
-    drop(materials);
+    let mat_handle = {
+        let mut materials = app.world_mut().resource_mut::<Assets<PlanetMaterial>>();
+        materials.add(ExtendedMaterial {
+            base: StandardMaterial::default(),
+            extension: PlanetMaterialExtension {
+                uniforms: PlanetUniforms::default(),
+            },
+        })
+    };
 
     // Spawn a planet entity
     let _planet_ent = app

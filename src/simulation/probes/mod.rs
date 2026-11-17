@@ -559,7 +559,9 @@ fn find_launch_origin(
                 origin_body_type = body.body_type;
                 origin_name.clone_from(&body.name);
             }
-        } else if body.name.to_lowercase().contains("earth") && best_origin_score < 50.0 {
+        } else if crate::utils::math::contains_ignore_ascii_case(&body.name, "earth")
+            && best_origin_score < 50.0
+        {
             best_origin_score = 50.0;
             origin_entity = ent;
             origin_pos = pos.0;
@@ -751,7 +753,6 @@ fn resolve_destination_target(
             if ent == origin_entity || opt_star.is_some() {
                 continue;
             }
-            let lower = body.name.to_lowercase();
             let rad = opt_r.map_or(0.005, |r| r.0);
             let dist = (pos.0 - origin_pos).length() as f32;
 
@@ -762,13 +763,13 @@ fn resolve_destination_target(
                 BodyType::GasGiant | BodyType::IceGiant => 400.0,
                 _ => 200.0,
             };
-            if lower.contains("moon") || lower.contains("luna") {
+            if crate::utils::math::contains_any_ignore_ascii_case(&body.name, &["moon", "luna"]) {
                 score += 300.0;
-            } else if lower.contains("mars") {
+            } else if crate::utils::math::contains_ignore_ascii_case(&body.name, "mars") {
                 score += 250.0;
-            } else if lower.contains("venus") {
+            } else if crate::utils::math::contains_ignore_ascii_case(&body.name, "venus") {
                 score += 200.0;
-            } else if lower.contains("jupiter") {
+            } else if crate::utils::math::contains_ignore_ascii_case(&body.name, "jupiter") {
                 score += 150.0;
             }
             // Favor closer destinations if scores tie
@@ -778,10 +779,10 @@ fn resolve_destination_target(
                 best_target_score = score;
                 let is_gas_or_star =
                     matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant)
-                        || lower.contains("jupiter")
-                        || lower.contains("saturn")
-                        || lower.contains("uranus")
-                        || lower.contains("neptune");
+                        || crate::utils::math::contains_any_ignore_ascii_case(
+                            &body.name,
+                            &["jupiter", "saturn", "uranus", "neptune"],
+                        );
                 chosen_target = Some((ent, body.name.clone(), pos.0, vel.0, rad, is_gas_or_star));
             }
         }
@@ -811,13 +812,12 @@ fn resolve_destination_target(
                 false,
             );
         };
-        let lower_t = t_body.name.to_lowercase();
         let is_gas_or_star = matches!(t_body.body_type, BodyType::GasGiant | BodyType::IceGiant)
             || t_body.body_type.is_star_or_remnant()
-            || lower_t.contains("jupiter")
-            || lower_t.contains("saturn")
-            || lower_t.contains("uranus")
-            || lower_t.contains("neptune");
+            || crate::utils::math::contains_any_ignore_ascii_case(
+                &t_body.name,
+                &["jupiter", "saturn", "uranus", "neptune"],
+            );
         (
             req_target,
             t_body.name.clone(),

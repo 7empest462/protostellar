@@ -645,3 +645,35 @@ pub fn append_oort_comet_telemetry(out: &mut String, comet: &OortComet) {
         comet.cumulative_volatile_loss_kg,
     );
 }
+
+/// Appends real-time astrophysical sonification frequency and 16-bar oscilloscope readout.
+pub fn append_sonification_telemetry(
+    out: &mut String,
+    audio: &crate::game::audio::CosmicAudioState,
+) {
+    use std::fmt::Write;
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let mut wave = String::with_capacity(16);
+    for &level in &audio.waveform_bars {
+        let ch = BARS
+            .get(usize::from(level).min(BARS.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or('▁');
+        wave.push(ch);
+    }
+    let mute_str = if audio.enabled {
+        "LIVE [M: Mute]"
+    } else {
+        "MUTED [M: Unmute]"
+    };
+    let _ = write!(
+        out,
+        "\n━━━ ⟪ COSMIC SONIFICATION AUDIO ⟫ ━━━━━━━━━━━━━━━━\n  • Status:     {mute_str} ({})\n  • Carrier:    {:.1} Hz | LFO: {:.2} Hz\n  • Spatial:    Prox {:.0}% | Pan {:+.2}\n  • Oscillosc.: [{wave}]\n  • Signal:     {}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        audio.mode.label(),
+        audio.carrier_freq_hz,
+        audio.modulation_hz,
+        audio.proximity_boost * 100.0,
+        audio.stereo_pan,
+        audio.status_line
+    );
+}

@@ -42,7 +42,7 @@ pub use kilonova::{
 pub use megastructures::{draw_dyson_swarms, update_megastructure_construction, DysonSwarm};
 pub use orbits::{
     draw_ambient_and_trailing_orbit_ribbon, draw_conic_apsides_and_nodes,
-    draw_hyperbolic_trajectory,
+    draw_hyperbolic_trajectory, OrbitRenderStyle,
 };
 pub use planetary::{
     draw_body_selection_and_beacons, draw_cometary_escape_tails, draw_diagnostic_overlays,
@@ -203,14 +203,14 @@ fn draw_body_orbit(
     mass: &Mass,
     body_type: BodyType,
     is_selected: bool,
+    is_hovered: bool,
     visual_rad: f32,
-    cam_pos: Option<Vec3>,
+    params: &BodyEffectParams,
     opt_satellite: Option<&SatelliteOf>,
     parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
-    star_pos_dvec: DVec3,
-    star_mass_val: f64,
-    star_vec: Vec3,
 ) {
+    let cam_pos = params.cam_tf.map(|t| t.translation);
+    let primary_occluder = Some((params.star_vec, params.star_vis_r));
     let (rel_pos, rel_vel, primary_mass, anchor_vec, is_satellite) =
         if let Some(sat) = opt_satellite {
             if let Ok((p_pos, p_vel, p_mass)) = parent_query.get(sat.parent) {
@@ -222,10 +222,22 @@ fn draw_body_orbit(
                     true,
                 )
             } else {
-                (pos.0 - star_pos_dvec, vel.0, star_mass_val, star_vec, false)
+                (
+                    pos.0 - params.star_pos_dvec,
+                    vel.0,
+                    params.star_mass_val,
+                    params.star_vec,
+                    false,
+                )
             }
         } else {
-            (pos.0 - star_pos_dvec, vel.0, star_mass_val, star_vec, false)
+            (
+                pos.0 - params.star_pos_dvec,
+                vel.0,
+                params.star_mass_val,
+                params.star_vec,
+                false,
+            )
         };
 
     if let Some(elements) =
@@ -234,23 +246,45 @@ fn draw_body_orbit(
         let base_color =
             determine_orbit_color(body_type, is_selected, is_satellite, elements.eccentricity);
         let base_rgba = base_color.to_srgba();
+        let minor_body_lod = matches!(
+            body_type,
+            BodyType::Asteroid | BodyType::Planetesimal | BodyType::DustGrain | BodyType::Comet
+        ) && !is_selected
+            && !is_hovered;
 
         if elements.eccentricity < 1.0 && elements.semi_major_axis > 0.0 {
             draw_ambient_and_trailing_orbit_ribbon(
                 gizmos,
                 &elements,
                 anchor_vec,
-                base_rgba,
-                is_selected,
-                visual_rad,
-                cam_pos,
+                OrbitRenderStyle {
+                    base_rgba,
+                    is_selected,
+                    visual_rad,
+                    cam_pos,
+                    minor_body_lod,
+                    primary_occluder,
+                },
             );
 
-            if is_selected || elements.eccentricity >= 0.03 {
-                draw_conic_apsides_and_nodes(gizmos, &elements, anchor_vec);
+            if !minor_body_lod && (is_selected || elements.eccentricity >= 0.03) {
+                draw_conic_apsides_and_nodes(
+                    gizmos,
+                    &elements,
+                    anchor_vec,
+                    cam_pos,
+                    primary_occluder,
+                );
             }
         } else if elements.eccentricity >= 1.0 {
-            draw_hyperbolic_trajectory(gizmos, &elements, anchor_vec, base_rgba);
+            draw_hyperbolic_trajectory(
+                gizmos,
+                &elements,
+                anchor_vec,
+                base_rgba,
+                cam_pos,
+                primary_occluder,
+            );
         }
     }
 }
@@ -259,6 +293,8 @@ struct BodyEffectParams {
     star_vec: Vec3,
     star_pos_dvec: DVec3,
     star_mass_val: f64,
+    star_vis_r: f32,
+    selected_occluder: Option<(Vec3, f32)>,
     elapsed: f32,
     cam_tf: Option<Transform>,
 }
@@ -332,6 +368,7 @@ fn draw_body_physical_features(
                 visual_rad,
                 diff,
                 opt_spin,
+                params.cam_tf.map(|t| t.translation),
             );
         }
     }
@@ -358,6 +395,14 @@ fn compute_satellite_glint_resolution_fade(
     t * t * (3.0 - 2.0 * t)
 }
 
+#[derive(Clone, Copy)]
+struct BodyEffectFlags {
+    is_blown_out_quasi: bool,
+    is_selected: bool,
+    is_hovered: bool,
+    is_planet: bool,
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Body orbit and overlays require astrometric and render contextual parameters"
@@ -372,21 +417,19 @@ fn draw_body_orbit_and_overlays(
     body: &CelestialBody,
     visual_rad: f32,
     temp_k: f64,
-    is_blown_out_quasi: bool,
     opt_satellite: Option<&SatelliteOf>,
     params: &BodyEffectParams,
     player_state: &PlayerInteractionState,
     parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
-    is_selected: bool,
-    is_planet: bool,
+    flags: BodyEffectFlags,
 ) {
     let r_orbit = pos.0.length() as f32;
     let should_draw_orbit = match player_state.orbit_mode {
         OrbitVisualizationMode::Off => false,
-        OrbitVisualizationMode::SelectedOnly => is_selected,
+        OrbitVisualizationMode::SelectedOnly => flags.is_selected,
         OrbitVisualizationMode::All => {
-            is_selected
-                || is_planet
+            flags.is_selected
+                || flags.is_planet
                 || opt_satellite.is_some()
                 || (mass.0 / EARTH_MASS_SOLAR) >= 0.05
                 || body.body_type == BodyType::Comet
@@ -401,14 +444,12 @@ fn draw_body_orbit_and_overlays(
             vel,
             mass,
             body.body_type,
-            is_selected,
+            flags.is_selected,
+            flags.is_hovered,
             visual_rad,
-            params.cam_tf.map(|t| t.translation),
+            params,
             opt_satellite,
             parent_query,
-            params.star_pos_dvec,
-            params.star_mass_val,
-            params.star_vec,
         );
     }
 
@@ -422,12 +463,14 @@ fn draw_body_orbit_and_overlays(
         body,
         params.star_mass_val,
         player_state.overlay_mode,
+        params.cam_tf.map(|t| t.translation),
+        params.star_vis_r,
     );
 
     if player_state.overlay_mode != DiagnosticOverlayMode::Hidden
         && crate::rendering::bodies::palettes::is_optically_luminous_or_reflective_glint_body(
             body.body_type,
-            is_blown_out_quasi,
+            flags.is_blown_out_quasi,
         )
     {
         if let Some(ctf) = params.cam_tf {
@@ -459,7 +502,7 @@ fn draw_body_orbit_and_overlays(
         }
     }
 
-    if is_selected && player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
+    if flags.is_selected && player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
         draw_body_selection_and_beacons(
             gizmos,
             body_vec,
@@ -571,13 +614,16 @@ fn draw_single_body_gizmos(
         body,
         visual_rad,
         temp_k,
-        is_blown_out_quasi,
         opt_satellite,
         params,
         player_state,
         parent_query,
-        is_selected,
-        is_planet,
+        BodyEffectFlags {
+            is_blown_out_quasi,
+            is_selected,
+            is_hovered,
+            is_planet,
+        },
     );
 
     if is_hovered && !is_selected && player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
@@ -615,6 +661,8 @@ fn draw_cataclysm_and_environment_effects(
     debris_pool: &RocheDebrisPool,
     supernova_pool: Option<&SupernovaDebrisPool>,
     star_vec: Vec3,
+    cam_pos: Option<Vec3>,
+    occluders: (Option<(Vec3, f32)>, Option<(Vec3, f32)>),
 ) {
     if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
         draw_impact_shockwaves(gizmos, shockwave_pool);
@@ -627,7 +675,7 @@ fn draw_cataclysm_and_environment_effects(
     if player_state.orbit_mode != OrbitVisualizationMode::Off
         && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
     {
-        draw_au_guide_rings(gizmos, star_vec);
+        draw_au_guide_rings(gizmos, star_vec, cam_pos, occluders);
     }
 }
 
@@ -758,6 +806,35 @@ pub fn draw_orbital_effects_and_gizmos(
 
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let cam_tf = camera_query.iter().next().copied();
+    let cam_pos = cam_tf.map(|t| t.translation);
+    let star_vis_r = opt_star.map_or(0.05, |(_, _, s_rad, _, s_body, ..)| {
+        let cam_dist = cam_pos.map_or(25.0, |cp| cp.distance(star_vec));
+        crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+            None,
+            s_rad.0,
+            s_body.body_type,
+            0.0,
+            cam_dist,
+            &config,
+        )
+    });
+    let selected_occluder = player_state.selected_entity.and_then(|sel| {
+        bodies_query.get(sel).ok().map(
+            |(_, pos, _, _, _, body, _, _, opt_rad, _, _, _, opt_tf, ..)| {
+                let bv = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+                let cd = cam_pos.map_or(25.0, |cp| cp.distance(bv));
+                let vr = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+                    opt_tf,
+                    opt_rad.map_or(0.00005, |r| r.0),
+                    body.body_type,
+                    bv.distance(star_vec),
+                    cd,
+                    &config,
+                );
+                (bv, vr)
+            },
+        )
+    });
 
     if let Some((_, s_mass, s_rad, opt_ign, s_body, opt_evo, _, opt_quasi, opt_kerr)) = opt_star {
         draw_star_effects(
@@ -783,12 +860,16 @@ pub fn draw_orbital_effects_and_gizmos(
         &debris_pool,
         supernova_pool.as_deref(),
         star_vec,
+        cam_pos,
+        (selected_occluder, Some((star_vec, star_vis_r))),
     );
 
     let params = BodyEffectParams {
         star_vec,
         star_pos_dvec,
         star_mass_val,
+        star_vis_r,
+        selected_occluder,
         elapsed,
         cam_tf,
     };
@@ -808,9 +889,7 @@ pub fn draw_orbital_effects_and_gizmos(
         opt_builder.as_deref(),
         opt_slingshot.as_deref(),
         opt_predictor.as_deref(),
-        star_vec,
-        star_mass_val,
-        elapsed,
+        &params,
     );
 }
 
@@ -825,9 +904,7 @@ fn draw_interactive_tool_gizmos(
     opt_builder: Option<&crate::game::ui::PlanetBuilderState>,
     opt_slingshot: Option<&crate::simulation::resources::SlingshotState>,
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
-    star_vec: Vec3,
-    star_mass_val: f64,
-    elapsed: f32,
+    params: &BodyEffectParams,
 ) {
     if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
         return;
@@ -838,15 +915,37 @@ fn draw_interactive_tool_gizmos(
     }
 
     if let Some(builder) = opt_builder {
-        draw_planet_builder_preview(gizmos, builder, star_vec, star_mass_val, elapsed);
+        draw_planet_builder_preview(
+            gizmos,
+            builder,
+            params.star_vec,
+            params.star_mass_val,
+            params.elapsed,
+        );
     }
 
     if let Some(slingshot) = opt_slingshot {
-        draw_slingshot_preview(gizmos, slingshot, star_vec, star_mass_val, elapsed);
+        draw_slingshot_preview(
+            gizmos,
+            slingshot,
+            params.star_vec,
+            params.star_mass_val,
+            params.elapsed,
+        );
     }
 
     if let Some(predictor) = opt_predictor {
-        draw_trajectory_prediction_gizmos(gizmos, predictor, star_vec, elapsed);
+        draw_trajectory_prediction_gizmos(
+            gizmos,
+            predictor,
+            params.star_vec,
+            params.cam_tf.map(|t| t.translation),
+            (
+                params.selected_occluder,
+                Some((params.star_vec, params.star_vis_r)),
+            ),
+            params.elapsed,
+        );
     }
 }
 

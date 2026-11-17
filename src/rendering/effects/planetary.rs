@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use super::orbits::{draw_occluded_circle, draw_segmented_ring_arcs, sphere_occlusion_fade};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
@@ -103,6 +104,7 @@ pub fn draw_planetary_magnetospheres(
     visual_radius: f32,
     diff: &InternalDifferentiation,
     opt_spin: Option<&SpinState>,
+    cam_pos: Option<Vec3>,
 ) {
     if diff.magnetic_field_gauss < 0.15 {
         return;
@@ -111,39 +113,62 @@ pub fn draw_planetary_magnetospheres(
     let tilt_rot = Quat::from_rotation_z(tilt_deg.to_radians());
     let b_strength = (diff.magnetic_field_gauss as f32).min(3.0);
     let shield_r = (visual_radius * (3.8 + b_strength * 1.8)).max(0.0012);
+    let field_alpha = 0.28 * (b_strength / 3.0);
 
-    for quad in 0..4 {
-        let quad_rot = Quat::from_rotation_y(quad as f32 * std::f32::consts::FRAC_PI_2);
+    let planes = 6usize;
+    let steps = 40usize;
+    for plane in 0..planes {
+        let quad_rot =
+            Quat::from_rotation_y((plane as f32) * (std::f32::consts::TAU / planes as f32));
         let mut prev_pt: Option<Vec3> = None;
-        let steps = 18;
         for step in 0..=steps {
             let theta = (step as f32 / steps as f32) * std::f32::consts::PI;
             let (sin_th, cos_th) = theta.sin_cos();
             let r = shield_r * sin_th * sin_th;
-            let local_x = r * sin_th;
-            let local_y = r * cos_th;
-            let local_pt = quad_rot * Vec3::new(local_x, local_y, 0.0);
+            let local_pt = quad_rot * Vec3::new(r * sin_th, r * cos_th, 0.0);
             let world_pt = body_vec + tilt_rot * local_pt;
 
             if let Some(prev) = prev_pt {
-                gizmos.line(
-                    prev,
-                    world_pt,
-                    Color::srgba(0.25, 0.75, 1.0, 0.35 * (b_strength / 3.0)),
-                );
+                let mid = prev.midpoint(world_pt);
+                let occ = sphere_occlusion_fade(mid, cam_pos, body_vec, visual_radius);
+                let polar_taper = (0.35 + 0.65 * sin_th).min(1.0);
+                let a = field_alpha * polar_taper * occ;
+                if a > 0.015 {
+                    gizmos.line(prev, world_pt, Color::srgba(0.28, 0.78, 1.0, a));
+                }
             }
             prev_pt = Some(world_pt);
         }
     }
 
+    // Smooth parabolic sunward magnetopause bow-shock curve instead of a 2-segment V chevron
     let to_sun = (star_vec - body_vec).normalize_or_zero();
-    let perp_tangent = Vec3::new(-to_sun.z, 0.0, to_sun.x).normalize_or_zero();
-    let bow_apex = body_vec + to_sun * (shield_r * 1.25);
-    let bow_left = body_vec + to_sun * (shield_r * 0.75) + perp_tangent * (shield_r * 1.1);
-    let bow_right = body_vec + to_sun * (shield_r * 0.75) - perp_tangent * (shield_r * 1.1);
-
-    gizmos.line(bow_left, bow_apex, Color::srgba(1.0, 0.85, 0.3, 0.55));
-    gizmos.line(bow_apex, bow_right, Color::srgba(1.0, 0.85, 0.3, 0.55));
+    if to_sun == Vec3::ZERO {
+        return;
+    }
+    let up_ref = if to_sun.y.abs() < 0.9 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
+    let tangent = to_sun.cross(up_ref).normalize_or_zero();
+    let bow_steps = 36usize;
+    let mut prev_bow: Option<Vec3> = None;
+    for s in 0..=bow_steps {
+        let u = (s as f32 / bow_steps as f32) * 2.0 - 1.0; // -1..+1 along flank
+        let sun_offset = shield_r * (1.26 - 0.65 * u * u);
+        let lat_offset = shield_r * 1.22 * u;
+        let pt = body_vec + to_sun * sun_offset + tangent * lat_offset;
+        if let Some(prev) = prev_bow {
+            let mid = prev.midpoint(pt);
+            let occ = sphere_occlusion_fade(mid, cam_pos, body_vec, visual_radius);
+            let flank_fade = (1.0 - u.abs().powf(2.2)) * 0.48 * occ;
+            if flank_fade > 0.015 {
+                gizmos.line(prev, pt, Color::srgba(1.0, 0.85, 0.35, flank_fade));
+            }
+        }
+        prev_bow = Some(pt);
+    }
 }
 
 pub fn draw_diagnostic_overlays(
@@ -156,24 +181,28 @@ pub fn draw_diagnostic_overlays(
     body: &CelestialBody,
     star_mass_val: f64,
     overlay_mode: DiagnosticOverlayMode,
+    cam_pos: Option<Vec3>,
+    star_vis_r: f32,
 ) {
     match overlay_mode {
         DiagnosticOverlayMode::SpectralComposition => {
             let dominant_color = if comp.metal_frac > 0.4 {
-                Color::srgba(1.0, 0.8, 0.2, 0.6)
+                Color::srgba(1.0, 0.8, 0.2, 0.52)
             } else if comp.ice_frac > 0.4 {
-                Color::srgba(0.2, 0.85, 1.0, 0.6)
+                Color::srgba(0.2, 0.85, 1.0, 0.52)
             } else if comp.gas_frac > 0.4 {
-                Color::srgba(0.9, 0.5, 0.1, 0.6)
+                Color::srgba(0.9, 0.5, 0.1, 0.52)
             } else {
-                Color::srgba(0.8, 0.4, 0.2, 0.6)
+                Color::srgba(0.8, 0.4, 0.2, 0.52)
             };
 
-            gizmos.circle(
-                Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                0.25,
-                dominant_color,
-            );
+            gizmos
+                .circle(
+                    Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    0.25,
+                    dominant_color,
+                )
+                .resolution(64);
         }
         DiagnosticOverlayMode::HillSpheresAndGaps => {
             let is_planet = matches!(
@@ -188,21 +217,34 @@ pub fn draw_diagnostic_overlays(
                 let hill_r =
                     (r_orbit * ((mass.0 / (3.0 * star_mass_val)).cbrt() as f32)).clamp(0.08, 2.5);
 
-                gizmos.sphere(
-                    Isometry3d::from_translation(body_vec),
-                    hill_r,
-                    Color::srgba(0.2, 0.9, 0.4, 0.25),
-                );
+                gizmos
+                    .sphere(
+                        Isometry3d::from_translation(body_vec),
+                        hill_r,
+                        Color::srgba(0.2, 0.9, 0.4, 0.22),
+                    )
+                    .resolution(48);
 
-                gizmos.circle(
-                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+                draw_occluded_circle(
+                    gizmos,
+                    star_vec,
+                    ring_rot,
                     (r_orbit - hill_r).max(0.1),
-                    Color::srgba(0.4, 0.8, 0.9, 0.3),
+                    Color::srgba(0.4, 0.8, 0.9, 0.26),
+                    128,
+                    cam_pos,
+                    (Some((star_vec, star_vis_r)), None),
                 );
-                gizmos.circle(
-                    Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                draw_occluded_circle(
+                    gizmos,
+                    star_vec,
+                    ring_rot,
                     r_orbit + hill_r,
-                    Color::srgba(0.4, 0.8, 0.9, 0.3),
+                    Color::srgba(0.4, 0.8, 0.9, 0.26),
+                    128,
+                    cam_pos,
+                    (Some((star_vec, star_vis_r)), None),
                 );
             }
         }
@@ -226,78 +268,82 @@ pub fn draw_body_selection_and_beacons(
 
     let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec)).max(0.0002);
     // Smoothly fade selection reticle & beacon when zoomed right up to a planet's surface
-    // so depth-biased gizmo rings and pins don't slice across the planet's disk.
+    // so rings and markers do not clutter a close planetary inspection view.
     let close_fade = ((cam_dist / safe_vis_r - 2.3) / 5.5).clamp(0.0, 1.0);
     if close_fade < 0.02 {
         return;
     }
 
-    let reticle_r = (safe_vis_r * 1.38).max(cam_dist * 0.036);
-    let beacon_base_y = safe_vis_r * 1.22;
-    let beacon_h = (safe_vis_r * 2.8).max(cam_dist * 0.085);
-    let pointer_r = (safe_vis_r * 0.22).max(cam_dist * 0.008);
-    let tick_len = reticle_r * 0.35;
+    let reticle_r = (safe_vis_r * 1.42).max(cam_dist * 0.034);
+    let beacon_base_y = safe_vis_r * 1.32;
+    let beacon_h = (safe_vis_r * 2.55).max(cam_dist * 0.072);
+    let tick_inner = reticle_r * 0.92;
+    let tick_outer = reticle_r * 1.24;
 
     let base_rgb = if is_star {
-        Srgba::new(1.0, 0.85, 0.2, 0.85 * close_fade)
+        Srgba::new(1.0, 0.86, 0.28, 0.82 * close_fade)
     } else {
-        Srgba::new(0.2, 0.95, 1.0, 0.80 * close_fade)
+        Srgba::new(0.24, 0.94, 1.0, 0.78 * close_fade)
     };
     let reticle_color = Color::from(base_rgb);
+    let subtle_color = Color::srgba(
+        base_rgb.red,
+        base_rgb.green,
+        base_rgb.blue,
+        0.22 * close_fade,
+    );
+    let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
 
-    gizmos.circle(
-        Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+    // Sleek segmented 4-quadrant bracket ring + fine outer concentric hairline
+    draw_segmented_ring_arcs(
+        gizmos,
+        body_vec,
+        ring_rot,
         reticle_r,
         reticle_color,
+        1.05,
+        16,
     );
-    gizmos.circle(
-        Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-        reticle_r * 1.25,
-        Color::srgba(
-            base_rgb.red,
-            base_rgb.green,
-            base_rgb.blue,
-            0.30 * close_fade,
-        ),
-    );
+    gizmos
+        .circle(
+            Isometry3d::new(body_vec, ring_rot),
+            reticle_r * 1.24,
+            subtle_color,
+        )
+        .resolution(96);
 
-    gizmos.line(
-        body_vec + Vec3::new(reticle_r * 0.95, 0.0, 0.0),
-        body_vec + Vec3::new(reticle_r + tick_len, 0.0, 0.0),
-        reticle_color,
-    );
-    gizmos.line(
-        body_vec - Vec3::new(reticle_r * 0.95, 0.0, 0.0),
-        body_vec - Vec3::new(reticle_r + tick_len, 0.0, 0.0),
-        reticle_color,
-    );
-    gizmos.line(
-        body_vec + Vec3::new(0.0, 0.0, reticle_r * 0.95),
-        body_vec + Vec3::new(0.0, 0.0, reticle_r + tick_len),
-        reticle_color,
-    );
-    gizmos.line(
-        body_vec - Vec3::new(0.0, 0.0, reticle_r * 0.95),
-        body_vec - Vec3::new(0.0, 0.0, reticle_r + tick_len),
-        reticle_color,
-    );
+    for axis in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z] {
+        gizmos.line(
+            body_vec + axis * tick_inner,
+            body_vec + axis * tick_outer,
+            reticle_color,
+        );
+    }
 
     if beacon_h > beacon_base_y {
-        gizmos.line(
-            body_vec + Vec3::new(0.0, beacon_base_y, 0.0),
-            body_vec + Vec3::new(0.0, beacon_h, 0.0),
-            reticle_color,
-        );
-        gizmos.sphere(
-            Isometry3d::from_translation(body_vec + Vec3::new(0.0, beacon_h, 0.0)),
-            pointer_r,
-            reticle_color,
-        );
+        // Subtle graduated telemetry pin capped by an open hairline ring instead of a solid ball
+        let stem_base = body_vec + Vec3::Y * beacon_base_y;
+        let stem_top = body_vec + Vec3::Y * beacon_h;
+        let stem_steps = 8usize;
+        for s in 0..stem_steps {
+            let t0 = s as f32 / stem_steps as f32;
+            let t1 = (s + 1) as f32 / stem_steps as f32;
+            let a = (0.14 + 0.56 * t0) * close_fade;
+            gizmos.line(
+                stem_base.lerp(stem_top, t0),
+                stem_base.lerp(stem_top, t1),
+                Color::srgba(base_rgb.red, base_rgb.green, base_rgb.blue, a),
+            );
+        }
+        let tip_r = (safe_vis_r * 0.16).max(cam_dist * 0.0055);
+        gizmos
+            .circle(Isometry3d::new(stem_top, ring_rot), tip_r, reticle_color)
+            .resolution(32);
     }
 }
 
 /// Draws a high-tech sci-fi holographic targeting reticle around a hovered celestial body,
-/// complete with 4 billboarded corner brackets facing the camera and a pulsing inner lock ring.
+/// complete with 4 billboarded corner brackets facing the camera and segmented inner arc rings.
 pub fn draw_hover_targeting_reticle(
     gizmos: &mut Gizmos,
     body_vec: Vec3,
@@ -313,49 +359,52 @@ pub fn draw_hover_targeting_reticle(
     let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec)).max(0.0002);
 
     let box_half = (safe_vis_r * 1.55).max(cam_dist * 0.040);
-    let corner_len = box_half * 0.35;
+    let corner_len = box_half * 0.34;
     let pulse = (elapsed * 6.0).sin().mul_add(0.15, 0.85);
 
     let reticle_color = if is_star {
-        Color::srgba(1.0, 0.88, 0.25, 0.90 * pulse)
+        Color::srgba(1.0, 0.88, 0.25, 0.88 * pulse)
     } else {
-        Color::srgba(0.20, 0.95, 1.0, 0.85 * pulse)
+        Color::srgba(0.20, 0.95, 1.0, 0.84 * pulse)
     };
 
+    let base_srgba = reticle_color.to_srgba();
     let ring_color = Color::srgba(
-        reticle_color.to_srgba().red,
-        reticle_color.to_srgba().green,
-        reticle_color.to_srgba().blue,
-        0.35 * pulse,
+        base_srgba.red,
+        base_srgba.green,
+        base_srgba.blue,
+        0.34 * pulse,
     );
 
     let cam_rot = cam_tf.map_or(Quat::IDENTITY, |t| t.rotation);
     let right = cam_rot * Vec3::X;
     let up = cam_rot * Vec3::Y;
 
-    // Inner pulsing circular reticle
-    gizmos.circle(
-        Isometry3d::new(body_vec, cam_rot),
+    // Segmented inner rotating lock arcs + smooth hairline ring
+    let spin_rot = cam_rot * Quat::from_rotation_z(elapsed * 0.45);
+    draw_segmented_ring_arcs(
+        gizmos,
+        body_vec,
+        spin_rot,
         box_half * 0.88,
-        ring_color,
+        reticle_color.with_alpha(0.55 * pulse),
+        0.92,
+        14,
     );
+    gizmos
+        .circle(
+            Isometry3d::new(body_vec, cam_rot),
+            box_half * 0.72,
+            ring_color,
+        )
+        .resolution(64);
 
     // Four corner brackets pointing inward toward the body
-    let tr = body_vec + right * box_half + up * box_half;
-    gizmos.line(tr, tr - right * corner_len, reticle_color);
-    gizmos.line(tr, tr - up * corner_len, reticle_color);
-
-    let tl = body_vec - right * box_half + up * box_half;
-    gizmos.line(tl, tl + right * corner_len, reticle_color);
-    gizmos.line(tl, tl - up * corner_len, reticle_color);
-
-    let br = body_vec + right * box_half - up * box_half;
-    gizmos.line(br, br - right * corner_len, reticle_color);
-    gizmos.line(br, br + up * corner_len, reticle_color);
-
-    let bl = body_vec - right * box_half - up * box_half;
-    gizmos.line(bl, bl + right * corner_len, reticle_color);
-    gizmos.line(bl, bl + up * corner_len, reticle_color);
+    for (sx, sy) in [(1.0_f32, 1.0_f32), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
+        let corner = body_vec + right * (box_half * sx) + up * (box_half * sy);
+        gizmos.line(corner, corner - right * (corner_len * sx), reticle_color);
+        gizmos.line(corner, corner - up * (corner_len * sy), reticle_color);
+    }
 }
 
 /// Internal strata radii and visual colors for 3D cutaway rendering.

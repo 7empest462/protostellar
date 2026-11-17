@@ -8,7 +8,9 @@ use crate::game::ui::types::NotificationToast;
 use crate::simulation::components::*;
 use crate::simulation::economy::ScienceData;
 use crate::simulation::resources::*;
-use crate::simulation::space_weather::types::{AuroralOvalState, GeomagneticStormLevel};
+use crate::simulation::space_weather::types::{
+    AuroralOvalState, AuroralStormExcitation, GeomagneticStormLevel,
+};
 
 /// Schedules stochastic hazards or ingests manual trigger messages.
 pub fn cosmic_event_scheduler_system(
@@ -21,7 +23,7 @@ pub fn cosmic_event_scheduler_system(
         hazard_mgr.trigger_hazard(msg.0, 1.0);
     }
 
-    if !hazard_mgr.auto_hazards_enabled || time_warp.is_paused {
+    if !hazard_mgr.auto_hazards_enabled || (time_warp.is_paused && !time_warp.step_once) {
         return;
     }
 
@@ -57,12 +59,13 @@ fn apply_grb_impacts(
     dt_years: f64,
 ) {
     let decay_factor = (1.0 - 0.08 * (dt_years.min(0.2) as f32)).clamp(0.0, 1.0);
+    let bio_loss = 0.15 * (dt_years.clamp(0.0, 0.2) as f32);
     for (mut volatiles, _, mut opt_bio, opt_field) in planets.iter_mut() {
         let is_shielded = opt_field.is_some_and(|f| f.magnetic_field_gauss >= 0.1);
         if !is_shielded {
             volatiles.atmospheric_pressure_bar *= decay_factor;
             if let Some(ref mut bio) = opt_bio {
-                bio.technosignature = (bio.technosignature - 0.15).max(0.0);
+                bio.technosignature = (bio.technosignature - bio_loss).max(0.0);
             }
         }
     }
@@ -70,13 +73,16 @@ fn apply_grb_impacts(
 
 /// Applies physical impacts of a Solar Superflare (G5 auroras and space probe telemetry disruptions).
 fn apply_superflare_impacts(
-    auroras: &mut Query<&mut AuroralOvalState>,
+    auroras: &mut Query<(&mut AuroralOvalState, Option<&mut AuroralStormExcitation>)>,
     probes: &mut Query<&mut crate::simulation::probes::FlightComputer>,
 ) {
-    for mut oval in auroras.iter_mut() {
+    for (mut oval, opt_exc) in auroras.iter_mut() {
         oval.geomagnetic_kp_index = 9.0;
         oval.storm_level = GeomagneticStormLevel::ExtremeStorm;
         oval.auroral_intensity = 3.5;
+        if let Some(mut exc) = opt_exc {
+            exc.excitation = exc.excitation.max(3.8);
+        }
     }
     for mut flight_comp in probes.iter_mut() {
         flight_comp.relative_speed = (flight_comp.relative_speed * 0.98).max(0.0);
@@ -188,7 +194,8 @@ pub fn apply_comet_delivery(
                 let d_water = (comet_vol.delivered_water_m_earth * 0.15).max(0.00018);
                 planet_vol.delivered_water_m_earth += d_water;
                 planet_vol.cometary_impact_count += 1;
-                let cov_from_water = ((planet_vol.delivered_water_m_earth / 0.0006) * 0.71) as f32;
+                let cov_from_water =
+                    (planet_vol.delivered_water_m_earth / 0.0005).clamp(0.0, 0.92) as f32;
                 planet_vol.ocean_coverage_frac = (planet_vol.ocean_coverage_frac + 0.14)
                     .max(cov_from_water)
                     .clamp(0.0, 0.98);
@@ -360,12 +367,12 @@ pub fn cosmic_event_lifecycle_system(
         >,
         CometDeliveryTargetQuery,
     )>,
-    mut auroral_query: Query<&mut AuroralOvalState>,
+    mut auroral_query: Query<(&mut AuroralOvalState, Option<&mut AuroralStormExcitation>)>,
     mut probe_query: Query<&mut crate::simulation::probes::FlightComputer>,
     mut comet_query: HazardCometQuery,
     interloper_query: Query<(Entity, &SimPosition), (With<RogueInterloper>, Without<HazardComet>)>,
 ) {
-    if time_warp.is_paused {
+    if time_warp.is_paused && !time_warp.step_once {
         return;
     }
     let dt_years = sim_time.current_dt_yr;

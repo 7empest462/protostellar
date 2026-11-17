@@ -97,13 +97,17 @@ fn test_circumstellar_disk_inspector_telemetry() {
 #[test]
 fn test_gmc_accretion_only_runs_on_active_full_disk_hosts() {
     let mut app = App::new();
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
-    let mut config = SimulationConfig::default();
-    config.enable_accretion = true;
-    config.gas_density_scale = 1.0;
+    let config = SimulationConfig {
+        enable_accretion: true,
+        gas_density_scale: 1.0,
+        ..Default::default()
+    };
     app.insert_resource(config);
     app.init_resource::<TimeWarp>();
     app.init_resource::<SimTime>();
@@ -220,8 +224,10 @@ fn test_gmc_accretion_only_runs_on_active_full_disk_hosts() {
 #[test]
 fn test_gmc_cluster_com_camera_activates_with_3_plus_systems() {
     let mut app = App::new();
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
     let cam_ent = app
@@ -337,8 +343,10 @@ fn test_universal_bombardment_availability_across_scenarios_and_body_types() {
     ];
 
     for preset in test_presets {
-        let mut sc = ActiveScenarioState::default();
-        sc.current_preset = preset;
+        let sc = ActiveScenarioState {
+            current_preset: preset,
+            ..Default::default()
+        };
         app.insert_resource(sc);
 
         for (b_type, name) in target_body_types {
@@ -369,9 +377,7 @@ fn test_universal_bombardment_availability_across_scenarios_and_body_types() {
             assert_eq!(
                 display,
                 Display::Flex,
-                "Terraforming & Bombardment section must be visible in {:?} for {:?}",
-                preset,
-                b_type
+                "Terraforming & Bombardment section must be visible in {preset:?} for {b_type:?}"
             );
 
             // Clean up target
@@ -398,8 +404,10 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
     app.add_message::<BombardmentEvent>();
 
     // Test launching all 4 bombardment weapons at an Embryo in GMC scenario
-    let mut sc = ActiveScenarioState::default();
-    sc.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let sc = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(sc);
 
     let embryo_ent = app
@@ -457,8 +465,7 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
 
         assert!(
             toast.message.contains(expected_type.name()),
-            "Toast must announce bombardment launch for {:?}",
-            expected_type
+            "Toast must announce bombardment launch for {expected_type:?}"
         );
 
         // Find the spawned guided bombardment projectile
@@ -471,8 +478,7 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
 
         assert!(
             spawned.is_some(),
-            "Guided projectile for {:?} must be spawned targeting embryo",
-            expected_type
+            "Guided projectile for {expected_type:?} must be spawned targeting embryo"
         );
     }
 
@@ -499,5 +505,130 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
     assert!(
         vol.is_some(),
         "Target embryo must have received volatile inventory from bombardment impacts"
+    );
+}
+
+#[test]
+fn test_gmc_sorted_nearest_star_3d_z_offset_and_tied_x() {
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimTime>();
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
+    app.insert_resource(scenario_state);
+
+    let disk_inactive = CircumstellarDisk {
+        inner_radius_au: 0.05,
+        outer_radius_au: 20.0,
+        disk_mass_solar: 0.001,
+        is_active_full_disk: false,
+        age_years: 90_000.0,
+        lifetime_years: 80_000.0,
+    };
+    let disk_active = CircumstellarDisk {
+        is_active_full_disk: true,
+        age_years: 1_000.0,
+        ..disk_inactive
+    };
+
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Star-X0-Inactive".to_string(),
+            body_type: BodyType::Protostar,
+        },
+        Mass(1.5),
+        SimPosition(bevy::math::DVec3::ZERO),
+        SimVelocity(bevy::math::DVec3::ZERO),
+        Radius(0.01),
+        Composition::solar_gas(),
+        disk_inactive,
+    ));
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Star-ZFar-Active".to_string(),
+            body_type: BodyType::Protostar,
+        },
+        Mass(1.5),
+        SimPosition(bevy::math::DVec3::new(10.0, 0.0, 120.0)),
+        SimVelocity(bevy::math::DVec3::ZERO),
+        Radius(0.01),
+        Composition::solar_gas(),
+        disk_active,
+    ));
+    // Two stars sharing identical X=20.0; active star is near Z=10 (Y=0), inactive is at Y=50.
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Star-TiedX-FarY-Inactive".to_string(),
+            body_type: BodyType::Protostar,
+        },
+        Mass(1.5),
+        SimPosition(bevy::math::DVec3::new(20.0, 50.0, 10.0)),
+        SimVelocity(bevy::math::DVec3::ZERO),
+        Radius(0.01),
+        Composition::solar_gas(),
+        disk_inactive,
+    ));
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Star-TiedX-Near3D-Active".to_string(),
+            body_type: BodyType::Protostar,
+        },
+        Mass(1.5),
+        SimPosition(bevy::math::DVec3::new(20.0, 0.0, 10.0)),
+        SimVelocity(bevy::math::DVec3::ZERO),
+        Radius(0.01),
+        Composition::solar_gas(),
+        disk_active,
+    ));
+
+    let p_near_inactive = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Planet-Near-Inactive".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            Mass(0.000_002),
+            SimPosition(bevy::math::DVec3::new(1.5, 0.0, 0.5)),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            Radius(0.0001),
+            Composition::solar_gas(),
+            VolatileInventory::default(),
+        ))
+        .id();
+
+    let p_near_active = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Planet-TiedX-NearActive".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            Mass(0.000_002),
+            SimPosition(bevy::math::DVec3::new(20.0, 1.0, 11.2)),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            Radius(0.0001),
+            Composition::solar_gas(),
+            VolatileInventory::default(),
+        ))
+        .id();
+
+    app.add_systems(Update, gmc_cluster_gas_accretion);
+    app.world_mut().resource_mut::<SimTime>().current_dt_yr = 1.0;
+    app.update();
+
+    let m_inactive = app.world().get::<Mass>(p_near_inactive).unwrap().0;
+    let m_active = app.world().get::<Mass>(p_near_active).unwrap().0;
+
+    assert_eq!(
+        m_inactive, 0.000_002,
+        "Protoplanet closest in 3D to inactive X0 star must not accrete from active stars farther in Z/X"
+    );
+    assert!(
+        m_active > 0.000_002,
+        "Protoplanet with tied X must pick the closest 3D active star and accrete mass (got {m_active})"
     );
 }

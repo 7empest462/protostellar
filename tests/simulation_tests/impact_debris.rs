@@ -75,7 +75,7 @@ fn test_moon_formation_ejecta_spawns_fragments_and_rings() {
         .world_mut()
         .spawn((
             SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
-            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, 6.28)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
             Mass(EARTH_MASS_SOLAR),
             Radius(EARTH_RADIUS_AU),
         ))
@@ -149,7 +149,7 @@ fn test_collision_merger_spawns_ballistic_fragments() {
         .world_mut()
         .spawn((
             SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
-            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, 6.28)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
             Mass(EARTH_MASS_SOLAR),
             Radius(EARTH_RADIUS_AU),
         ))
@@ -279,7 +279,12 @@ fn test_comet_impact_ejecta_blasts_into_space_and_gets_reabsorbed() {
 
     let planet_pos = Vec3::new(1.0, 0.0, 0.0);
     let visual_radius = 0.03_f32;
-    let impact_normal = Vec3::new(-0.7071, 0.7071, 0.0).normalize();
+    let impact_normal = Vec3::new(
+        -std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.0,
+    )
+    .normalize();
 
     let planet_ent = app
         .world_mut()
@@ -377,7 +382,7 @@ fn test_bombardment_event_ejecta_comoves_with_orbiting_planet() {
         .world_mut()
         .spawn((
             SimPosition(bevy::math::DVec3::new(1.0, 0.0, 0.0)),
-            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, 6.28)),
+            SimVelocity(bevy::math::DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
             Mass(EARTH_MASS_SOLAR),
             Radius(EARTH_RADIUS_AU),
             Transform::from_translation(initial_planet_pos).with_scale(Vec3::splat(visual_radius)),

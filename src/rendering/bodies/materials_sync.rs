@@ -4,6 +4,7 @@ use crate::rendering::materials::*;
 use crate::simulation::components::*;
 use crate::simulation::geology::GeologicalState;
 use crate::simulation::space_weather::{AuroralOvalState, StellarFlareState};
+use crate::simulation::thermodynamics::retained_gas_envelope_bar;
 use crate::simulation::tides::TidalState;
 
 use super::palettes::*;
@@ -317,6 +318,95 @@ struct BodyMaterialParameters {
     mag_gauss: f32,
 }
 
+struct AtmosphereCloudParams {
+    pressure_bar: f32,
+    scale_height: f32,
+    cloud_density: f32,
+    haze_density: f32,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Atmosphere/cloud parameter builder"
+)]
+fn compute_atmosphere_and_cloud_params(
+    is_minor_body: bool,
+    has_water_volatiles: bool,
+    ocean_frac: f32,
+    norm_comp: &Composition,
+    mass_solar: f64,
+    temp_k: f64,
+    opt_climate: Option<&PlanetaryClimate>,
+    opt_vol: Option<&VolatileInventory>,
+) -> AtmosphereCloudParams {
+    let gas_envelope_bar = if is_minor_body {
+        0.0
+    } else {
+        retained_gas_envelope_bar(mass_solar, norm_comp.gas_frac as f32)
+    };
+    let pressure_bar = if is_minor_body {
+        0.0
+    } else {
+        opt_vol
+            .map_or((norm_comp.gas_frac as f32 * 2.0).max(0.01), |v| {
+                v.atmospheric_pressure_bar
+            })
+            .max(gas_envelope_bar)
+    };
+    let is_airless = (opt_climate
+        .is_some_and(|c| c.climate_regime == ClimateRegime::AirlessVacuum)
+        && gas_envelope_bar <= 0.0)
+        || (pressure_bar < 0.02 && norm_comp.gas_frac <= 0.005);
+    let envelope_cloud_floor = if pressure_bar > 15.0 {
+        ((pressure_bar - 15.0) / 60.0).clamp(0.45, 0.95)
+    } else {
+        0.0
+    };
+    let cloud_density = if !is_minor_body
+        && !is_airless
+        && (has_water_volatiles || norm_comp.gas_frac > 0.005 || pressure_bar >= 0.05)
+    {
+        let fallback_clouds = if has_water_volatiles {
+            norm_comp.gas_frac as f32
+        } else {
+            (0.24 + norm_comp.gas_frac as f32 * 6.5).clamp(0.22, 0.68)
+        };
+        let base_clouds = opt_climate
+            .map_or(fallback_clouds, |c| c.cloud_coverage_frac)
+            .max(envelope_cloud_floor);
+        if temp_k > 380.0 && (ocean_frac > 0.01 || has_water_volatiles) {
+            let steam_factor = ((temp_k as f32 - 380.0) / 55.0).clamp(0.0, 1.0);
+            (base_clouds + steam_factor * 0.70).clamp(0.0, 0.98)
+        } else {
+            base_clouds
+        }
+    } else {
+        0.0
+    };
+    let scale_height = (0.08f32 * (temp_k as f32 / 288.0f32).sqrt()).clamp(0.02f32, 0.25f32);
+    let base_haze = if is_minor_body || is_airless {
+        0.0
+    } else {
+        opt_climate
+            .map_or((norm_comp.gas_frac as f32 * 1.5).clamp(0.0, 1.0), |c| {
+                (c.cloud_coverage_frac * 1.2).clamp(0.0, 1.0)
+            })
+            .max((envelope_cloud_floor * 1.1).clamp(0.0, 1.0))
+    };
+    let haze_density = if !is_minor_body && temp_k > 380.0 && ocean_frac > 0.02 {
+        let steam_haze = ((temp_k as f32 - 380.0) / 55.0).clamp(0.0, 1.0) * 0.6;
+        (base_haze + steam_haze).clamp(0.0, 1.0)
+    } else {
+        base_haze
+    };
+    AtmosphereCloudParams {
+        pressure_bar,
+        scale_height,
+        cloud_density,
+        haze_density,
+    }
+}
+
 #[allow(clippy::too_many_arguments, reason = "Material parameter builder")]
 fn compute_body_material_parameters(
     body_type: BodyType,
@@ -362,59 +452,30 @@ fn compute_body_material_parameters(
     } else {
         0.0
     };
-    let pressure_bar = if is_minor_body {
-        0.0
-    } else {
-        opt_vol.map_or((norm_comp.gas_frac as f32 * 2.0).max(0.01), |v| {
-            v.atmospheric_pressure_bar
-        })
-    };
-    let is_airless = opt_climate.is_some_and(|c| c.climate_regime == ClimateRegime::AirlessVacuum)
-        || (pressure_bar < 0.02 && norm_comp.gas_frac <= 0.005);
-    let cloud_density = if !is_minor_body
-        && !is_airless
-        && (has_water_volatiles || norm_comp.gas_frac > 0.005 || pressure_bar >= 0.05)
-    {
-        let base_clouds = opt_climate.map_or(
-            if has_water_volatiles {
-                norm_comp.gas_frac as f32
-            } else {
-                (0.24 + norm_comp.gas_frac as f32 * 6.5).clamp(0.22, 0.68)
-            },
-            |c| c.cloud_coverage_frac,
-        );
-        if temp_k > 340.0 && (ocean_frac > 0.01 || has_water_volatiles) {
-            let steam_factor = ((temp_k as f32 - 340.0) / 40.0).clamp(0.0, 1.0);
-            (base_clouds + steam_factor * 0.70).clamp(0.0, 0.98)
-        } else {
-            base_clouds
-        }
-    } else {
-        0.0
-    };
-    let scale_height = (0.08f32 * (temp_k as f32 / 288.0f32).sqrt()).clamp(0.02f32, 0.25f32);
-    let base_haze = if is_minor_body || is_airless {
-        0.0
-    } else {
-        opt_climate.map_or((norm_comp.gas_frac as f32 * 1.5).clamp(0.0, 1.0), |c| {
-            (c.cloud_coverage_frac * 1.2).clamp(0.0, 1.0)
-        })
-    };
-    let haze_density = if !is_minor_body && temp_k > 340.0 && ocean_frac > 0.02 {
-        let steam_haze = ((temp_k as f32 - 340.0) / 40.0).clamp(0.0, 1.0) * 0.6;
-        (base_haze + steam_haze).clamp(0.0, 1.0)
-    } else {
-        base_haze
-    };
+    let AtmosphereCloudParams {
+        pressure_bar,
+        scale_height,
+        cloud_density,
+        haze_density,
+    } = compute_atmosphere_and_cloud_params(
+        is_minor_body,
+        has_water_volatiles,
+        ocean_frac,
+        &norm_comp,
+        mass_solar,
+        temp_k,
+        opt_climate,
+        opt_vol,
+    );
     let greenhouse = opt_climate.map_or(33.0, |c| c.greenhouse_delta_k);
 
     let b_em = opt_em.map_or(0.0, |e| e.magnetic_field_gauss as f32);
     let b_diff = opt_diff.map_or(0.0, |d| d.magnetic_field_gauss as f32);
     let mag_gauss = b_em.max(b_diff);
-    let liquid_ocean_frac = if is_snowball_regime || temp_k > 380.0 {
+    let liquid_ocean_frac = if is_snowball_regime || temp_k > 435.0 {
         0.0
-    } else if temp_k > 340.0 {
-        let boil_factor = (380.0 - temp_k) / 40.0;
+    } else if temp_k > 385.0 {
+        let boil_factor = (435.0 - temp_k) / 50.0;
         (ocean_frac * boil_factor as f32).clamp(0.0, 1.0)
     } else {
         ocean_frac
@@ -481,36 +542,20 @@ fn compute_spin_axis(opt_spin: Option<&SpinState>, opt_geo: Option<&GeologicalSt
 }
 
 fn compute_aurora_uniforms(opt_aurora: Option<&AuroralOvalState>, mag_gauss: f32) -> Vec4 {
-    opt_aurora.map_or_else(
-        || {
-            if mag_gauss > 0.1 {
-                Vec4::new(0.315, 0.065, (mag_gauss * 0.8).clamp(0.2, 2.5), 1.5)
-            } else {
-                Vec4::ZERO
-            }
-        },
-        |a| {
-            Vec4::new(
-                a.oval_colatitude_rad,
-                a.oval_width_rad,
-                a.auroral_intensity,
-                a.geomagnetic_kp_index,
-            )
-        },
-    )
+    crate::simulation::space_weather::calculate_aurora_shader_uniforms(opt_aurora, mag_gauss)
 }
 
 fn compute_storm_uniforms(
     opt_storm: Option<&AtmosphericStormState>,
     body_name: &str,
 ) -> (Vec4, Vec4) {
-    let lower_name = body_name.to_lowercase();
+    use crate::game::ui::world_list::contains_ignore_ascii_case;
     let storm = opt_storm.copied().or_else(|| {
-        if lower_name.contains("saturn") {
+        if contains_ignore_ascii_case(body_name, "saturn") {
             Some(AtmosphericStormState::saturn())
-        } else if lower_name.contains("jupiter") {
+        } else if contains_ignore_ascii_case(body_name, "jupiter") {
             Some(AtmosphericStormState::jupiter())
-        } else if lower_name.contains("neptune") {
+        } else if contains_ignore_ascii_case(body_name, "neptune") {
             Some(AtmosphericStormState::neptune())
         } else {
             None
@@ -565,6 +610,30 @@ fn compute_civilization_uniforms(
     } else {
         Vec4::new(0.0, 0.0, 0.0, surface_gravity_g)
     }
+}
+
+fn body_uses_shader_time(
+    body_type: BodyType,
+    is_cutaway: bool,
+    params: &BodyMaterialParameters,
+    aurora_params: Vec4,
+    impact_basins_data: &[Vec4; 4],
+) -> bool {
+    if is_cutaway
+        || body_type.is_star_or_remnant()
+        || matches!(body_type, BodyType::GasGiant | BodyType::IceGiant)
+    {
+        return true;
+    }
+    if params.pressure_bar >= 0.001
+        || params.cloud_density > 0.005
+        || params.climate_and_bio.x > 0.005
+        || params.dynamics_and_mag.y > 0.005
+        || (aurora_params.x > 0.05 && aurora_params.z > 0.02)
+    {
+        return true;
+    }
+    impact_basins_data.iter().any(|b| b.w > 0.005 && b.x > 0.01)
 }
 
 #[allow(clippy::too_many_arguments, reason = "Material sync system helper")]
@@ -627,10 +696,24 @@ pub(crate) fn update_body_material_properties(
         axial_tilt,
     );
 
+    let aurora_params = compute_aurora_uniforms(opt_aurora, params.mag_gauss);
+    let cutaway_active = mat.extension.uniforms.cutaway_params.x > 0.5;
+    let shader_time = if body_uses_shader_time(
+        body.body_type,
+        cutaway_active,
+        &params,
+        aurora_params,
+        &mat.extension.uniforms.impact_basins_data,
+    ) {
+        elapsed_secs
+    } else {
+        0.0
+    };
+
     mat.base.base_color = color;
     mat.extension.uniforms.color_seed = LinearRgba::from(color).to_vec4();
     mat.extension.uniforms.temperature = temp.0 as f32;
-    mat.extension.uniforms.time = elapsed_secs;
+    mat.extension.uniforms.time = shader_time;
     mat.extension.uniforms.spin_angle = spin_angle;
     mat.extension.uniforms.climate_and_bio = params.climate_and_bio;
     mat.extension.uniforms.atmosphere_params = params.atmosphere_params;
@@ -666,7 +749,7 @@ pub(crate) fn update_body_material_properties(
         )
     });
 
-    mat.extension.uniforms.aurora_params = compute_aurora_uniforms(opt_aurora, params.mag_gauss);
+    mat.extension.uniforms.aurora_params = aurora_params;
     mat.extension.uniforms.civilization_params =
         compute_civilization_uniforms(mass.0, opt_bio, opt_tidal);
 

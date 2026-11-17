@@ -27,11 +27,11 @@ fn test_t1_r1_eulerian_grid_scaling_and_cell_volume() {
 
     let expected_dx = 1100.0 / 96.0;
     assert!((GMC_CELL_DX_AU - expected_dx).abs() < 1e-5);
-    assert!((GMC_CELL_DX_AU - 11.458333).abs() < 1e-4);
+    assert!((GMC_CELL_DX_AU - 11.458_333).abs() < 1e-4);
 
     let expected_vol = expected_dx * expected_dx * expected_dx;
     assert!((GMC_CELL_VOLUME_AU3 - expected_vol).abs() < 1e-3);
-    assert!(GMC_CELL_VOLUME_AU3 > 1500.0 && GMC_CELL_VOLUME_AU3 < 1510.0);
+    const { assert!(GMC_CELL_VOLUME_AU3 > 1500.0 && GMC_CELL_VOLUME_AU3 < 1510.0) };
 
     // Verify 1D linear mapping bounds and bijectivity
     let idx_origin = grid_index_1d(0, 0, 0);
@@ -103,8 +103,8 @@ fn test_t1_r1_gas_pressure_gradient_force_field() {
     // Density gradient along x-axis between two adjacent cells
     let rho_left = 4.0e-11;
     let rho_right = 6.0e-11;
-    let rho_mid = 0.5 * (rho_left + rho_right);
-    let dx = GMC_CELL_DX_AU as f64;
+    let rho_mid = f64::midpoint(rho_left, rho_right);
+    let dx = f64::from(GMC_CELL_DX_AU);
 
     let grad_rho_x = (rho_right - rho_left) / dx;
     let accel_x = -cs_sq * (grad_rho_x / rho_mid);
@@ -161,8 +161,7 @@ fn test_t1_r2_thermal_jeans_mass_dense_core() {
     // For T = 15 K and rho = 5e-11 M_sun/AU^3, M_J ~ 0.28 M_sun
     assert!(
         m_jeans_th > 0.15 && m_jeans_th < 0.60,
-        "Thermal Jeans mass in dense clump must be in 0.15-0.60 M_sun range (got {:.3} M_sun)",
-        m_jeans_th
+        "Thermal Jeans mass in dense clump must be in 0.15-0.60 M_sun range (got {m_jeans_th:.3} M_sun)"
     );
 }
 
@@ -177,13 +176,11 @@ fn test_t1_r2_turbulent_jeans_mass_supersonic_dispersion() {
 
     assert!(
         m_jeans_core > 1.5 && m_jeans_core < 3.5,
-        "Core turbulent Jeans mass must be ~2.4 M_sun (got {:.3})",
-        m_jeans_core
+        "Core turbulent Jeans mass must be ~2.4 M_sun (got {m_jeans_core:.3})"
     );
     assert!(
         m_jeans_cloud > 10.0 && m_jeans_cloud < 20.0,
-        "Cloud-scale turbulent Jeans mass must be ~15 M_sun (got {:.3})",
-        m_jeans_cloud
+        "Cloud-scale turbulent Jeans mass must be ~15 M_sun (got {m_jeans_cloud:.3})"
     );
     assert!(
         m_jeans_cloud > m_jeans_core,

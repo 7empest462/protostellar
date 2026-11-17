@@ -121,6 +121,48 @@ impl ScenarioPreset {
             }
         }
     }
+
+    /// Clean filename slug for scenario-specific multi-save slots (e.g. `"trappist1"`).
+    pub fn save_slot_slug(&self) -> &'static str {
+        match self {
+            ScenarioPreset::GalacticCollision => "galactic_collision",
+            ScenarioPreset::SolarNebulaMmsn => "solar_nebula",
+            ScenarioPreset::AccretionDiskGenesis => "disk_genesis",
+            ScenarioPreset::Trappist1System => "trappist1",
+            ScenarioPreset::Kepler16Circumbinary => "kepler16",
+            ScenarioPreset::HotJupiterMigration => "hot_jupiter",
+            ScenarioPreset::RoguePlanetFlyby => "rogue_flyby",
+            ScenarioPreset::LittleRedDot => "little_red_dot",
+            ScenarioPreset::PulsarSystem => "pulsar_system",
+            ScenarioPreset::MagnetarOutburst => "magnetar",
+            ScenarioPreset::RelativisticBinary => "relativistic_binary",
+            ScenarioPreset::KozaiLidovTriple => "kozai_triple",
+            ScenarioPreset::SagittariusAStar => "sgr_a_star",
+            ScenarioPreset::MolecularCloudCluster => "molecular_cloud",
+            ScenarioPreset::TidalDisruptionEvent => "tidal_disruption",
+        }
+    }
+
+    /// Compact badge label for save-slot cards and HUD pills.
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            ScenarioPreset::GalacticCollision => "Galaxy Merger",
+            ScenarioPreset::SolarNebulaMmsn => "Solar Nebula",
+            ScenarioPreset::AccretionDiskGenesis => "Disk Genesis",
+            ScenarioPreset::Trappist1System => "TRAPPIST-1",
+            ScenarioPreset::Kepler16Circumbinary => "Kepler-16",
+            ScenarioPreset::HotJupiterMigration => "Hot Jupiter",
+            ScenarioPreset::RoguePlanetFlyby => "Rogue Flyby",
+            ScenarioPreset::LittleRedDot => "Little Red Dot",
+            ScenarioPreset::PulsarSystem => "PSR B1257+12",
+            ScenarioPreset::MagnetarOutburst => "Magnetar",
+            ScenarioPreset::RelativisticBinary => "Relativistic Binary",
+            ScenarioPreset::KozaiLidovTriple => "Kozai-Lidov",
+            ScenarioPreset::SagittariusAStar => "Sgr A*",
+            ScenarioPreset::MolecularCloudCluster => "GMC Cluster",
+            ScenarioPreset::TidalDisruptionEvent => "TDE",
+        }
+    }
 }
 
 /// Message event to request loading a new sandbox scenario.
@@ -261,7 +303,7 @@ pub fn update_scenario_system_phase(
         ScenarioPreset::AccretionDiskGenesis => (
             crate::game::phases::SystemPhase::ProtoplanetaryDisk,
             "🌌 Protoplanetary Disk Genesis: SPH viscous gas fluid, aerodynamic drag, snow line trap & electrostatic coagulation.",
-            crate::game::phases::default_milestones(),
+            crate::game::phases::genesis_milestones(),
         ),
         ScenarioPreset::MolecularCloudCluster => (
             crate::game::phases::SystemPhase::MolecularCloudCollapse,

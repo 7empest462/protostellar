@@ -82,6 +82,7 @@ fn update_single_oort_comet(
     vel: &mut DVec3,
     mass_solar: f64,
     star_pos: DVec3,
+    star_vel: DVec3,
     star_mass: f64,
     dt_years: f64,
     config: &OortCloudConfig,
@@ -104,22 +105,23 @@ fn update_single_oort_comet(
     );
     *vel += a_tide * dt_years;
 
-    // 2. Track current Keplerian orbital elements
-    let (a, e, q) =
-        if let Some(orb) = state_vectors_to_orbital_elements(r_vec, *vel, star_mass, mass_solar) {
-            let a_val = orb.semi_major_axis;
-            let e_val = orb.eccentricity.clamp(0.0, 0.99999);
-            let q_val = if a_val.is_finite() && a_val > 0.0 {
-                a_val * (1.0 - e_val)
-            } else {
-                dist_au
-            };
-            comet.inclination_rad = orb.inclination;
-            comet.argument_of_periapsis_rad = orb.argument_of_periapsis;
-            (a_val, e_val, q_val)
+    // 2. Track current Keplerian orbital elements relative to the host star
+    let (a, e, q) = if let Some(orb) =
+        state_vectors_to_orbital_elements(r_vec, *vel - star_vel, star_mass, mass_solar)
+    {
+        let a_val = orb.semi_major_axis;
+        let e_val = orb.eccentricity.clamp(0.0, 0.99999);
+        let q_val = if a_val.is_finite() && a_val > 0.0 {
+            a_val * (1.0 - e_val)
         } else {
-            (dist_au, 0.7, dist_au)
+            dist_au
         };
+        comet.inclination_rad = orb.inclination;
+        comet.argument_of_periapsis_rad = orb.argument_of_periapsis;
+        (a_val, e_val, q_val)
+    } else {
+        (dist_au, 0.7, dist_au)
+    };
 
     comet.semi_major_axis_au = a;
     comet.eccentricity = e;
@@ -170,10 +172,12 @@ fn step_cometary_sublimation(
         let loss_kg = f64::from(rate) * dt_sec;
         comet.cumulative_volatile_loss_kg += loss_kg;
 
-        if loss_kg > 1.0e12 {
-            comet.volatile_ice_fraction = (comet.volatile_ice_fraction - 1e-5).max(0.01);
+        if loss_kg > 1.0e9 {
+            let delta_ice = ((loss_kg / 1.0e17) as f32).clamp(1e-6, 5e-4);
+            comet.volatile_ice_fraction = (comet.volatile_ice_fraction - delta_ice).max(0.01);
             if let Some(comp) = opt_comp {
-                comp.ice_frac = (comp.ice_frac - 1e-5).max(0.01);
+                comp.ice_frac = (comp.ice_frac - f64::from(delta_ice)).max(0.01);
+                *comp = comp.normalized();
             }
         }
     } else {
@@ -194,7 +198,7 @@ pub fn step_oort_galactic_tides_system(
     config: Res<OortCloudConfig>,
     mut tide_state: ResMut<GalacticTideState>,
     mut infall_events: MessageWriter<OortCometInfallEvent>,
-    star_query: Query<(&SimPosition, &Mass, &CelestialBody)>,
+    star_query: Query<(&SimPosition, &SimVelocity, &Mass, &CelestialBody), Without<OortComet>>,
     mut comets_query: Query<(
         Entity,
         &SimPosition,
@@ -216,16 +220,20 @@ pub fn step_oort_galactic_tides_system(
 
     let star_entry = star_query
         .iter()
-        .find(|(_, _, b)| b.body_type.is_star_or_remnant());
-    let (star_pos, star_mass) = if let Some((s_pos, s_mass, _)) = star_entry {
-        (s_pos.0, s_mass.0)
+        .find(|(_, _, _, b)| b.body_type.is_star_or_remnant());
+    let (star_pos, star_vel, star_mass) = if let Some((s_pos, s_vel, s_mass, _)) = star_entry {
+        (s_pos.0, s_vel.0, s_mass.0)
     } else {
-        (DVec3::ZERO, 1.0)
+        (DVec3::ZERO, DVec3::ZERO, 1.0)
     };
 
-    let dt_years = sim_time
-        .as_ref()
-        .map_or(0.016, |s| s.current_dt_yr.max(1e-4));
+    let dt_years = sim_time.as_ref().map_or(0.016, |s| {
+        if s.current_dt_yr > 0.0 {
+            s.current_dt_yr
+        } else {
+            1e-4
+        }
+    });
     if dt_years <= 0.0 {
         return;
     }
@@ -245,6 +253,7 @@ pub fn step_oort_galactic_tides_system(
             &mut vel.0,
             mass.0,
             star_pos,
+            star_vel,
             star_mass,
             dt_years,
             &config,
@@ -293,7 +302,10 @@ pub fn apply_stellar_flyby_perturbation(
         let r_vec = pos.0 - star_pos;
         let r_norm = r_vec.normalize_or_zero();
         // Scatter along direction perpendicular to flyby track
-        let scatter_vec = (r_norm.cross(dir)).cross(dir).normalize_or_zero();
+        let mut scatter_vec = (r_norm.cross(dir)).cross(dir).normalize_or_zero();
+        if scatter_vec == DVec3::ZERO {
+            scatter_vec = dir.any_orthonormal_vector();
+        }
         vel.0 += scatter_vec * delta_v_mag;
     }
 }

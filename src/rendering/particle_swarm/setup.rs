@@ -114,7 +114,7 @@ pub fn generate_initial_swarm_buffers(
     let mut indices: Vec<u32> = Vec::with_capacity(capacity * 6);
 
     let scale_mult = (disk_params.outer_radius_au / 45.0).clamp(0.02, 1.0) as f32;
-    let base_render_r = 0.085 * config.particle_render_scale * scale_mult;
+    let base_render_r = 0.080 * config.particle_render_scale * scale_mult;
     let active = active_count.min(capacity);
 
     for i in 0..active {
@@ -152,7 +152,7 @@ pub fn generate_initial_swarm_buffers(
         mesh_uvs.push([1.0, 1.0]);
         mesh_uvs.push([0.0, 1.0]);
 
-        let dust_col = [final_color[0], final_color[1], final_color[2], 0.75];
+        let dust_col = [final_color[0], final_color[1], final_color[2], 0.38];
         mesh_colors.push(dust_col);
         mesh_colors.push(dust_col);
         mesh_colors.push(dust_col);
@@ -219,8 +219,7 @@ pub const MAX_SWARM_PARTICLES: usize = 500_000;
 pub fn setup_particle_swarm(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    opt_materials: Option<ResMut<Assets<super::ParticleSwarmMaterial>>>,
     disk_params: Res<DiskParameters>,
     config: Res<SimulationConfig>,
 ) {
@@ -237,7 +236,7 @@ pub fn setup_particle_swarm(
         &config,
     );
 
-    let mesh_normals = vec![[0.0f32, 1.0f32, 0.0f32]; MAX_SWARM_PARTICLES * 4];
+    let mesh_normals = vec![[0.0f32, 0.0f32, 0.0f32]; MAX_SWARM_PARTICLES * 4];
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -249,20 +248,9 @@ pub fn setup_particle_swarm(
     mesh.insert_indices(bevy::render::mesh::Indices::U32(buffers.indices));
 
     let mesh_handle = meshes.add(mesh);
-    let texture_handle = images.add(create_soft_particle_texture());
 
-    let material = materials.add(StandardMaterial {
-        base_color_texture: Some(texture_handle),
-        base_color: Color::WHITE,
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        ..default()
-    });
-
-    commands.spawn((
+    let mut entity_cmd = commands.spawn((
         Mesh3d(mesh_handle.clone()),
-        MeshMaterial3d(material),
         Transform::from_translation(Vec3::ZERO),
         Visibility::default(),
         NotShadowCaster,
@@ -272,8 +260,14 @@ pub fn setup_particle_swarm(
             Vec3::splat(3_000_000.0),
         ),
     ));
+    if let Some(mut materials) = opt_materials {
+        let material = materials.add(super::ParticleSwarmMaterial::new(
+            config.particle_render_scale,
+        ));
+        entity_cmd.insert(MeshMaterial3d(material));
+    }
 
-    commands.insert_resource(ParticleSwarmData {
+    let mut data = ParticleSwarmData {
         positions: buffers.positions,
         velocities: buffers.velocities,
         masses: buffers.masses,
@@ -289,7 +283,10 @@ pub fn setup_particle_swarm(
         base_mass: individual_mass,
         is_dirty: true,
         pending_gpu_accretions: Vec::new(),
-    });
+    };
+    super::update_gpu_billboard_mesh(&mut data, &disk_params, &mut meshes);
+    data.is_dirty = false;
+    commands.insert_resource(data);
 }
 
 /// Parks dormant particles beyond the active count out of view with zero mass and zero alpha.
@@ -398,9 +395,18 @@ fn reseed_colliding_galaxies(data: &mut ParticleSwarmData, n: usize) {
 pub fn reseed_particle_swarm(
     data: &mut ParticleSwarmData,
     disk_params: &DiskParameters,
-    _config: &SimulationConfig,
+    config: &SimulationConfig,
 ) {
-    let n = data.count;
+    let min_count = if data.positions.len() >= 50_000 {
+        50_000
+    } else {
+        1
+    };
+    let n = config
+        .target_particle_count
+        .clamp(min_count, MAX_SWARM_PARTICLES)
+        .min(data.positions.len());
+    data.count = n;
 
     if disk_params.disk_mass <= 0.0 {
         data.base_mass = 0.0;

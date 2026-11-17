@@ -33,9 +33,20 @@ fn compute_surface_temperature(
     let cloud_refl = if atm_pressure > 0.05 { 0.10 } else { 0.0 };
     let albedo = (surface_albedo + cloud_refl).clamp(0.12, 0.78);
 
-    let equilibrium_temp =
-        (star_temp * (star_r / (2.0 * r)).sqrt() * (1.0 - f64::from(albedo)).powf(0.25))
-            * star_lum.powf(0.25);
+    let flux_transmission = if star_lum <= 0.0 {
+        0.0
+    } else {
+        let sb_lum = (star_r / crate::utils::constants::SOLAR_RADIUS_AU).powi(2)
+            * (star_temp / 5778.0).powi(4);
+        if sb_lum > 1e-12 && star_lum < sb_lum {
+            (star_lum / sb_lum).clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    };
+    let equilibrium_temp = star_temp
+        * (star_r / (2.0 * r)).sqrt()
+        * ((1.0 - f64::from(albedo)) * flux_transmission).powf(0.25);
 
     let shock_boost = if shockwave_r > 0.0 && (r - shockwave_r).abs() < 2.5 {
         800.0 * (1.0 - (r - shockwave_r).abs() / 2.5)
@@ -89,17 +100,33 @@ fn compute_steam_condensation_fraction(surface_temp: f64) -> f32 {
     }
 }
 
+/// Computes minimum atmospheric pressure (bar) from retained primordial H2/He gas
+/// on worlds massive enough to gravitationally bind a dense envelope (`>= 0.5 M_earth`, `>= 1.5%` gas).
+pub fn retained_gas_envelope_bar(mass_solar: f64, gas_frac: f32) -> f32 {
+    if mass_solar >= 0.5 * crate::utils::constants::EARTH_MASS_SOLAR && gas_frac >= 0.015 {
+        let mass_earth = mass_solar / crate::utils::constants::EARTH_MASS_SOLAR;
+        (mass_earth * f64::from(gas_frac) * 25.0).clamp(0.5, 500.0) as f32
+    } else {
+        0.0
+    }
+}
+
 fn update_volatile_condensation(
     opt_vol: &mut Option<&mut VolatileInventory>,
     body_type: BodyType,
     b_mass_solar: f64,
     has_water_volatiles: bool,
     current_ice: f32,
+    comp_gas_frac: f32,
     surface_temp: f64,
 ) -> (f32, f32) {
+    let retained_gas_bar = retained_gas_envelope_bar(b_mass_solar, comp_gas_frac);
     let Some(ref mut vol) = opt_vol else {
-        return (0.0, 0.0);
+        return (0.0, retained_gas_bar);
     };
+    if retained_gas_bar > 0.0 {
+        vol.atmospheric_pressure_bar = vol.atmospheric_pressure_bar.max(retained_gas_bar);
+    }
     if !has_water_volatiles {
         vol.ocean_coverage_frac = 0.0;
         return (0.0, vol.atmospheric_pressure_bar);
@@ -196,22 +223,28 @@ fn determine_climate_coverage(
 
     let polar_ice_lat = (90.0 * (1.0 - ice_coverage)).clamp(0.0, 90.0);
 
+    let pressure_clouds = if effective_pressure > 15.0 {
+        ((effective_pressure - 15.0) / 60.0).clamp(0.45, 0.95)
+    } else {
+        0.0
+    };
     let cloud_coverage = if effective_pressure < 0.02 && comp_gas_frac <= 0.005 {
         0.0
     } else if has_water_volatiles {
-        let base_water_clouds = (0.35 + ocean_frac * 0.40).clamp(0.10, 0.95);
+        let base_water_clouds = (0.28 + ocean_frac * 0.34).clamp(0.10, 0.90);
         if surface_temp >= 647.0 {
             // Supercritical steam + CO2 envelope above the critical point of water
             0.95
-        } else if surface_temp > 340.0 {
-            let boil_frac = ((surface_temp as f32 - 340.0) / 40.0).clamp(0.0, 1.0);
-            (base_water_clouds + boil_frac * 0.60).clamp(0.10, 0.98)
+        } else if surface_temp > 380.0 {
+            let boil_frac = ((surface_temp as f32 - 380.0) / 55.0).clamp(0.0, 1.0);
+            (base_water_clouds + boil_frac * 0.65).clamp(0.10, 0.98)
         } else {
             base_water_clouds
         }
+        .max(pressure_clouds)
     } else if effective_pressure > 15.0 {
         // Crushing dry Venus-like atmosphere with dense sulfuric/aerosol cloud decks
-        ((effective_pressure - 15.0) / 60.0).clamp(0.45, 0.95)
+        pressure_clouds
     } else if comp_gas_frac > 0.005 || effective_pressure >= 0.05 {
         // Volatile gas envelope on a desiccated surface: visible dynamic cloud bands & fronts (25%..68%),
         // without turning into a 100% opaque boiling-ocean whiteout
@@ -281,6 +314,7 @@ pub fn update_body_climate_and_biosphere(
         b_mass_solar,
         has_water_volatiles,
         current_ice,
+        comp.gas_frac as f32,
         thermal.surface_temp,
     );
 

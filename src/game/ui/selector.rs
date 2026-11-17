@@ -6,76 +6,138 @@ use crate::simulation::components::*;
 use crate::simulation::probes::{ProbeStatus, ProbeType, SpaceProbe};
 use crate::simulation::resources::*;
 
+use crate::utils::math::{
+    contains_any_ignore_ascii_case, contains_ignore_ascii_case, eq_any_ignore_ascii_case,
+    starts_with_ignore_ascii_case, strip_prefix_ignore_ascii_case,
+};
+
 use super::types::*;
 
+fn format_moon_button_label(name: &str) -> String {
+    let trimmed = name.trim();
+    if eq_any_ignore_ascii_case(trimmed, &["the moon", "moon"]) {
+        return "🌙 The Moon".to_string();
+    }
+    // Strip trailing "(Moon)" and parenthetical mass/class tags like "(1.5 M_J)" or "(Gas Giant)"
+    let base = name
+        .strip_suffix("(Moon)")
+        .or_else(|| name.strip_suffix("(moon)"))
+        .unwrap_or(name)
+        .trim();
+    let mut compact = String::with_capacity(base.len());
+    let mut depth = 0usize;
+    for ch in base.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => compact.push(ch),
+            _ => {}
+        }
+    }
+    let compact = compact
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("Super-Jupiter", "Sup-Jup")
+        .replace("Captured ", "")
+        .replace("Planet-", "Pl-");
+    let full = format!("🌙 {compact}");
+    if full.chars().count() > 14 {
+        let trunc: String = full.chars().take(13).collect();
+        format!("{trunc}…")
+    } else {
+        full
+    }
+}
+
+fn format_super_jupiter_button_label(name: &str) -> String {
+    if let (Some(start), Some(end)) = (name.find('('), name.find(')')) {
+        if let Some(raw_tag) = name.get(start + 1..end) {
+            let tag = raw_tag.trim().replace(" M_J", "J");
+            let candidate = format!("🪐 Sup-Jup {tag}");
+            if candidate.chars().count() <= 16 {
+                return candidate;
+            }
+        }
+    }
+    "🪐 Super-Jup".to_string()
+}
+
 pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> String {
-    let lower = name.to_lowercase();
-    if lower.contains("little red dot") || body_type == BodyType::QuasiStar {
+    if body_type == BodyType::Moon || contains_ignore_ascii_case(name, "(moon)") {
+        return format_moon_button_label(name);
+    }
+    if starts_with_ignore_ascii_case(name, "super-jupiter") && body_type == BodyType::GasGiant {
+        return format_super_jupiter_button_label(name);
+    }
+    if contains_ignore_ascii_case(name, "little red dot") || body_type == BodyType::QuasiStar {
         "🔴 Little Red Dot".to_string()
-    } else if lower.contains("trappist-1") {
+    } else if contains_ignore_ascii_case(name, "trappist-1") {
         if is_star || body_type.is_star_or_remnant() {
             "TRAPPIST-1".to_string()
-        } else if lower.contains("trappist-1e") {
+        } else if contains_ignore_ascii_case(name, "trappist-1e") {
             "1e (HZ)".to_string()
-        } else if lower.contains("trappist-1f") {
+        } else if contains_ignore_ascii_case(name, "trappist-1f") {
             "1f (HZ)".to_string()
-        } else if lower.contains("trappist-1g") {
+        } else if contains_ignore_ascii_case(name, "trappist-1g") {
             "1g (HZ)".to_string()
-        } else if lower.contains("trappist-1b") {
+        } else if contains_ignore_ascii_case(name, "trappist-1b") {
             "1b".to_string()
-        } else if lower.contains("trappist-1c") {
+        } else if contains_ignore_ascii_case(name, "trappist-1c") {
             "1c".to_string()
-        } else if lower.contains("trappist-1d") {
+        } else if contains_ignore_ascii_case(name, "trappist-1d") {
             "1d".to_string()
-        } else if lower.contains("trappist-1h") {
+        } else if contains_ignore_ascii_case(name, "trappist-1h") {
             "1h".to_string()
-        } else if let Some(suffix) = lower.strip_prefix("trappist-1") {
+        } else if let Some(suffix) = strip_prefix_ignore_ascii_case(name, "trappist-1") {
             format!("1{}", suffix.trim())
         } else {
             name.to_string()
         }
-    } else if lower.contains("kepler-16") {
-        if lower.contains("kepler-16a") {
+    } else if contains_ignore_ascii_case(name, "kepler-16") {
+        if contains_ignore_ascii_case(name, "kepler-16a") {
             "Kepler-16A".to_string()
-        } else if lower.contains("kepler-16b (secondary")
-            || lower.contains("kepler-16b (secondary m-dwarf)")
-            || (is_star && lower.contains("16b"))
+        } else if contains_any_ignore_ascii_case(
+            name,
+            &["kepler-16b (secondary", "kepler-16b (secondary m-dwarf)"],
+        ) || (is_star && contains_ignore_ascii_case(name, "16b"))
         {
             "Kepler-16B".to_string()
-        } else if lower.contains("kepler-16b") {
+        } else if contains_ignore_ascii_case(name, "kepler-16b") {
             "Kepler-16b".to_string()
         } else {
             name.to_string()
         }
-    } else if lower.contains("nemesis") || lower.contains("rogue") {
+    } else if contains_any_ignore_ascii_case(name, &["nemesis", "rogue"]) {
         "Nemesis-X".to_string()
-    } else if lower.contains("hot jupiter") || lower.contains("hd 209458") {
+    } else if contains_any_ignore_ascii_case(name, &["hot jupiter", "hd 209458"]) {
         "Hot Jupiter".to_string()
-    } else if lower.contains("proto-earth") || (lower.contains("earth") && lower.contains("inner"))
+    } else if contains_ignore_ascii_case(name, "proto-earth")
+        || (contains_ignore_ascii_case(name, "earth") && contains_ignore_ascii_case(name, "inner"))
     {
         "Proto-Earth".to_string()
-    } else if lower.contains("proto-jupiter") {
+    } else if contains_ignore_ascii_case(name, "proto-jupiter") {
         "Proto-Jupiter".to_string()
-    } else if lower.contains("proto-mercury") {
+    } else if contains_ignore_ascii_case(name, "proto-mercury") {
         "Mercury".to_string()
-    } else if lower.contains("proto-venus") {
+    } else if contains_ignore_ascii_case(name, "proto-venus") {
         "Venus".to_string()
-    } else if lower.contains("proto-mars") {
+    } else if contains_ignore_ascii_case(name, "proto-mars") {
         "Mars".to_string()
-    } else if lower.contains("theia") {
+    } else if contains_ignore_ascii_case(name, "theia") {
         "🌑 Theia".to_string()
-    } else if lower.contains("proto-saturn") {
+    } else if contains_ignore_ascii_case(name, "proto-saturn") {
         "Saturn".to_string()
-    } else if lower.contains("proto-uranus") {
+    } else if contains_ignore_ascii_case(name, "proto-uranus") {
         "Uranus".to_string()
-    } else if lower.contains("proto-neptune") {
+    } else if contains_ignore_ascii_case(name, "proto-neptune") {
         "Neptune".to_string()
-    } else if lower.contains("pluto") {
+    } else if contains_ignore_ascii_case(name, "pluto") {
         "🧊 Pluto".to_string()
-    } else if lower.contains("planet nine") || lower.contains("planet 9") {
+    } else if contains_any_ignore_ascii_case(name, &["planet nine", "planet 9"]) {
         "🪐 Planet 9".to_string()
     } else if is_embryo_body(name, body_type) {
-        if lower.contains("theia") {
+        if contains_ignore_ascii_case(name, "theia") {
             "Theia".to_string()
         } else if let Some(suffix) = name.strip_prefix("Embryo-") {
             format!("🌱 {suffix}")
@@ -84,28 +146,28 @@ pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> S
         } else {
             format!("🌱 {name}")
         }
-    } else if lower.contains("kuiper") {
+    } else if contains_ignore_ascii_case(name, "kuiper") {
         "Kuiper".to_string()
-    } else if lower.contains("ceres") {
+    } else if contains_ignore_ascii_case(name, "ceres") {
         "Ceres".to_string()
     } else if let Some(suffix) = name.strip_prefix("Protostar Jeans-") {
         format!("✨ Jeans-{suffix}")
     } else if let Some(suffix) = name.strip_prefix("Protostar ") {
         let clean = suffix.split('(').next().unwrap_or(suffix).trim();
         format!("✨ {clean}")
-    } else if lower.contains("genesis") {
+    } else if contains_ignore_ascii_case(name, "genesis") {
         "Genesis Protostar".to_string()
-    } else if is_star && lower.contains("sun") {
+    } else if is_star && contains_ignore_ascii_case(name, "sun") {
         "Sun".to_string()
-    } else if lower.contains("protostar") {
+    } else if contains_ignore_ascii_case(name, "protostar") {
         "✨ Protostar".to_string()
-    } else if lower.contains("host star") {
+    } else if contains_ignore_ascii_case(name, "host star") {
         "Host Star".to_string()
-    } else if lower.starts_with("asteroid-") {
-        name.strip_prefix("Asteroid-")
+    } else if starts_with_ignore_ascii_case(name, "asteroid-") {
+        strip_prefix_ignore_ascii_case(name, "asteroid-")
             .map_or_else(|| name.to_string(), |s| format!("Ast-{s}"))
-    } else if lower.starts_with("dust-") {
-        name.strip_prefix("Dust-")
+    } else if starts_with_ignore_ascii_case(name, "dust-") {
+        strip_prefix_ignore_ascii_case(name, "dust-")
             .map_or_else(|| name.to_string(), |s| format!("Dust-{s}"))
     } else if let Some(prefix) = name.get(..12) {
         if name.len() > 14 {
@@ -122,14 +184,13 @@ pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> S
 }
 
 pub fn body_to_button_colors(name: &str, body_type: BodyType, is_star: bool) -> (Color, Color) {
-    let lower = name.to_lowercase();
     if is_star || body_type.is_star_or_remnant() {
-        if lower.contains("little red dot") || body_type == BodyType::QuasiStar {
+        if contains_ignore_ascii_case(name, "little red dot") || body_type == BodyType::QuasiStar {
             (
                 Color::srgba(0.28, 0.04, 0.08, 0.95),
                 Color::srgb(1.0, 0.35, 0.45),
             )
-        } else if lower.contains("red") || lower.contains("trappist") || lower.contains("16b") {
+        } else if contains_any_ignore_ascii_case(name, &["red", "trappist", "16b"]) {
             (
                 Color::srgba(0.28, 0.08, 0.04, 0.9),
                 Color::srgb(1.0, 0.45, 0.3),
@@ -140,71 +201,64 @@ pub fn body_to_button_colors(name: &str, body_type: BodyType, is_star: bool) -> 
                 Color::srgb(1.0, 0.8, 0.2),
             )
         }
-    } else if lower.contains("hz")
-        || lower.contains("earth")
-        || lower.contains("habitable")
-        || lower.contains("1e")
-        || lower.contains("1f")
-        || lower.contains("1g")
+    } else if contains_any_ignore_ascii_case(name, &["hz", "earth", "habitable", "1e", "1f", "1g"])
     {
         (
             Color::srgba(0.04, 0.22, 0.16, 0.9),
             Color::srgb(0.3, 0.9, 0.6),
         )
-    } else if lower.contains("rogue") || lower.contains("nemesis") {
+    } else if contains_any_ignore_ascii_case(name, &["rogue", "nemesis"]) {
         (
             Color::srgba(0.28, 0.05, 0.12, 0.95),
             Color::srgb(1.0, 0.3, 0.5),
         )
-    } else if lower.contains("pluto") {
+    } else if contains_ignore_ascii_case(name, "pluto") {
         (
             Color::srgba(0.10, 0.14, 0.22, 0.9),
             Color::srgb(0.7, 0.85, 0.95),
         )
-    } else if lower.contains("planet nine") || lower.contains("planet 9") {
+    } else if contains_any_ignore_ascii_case(name, &["planet nine", "planet 9"]) {
         (
             Color::srgba(0.04, 0.12, 0.25, 0.9),
             Color::srgb(0.2, 0.75, 0.9),
         )
-    } else if lower.contains("theia") {
+    } else if contains_ignore_ascii_case(name, "theia") {
         (
             Color::srgba(0.24, 0.12, 0.10, 0.95),
             Color::srgb(1.0, 0.65, 0.45),
+        )
+    } else if body_type == BodyType::Moon || contains_ignore_ascii_case(name, "(moon)") {
+        (
+            Color::srgba(0.14, 0.16, 0.22, 0.90),
+            Color::srgb(0.72, 0.78, 0.88),
         )
     } else if is_embryo_body(name, body_type) {
         (
             Color::srgba(0.06, 0.18, 0.10, 0.9),
             Color::srgb(0.3, 0.95, 0.65),
         )
-    } else if lower.contains("hot jupiter")
-        || body_type == BodyType::GasGiant
-        || lower.contains("jupiter")
-        || lower.contains("saturn")
+    } else if body_type == BodyType::GasGiant
+        || contains_any_ignore_ascii_case(name, &["hot jupiter", "jupiter", "saturn"])
     {
         (
             Color::srgba(0.20, 0.12, 0.06, 0.9),
             Color::srgb(0.95, 0.65, 0.3),
         )
     } else if body_type == BodyType::IceGiant
-        || lower.contains("neptune")
-        || lower.contains("uranus")
-        || lower.contains("kuiper")
+        || contains_any_ignore_ascii_case(name, &["neptune", "uranus", "kuiper"])
     {
         (
             Color::srgba(0.06, 0.14, 0.26, 0.9),
             Color::srgb(0.4, 0.7, 1.0),
         )
-    } else if body_type == BodyType::Comet || lower.contains("comet") {
+    } else if body_type == BodyType::Comet || contains_ignore_ascii_case(name, "comet") {
         (
             Color::srgba(0.05, 0.14, 0.24, 0.90),
             Color::srgb(0.4, 0.8, 1.0),
         )
     } else if body_type == BodyType::Asteroid
         || body_type == BodyType::Planetesimal
-        || lower.contains("asteroid")
-        || lower.contains("ceres")
-        || lower.contains("vesta")
-        || lower.contains("pallas")
+        || contains_any_ignore_ascii_case(name, &["asteroid", "ceres", "vesta", "pallas"])
     {
         (
             Color::srgba(0.18, 0.12, 0.08, 0.90),
@@ -229,13 +283,25 @@ pub fn body_to_button_label_and_colors(
 }
 
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
-fn collect_embryo_and_minor_bodies(
-    bodies: impl Iterator<Item = (Entity, CelestialBody, SimPosition, Mass, Radius, bool)>,
+fn collect_embryo_and_minor_bodies<'a, I>(
+    bodies: I,
     sort_by_mass: bool,
 ) -> (
     Vec<(Entity, String, BodyType, bool, f64, f64)>,
     Vec<(Entity, String, BodyType, bool, f64, f64)>,
-) {
+)
+where
+    I: IntoIterator<
+        Item = (
+            Entity,
+            &'a CelestialBody,
+            &'a SimPosition,
+            &'a Mass,
+            &'a Radius,
+            bool,
+        ),
+    >,
+{
     let mut embryo_bodies = Vec::new();
     let mut minor_bodies = Vec::new();
 
@@ -667,30 +733,72 @@ pub fn update_quick_bar_highlights(
     }
 }
 
-#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
+use super::world_list::{
+    compute_quick_bar_fingerprint, retain_filtered_quick_bar_items,
+    should_defer_quick_bar_hover_rebuild, QuickBarBodiesQuery, QuickBarFingerprint,
+    QuickBarMinorEntry, QuickBarProbeEntry,
+};
+
+#[allow(clippy::too_many_arguments, reason = "Quick bar rebuild helper")]
+fn rebuild_quick_bar_contents(
+    commands: &mut Commands,
+    bar_ent: Entity,
+    quick_bar_state: &QuickBarState,
+    major_worlds: &[SystemWorld],
+    embryo_bodies: &[QuickBarMinorEntry],
+    minor_bodies: &[QuickBarMinorEntry],
+    probes: &[QuickBarProbeEntry],
+    selected_entity: Option<Entity>,
+) {
+    if let Ok(mut bar_cmd) = commands.get_entity(bar_ent) {
+        bar_cmd.despawn_children();
+        bar_cmd.with_children(|btn_row| {
+            if quick_bar_state.is_minimized {
+                populate_minimized_quick_bar(
+                    btn_row,
+                    major_worlds.len(),
+                    embryo_bodies.len(),
+                    minor_bodies.len(),
+                );
+            } else {
+                populate_expanded_quick_bar(
+                    btn_row,
+                    major_worlds,
+                    embryo_bodies,
+                    minor_bodies,
+                    probes,
+                    selected_entity,
+                    quick_bar_state,
+                );
+            }
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments, reason = "Quick bar system queries")]
 pub fn update_quick_body_selector_bar(
     mut commands: Commands,
     bar_query: Query<Entity, With<QuickBodySelectorBar>>,
-    bodies_query: Query<
-        (
-            Entity,
-            &CelestialBody,
-            &SimPosition,
-            &Mass,
-            &Radius,
-            Option<&CentralStar>,
-        ),
-        With<CelestialBody>,
-    >,
+    bodies_query: QuickBarBodiesQuery,
     probes_query: Query<(Entity, &SpaceProbe, &CelestialBody)>,
     mut quick_bar_state: ResMut<QuickBarState>,
     player_state: Res<PlayerInteractionState>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut last_state: Local<QuickBarCacheState>,
+    mut last_fp: Local<Option<QuickBarFingerprint>>,
+    opt_scenario: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     (focus, editable_query): (
         Option<Res<bevy::input_focus::InputFocus>>,
         Query<(), With<bevy::text::EditableText>>,
     ),
+    hovered_bar_buttons: Query<
+        (
+            &ChildOf,
+            &bevy::picking::hover::Hovered,
+            Has<bevy::ui::Pressed>,
+        ),
+        With<HudButton>,
+    >,
 ) {
     let Ok(bar_ent) = bar_query.single() else {
         return;
@@ -699,18 +807,33 @@ pub fn update_quick_body_selector_bar(
     let text_focused =
         crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
 
-    if !text_focused && keyboard.just_pressed(KeyCode::KeyH) {
+    let toggled_hotkey = !text_focused && keyboard.just_pressed(KeyCode::KeyH);
+    if toggled_hotkey {
         quick_bar_state.is_minimized = !quick_bar_state.is_minimized;
+    }
+
+    let current_fp = compute_quick_bar_fingerprint(
+        &bodies_query,
+        &probes_query,
+        &quick_bar_state,
+        opt_scenario.as_deref(),
+    );
+    if !toggled_hotkey
+        && !quick_bar_state.is_changed()
+        && last_fp.as_ref() == Some(&current_fp)
+        && !last_state.0.is_empty()
+    {
+        return;
     }
 
     let (mut embryo_bodies, mut minor_bodies) = collect_embryo_and_minor_bodies(
         bodies_query.iter().map(|(e, b, p, m, r, s)| {
             (
                 e,
-                b.clone(),
-                *p,
-                *m,
-                *r,
+                b,
+                p,
+                m,
+                r,
                 s.is_some() || b.body_type.is_star_or_remnant(),
             )
         }),
@@ -725,20 +848,20 @@ pub fn update_quick_body_selector_bar(
         .collect();
 
     // Filter celestial worlds and probes case-insensitively when search query is active
-    let filter = quick_bar_state.filter_text.trim().to_lowercase();
-    if !filter.is_empty() {
-        major_worlds.retain(|w| w.name.to_lowercase().contains(&filter));
-        embryo_bodies.retain(|b| b.1.to_lowercase().contains(&filter));
-        minor_bodies.retain(|b| b.1.to_lowercase().contains(&filter));
-        probes.retain(|(_, _, _, name)| name.to_lowercase().contains(&filter));
-    }
+    retain_filtered_quick_bar_items(
+        quick_bar_state.filter_text.trim(),
+        &mut major_worlds,
+        &mut embryo_bodies,
+        &mut minor_bodies,
+        &mut probes,
+    );
 
     let probe_states: Vec<(Entity, ProbeStatus)> =
         probes.iter().map(|(e, _, s, _)| (*e, *s)).collect();
 
     let current_entities: Vec<Entity> = major_worlds.iter().map(|b| b.entity).collect();
     let current_state = (
-        current_entities,
+        current_entities.clone(),
         embryo_bodies.len(),
         minor_bodies.len(),
         probe_states,
@@ -754,34 +877,39 @@ pub fn update_quick_body_selector_bar(
     );
 
     if *last_state == current_state && !major_worlds.is_empty() {
+        *last_fp = Some(current_fp);
         return;
     }
 
+    // Do not despawn and recreate QuickBar buttons while the pointer is hovering or pressing
+    // one unless the user toggled bar controls/filter or major world membership changed.
+    // Otherwise recreating buttons resets their `ComputedNode` size for a frame and drops clicks.
+    let pointer_on_quick_bar = hovered_bar_buttons
+        .iter()
+        .any(|(child_of, h, pressed)| child_of.parent() == bar_ent && (h.get() || pressed));
+    if should_defer_quick_bar_hover_rebuild(
+        pointer_on_quick_bar,
+        quick_bar_state.is_changed(),
+        toggled_hotkey,
+        &last_state.0,
+        &current_entities,
+    ) {
+        return;
+    }
+
+    *last_fp = Some(current_fp);
     *last_state = current_state;
 
-    if let Ok(mut bar_cmd) = commands.get_entity(bar_ent) {
-        bar_cmd.despawn_children();
-        bar_cmd.with_children(|btn_row| {
-            if quick_bar_state.is_minimized {
-                populate_minimized_quick_bar(
-                    btn_row,
-                    major_worlds.len(),
-                    embryo_bodies.len(),
-                    minor_bodies.len(),
-                );
-            } else {
-                populate_expanded_quick_bar(
-                    btn_row,
-                    &major_worlds,
-                    &embryo_bodies,
-                    &minor_bodies,
-                    &probes,
-                    player_state.selected_entity,
-                    &quick_bar_state,
-                );
-            }
-        });
-    }
+    rebuild_quick_bar_contents(
+        &mut commands,
+        bar_ent,
+        &quick_bar_state,
+        &major_worlds,
+        &embryo_bodies,
+        &minor_bodies,
+        &probes,
+        player_state.selected_entity,
+    );
 }
 
 pub use super::builder_spawner::{

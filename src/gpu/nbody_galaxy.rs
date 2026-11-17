@@ -106,8 +106,11 @@ pub fn extract_galaxy_sim_data(
     let mut massive_body_velocities = [[0.0; 4]; 32];
     let mut num_bodies = 0u32;
 
-    let total_massive_query_count = massive_query.iter().count();
-    for (pos, mass, (_, vel_maybe, _)) in massive_query.iter() {
+    let smbh_count = massive_query
+        .iter()
+        .filter(|(_, m, (_, _, b))| b.body_type == BodyType::BlackHole && m.0 >= 100_000.0)
+        .count();
+    for (pos, mass, (_, vel_maybe, body)) in massive_query.iter() {
         if let (Some(body_slot), Some(vel_slot)) = (
             massive_bodies.get_mut(num_bodies as usize),
             massive_body_velocities.get_mut(num_bodies as usize),
@@ -121,7 +124,9 @@ pub fn extract_galaxy_sim_data(
                 ],
             };
             let v = vel_maybe.map_or(bevy::math::DVec3::ZERO, |v| v.0);
-            let halo_m = if total_massive_query_count <= 1 {
+            let halo_m = if body.body_type != BodyType::BlackHole || mass.0 < 100_000.0 {
+                0.0_f32
+            } else if smbh_count <= 1 {
                 2.4e12_f32 // Merged Milkomeda halo
             } else if mass.0 > 50_000_000.0 {
                 1.4e12_f32 // Andromeda halo
@@ -141,7 +146,7 @@ pub fn extract_galaxy_sim_data(
     let count = if let Some(s) = swarm.as_ref() {
         s.count as u32
     } else {
-        100_000
+        500_000
     };
     commands.insert_resource(GpuGalaxyExtractedParams {
         count,

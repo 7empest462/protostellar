@@ -90,9 +90,7 @@ fn test_oort_cloud_isotropic_spawner() {
     // Quasi-spherical isotropic distribution should have roughly comparable prograde and retrograde comets
     assert!(
         prograde_count > 15 && retrograde_count > 15,
-        "Expected mixed isotropic inclinations (got prograde: {}, retrograde: {})",
-        prograde_count,
-        retrograde_count
+        "Expected mixed isotropic inclinations (got prograde: {prograde_count}, retrograde: {retrograde_count})"
     );
 }
 
@@ -105,9 +103,11 @@ fn test_galactic_tide_kozai_cycle_perihelion_drop() {
     app.init_resource::<TimeWarp>();
     app.init_resource::<SimTime>();
 
-    let mut config = OortCloudConfig::default();
-    config.secular_accel_factor = 1.0e6; // Accelerated for testing
-    config.sublimation_distance_au = 5.0;
+    let config = OortCloudConfig {
+        secular_accel_factor: 1.0e6, // Accelerated for testing
+        sublimation_distance_au: 5.0,
+        ..Default::default()
+    };
     app.insert_resource(config);
 
     // Spawn central star
@@ -168,8 +168,10 @@ fn test_sun_grazing_comet_sublimation_activation() {
     app.add_plugins(OortPlugin);
 
     app.init_resource::<TimeWarp>();
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 0.02;
+    let sim_time = SimTime {
+        current_dt_yr: 0.02,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     // Spawn central star

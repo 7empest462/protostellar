@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::terraforming::TerraformingAtmosphere;
 use crate::utils::constants::EARTH_MASS_SOLAR;
 
 /// Registers an impact basin on an entity, maintaining at most 8 recent basins.
@@ -84,29 +85,33 @@ pub fn deliver_volatiles_and_crater(
 
     if let Ok(mut p_cmd) = commands.get_entity(primary_entity) {
         if d_water_earth > 0.0 || d_gas_earth > 0.0 {
+            let impact_inc = u32::from(d_water_earth > 0.0);
             p_cmd
                 .entry::<VolatileInventory>()
                 .and_modify(move |mut vol| {
                     vol.delivered_water_m_earth += d_water_earth;
-                    vol.cometary_impact_count += 1;
+                    vol.cometary_impact_count += impact_inc;
+                    let cov_from_water =
+                        (vol.delivered_water_m_earth / 0.0005).clamp(0.0, 0.92) as f32;
                     vol.ocean_coverage_frac =
-                        ((vol.delivered_water_m_earth / 0.0006) * 0.71).clamp(0.0, 0.98) as f32;
+                        vol.ocean_coverage_frac.max(cov_from_water).clamp(0.0, 0.98);
                     vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar
                         + (d_gas_earth * 120.0) as f32)
                         .clamp(0.01, 90.0);
                 })
                 .or_insert(VolatileInventory {
                     delivered_water_m_earth: d_water_earth,
-                    ocean_coverage_frac: ((d_water_earth / 0.0006) * 0.71).clamp(0.0, 0.98) as f32,
+                    ocean_coverage_frac: (d_water_earth / 0.0005).clamp(0.0, 0.92) as f32,
                     atmospheric_pressure_bar: (d_gas_earth * 120.0).clamp(0.01, 90.0) as f32,
-                    cometary_impact_count: 1,
+                    cometary_impact_count: impact_inc,
                 });
-
             p_cmd
-                .entry::<crate::simulation::terraforming::TerraformingAtmosphere>()
+                .entry::<TerraformingAtmosphere>()
                 .and_modify(move |mut terra| {
-                    terra.surface_liquid_water_m_earth += d_water_earth;
-                    terra.atmospheric_water_m_earth += d_water_earth * 0.05;
+                    terra.surface_liquid_water_m_earth += d_water_earth * 0.70;
+                    terra.atmospheric_water_m_earth += d_water_earth * 0.30;
+                    terra.co2_pressure_bar += (d_gas_earth * 40.0) as f32;
+                    terra.nitrogen_pressure_bar += (d_gas_earth * 80.0) as f32;
                 });
         }
 

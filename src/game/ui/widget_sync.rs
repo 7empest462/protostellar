@@ -22,6 +22,50 @@ pub struct HoverReticleBracket;
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SurfaceCompassNeedle;
 
+fn apply_mass_slider_to_body(
+    mass: &mut Mass,
+    radius_opt: Option<&mut Radius>,
+    body_opt: Option<&mut CelestialBody>,
+    comp_opt: Option<&Composition>,
+    diff_opt: Option<&mut InternalDifferentiation>,
+    log_mass_earth: f32,
+) {
+    let mass_earth = 10.0_f64.powf(f64::from(log_mass_earth));
+    mass.0 = mass_earth * EARTH_MASS_SOLAR;
+
+    let comp = comp_opt.copied().unwrap_or_else(Composition::rocky);
+    let mut is_star_or_remnant = body_opt
+        .as_deref()
+        .is_some_and(|b| b.body_type.is_star_or_remnant());
+    let mut new_radius = radius_opt.as_deref().map_or(EARTH_RADIUS_AU, |r| r.0);
+
+    if let Some(radius) = radius_opt {
+        if body_opt
+            .as_deref()
+            .is_some_and(|b| b.body_type == BodyType::BlackHole)
+        {
+            radius.0 = (1.974e-8 * mass.0).max(1e-7);
+        } else if !is_star_or_remnant {
+            let avg_density = comp.average_density();
+            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * std::f64::consts::PI))
+                .cbrt()
+                .max(EARTH_RADIUS_AU * 0.1);
+        }
+        new_radius = radius.0;
+    }
+
+    if let Some(diff) = diff_opt {
+        diff.recalculate(mass.0, new_radius, &comp);
+    }
+
+    if let Some(body) = body_opt {
+        is_star_or_remnant = is_star_or_remnant || body.body_type.is_star_or_remnant();
+        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
+            body.body_type = classify_body_by_mass_and_comp(mass.0, &comp, is_star_or_remnant);
+        }
+    }
+}
+
 /// Synchronizes slider progress fill bars, thumb positions, readouts, and model-driven updates.
 #[allow(
     clippy::type_complexity,
@@ -36,8 +80,8 @@ pub fn sync_hud_sliders(
         &SliderRange,
         &SliderDragState,
         &SliderValue,
-        &Children,
     )>,
+    children_query: Query<&Children>,
     mut fill_query: Query<&mut Node, (With<HudSliderFill>, Without<HudSliderThumb>)>,
     mut thumb_query: Query<&mut Node, (With<HudSliderThumb>, Without<HudSliderFill>)>,
     mut readout_query: Query<(&HudSliderReadout, &mut Text)>,
@@ -48,20 +92,8 @@ pub fn sync_hud_sliders(
 ) {
     let mut current_vals = rustc_hash::FxHashMap::default();
 
-    for (ent, hud_slider, range, drag_state, slider_val, children) in slider_query.iter() {
-        let val = slider_val.0;
-        current_vals.insert(hud_slider.0, val);
-
-        let pct = range.thumb_position(val).clamp(0.0, 1.0) * 100.0;
-
-        for &child in children {
-            if let Ok(mut fill_node) = fill_query.get_mut(child) {
-                fill_node.width = Val::Percent(pct);
-            }
-            if let Ok(mut thumb_node) = thumb_query.get_mut(child) {
-                thumb_node.left = Val::Percent(pct);
-            }
-        }
+    for (ent, hud_slider, range, drag_state, slider_val) in slider_query.iter() {
+        let mut val = slider_val.0;
 
         // External model -> slider synchronization when user is not actively dragging
         if !drag_state.dragging {
@@ -103,15 +135,37 @@ pub fn sync_hud_sliders(
                 let clamped_target = range.clamp(ext_val);
                 if (clamped_target - val).abs() > 0.005 {
                     commands.entity(ent).insert(SliderValue(clamped_target));
+                    val = clamped_target;
+                }
+            }
+        }
+
+        current_vals.insert(hud_slider.0, val);
+        let pct = range.thumb_position(val).clamp(0.0, 1.0) * 100.0;
+        let fill_width = Val::Percent(pct);
+        let thumb_left = Val::Percent(pct);
+
+        for child in children_query.iter_descendants(ent) {
+            if let Ok(mut fill_node) = fill_query.get_mut(child) {
+                if fill_node.width != fill_width {
+                    fill_node.width = fill_width;
+                }
+            }
+            if let Ok(mut thumb_node) = thumb_query.get_mut(child) {
+                if thumb_node.left != thumb_left {
+                    thumb_node.left = thumb_left;
                 }
             }
         }
     }
 
-    // Update live text readouts
+    // Update live text readouts only when formatted value changes
     for (readout, mut text) in readout_query.iter_mut() {
         if let Some(&val) = current_vals.get(&readout.0) {
-            text.0 = readout.0.format_value(val);
+            let formatted = readout.0.format_value(val);
+            if text.0 != formatted {
+                text.0 = formatted;
+            }
         }
     }
 }
@@ -127,6 +181,10 @@ pub fn apply_hud_slider_changes(
     player_state: Option<Res<PlayerInteractionState>>,
     mut target_body_query: Query<(
         &mut Mass,
+        Option<&mut Radius>,
+        Option<&mut CelestialBody>,
+        Option<&Composition>,
+        Option<&mut InternalDifferentiation>,
         Option<&mut SimPosition>,
         Option<&mut SimVelocity>,
         Option<&mut SpinState>,
@@ -160,15 +218,29 @@ pub fn apply_hud_slider_changes(
             }
             HudSliderKind::InspectorLogMassEarth => {
                 if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                    if let Ok((mut mass, ..)) = target_body_query.get_mut(selected) {
-                        let mass_earth = 10.0_f64.powf(f64::from(val));
-                        mass.0 = mass_earth * EARTH_MASS_SOLAR;
+                    if let Ok((
+                        mut mass,
+                        mut radius_opt,
+                        mut body_opt,
+                        comp_opt,
+                        mut diff_opt,
+                        ..,
+                    )) = target_body_query.get_mut(selected)
+                    {
+                        apply_mass_slider_to_body(
+                            &mut mass,
+                            radius_opt.as_deref_mut(),
+                            body_opt.as_deref_mut(),
+                            comp_opt,
+                            diff_opt.as_deref_mut(),
+                            val,
+                        );
                     }
                 }
             }
             HudSliderKind::InspectorOrbitAu => {
                 if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                    if let Ok((mass, Some(mut pos), Some(mut vel), _)) =
+                    if let Ok((.., Some(mut pos), Some(mut vel), _)) =
                         target_body_query.get_mut(selected)
                     {
                         let current_r = pos.0.length();
@@ -179,13 +251,12 @@ pub fn apply_hud_slider_changes(
                             // Scale velocity for circular Keplerian consistency: v ~ 1/sqrt(r)
                             vel.0 /= ratio.sqrt();
                         }
-                        let _ = mass;
                     }
                 }
             }
             HudSliderKind::InspectorAxialTiltDeg => {
                 if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity) {
-                    if let Ok((_, _, _, Some(mut spin))) = target_body_query.get_mut(selected) {
+                    if let Ok((.., Some(mut spin))) = target_body_query.get_mut(selected) {
                         spin.axial_tilt_degrees = f64::from(val);
                         let rad = f64::from(val).to_radians();
                         spin.spin_vector = bevy::math::DVec3::new(rad.sin(), rad.cos(), 0.0);
@@ -217,11 +288,13 @@ pub fn sync_hud_text_inputs(
 
     for (_wrapper, mut border_color, children) in wrapper_query.iter_mut() {
         let is_wrapper_focused = children.iter().any(|child| focused_ent == Some(child));
-
-        if is_wrapper_focused {
-            *border_color = BorderColor::all(Color::srgb(0.35, 0.85, 1.0));
+        let target_border = if is_wrapper_focused {
+            BorderColor::all(Color::srgb(0.35, 0.85, 1.0))
         } else {
-            *border_color = BorderColor::all(Color::srgb(0.18, 0.38, 0.55));
+            BorderColor::all(Color::srgb(0.18, 0.38, 0.55))
+        };
+        if *border_color != target_border {
+            *border_color = target_border;
         }
     }
 

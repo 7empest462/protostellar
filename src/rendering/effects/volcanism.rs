@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+use super::orbits::{draw_occluded_circle, sphere_occlusion_fade};
 use crate::simulation::components::volcanism::{VolcanicActivityType, VolcanicState};
 use crate::simulation::components::SpinState;
 
@@ -26,6 +27,10 @@ pub const ENCELADUS_VENT_NORMALS: [Vec3; 4] = [
 ];
 
 /// Draws expanding supersonic ballistic umbrella plumes and fallout halos for sulfur volcanism.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Umbrella plume rendering needs body geometry, state, rotation, camera occlusion, and phase"
+)]
 fn draw_io_umbrella_plumes(
     gizmos: &mut Gizmos,
     body_vec: Vec3,
@@ -33,11 +38,13 @@ fn draw_io_umbrella_plumes(
     volc: &VolcanicState,
     rot: Quat,
     num_plumes: usize,
+    cam_pos: Vec3,
     elapsed: f32,
 ) {
     let is_sulfur = volc.activity_type == VolcanicActivityType::IoSulfurVolcanism;
-    let h_vis = visual_radius * (volc.max_plume_height_km / 1821.0).clamp(0.12, 0.48);
+    let h_vis = visual_radius * (volc.max_plume_height_km / 1821.0).clamp(0.10, 0.42);
     let fallout_radius = h_vis * 0.65;
+    let cam_opt = Some(cam_pos);
 
     for (i, &local_n) in IO_VENT_NORMALS.iter().enumerate().take(num_plumes) {
         let world_n: Vec3 = (rot * local_n).normalize_or_zero();
@@ -47,14 +54,25 @@ fn draw_io_umbrella_plumes(
         let vent_pos = body_vec + world_n * visual_radius;
         let stem_top = vent_pos + world_n * h_vis;
 
-        // 1. Incandescent supersonic central volcanic throat core
-        let pulse = 0.8 + 0.2 * (elapsed * 4.5 + (i as f32) * 1.7).sin();
-        let stem_col = if is_sulfur {
-            Color::srgba(1.0, 0.68, 0.12, pulse)
-        } else {
-            Color::srgba(1.0, 0.35, 0.08, pulse)
-        };
-        gizmos.line(vent_pos, stem_top, stem_col);
+        // 1. Graduated incandescent central volcanic throat jet (fading toward the canopy apex)
+        let pulse = 0.72 + 0.20 * (elapsed * 4.5 + (i as f32) * 1.7).sin();
+        let stem_segs = 8usize;
+        for s in 0..stem_segs {
+            let t0 = s as f32 / stem_segs as f32;
+            let t1 = (s + 1) as f32 / stem_segs as f32;
+            let s0 = vent_pos.lerp(stem_top, t0);
+            let s1 = vent_pos.lerp(stem_top, t1);
+            let occ = sphere_occlusion_fade(s0.midpoint(s1), cam_opt, body_vec, visual_radius);
+            let a = (1.0 - t0 * 0.55) * pulse * occ;
+            if a > 0.02 {
+                let col = if is_sulfur {
+                    Color::srgba(1.0, 0.68, 0.14, a)
+                } else {
+                    Color::srgba(1.0, 0.36, 0.08, a)
+                };
+                gizmos.line(s0, s1, col);
+            }
+        }
 
         let ortho1 = if world_n.y.abs() < 0.95 {
             world_n.cross(Vec3::Y).normalize()
@@ -63,62 +81,85 @@ fn draw_io_umbrella_plumes(
         };
         let ortho2 = world_n.cross(ortho1).normalize();
 
-        // 2. Parabolic umbrella ballistic canopy ribs
-        let n_ribs = 6;
+        // 2. Smooth parabolic umbrella ballistic canopy ribs + tangent micro-streaks
+        let n_ribs = 10usize;
+        let n_segs = 14usize;
         for rib_j in 0..n_ribs {
-            let theta = (rib_j as f32) * (TAU / (n_ribs as f32)) + elapsed * 0.15;
+            let theta = (rib_j as f32) * (TAU / (n_ribs as f32)) + elapsed * 0.14;
             let r_dir = ortho1 * theta.cos() + ortho2 * theta.sin();
 
-            let n_segs = 5;
             for s in 0..n_segs {
                 let u0 = (s as f32) / (n_segs as f32);
                 let u1 = ((s + 1) as f32) / (n_segs as f32);
 
-                let z0 = h_vis * (1.0 - 0.95 * u0 * u0);
+                let z0 = h_vis * (1.0 - 0.96 * u0 * u0);
                 let r0 = fallout_radius * (u0 * FRAC_PI_2).sin();
                 let p0 = vent_pos + world_n * z0 + r_dir * r0;
 
-                let z1 = h_vis * (1.0 - 0.95 * u1 * u1);
+                let z1 = h_vis * (1.0 - 0.96 * u1 * u1);
                 let r1 = fallout_radius * (u1 * FRAC_PI_2).sin();
                 let p1 = vent_pos + world_n * z1 + r_dir * r1;
 
-                let alpha = (1.0 - u0) * 0.75;
-                let rib_col = if is_sulfur {
-                    Color::srgba(1.0, 0.82, 0.25, alpha)
-                } else {
-                    Color::srgba(0.85, 0.45, 0.15, alpha)
-                };
-                gizmos.line(p0, p1, rib_col);
+                let occ = sphere_occlusion_fade(p0.midpoint(p1), cam_opt, body_vec, visual_radius);
+                let alpha = (1.0 - u0).powf(1.25) * 0.58 * occ;
+                if alpha > 0.02 {
+                    let rib_col = if is_sulfur {
+                        Color::srgba(1.0, 0.80, 0.24, alpha)
+                    } else {
+                        Color::srgba(0.88, 0.44, 0.14, alpha)
+                    };
+                    gizmos.line(p0, p1, rib_col);
 
-                // Animated glowing droplets descending along the umbrella fountain
-                let droplet_t = (elapsed * 0.8 + (rib_j as f32 * 0.3) + u0) % 1.0;
-                if (droplet_t - u0).abs() < 0.12 {
-                    let d_pos = p0.lerp(p1, (droplet_t - u0) / 0.12);
-                    let d_col = Color::srgba(1.0, 0.95, 0.40, 0.9);
-                    gizmos.sphere(
-                        Isometry3d::from_translation(d_pos),
-                        visual_radius * 0.012,
-                        d_col,
-                    );
+                    let droplet_t = (elapsed * 0.8 + (rib_j as f32 * 0.3) + u0) % 1.0;
+                    if (droplet_t - u0).abs() < 0.08 {
+                        let d_pos = p0.lerp(p1, (droplet_t - u0) / 0.08);
+                        let dir = (p1 - p0).normalize_or_zero();
+                        let streak = dir * (visual_radius * 0.028);
+                        gizmos.line(
+                            d_pos - streak,
+                            d_pos + streak,
+                            Color::srgba(1.0, 0.92, 0.42, 0.80 * occ),
+                        );
+                    }
                 }
             }
         }
 
-        // 3. Circular sulfur fallout halo on the surface around the patera
+        // 3. Smooth high-res surface caldera & fallout concentric halos
         let ring_rot = Quat::from_rotation_arc(Vec3::Z, world_n);
-        let ring_iso = Isometry3d::new(vent_pos + world_n * (visual_radius * 0.002), ring_rot);
-        let halo_col = if is_sulfur {
-            Color::srgba(0.92, 0.38, 0.08, 0.55)
+        let ring_center = vent_pos + world_n * (visual_radius * 0.002);
+        let (halo_col, inner_col) = if is_sulfur {
+            (
+                Color::srgba(0.92, 0.38, 0.08, 0.38),
+                Color::srgba(0.88, 0.78, 0.18, 0.32),
+            )
         } else {
-            Color::srgba(0.35, 0.25, 0.15, 0.45)
+            (
+                Color::srgba(0.45, 0.28, 0.15, 0.32),
+                Color::srgba(0.68, 0.36, 0.12, 0.26),
+            )
         };
-        let inner_col = if is_sulfur {
-            Color::srgba(0.88, 0.78, 0.18, 0.45)
-        } else {
-            Color::srgba(0.60, 0.35, 0.10, 0.35)
-        };
-        gizmos.circle(ring_iso, fallout_radius, halo_col);
-        gizmos.circle(ring_iso, fallout_radius * 0.62, inner_col);
+        let occ = (Some((body_vec, visual_radius)), None);
+        draw_occluded_circle(
+            gizmos,
+            ring_center,
+            ring_rot,
+            fallout_radius,
+            halo_col,
+            64,
+            cam_opt,
+            occ,
+        );
+        draw_occluded_circle(
+            gizmos,
+            ring_center,
+            ring_rot,
+            fallout_radius * 0.62,
+            inner_col,
+            48,
+            cam_opt,
+            occ,
+        );
     }
 }
 
@@ -187,7 +228,9 @@ fn draw_cryo_geyser_jets(
             Color::srgba(0.80, 0.75, 0.40, (0.30 * mie_boost).min(0.60))
         };
         let cap_rot = Quat::from_rotation_arc(Vec3::Z, (cam_pos - jet_top).normalize_or_zero());
-        gizmos.circle(Isometry3d::new(jet_top, cap_rot), w_top * 0.85, cap_col);
+        gizmos
+            .circle(Isometry3d::new(jet_top, cap_rot), w_top * 0.85, cap_col)
+            .resolution(48);
 
         // 4. Orbital escape streamers feeding the parent planet's E-Ring
         if volc.cryo_ring_feed_rate_kg_s > 0.0 {
@@ -242,6 +285,7 @@ pub fn draw_volcanic_and_cryo_plumes(
                 volc,
                 rot,
                 num_plumes,
+                cam_pos,
                 elapsed,
             );
         }

@@ -6,6 +6,36 @@ use bevy::prelude::*;
 use crate::simulation::components::{BodyType, SatelliteOf};
 use crate::utils::constants::*;
 
+pub const ROLE_MOON_NAMED: u8 = 1 << 0;
+pub const ROLE_JUPITER: u8 = 1 << 1;
+pub const ROLE_SATURN: u8 = 1 << 2;
+pub const ROLE_ICE_GIANT_NAMED: u8 = 1 << 3;
+pub const ROLE_INTERLOPER: u8 = 1 << 4;
+
+pub fn compute_body_role_flags(name: &str) -> u8 {
+    let mut flags = 0u8;
+    if crate::utils::math::contains_ascii_case_insensitive(name, "(moon)") {
+        flags |= ROLE_MOON_NAMED;
+    }
+    if name.eq_ignore_ascii_case("jupiter")
+        || name.eq_ignore_ascii_case("proto-jupiter")
+        || name.eq_ignore_ascii_case("hot jupiter")
+    {
+        flags |= ROLE_JUPITER;
+    } else if name.eq_ignore_ascii_case("saturn") || name.eq_ignore_ascii_case("proto-saturn") {
+        flags |= ROLE_SATURN;
+    }
+    if crate::utils::math::contains_ascii_case_insensitive(name, "uranus")
+        || crate::utils::math::contains_ascii_case_insensitive(name, "neptune")
+    {
+        flags |= ROLE_ICE_GIANT_NAMED;
+    }
+    if name.contains("Rogue") || name.contains("Interloper") {
+        flags |= ROLE_INTERLOPER;
+    }
+    flags
+}
+
 pub struct PhysicsBodyEntry {
     pub entity: Entity,
     pub mass: f64,
@@ -16,7 +46,7 @@ pub struct PhysicsBodyEntry {
     pub body_type: BodyType,
     pub satellite: Option<SatelliteOf>,
     pub is_central_star: bool,
-    pub name: String,
+    pub role_flags: u8,
 }
 
 pub fn is_body_bound_to_star(
@@ -24,7 +54,7 @@ pub fn is_body_bound_to_star(
     vel: DVec3,
     star_pos: DVec3,
     star_mass: f64,
-    _body_mass: f64,
+    body_mass: f64,
 ) -> bool {
     if star_mass <= 1e-6 {
         return false;
@@ -34,7 +64,12 @@ pub fn is_body_bound_to_star(
     if r < 1e-5 || r > 50_000.0 {
         return false;
     }
-    let mu = G_ASTRO * star_mass;
+    let eff_body_mass = if body_mass < star_mass * 0.5 {
+        body_mass.max(0.0)
+    } else {
+        0.0
+    };
+    let mu = G_ASTRO * (star_mass + eff_body_mass);
     let specific_energy = 0.5 * vel.length_squared() - mu / r;
     if specific_energy >= -1e-9 {
         return false;
@@ -53,12 +88,33 @@ pub fn is_body_bound_to_star(
     e.is_finite() && e < 0.999
 }
 
+/// Determines whether a body should integrate via single-star Kepler splitting (`kepler_drift_body`
+/// around `star_mass`) or full Cartesian symplectic Kick-Drift-Kick.
+///
+/// Circumbinary planets/debris orbiting outside a massive stellar companion do not follow a
+/// 2-body Kepler ellipse around `star_mass` alone and receive large indirect companion accelerations
+/// that must not be clamped against single-star orbital speed.
+#[inline]
+pub fn should_use_kepler_splitting(
+    pos: DVec3,
+    vel: DVec3,
+    body_mass: f64,
+    body_type: BodyType,
+    star_pos: DVec3,
+    star_mass: f64,
+    inner_companion_radius: Option<f64>,
+) -> bool {
+    let is_circumbinary = !body_type.is_star_or_remnant()
+        && inner_companion_radius.is_some_and(|r_comp| (pos - star_pos).length() > r_comp * 1.15);
+    !is_circumbinary && is_body_bound_to_star(pos, vel, star_pos, star_mass, body_mass)
+}
+
 fn kepler_drift_body(
     pos: &mut DVec3,
     vel: &mut DVec3,
     star_pos: DVec3,
     star_mass: f64,
-    _body_mass: f64,
+    body_mass: f64,
     dt: f64,
 ) {
     if star_mass <= 1e-6 || dt.abs() < 1e-12 {
@@ -67,7 +123,12 @@ fn kepler_drift_body(
     }
     let r_rel = *pos - star_pos;
     let r = r_rel.length();
-    let mu = G_ASTRO * star_mass;
+    let eff_body_mass = if body_mass < star_mass * 0.5 {
+        body_mass.max(0.0)
+    } else {
+        0.0
+    };
+    let mu = G_ASTRO * (star_mass + eff_body_mass);
     let v_sq = vel.length_squared();
     let specific_energy = 0.5 * v_sq - mu / r;
     if r < 1e-5 || r > 50_000.0 || specific_energy >= -1e-9 {
@@ -171,13 +232,41 @@ pub fn advance_symplectic_leapfrog_drift(
     snapshot_buffer: &mut Vec<(Entity, DVec3, DVec3, f64, f64)>,
     is_galaxy_collision: bool,
 ) {
+    advance_symplectic_leapfrog_drift_with_companion(
+        body_data,
+        sub_dt,
+        star_pos,
+        star_mass,
+        snapshot_buffer,
+        is_galaxy_collision,
+        None,
+    );
+}
+
+pub fn advance_symplectic_leapfrog_drift_with_companion(
+    body_data: &mut [PhysicsBodyEntry],
+    sub_dt: f64,
+    star_pos: DVec3,
+    star_mass: f64,
+    snapshot_buffer: &mut Vec<(Entity, DVec3, DVec3, f64, f64)>,
+    is_galaxy_collision: bool,
+    inner_companion_radius: Option<f64>,
+) {
     for body in body_data.iter_mut() {
         if body.satellite.is_none() {
             if body.is_central_star && !is_galaxy_collision {
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
-            } else if is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass, body.mass) {
+            } else if should_use_kepler_splitting(
+                body.pos,
+                body.vel,
+                body.mass,
+                body.body_type,
+                star_pos,
+                star_mass,
+                inner_companion_radius,
+            ) {
                 kepler_drift_body(
                     &mut body.pos,
                     &mut body.vel,
@@ -192,23 +281,41 @@ pub fn advance_symplectic_leapfrog_drift(
         }
     }
 
+    let has_satellites = body_data.iter().any(|b| b.satellite.is_some());
+    if !has_satellites {
+        return;
+    }
+
     snapshot_buffer.clear();
     snapshot_buffer.extend(
         body_data
             .iter()
+            .filter(|b| b.satellite.is_none())
             .map(|b| (b.entity, b.pos, b.vel, b.mass, b.radius)),
     );
+    snapshot_buffer.sort_unstable_by_key(|&(e, ..)| e);
 
     for body in body_data.iter_mut() {
         if let Some(ref mut sat) = body.satellite {
-            if let Some(&(_, parent_pos, parent_vel, parent_mass, parent_radius)) =
-                snapshot_buffer.iter().find(|(e, ..)| *e == sat.parent)
+            if let Ok(parent_idx) = snapshot_buffer.binary_search_by_key(&sat.parent, |&(e, ..)| e)
             {
+                let Some(&(_, parent_pos, parent_vel, parent_mass, parent_radius)) =
+                    snapshot_buffer.get(parent_idx)
+                else {
+                    continue;
+                };
                 let r_orbit = sat.semi_major_axis_au.max(1e-5);
                 if r_orbit < parent_radius * 1.05 {
                     body.satellite = None;
                     body.pos += body.vel * sub_dt;
                 } else {
+                    let rel_before = body.pos - parent_pos;
+                    let r_before = rel_before.length();
+                    let sin_inc_y = if r_before > 1e-6 {
+                        (rel_before.y / r_before).clamp(-0.5, 0.5)
+                    } else {
+                        0.0
+                    };
                     let omega_moon = if sat.orbital_period_years > 1e-8 {
                         2.0 * std::f64::consts::PI / sat.orbital_period_years
                     } else {
@@ -220,9 +327,12 @@ pub fn advance_symplectic_leapfrog_drift(
                     let cos_a = sat.true_anomaly.cos();
                     let sin_a = sat.true_anomaly.sin();
                     let v_orb_mag = omega_moon * r_orbit;
+                    let y_pos = r_orbit * sin_inc_y * sin_a;
+                    let y_vel = v_orb_mag * sin_inc_y * cos_a;
 
-                    body.pos = parent_pos + DVec3::new(r_orbit * cos_a, 0.0, r_orbit * sin_a);
-                    body.vel = parent_vel + DVec3::new(-v_orb_mag * sin_a, 0.0, v_orb_mag * cos_a);
+                    body.pos = parent_pos + DVec3::new(r_orbit * cos_a, y_pos, r_orbit * sin_a);
+                    body.vel =
+                        parent_vel + DVec3::new(-v_orb_mag * sin_a, y_vel, v_orb_mag * cos_a);
                 }
             } else {
                 body.satellite = None;
@@ -239,6 +349,9 @@ pub fn apply_pert_kick(
     star_mass: f64,
     is_bound: bool,
 ) {
+    if body.satellite.is_some() {
+        return;
+    }
     if !is_bound {
         body.vel += body.acc * half_dt;
         return;
@@ -246,7 +359,12 @@ pub fn apply_pert_kick(
 
     let r_rel = body.pos - star_pos;
     let r = r_rel.length().max(0.0005);
-    let mu = G_ASTRO * star_mass;
+    let eff_body_mass = if body.mass < star_mass * 0.5 {
+        body.mass.max(0.0)
+    } else {
+        0.0
+    };
+    let mu = G_ASTRO * (star_mass + eff_body_mass);
     let v_k = (mu / r).sqrt();
     let t_orbit = 2.0 * std::f64::consts::PI * r / v_k.max(1e-6);
     let eff_dt = half_dt.min(t_orbit * 0.05);
@@ -307,15 +425,48 @@ pub fn apply_velocity_kick_and_limits(
     is_gmc_cluster: bool,
     is_galaxy_collision: bool,
 ) {
+    apply_velocity_kick_and_limits_with_companion(
+        body_data,
+        sub_dt,
+        star_mass,
+        star_pos,
+        is_little_red_dot,
+        is_gmc_cluster,
+        is_galaxy_collision,
+        None,
+    );
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Symplectic binary-safe kick and velocity clamping pass"
+)]
+pub fn apply_velocity_kick_and_limits_with_companion(
+    body_data: &mut [PhysicsBodyEntry],
+    sub_dt: f64,
+    star_mass: f64,
+    star_pos: DVec3,
+    is_little_red_dot: bool,
+    is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
+    inner_companion_radius: Option<f64>,
+) {
     for body in body_data.iter_mut() {
         if body.is_central_star && !is_galaxy_collision {
             body.pos = DVec3::ZERO;
             body.vel = DVec3::ZERO;
             body.acc = DVec3::ZERO;
         } else {
-            let is_bound =
-                is_body_bound_to_star(body.pos, body.vel, star_pos, star_mass, body.mass);
-            apply_pert_kick(body, sub_dt * 0.5, star_pos, star_mass, is_bound);
+            let use_kepler = should_use_kepler_splitting(
+                body.pos,
+                body.vel,
+                body.mass,
+                body.body_type,
+                star_pos,
+                star_mass,
+                inner_companion_radius,
+            );
+            apply_pert_kick(body, sub_dt * 0.5, star_pos, star_mass, use_kepler);
 
             if !body.pos.is_finite() || !body.vel.is_finite() {
                 let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };

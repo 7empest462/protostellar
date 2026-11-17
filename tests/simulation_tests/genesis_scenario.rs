@@ -62,17 +62,18 @@ fn test_accretion_disk_genesis_spawner_zero_starter_planets() {
 
 #[test]
 fn test_snow_line_thermodynamic_location() {
-    let mut disk_params = DiskParameters::default();
-    disk_params.reference_temp_1au = 325.0;
-    disk_params.snow_line_au = 3.65;
+    let disk_params = DiskParameters {
+        reference_temp_1au: 325.0,
+        snow_line_au: 3.65,
+        ..Default::default()
+    };
 
     // Thermodynamic water ice sublimation temperature in protostellar disks is ~170 K
     let temp_at_snow_line =
         disk_params.reference_temp_1au * (disk_params.snow_line_au / 1.0).powf(-0.5);
     assert!(
         (temp_at_snow_line - 170.1).abs() < 1.0,
-        "Temperature at 3.65 AU snow line must be ~170 K for water ice condensation (got {:.1} K)",
-        temp_at_snow_line
+        "Temperature at 3.65 AU snow line must be ~170 K for water ice condensation (got {temp_at_snow_line:.1} K)"
     );
 
     // Inside snow line (e.g. 1.0 AU Earth orbit) is warm dry silicates (> 270 K)
@@ -466,30 +467,34 @@ fn test_key_i_triggers_star_ignition_and_cme() {
 
 #[test]
 fn test_genesis_protostar_hayashi_contraction_density_growth_and_ignition() {
+    use protostellar::simulation::scenarios::LoadScenarioEvent;
+
     let mut app = App::new();
     app.add_plugins(bevy::time::TimePlugin);
     app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
     app.add_plugins(protostellar::simulation::SimulationPlugin);
 
-    use protostellar::simulation::scenarios::LoadScenarioEvent;
     app.world_mut()
         .resource_mut::<Messages<LoadScenarioEvent>>()
         .write(LoadScenarioEvent(ScenarioPreset::AccretionDiskGenesis));
     app.update();
 
-    // Set time warp to 10,000x (~300 yr/sec)
+    // Set time warp to 100,000x (~3,000 yr/sec) to cover the extended ~5,000 yr contraction window
     {
         let mut time_warp = app.world_mut().resource_mut::<TimeWarp>();
-        time_warp.multiplier = 10_000.0;
+        time_warp.multiplier = 100_000.0;
         time_warp.is_paused = false;
     }
 
     let mut densities = Vec::new();
     let mut radii = Vec::new();
     let mut ignited = false;
+    let mut ignition_yr = None;
+    let mut ignited_before_1500_yr = false;
 
-    for _frame in 0..100 {
+    for _frame in 0..400 {
         app.update();
+        let elapsed_yr = app.world().resource::<SimTime>().elapsed_years;
         let mut star_query = app
             .world_mut()
             .query::<(&CelestialBody, &IgnitionState, &Radius, &Mass)>();
@@ -501,6 +506,10 @@ fn test_genesis_protostar_hayashi_contraction_density_growth_and_ignition() {
                 densities.push(rho);
                 radii.push(rad.0);
                 if ign.is_ignited {
+                    if elapsed_yr < 1_500.0 {
+                        ignited_before_1500_yr = true;
+                    }
+                    ignition_yr = Some(elapsed_yr);
                     ignited = true;
                     break;
                 }
@@ -527,7 +536,198 @@ fn test_genesis_protostar_hayashi_contraction_density_growth_and_ignition() {
         "Radius must contract along Hayashi track"
     );
     assert!(
+        !ignited_before_1500_yr,
+        "Genesis protostar must stay unignited during early accretion (ignited at {ignition_yr:?} yr)"
+    );
+    assert!(
         ignited,
-        "Genesis protostar must successfully ignite without freezing"
+        "Genesis protostar must successfully ignite after extended contraction without freezing"
+    );
+    assert!(
+        ignition_yr.unwrap_or(0.0) >= 4_500.0,
+        "Genesis protostar ignition must be extended to ~5,000+ yr (ignited at {ignition_yr:?} yr)"
+    );
+}
+
+#[test]
+fn test_genesis_milestones_and_lhb_alignment() {
+    use bevy::math::DVec3;
+    use protostellar::game::phases::{
+        genesis_milestones, monitor_phase_transitions, GlobalTrophies, LateHeavyBombardmentState,
+        MilestoneId, PhaseManager, SystemPhase,
+    };
+    use protostellar::simulation::scenarios::LoadScenarioEvent;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<SystemPhase>();
+    app.init_resource::<LateHeavyBombardmentState>();
+    app.init_resource::<PhaseManager>();
+    app.init_resource::<GlobalTrophies>();
+    app.add_plugins(protostellar::simulation::SimulationPlugin);
+    app.add_systems(Update, monitor_phase_transitions);
+
+    app.world_mut()
+        .resource_mut::<Messages<LoadScenarioEvent>>()
+        .write(LoadScenarioEvent(ScenarioPreset::AccretionDiskGenesis));
+    app.update();
+
+    {
+        let pm = app.world().resource::<PhaseManager>();
+        let expected_ids: Vec<MilestoneId> =
+            genesis_milestones().into_iter().map(|m| m.id).collect();
+        let actual_ids: Vec<MilestoneId> = pm.milestones.iter().map(|m| m.id).collect();
+        assert_eq!(actual_ids, expected_ids);
+        assert!(
+            !pm.milestones
+                .iter()
+                .any(|m| m.id == MilestoneId::GiantPlanetResonance),
+            "Genesis must not require Jupiter/Saturn 2:1 Resonance milestone"
+        );
+        assert!(
+            !pm.milestones
+                .iter()
+                .any(|m| m.prompt.contains("Jupiter and Saturn")),
+            "Genesis milestone prompts must not reference Jupiter and Saturn"
+        );
+        assert!(pm
+            .milestones
+            .iter()
+            .any(|m| m.id == MilestoneId::GiantPlanetEmergence));
+        assert!(pm
+            .milestones
+            .iter()
+            .any(|m| m.id == MilestoneId::PlanetesimalBombardment));
+    }
+
+    // At t = 850 yr with zero formed planets, Genesis must not auto-trigger LHB
+    app.world_mut().resource_mut::<SimTime>().elapsed_years = 850.0;
+    app.update();
+    assert!(
+        !app.world()
+            .resource::<LateHeavyBombardmentState>()
+            .is_active,
+        "Genesis must wait until at least one planet forms before entering bombardment epoch"
+    );
+    assert_ne!(
+        app.world().resource::<PhaseManager>().current_phase,
+        SystemPhase::LateHeavyBombardment
+    );
+
+    // Spawning an organically formed gas giant allows both GiantPlanetEmergence and Genesis LHB text
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Super-Jupiter (1.5 M_J)".to_string(),
+            body_type: BodyType::GasGiant,
+        },
+        Mass(1.5 * JUPITER_MASS_SOLAR),
+        SimPosition(DVec3::new(6.0, 0.0, 0.0)),
+    ));
+    app.world_mut().resource_mut::<SimTime>().elapsed_years = 850.0;
+    app.update();
+
+    let pm = app.world().resource::<PhaseManager>();
+    let lhb = app.world().resource::<LateHeavyBombardmentState>();
+    assert!(
+        pm.milestones
+            .iter()
+            .find(|m| m.id == MilestoneId::GiantPlanetEmergence)
+            .is_some_and(|m| m.achieved),
+        "Forming a gas giant in Genesis must unlock GiantPlanetEmergence"
+    );
+    assert!(
+        lhb.is_active,
+        "Genesis must enter bombardment epoch once planets exist past 800 yr"
+    );
+    assert!(
+        !pm.phase_description.contains("Jupiter") && !pm.phase_description.contains("Saturn"),
+        "Genesis bombardment description must not hardcode Jupiter or Saturn: {}",
+        pm.phase_description
+    );
+}
+
+#[test]
+fn test_genesis_late_ignition_preserves_forward_phases() {
+    use bevy::math::DVec3;
+    use protostellar::game::phases::{
+        monitor_phase_transitions, GlobalTrophies, LateHeavyBombardmentState, PhaseManager,
+        SystemPhase,
+    };
+    use protostellar::simulation::scenarios::LoadScenarioEvent;
+    use protostellar::simulation::thermodynamics::StarIgnitionEvent;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.init_state::<SystemPhase>();
+    app.init_resource::<LateHeavyBombardmentState>();
+    app.init_resource::<PhaseManager>();
+    app.init_resource::<GlobalTrophies>();
+    app.add_plugins(protostellar::simulation::SimulationPlugin);
+    app.add_systems(Update, monitor_phase_transitions);
+
+    app.world_mut()
+        .resource_mut::<Messages<LoadScenarioEvent>>()
+        .write(LoadScenarioEvent(ScenarioPreset::AccretionDiskGenesis));
+    app.update();
+
+    let star_ent = app
+        .world_mut()
+        .query_filtered::<Entity, With<CentralStar>>()
+        .single(app.world())
+        .expect("Genesis star must exist");
+
+    assert_eq!(
+        app.world().resource::<PhaseManager>().current_phase,
+        SystemPhase::ProtoplanetaryDisk
+    );
+
+    // 1. Embryo formation transitions ProtoplanetaryDisk -> PlanetaryAccretion before ignition.
+    let embryo_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Genesis-Embryo".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            Mass(0.2 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+        ))
+        .id();
+    app.update();
+    assert_eq!(
+        app.world().resource::<PhaseManager>().current_phase,
+        SystemPhase::PlanetaryAccretion
+    );
+
+    // 2. Mature planet formation past 800 yr advances into LateHeavyBombardment.
+    app.world_mut().entity_mut(embryo_ent).insert((
+        CelestialBody {
+            name: "Planet-1AU".to_string(),
+            body_type: BodyType::TerrestrialPlanet,
+        },
+        Mass(1.1 * EARTH_MASS_SOLAR),
+    ));
+    app.world_mut().resource_mut::<SimTime>().elapsed_years = 900.0;
+    app.update();
+    assert_eq!(
+        app.world().resource::<PhaseManager>().current_phase,
+        SystemPhase::LateHeavyBombardment
+    );
+
+    // 3. Delayed ignition event around ~5,000 yr must NOT regress phase backward to StarIgnition.
+    app.world_mut()
+        .resource_mut::<Messages<StarIgnitionEvent>>()
+        .write(StarIgnitionEvent {
+            star_entity: star_ent,
+            star_mass: 1.33,
+            luminosity_l_sun: 2.0,
+            surface_temp_kelvin: 6500.0,
+        });
+    app.update();
+    assert_eq!(
+        app.world().resource::<PhaseManager>().current_phase,
+        SystemPhase::LateHeavyBombardment
     );
 }

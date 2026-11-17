@@ -1,10 +1,19 @@
 //! Interactive UI panel for the Science Economy and Technology Tree.
 
 use super::types::*;
+use super::update::{set_display_if_changed, set_text_if_changed};
 use crate::simulation::economy::{
     ScienceData, TechNode, TechnologyCategory, UnlockedTechs, ALL_TECH_NODES,
 };
 use bevy::prelude::*;
+
+/// Marker for the live spendable science points summary line.
+#[derive(Component)]
+pub struct TechTreeSummaryPointsText;
+
+/// Marker for the lifetime cumulative science summary line.
+#[derive(Component)]
+pub struct TechTreeSummaryLifetimeText;
 
 /// Spawns the full Tech Tree panel container hierarchy.
 pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
@@ -79,6 +88,7 @@ pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
                         ..default()
                     },
                     TextColor(Color::srgb(0.40, 0.90, 1.0)),
+                    TechTreeSummaryPointsText,
                 ));
                 banner.spawn((
                     Text::new("Lifetime: 100.0"),
@@ -87,6 +97,7 @@ pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
                         ..default()
                     },
                     TextColor(Color::srgb(0.65, 0.75, 0.85)),
+                    TechTreeSummaryLifetimeText,
                 ));
             });
 
@@ -101,28 +112,6 @@ pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
             TechTreePanelElement::Content,
         ));
     });
-}
-
-fn rebuild_summary_banner(banner: &mut ChildSpawnerCommands, science_data: &ScienceData) {
-    banner.spawn((
-        Text::new(format!(
-            "⚛️ {:.1} Science Data (+{:.1}/s)",
-            science_data.points, science_data.passive_rate_per_sec
-        )),
-        TextFont {
-            font_size: FontSize::Px(11.5),
-            ..default()
-        },
-        TextColor(Color::srgb(0.40, 0.90, 1.0)),
-    ));
-    banner.spawn((
-        Text::new(format!("Lifetime: {:.0}", science_data.lifetime_points)),
-        TextFont {
-            font_size: FontSize::Px(10.0),
-            ..default()
-        },
-        TextColor(Color::srgb(0.65, 0.75, 0.85)),
-    ));
 }
 
 fn spawn_tech_card(
@@ -287,27 +276,64 @@ fn rebuild_content_tree(
     }
 }
 
-/// Updates panel visibility, telemetry summary numbers, and the interactive tech nodes list.
+fn compute_tech_tree_signature(unlocked_techs: &UnlockedTechs, science_points: f64) -> (u32, u32) {
+    let mut unlocked_mask = 0u32;
+    let mut affordable_mask = 0u32;
+    for (idx, node) in ALL_TECH_NODES.iter().enumerate() {
+        if idx >= 32 {
+            break;
+        }
+        let bit = 1u32 << idx;
+        if unlocked_techs.has(node.id) {
+            unlocked_mask |= bit;
+        } else if unlocked_techs.prerequisites_met(node.id) && science_points >= node.cost {
+            affordable_mask |= bit;
+        }
+    }
+    (unlocked_mask, affordable_mask)
+}
+
+/// Updates panel visibility, in-place summary text, and tech card tree only when unlock/affordability state changes.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    reason = "Updates tech tree visibility, in-place summary banner, and gated content cards"
+)]
 pub fn update_tech_tree_panel(
     panel_state: Res<TechTreePanelState>,
     science_data: Res<ScienceData>,
     unlocked_techs: Res<UnlockedTechs>,
     mut container_query: Query<(&mut Node, &TechTreePanelElement)>,
+    mut points_text_query: Query<
+        &mut Text,
+        (
+            With<TechTreeSummaryPointsText>,
+            Without<TechTreeSummaryLifetimeText>,
+        ),
+    >,
+    mut lifetime_text_query: Query<
+        &mut Text,
+        (
+            With<TechTreeSummaryLifetimeText>,
+            Without<TechTreeSummaryPointsText>,
+        ),
+    >,
     content_query: Query<(Entity, &TechTreePanelElement), Without<Text>>,
     mut commands: Commands,
+    mut last_tree_sig: Local<Option<(u32, u32)>>,
 ) {
     if !panel_state.is_changed() && !science_data.is_changed() && !unlocked_techs.is_changed() {
         return;
     }
 
-    // Toggle container flex display
+    let target_display = if panel_state.is_open {
+        Display::Flex
+    } else {
+        Display::None
+    };
     for (mut node, element) in container_query.iter_mut() {
         if matches!(element, TechTreePanelElement::Container) {
-            node.display = if panel_state.is_open {
-                Display::Flex
-            } else {
-                Display::None
-            };
+            set_display_if_changed(&mut node, target_display);
         }
     }
 
@@ -315,22 +341,34 @@ pub fn update_tech_tree_panel(
         return;
     }
 
-    // Rebuild Summary Banner and Tech Cards
+    if let Ok(mut text) = points_text_query.single_mut() {
+        set_text_if_changed(
+            &mut text,
+            format!(
+                "⚛️ {:.1} Science Data (+{:.1}/s)",
+                science_data.points, science_data.passive_rate_per_sec
+            ),
+        );
+    }
+    if let Ok(mut text) = lifetime_text_query.single_mut() {
+        set_text_if_changed(
+            &mut text,
+            format!("Lifetime: {:.0}", science_data.lifetime_points),
+        );
+    }
+
+    let sig = compute_tech_tree_signature(&unlocked_techs, science_data.points);
+    if last_tree_sig.as_ref() == Some(&sig) {
+        return;
+    }
+    *last_tree_sig = Some(sig);
+
     for (entity, element) in content_query.iter() {
-        match element {
-            TechTreePanelElement::Summary => {
-                commands.entity(entity).despawn_children();
-                commands.entity(entity).with_children(|banner| {
-                    rebuild_summary_banner(banner, &science_data);
-                });
-            }
-            TechTreePanelElement::Content => {
-                commands.entity(entity).despawn_children();
-                commands.entity(entity).with_children(|col| {
-                    rebuild_content_tree(col, &unlocked_techs, &science_data);
-                });
-            }
-            TechTreePanelElement::Container => {}
+        if matches!(element, TechTreePanelElement::Content) {
+            commands.entity(entity).despawn_children();
+            commands.entity(entity).with_children(|col| {
+                rebuild_content_tree(col, &unlocked_techs, &science_data);
+            });
         }
     }
 }

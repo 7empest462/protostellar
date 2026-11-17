@@ -127,8 +127,7 @@ fn verify_zoom_into_central_star(app: &mut App, camera_ent: Entity, star_vis_r: 
     let surface_clearance_star = cam.radius - star_vis_r;
     assert!(
         surface_clearance_star >= 0.005,
-        "Camera must maintain safe surface clearance ({}) in front of the star!",
-        surface_clearance_star
+        "Camera must maintain safe surface clearance ({surface_clearance_star}) in front of the star!"
     );
 }
 
@@ -183,8 +182,7 @@ fn verify_zoom_into_earth(app: &mut App, camera_ent: Entity, earth_ent: Entity, 
         let surface_clearance_earth = cam.radius - earth_vis_r;
         assert!(
             surface_clearance_earth >= 0.001,
-            "Surface clearance ({}) must be far greater than camera near clipping plane (0.0001 AU) to prevent near-plane clipping!",
-            surface_clearance_earth
+            "Surface clearance ({surface_clearance_earth}) must be far greater than camera near clipping plane (0.0001 AU) to prevent near-plane clipping!"
         );
     }
 }
@@ -294,6 +292,13 @@ fn test_camera_tracking_selected_planet_zero_drift_at_high_warp() {
     use protostellar::simulation::resources::*;
     use protostellar::utils::constants::*;
 
+    // Mock transform sync system matching sync_celestial_transforms logic
+    fn sync_transforms(mut query: Query<(&SimPosition, &mut Transform)>) {
+        for (pos, mut tf) in query.iter_mut() {
+            tf.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        }
+    }
+
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.init_resource::<ButtonInput<MouseButton>>();
@@ -368,13 +373,6 @@ fn test_camera_tracking_selected_planet_zero_drift_at_high_warp() {
             GlobalTransform::IDENTITY,
         ))
         .id();
-
-    // Mock transform sync system matching sync_celestial_transforms logic
-    fn sync_transforms(mut query: Query<(&SimPosition, &mut Transform)>) {
-        for (pos, mut tf) in query.iter_mut() {
-            tf.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        }
-    }
 
     // Schedule: physics -> sync transforms -> camera
     app.add_systems(
@@ -528,8 +526,7 @@ fn test_outer_bodies_camera_stability_no_cancellation_jitter() {
     let dot = cam_forward.dot(dir_to_planet);
     assert!(
         (dot - 1.0).abs() < 1e-5,
-        "Camera optical axis must align with Planet Nine at 380 AU with dot product ~1.0 (found {:.7})",
-        dot
+        "Camera optical axis must align with Planet Nine at 380 AU with dot product ~1.0 (found {dot:.7})"
     );
 }
 
@@ -614,11 +611,10 @@ fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
         .get::<PanOrbitCamera>(camera_ent)
         .unwrap()
         .target_radius;
-    // 16.0 * exp(-1.0 * 0.055) = ~15.14 AU
+    // 16.0 * exp(-1.0 * 0.13) = ~14.05 AU
     assert!(
-        (target_r_line - 15.14).abs() < 0.05,
-        "1-line scroll must zoom gently by ~5.4% (got target_radius {})",
-        target_r_line
+        (target_r_line - 14.05).abs() < 0.05,
+        "1-line scroll must zoom crisply by ~12.2% (got target_radius {target_r_line})"
     );
 
     // Reset back to 16.0 AU
@@ -631,13 +627,13 @@ fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
         cam.target_radius = 16.0;
     }
 
-    // A 24-pixel trackpad gesture (macOS smooth scroll) must yield the EXACT same gentle 1-line zoom!
+    // A 14-pixel trackpad gesture (macOS smooth scroll) must yield the EXACT same 1-line zoom!
     {
         let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();
         wheel.write(MouseWheel {
             unit: MouseScrollUnit::Pixel,
             x: 0.0,
-            y: 24.0,
+            y: 14.0,
             window: Entity::PLACEHOLDER,
             phase: bevy::input::touch::TouchPhase::Moved,
         });
@@ -651,9 +647,7 @@ fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
         .target_radius;
     assert!(
         (target_r_pixel - target_r_line).abs() < 1e-4,
-        "24-pixel macOS trackpad gesture ({}) must match 1-line scroll ({}) precisely!",
-        target_r_pixel,
-        target_r_line
+        "14-pixel macOS trackpad gesture ({target_r_pixel}) must match 1-line scroll ({target_r_line}) precisely!"
     );
 
     // 2. Test Shift precision micro-zoom
@@ -684,10 +678,10 @@ fn test_camera_zoom_sensitivity_mac_trackpad_and_modifiers() {
         .get::<PanOrbitCamera>(camera_ent)
         .unwrap()
         .target_radius;
+    // 16.0 * exp(-0.13 * 0.35) = ~15.29 AU
     assert!(
-        (target_r_shift - 15.69).abs() < 0.05,
-        "Shift-held scroll must provide precision micro-zoom (~1.9% delta, got target_radius {})",
-        target_r_shift
+        (target_r_shift - 15.29).abs() < 0.05,
+        "Shift-held scroll must provide precision micro-zoom (~4.4% delta, got target_radius {target_r_shift})"
     );
 }
 
@@ -758,8 +752,8 @@ fn test_camera_smooth_interplanetary_flight_on_selection() {
                 name: "Jupiter".to_string(),
                 body_type: BodyType::GasGiant,
             },
-            Mass(0.000954),
-            Radius(0.000477),
+            Mass(0.000_954),
+            Radius(0.000_477),
             SimPosition(bevy::math::DVec3::new(5.2, 0.0, 0.0)),
             Transform::from_xyz(5.2, 0.0, 0.0),
         ))
@@ -838,5 +832,87 @@ fn test_camera_smooth_interplanetary_flight_on_selection() {
     assert!(
         (cam_final.focus.x - 5.2).abs() < 1e-4,
         "Camera focus must lock tightly onto Jupiter at 5.2 AU"
+    );
+}
+
+#[test]
+fn test_camera_non_overflowing_scroll_container_and_pinch_zoom() {
+    use bevy::input::gestures::PinchGesture;
+    use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+    use bevy::prelude::*;
+    use bevy::ui::ComputedNode;
+    use protostellar::rendering::camera::PanOrbitCamera;
+
+    let (mut app, camera_ent) = setup_camera_zoom_test_app();
+    app.add_message::<PinchGesture>();
+
+    // Non-overflowing hovered scroll container must NOT block camera wheel zoom.
+    let non_overflow_scroll = app
+        .world_mut()
+        .spawn((
+            Node::default(),
+            ScrollPosition::default(),
+            bevy::picking::hover::Hovered(true),
+            ComputedNode {
+                size: Vec2::new(640.0, 200.0),
+                content_size: Vec2::new(640.0, 140.0),
+                inverse_scale_factor: 1.0,
+                ..default()
+            },
+        ))
+        .id();
+
+    {
+        let mut wheel = app.world_mut().resource_mut::<Messages<MouseWheel>>();
+        wheel.write(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: 1.0,
+            window: Entity::PLACEHOLDER,
+            phase: bevy::input::touch::TouchPhase::Moved,
+        });
+    }
+    app.update();
+
+    let after_wheel = app
+        .world()
+        .get::<PanOrbitCamera>(camera_ent)
+        .unwrap()
+        .target_radius;
+    assert!(
+        after_wheel < 15.0,
+        "Non-overflowing scroll container must allow camera zoom (got {after_wheel})"
+    );
+    app.world_mut().despawn(non_overflow_scroll);
+
+    // Trackpad pinch gesture must zoom in on positive delta and damp smoothly on log scale.
+    {
+        let mut cam = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        cam.radius = 16.0;
+        cam.target_radius = 16.0;
+
+        let mut pinch = app.world_mut().resource_mut::<Messages<PinchGesture>>();
+        pinch.write(PinchGesture(0.10));
+    }
+    {
+        let mut t = app.world_mut().resource_mut::<Time>();
+        t.advance_by(std::time::Duration::from_millis(16));
+    }
+    app.update();
+
+    let cam_after_pinch = app.world().get::<PanOrbitCamera>(camera_ent).unwrap();
+    assert!(
+        cam_after_pinch.target_radius < 15.0,
+        "Positive PinchGesture must zoom target_radius in (got {})",
+        cam_after_pinch.target_radius
+    );
+    assert!(
+        cam_after_pinch.radius < 16.0 && cam_after_pinch.radius > cam_after_pinch.target_radius,
+        "Camera radius must damp monotonically toward target_radius (got {} -> {})",
+        cam_after_pinch.radius,
+        cam_after_pinch.target_radius
     );
 }

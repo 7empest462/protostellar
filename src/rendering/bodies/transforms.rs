@@ -247,14 +247,14 @@ pub fn compute_close_camera_framing_radius(
 
 fn find_star_position_and_min_orbit(
     query: &CelestialBodyQuery,
-    stars: &mut Vec<(Entity, Vec3)>,
+    stars: &mut Vec<(Entity, Vec3, f32)>,
 ) -> (Vec3, f64, Option<Entity>, f32) {
     stars.clear();
     let mut s_pos = Vec3::ZERO;
     let mut s_mass = 1.0;
     let mut s_ent = None;
 
-    for (e, p, m, _, _, _, b, ..) in query.iter() {
+    for (e, p, m, _, _, _, b, _, _, _, _, (_, _, opt_bhs, ..), _) in query.iter() {
         if b.body_type.is_star_or_remnant() {
             let p_vec = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
             if stars.is_empty() || m.0 > s_mass {
@@ -262,7 +262,19 @@ fn find_star_position_and_min_orbit(
                 s_mass = m.0;
                 s_ent = Some(e);
             }
-            stars.push((e, p_vec));
+            let lum_weight = if b.body_type == BodyType::BlackHole && opt_bhs.is_none() {
+                0.001_f32
+            } else if b.body_type == BodyType::WhiteDwarf {
+                0.01_f32
+            } else if matches!(
+                b.body_type,
+                BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+            ) {
+                0.02_f32
+            } else {
+                (m.0.max(0.01) as f32).powf(3.5).clamp(1e-4, 1.0e6)
+            };
+            stars.push((e, p_vec, lum_weight));
         }
     }
 
@@ -283,26 +295,46 @@ fn find_star_position_and_min_orbit(
     (s_pos, s_mass, s_ent, min_orbit_r)
 }
 
-fn resolve_star_direction(
+/// Computes the flux-weighted incoming starlight direction for a celestial body,
+/// smoothly blending illumination across multi-star and circumbinary systems.
+pub fn resolve_star_direction(
     entity: Entity,
     body_pos: Vec3,
     star_pos: Vec3,
-    stars: &[(Entity, Vec3)],
+    stars: &[(Entity, Vec3, f32)],
 ) -> Vec3 {
     if stars.is_empty() {
         Vec3::Y
     } else if stars.len() == 1 {
         (star_pos - body_pos).normalize_or_zero()
     } else {
-        let closest = stars
-            .iter()
-            .filter(|(e, _)| *e != entity)
-            .min_by(|(_, p1), (_, p2)| {
-                let d1 = (*p1 - body_pos).length_squared();
-                let d2 = (*p2 - body_pos).length_squared();
-                d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        closest.map_or(Vec3::Y, |(_, p)| (*p - body_pos).normalize_or_zero())
+        let mut weighted_dir = Vec3::ZERO;
+        let mut nearest_dir = Vec3::Y;
+        let mut nearest_dist_sq = f32::MAX;
+
+        for &(s_ent, s_pos, lum_weight) in stars {
+            if s_ent == entity {
+                continue;
+            }
+            let to_star = s_pos - body_pos;
+            let dist_sq = to_star.length_squared();
+            if dist_sq < 1e-12 {
+                continue;
+            }
+            let dir = to_star / dist_sq.sqrt();
+            if dist_sq < nearest_dist_sq {
+                nearest_dist_sq = dist_sq;
+                nearest_dir = dir;
+            }
+            let flux = lum_weight.max(1e-4) / dist_sq.max(1e-6);
+            weighted_dir += dir * flux;
+        }
+
+        if weighted_dir.length_squared() > 1e-12 {
+            weighted_dir.normalize()
+        } else {
+            nearest_dir
+        }
     }
 }
 
@@ -317,7 +349,17 @@ fn collect_system_moons(
     all_moons.clear();
     for (m_ent, pos, _, radius, _, _, body, _, _, _, _, (_, _, _, _, _, opt_sat), _) in query.iter()
     {
-        if opt_sat.is_some() || body.body_type == BodyType::Moon {
+        let is_moon = opt_sat.is_some() || body.body_type == BodyType::Moon;
+        let is_host_planet = !is_moon
+            && matches!(
+                body.body_type,
+                BodyType::TerrestrialPlanet
+                    | BodyType::SuperEarth
+                    | BodyType::GasGiant
+                    | BodyType::IceGiant
+                    | BodyType::Protoplanet
+            );
+        if is_moon || is_host_planet {
             let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let r_orb = (m_pos - star_pos).length();
             let m_cam_dist = cam_pos.map_or(25.0, |cp| cp.distance(m_pos));
@@ -329,7 +371,14 @@ fn collect_system_moons(
                 m_cam_dist,
                 config,
             );
-            all_moons.push((m_ent, m_pos, m_vis_rad, opt_sat.map(|s| s.parent)));
+            // Moons record `Some(parent)` (or `None` if unbound); non-moon host planets tag
+            // themselves `Some(m_ent)` so moons can resolve parent lunar eclipses & planetshine.
+            let parent_tag = if is_moon {
+                opt_sat.map(|s| s.parent)
+            } else {
+                Some(m_ent)
+            };
+            all_moons.push((m_ent, m_pos, m_vis_rad, parent_tag));
         }
     }
 }
@@ -553,6 +602,17 @@ fn resolve_cutaway_uniform_params(
     }
 }
 
+#[inline]
+fn planet_material_state_eq(a: &PlanetMaterial, b: &PlanetMaterial) -> bool {
+    a.extension.uniforms == b.extension.uniforms
+        && a.base.base_color == b.base.base_color
+        && a.base.emissive == b.base.emissive
+        && a.base.perceptual_roughness == b.base.perceptual_roughness
+        && a.base.metallic == b.base.metallic
+        && a.base.alpha_mode == b.base.alpha_mode
+        && a.base.unlit == b.base.unlit
+}
+
 pub fn sync_celestial_transforms(
     (sim_time, time_warp): (Option<Res<SimTime>>, Option<Res<TimeWarp>>),
     config: Res<SimulationConfig>,
@@ -562,8 +622,9 @@ pub fn sync_celestial_transforms(
     camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialBody>)>,
     opt_player_state: Option<Res<PlayerInteractionState>>,
     mut query: CelestialBodyQuery,
-    mut stars_scratch: Local<Vec<(Entity, Vec3)>>,
+    mut stars_scratch: Local<Vec<(Entity, Vec3, f32)>>,
     mut moons_scratch: Local<Vec<(Entity, Vec3, f32, Option<Entity>)>>,
+    mut scratch_mat: Local<Option<PlanetMaterial>>,
 ) {
     let cam_pos = camera_query.iter().next().map(|t| t.translation);
     let (star_pos, star_mass, _star_entity, min_orbit_r) =
@@ -641,8 +702,15 @@ pub fn sync_celestial_transforms(
             mesh.0 = expected_mesh;
         }
 
-        if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
-            mat.extension.uniforms.cutaway_params = resolve_cutaway_uniform_params(
+        if let Some(existing) = materials.get(&mat_handle.0) {
+            let next_mat = match scratch_mat.as_mut() {
+                Some(m) => {
+                    m.clone_from(existing);
+                    m
+                }
+                None => scratch_mat.insert(existing.clone()),
+            };
+            next_mat.extension.uniforms.cutaway_params = resolve_cutaway_uniform_params(
                 body,
                 radius.0,
                 visual_radius,
@@ -652,7 +720,7 @@ pub fn sync_celestial_transforms(
             );
 
             sync_body_uniforms(
-                &mut mat,
+                next_mat,
                 entity,
                 body,
                 mass,
@@ -685,6 +753,12 @@ pub fn sync_celestial_transforms(
                 opt_storm,
                 opt_roche,
             );
+
+            if !planet_material_state_eq(next_mat, existing) {
+                if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
+                    mat.clone_from(next_mat);
+                }
+            }
         }
     }
 }
@@ -775,7 +849,8 @@ pub fn sync_camera_adaptive_body_scales(
             )
         };
 
-        if (tf.scale.x - visual_radius).abs() > 1e-7 {
+        let scale_tol = (visual_radius * 1e-4).max(1e-6);
+        if (tf.scale.x - visual_radius).abs() > scale_tol {
             tf.scale = Vec3::splat(visual_radius);
             if let (Some(mats), Some(mat_handle)) = (materials.as_deref_mut(), opt_mat) {
                 if let Some(mut mat) = mats.get_mut(&mat_handle.0) {

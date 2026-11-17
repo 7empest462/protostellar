@@ -13,9 +13,7 @@ fn test_snow_line_pebble_pileup_density() {
 
     assert!(
         sigma_at_snow > sigma_outside,
-        "Pebble surface density at the snow line ({:.4}) must be enhanced over distant regions ({:.4})",
-        sigma_at_snow,
-        sigma_outside
+        "Pebble surface density at the snow line ({sigma_at_snow:.4}) must be enhanced over distant regions ({sigma_outside:.4})"
     );
 }
 
@@ -68,24 +66,32 @@ fn test_asteroid_promotion_to_planetesimal_via_pebbles() {
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
 
     let mut app = App::new();
-    let mut config = SimulationConfig::default();
-    config.enable_accretion = true;
-    config.gas_density_scale = 1.0;
-    config.base_dt_yr = 0.5;
+    let config = SimulationConfig {
+        enable_accretion: true,
+        gas_density_scale: 1.0,
+        base_dt_yr: 0.5,
+        ..Default::default()
+    };
     app.insert_resource(config);
 
-    let mut time_warp = TimeWarp::default();
-    time_warp.multiplier = 1.0;
+    let time_warp = TimeWarp {
+        multiplier: 1.0,
+        ..Default::default()
+    };
     app.insert_resource(time_warp);
 
-    let mut sim_time = SimTime::default();
-    sim_time.elapsed_years = 100.0;
+    let sim_time = SimTime {
+        elapsed_years: 100.0,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
-    let mut disk_params = DiskParameters::default();
-    disk_params.central_star_mass = 1.0;
-    disk_params.gas_disk_lifetime_yr = 5_000_000.0;
-    disk_params.snow_line_au = 2.7;
+    let disk_params = DiskParameters {
+        central_star_mass: 1.0,
+        gas_disk_lifetime_yr: 5_000_000.0,
+        snow_line_au: 2.7,
+        ..Default::default()
+    };
     app.insert_resource(disk_params);
 
     let init_mass = 0.00099 * EARTH_MASS_SOLAR;
@@ -131,25 +137,33 @@ fn test_streaming_instability_spawns_asteroids_and_comets() {
     use protostellar::simulation::resources::*;
 
     let mut app = App::new();
-    let mut config = SimulationConfig::default();
-    config.gas_density_scale = 1.0;
+    let config = SimulationConfig {
+        gas_density_scale: 1.0,
+        ..Default::default()
+    };
     app.insert_resource(config);
 
     app.insert_resource(TimeWarp::default());
 
-    let mut sim_time = SimTime::default();
-    sim_time.elapsed_years = 500.0;
+    let sim_time = SimTime {
+        elapsed_years: 500.0,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
-    let mut disk_params = DiskParameters::default();
-    disk_params.central_star_mass = 1.0;
-    disk_params.gas_disk_lifetime_yr = 4_000_000.0;
-    disk_params.snow_line_au = 2.7;
+    let disk_params = DiskParameters {
+        central_star_mass: 1.0,
+        gas_disk_lifetime_yr: 4_000_000.0,
+        snow_line_au: 2.7,
+        ..Default::default()
+    };
     app.insert_resource(disk_params);
 
-    let mut spawner = PlanetesimalSpawner::default();
-    spawner.last_spawn_yr = 0.0;
-    spawner.max_ecs_bodies = 50;
+    let spawner = PlanetesimalSpawner {
+        last_spawn_yr: 0.0,
+        max_ecs_bodies: 50,
+        ..Default::default()
+    };
     app.insert_resource(spawner);
 
     app.add_systems(Update, spawn_streaming_instability_minor_bodies);
@@ -188,16 +202,14 @@ fn test_silicate_pebble_fragmentation_barrier() {
     let barrier_inside = silicate_fragmentation_barrier(1.0, snow_line);
     assert!(
         barrier_inside < 0.30,
-        "Silicate pebble barrier must suppress pebble density by >= 70%: got {:.3}",
-        barrier_inside
+        "Silicate pebble barrier must suppress pebble density by >= 70%: got {barrier_inside:.3}"
     );
 
     // Beyond snow line: sticky icy pebbles maintain full cohesion
     let barrier_outside = silicate_fragmentation_barrier(3.5, snow_line);
     assert!(
         (barrier_outside - 1.0).abs() < 1e-6,
-        "Silicate pebble barrier outside snow line must be 1.0: got {:.3}",
-        barrier_outside
+        "Silicate pebble barrier outside snow line must be 1.0: got {barrier_outside:.3}"
     );
 
     let sigma_1au = local_pebble_sigma(1.0, gas_scale, snow_line);
@@ -242,9 +254,7 @@ fn test_inner_terrestrial_mass_ceiling_no_runaway() {
     );
     assert!(
         rate_super < rate_sub * 0.05,
-        "Pebble accretion rate for super-Earth must stall: rate_super={:.2e}, rate_sub={:.2e}",
-        rate_super,
-        rate_sub
+        "Pebble accretion rate for super-Earth must stall: rate_super={rate_super:.2e}, rate_sub={rate_sub:.2e}"
     );
 }
 
@@ -278,7 +288,7 @@ fn test_theia_giant_impact_classification_and_moon_formation() {
 
     // 2. Theia sideswipe collision with Proto-Earth at 5 km/s (u ~ 0.6) and b = 0.35
     let (p_mass, s_mass) = (0.88 * EARTH_MASS_SOLAR, 0.12 * EARTH_MASS_SOLAR);
-    let (p_rad, s_rad) = (0.000040, 0.000022);
+    let (p_rad, s_rad) = (0.000_040, 0.000_022);
     let params = ImpactParams {
         primary_mass: p_mass,
         secondary_mass: s_mass,
@@ -380,8 +390,10 @@ fn test_roche_lobe_overflow_mass_transfer() {
     let mut time = bevy::prelude::Time::<()>::default();
     time.advance_by(std::time::Duration::from_secs(1));
     app.insert_resource(time);
-    let mut config = SimulationConfig::default();
-    config.base_dt_yr = 1.0; // 1 year per step for quick test
+    let config = SimulationConfig {
+        base_dt_yr: 1.0, // 1 year per step for quick test
+        ..Default::default()
+    };
     app.insert_resource(config);
     app.add_systems(bevy::prelude::Update, process_roche_lobe_overflow);
 
@@ -509,8 +521,10 @@ fn test_s4714_sgr_a_roche_stream_multi_star_cluster() {
     app.insert_resource(time);
     app.init_resource::<Assets<Mesh>>();
     app.init_resource::<Assets<RocheStreamMaterial>>();
-    let mut config = SimulationConfig::default();
-    config.base_dt_yr = 0.01;
+    let config = SimulationConfig {
+        base_dt_yr: 0.01,
+        ..Default::default()
+    };
     app.insert_resource(config);
     app.add_systems(
         Update,
@@ -583,4 +597,202 @@ fn test_s4714_sgr_a_roche_stream_multi_star_cluster() {
     assert_eq!(visuals[0].0.accretor, sgr_a);
     assert!(visuals[0].1.translation.is_finite());
     assert!(visuals[0].1.scale.is_finite());
+}
+
+#[test]
+fn test_earth_accumulates_water_and_oceans_via_pebble_accretion() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::pebble_accretion::apply_pebble_accretion;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU, SOLAR_RADIUS_AU};
+
+    let mut app = App::new();
+    let config = SimulationConfig {
+        enable_accretion: true,
+        gas_density_scale: 1.0,
+        base_dt_yr: 0.5,
+        ..Default::default()
+    };
+    app.insert_resource(config);
+
+    let time_warp = TimeWarp {
+        multiplier: 1.0,
+        ..Default::default()
+    };
+    app.insert_resource(time_warp);
+
+    let sim_time = SimTime {
+        elapsed_years: 100.0,
+        ..Default::default()
+    };
+    app.insert_resource(sim_time);
+
+    let disk_params = DiskParameters {
+        central_star_mass: 1.0,
+        gas_disk_lifetime_yr: 4_000_000.0,
+        snow_line_au: 2.7,
+        ..Default::default()
+    };
+    app.insert_resource(disk_params);
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sol".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        SimPosition(DVec3::ZERO),
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        Temperature(5778.0),
+        Luminosity(1.0),
+        IgnitionState {
+            is_ignited: true,
+            fusion_fraction: 1.0,
+            shockwave_radius: 50.0,
+            ..default()
+        },
+    ));
+
+    let earth_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(1.0 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
+            Temperature(288.0),
+            Composition::rocky(),
+            VolatileInventory {
+                delivered_water_m_earth: 0.0,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 1.0,
+                cometary_impact_count: 0,
+            },
+        ))
+        .id();
+
+    // Growing proto-Earth without an initial VolatileInventory component must also gain one
+    let proto_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Proto-Earth".to_string(),
+                body_type: BodyType::Protoplanet,
+            },
+            Mass(0.40 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.74),
+            SimPosition(DVec3::new(1.05, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 6.13)),
+            Temperature(288.0),
+            Composition::rocky(),
+        ))
+        .id();
+
+    app.add_message::<StarIgnitionEvent>()
+        .add_message::<PlanetaryEngulfmentEvent>()
+        .add_message::<SupernovaEvent>()
+        .add_systems(
+            Update,
+            (apply_pebble_accretion, update_thermodynamics).chain(),
+        );
+
+    // Run 60 simulated years (120 steps * 0.5 yr)
+    for _ in 0..120 {
+        app.update();
+    }
+
+    let world = app.world();
+    let earth_vol = world
+        .get::<VolatileInventory>(earth_ent)
+        .expect("Earth VolatileInventory must exist");
+    let earth_body = world.get::<CelestialBody>(earth_ent).unwrap();
+    assert!(
+        earth_vol.delivered_water_m_earth > 0.0002,
+        "Earth at 1.0 AU must accumulate substantial H2O via hydrated pebble accretion, got {:.6e}",
+        earth_vol.delivered_water_m_earth
+    );
+    assert!(
+        earth_vol.ocean_coverage_frac > 0.25,
+        "Earth accumulated pebble water must condense into surface oceans (>25% coverage), got {:.3}",
+        earth_vol.ocean_coverage_frac
+    );
+    assert_eq!(
+        earth_body.body_type,
+        BodyType::TerrestrialPlanet,
+        "Wet pebble accretion must keep Earth classified as a TerrestrialPlanet"
+    );
+
+    let proto_vol = world.get::<VolatileInventory>(proto_ent).expect(
+        "Proto-Earth without initial VolatileInventory must receive one via pebble accretion",
+    );
+    assert!(
+        proto_vol.delivered_water_m_earth > 0.0002,
+        "Proto-Earth must accumulate pebble water: got {:.6e}",
+        proto_vol.delivered_water_m_earth
+    );
+}
+
+#[test]
+fn test_physical_comet_collision_preserves_pebble_accretion_oceans() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::accretion::basins::deliver_volatiles_and_crater;
+    use protostellar::simulation::components::*;
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    let mut world = World::new();
+    let earth_ent = world
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Temperature(305.0),
+            VolatileInventory {
+                delivered_water_m_earth: 0.000_425,
+                ocean_coverage_frac: 0.85,
+                atmospheric_pressure_bar: 1.06,
+                cometary_impact_count: 0,
+            },
+        ))
+        .id();
+
+    let mut queue = bevy::ecs::world::CommandQueue::default();
+    {
+        let mut commands = Commands::new(&mut queue, &world);
+        deliver_volatiles_and_crater(
+            &mut commands,
+            earth_ent,
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(1.0001, 0.0, 0.0),
+            EARTH_MASS_SOLAR,
+            0.0001 * EARTH_MASS_SOLAR,
+            &Composition::icy(),
+            100.0,
+        );
+    }
+    queue.apply(&mut world);
+
+    let vol = world
+        .get::<VolatileInventory>(earth_ent)
+        .expect("Earth must retain VolatileInventory after physical comet merger");
+    assert!(
+        vol.delivered_water_m_earth > 0.000_425,
+        "Physical icy comet merger must increase delivered water: got {:.6}",
+        vol.delivered_water_m_earth
+    );
+    assert!(
+        vol.ocean_coverage_frac >= 0.85,
+        "Physical icy comet merger must NOT reduce 85% ocean coverage: got {:.4}",
+        vol.ocean_coverage_frac
+    );
 }

@@ -210,7 +210,8 @@ fn step_lhb_impactor_guidance(
     } else if current_sim_yr > impactor.expected_arrival_yr + 0.8 {
         let r_sun = (*i_pos - star_pos).length();
         let v_radial = (*i_pos - star_pos).dot(*i_vel);
-        if r_sun > 2.2 && v_radial > 0.0 {
+        let stale_timeout = current_sim_yr > impactor.expected_arrival_yr + 3.0;
+        if (r_sun > 2.2 && v_radial > 0.0) || stale_timeout {
             if let Ok(mut entity_cmd) = commands.get_entity(i_ent) {
                 entity_cmd.try_despawn();
             }
@@ -248,6 +249,7 @@ pub fn update_late_heavy_bombardment_cascade(
     }
 
     if !lhb_state.is_active || lhb_state.migration_progress >= 0.98 {
+        *cascade_timer = 0.0;
         return;
     }
 

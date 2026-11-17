@@ -106,8 +106,7 @@ fn test_realistic_visual_radius_strictly_monotonic_angular_size() {
             let theta = r_vis / d;
             assert!(
                 theta > prev_theta,
-                "Apparent angular size Theta(d) must strictly increase as camera approaches {:?} (at d={d}: {theta} <= {prev_theta})",
-                btype
+                "Apparent angular size Theta(d) must strictly increase as camera approaches {btype:?} (at d={d}: {theta} <= {prev_theta})"
             );
             prev_theta = theta;
         }

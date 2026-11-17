@@ -774,3 +774,176 @@ fn test_surface_horizon_airless_body_shadows() {
         "Airless bodies like the Moon must NOT attach AtmosphereSettings"
     );
 }
+
+#[test]
+fn test_surface_terrain_cleans_up_root_on_destroyed_host() {
+    use protostellar::game::ui::NotificationToast;
+    use protostellar::rendering::camera::PanOrbitCamera;
+    use protostellar::rendering::surface_camera::update_surface_horizon_camera;
+    use protostellar::rendering::surface_terrain::*;
+
+    let (mut app, camera_ent, earth_ent) = setup_surface_camera_app();
+    app.init_resource::<NotificationToast>();
+    app.init_resource::<SurfaceTerrainState>();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.world_mut().entity_mut(earth_ent).insert((
+        Temperature(288.0),
+        Composition::rocky(),
+        BiosphereState::default(),
+    ));
+    if let Some(mut cam_comp) = app.world_mut().get_mut::<PanOrbitCamera>(camera_ent) {
+        cam_comp.target_entity = Some(earth_ent);
+        cam_comp.surface_horizon_mode = true;
+    }
+
+    // Schedule sync_surface_terrain_system alone first so we directly isolate the destroyed-host
+    // guard while `surface_horizon_mode` is still true.
+    app.add_systems(
+        Update,
+        (sync_surface_terrain_system, update_surface_horizon_camera),
+    );
+    app.update();
+
+    let spawned_root = app
+        .world()
+        .resource::<SurfaceTerrainState>()
+        .root_entity
+        .expect("PlanetarySurfaceTerrainRoot must spawn while host exists");
+    assert!(app.world().get_entity(spawned_root).is_ok());
+
+    // Despawn the host planet while Surface Horizon mode is still true -> root must clean up cleanly.
+    app.world_mut().despawn(earth_ent);
+    app.update();
+
+    let terrain_state = app.world().resource::<SurfaceTerrainState>();
+    assert!(terrain_state.root_entity.is_none());
+    assert!(terrain_state.active_host.is_none());
+    assert!(
+        app.world().get_entity(spawned_root).is_err(),
+        "Destroying host planet must despawn PlanetarySurfaceTerrainRoot instead of leaking it"
+    );
+}
+
+#[test]
+fn test_surface_terrain_zero_radius_guard_and_ring_cleanup_and_picking_ui_guard() {
+    use bevy::input::mouse::{MouseMotion, MouseWheel};
+    use protostellar::game::ui::types::HudVisibilityState;
+    use protostellar::rendering::bodies::structures::{sync_planetary_rings, VisualRingChild};
+    use protostellar::rendering::bodies::{VisualAssets, VisualBody};
+    use protostellar::rendering::camera::{update_pan_orbit_camera, PanOrbitCamera};
+    use protostellar::rendering::materials::RingMaterial;
+    use protostellar::rendering::surface_terrain::generate_surface_terrain_mesh;
+    use protostellar::simulation::resources::{PlayerInteractionState, SimTime, SimulationConfig};
+
+    // 1. generate_surface_terrain_mesh with degenerate vis_rad == 0.0 must stay finite (no NaN)
+    let mesh = generate_surface_terrain_mesh(
+        Vec3::Y,
+        0.0,
+        &Composition::rocky(),
+        288.0,
+        BodyType::TerrestrialPlanet,
+        None,
+        0.1,
+    );
+    let pos_attr = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .expect("terrain mesh must have positions")
+        .as_float3()
+        .expect("f32 positions");
+    assert!(
+        pos_attr
+            .iter()
+            .all(|p| p[0].is_finite() && p[1].is_finite() && p[2].is_finite()),
+        "Degenerate zero vis_rad must not produce NaN vertices"
+    );
+
+    // 2. sync_planetary_rings turning a ringed planet into a BlackHole uses try_despawn cleanly
+    let mut ring_app = App::new();
+    ring_app.add_plugins(MinimalPlugins);
+    ring_app.init_resource::<Assets<Mesh>>();
+    ring_app.init_resource::<Assets<StandardMaterial>>();
+    ring_app.init_resource::<Assets<RingMaterial>>();
+    ring_app.init_resource::<SimulationConfig>();
+    ring_app.init_resource::<SimTime>();
+
+    let dummy_mesh = ring_app
+        .world_mut()
+        .resource_mut::<Assets<Mesh>>()
+        .add(Sphere::new(1.0).mesh());
+    ring_app.insert_resource(VisualAssets::dummy(dummy_mesh));
+    ring_app.add_systems(Update, sync_planetary_rings);
+
+    let planet = ring_app
+        .world_mut()
+        .spawn((
+            VisualBody,
+            CelestialBody {
+                name: "Ringed Giant".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            SimPosition(DVec3::new(9.5, 0.0, 0.0)),
+            Radius(EARTH_RADIUS_AU * 9.0),
+            PlanetaryRingSystem::default(),
+            Transform::default(),
+        ))
+        .id();
+    ring_app.update();
+    assert_eq!(
+        ring_app
+            .world_mut()
+            .query_filtered::<Entity, With<VisualRingChild>>()
+            .iter(ring_app.world())
+            .count(),
+        1
+    );
+
+    ring_app
+        .world_mut()
+        .get_mut::<CelestialBody>(planet)
+        .unwrap()
+        .body_type = BodyType::BlackHole;
+    ring_app.update();
+    assert_eq!(
+        ring_app
+            .world_mut()
+            .query_filtered::<Entity, With<VisualRingChild>>()
+            .iter(ring_app.world())
+            .count(),
+        0,
+        "Transitioning to BlackHole must cleanly despawn VisualRingChild"
+    );
+
+    // 3. Camera picking respects `just_selected_via_ui` and top fixed-HUD exclusion zone
+    let mut pick_app = App::new();
+    pick_app.add_plugins(MinimalPlugins);
+    pick_app.init_resource::<ButtonInput<MouseButton>>();
+    pick_app.init_resource::<ButtonInput<KeyCode>>();
+    pick_app.init_resource::<SimulationConfig>();
+    pick_app.init_resource::<HudVisibilityState>();
+    pick_app.add_message::<MouseMotion>();
+    pick_app.add_message::<MouseWheel>();
+    pick_app.insert_resource(PlayerInteractionState {
+        just_selected_via_ui: true,
+        hovered_entity: Some(planet),
+        ..default()
+    });
+    let mut window = Window {
+        resolution: bevy::window::WindowResolution::new(1280, 720),
+        ..default()
+    };
+    window.set_cursor_position(Some(Vec2::new(20.0, 20.0)));
+    pick_app.world_mut().spawn(window);
+    pick_app.world_mut().spawn((
+        Camera::default(),
+        PanOrbitCamera::default(),
+        Transform::default(),
+        GlobalTransform::default(),
+    ));
+    pick_app.add_systems(Update, update_pan_orbit_camera);
+    pick_app.update();
+
+    let pstate = pick_app.world().resource::<PlayerInteractionState>();
+    assert!(!pstate.just_selected_via_ui);
+    assert!(pstate.hovered_entity.is_none());
+}

@@ -50,7 +50,7 @@ fn test_lagrange_points_equilateral_and_collinear_geometry() {
     let prim_mass = 1.0; // 1 Solar mass
 
     let sec_pos = Vec3::new(1.0, 0.0, 0.0); // 1 AU along X
-    let sec_vel = Vec3::new(0.0, 0.0, 6.283_185); // Circular velocity in X-Z plane
+    let sec_vel = Vec3::new(0.0, 0.0, std::f32::consts::TAU); // Circular velocity in X-Z plane
     let sec_mass = EARTH_MASS_SOLAR; // 3.003e-6 M_sun
 
     let coords =

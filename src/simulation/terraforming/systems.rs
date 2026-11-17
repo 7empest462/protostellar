@@ -77,8 +77,19 @@ fn resolve_bombardment_impact(
         }
     }
 
-    // Thermal flash on surface
-    target.temp.0 = (target.temp.0 + delivery.core_temp_boost_k * 0.35).clamp(30.0, 10000.0);
+    // Thermal flash on surface (volatile comets hydrate cold planets without flash-boiling global oceans)
+    let flash_scale = match params.bombardment_type {
+        BombardmentType::IronAsteroid => 0.35,
+        BombardmentType::CarbonaceousChondrite => 0.08,
+        BombardmentType::IcyComet | BombardmentType::VolatileAblationSalvo => 0.03,
+    };
+    let raw_flash = delivery.core_temp_boost_k * flash_scale;
+    let clamped_flash = if params.bombardment_type == BombardmentType::IronAsteroid {
+        raw_flash
+    } else {
+        raw_flash.min(10.0)
+    };
+    target.temp.0 = (target.temp.0 + clamped_flash).clamp(30.0, 10000.0);
 
     // Record glowing impact crater basin
     let norm = params.disp.normalize_or_zero();
@@ -171,7 +182,9 @@ fn advance_guided_projectile(
     let eff_target_radius = opt_target_tf
         .map(|tf| f64::from(tf.scale.x))
         .filter(|&vis_r| vis_r > t_rad.0 && (vis_r - 1.0).abs() > 1e-4)
-        .unwrap_or(t_rad.0);
+        .map_or(t_rad.0, |vis_r| {
+            vis_r.min((proj.initial_distance * 0.45).max(t_rad.0))
+        });
     let contact_dist = (eff_target_radius + p_rad * 2.0).max(eff_target_radius * 1.01);
 
     // Check if manually positioned right onto target in tests
@@ -211,8 +224,8 @@ fn advance_guided_projectile(
     proj.is_detonated = true;
     let v_rel = (p_vel.0 - t_vel.0).length();
 
-    // Impact normal is strictly directed along inbound descent corridor onto target surface
-    let impact_disp = approach_dir * eff_target_radius;
+    // Impact normal is strictly directed along inbound descent corridor onto target physical surface
+    let impact_disp = approach_dir * t_rad.0;
 
     resolve_bombardment_impact(
         commands,
@@ -305,6 +318,42 @@ pub fn update_guided_bombardment_projectiles(
     }
 }
 
+/// Seeds a newly created `TerraformingAtmosphere` from any pre-existing hydrosphere & atmosphere
+/// accumulated via pebble accretion or prior belt impacts before adding the comet's delivery.
+fn build_initial_terraforming_atmosphere(
+    prev_vol: Option<(f64, f32, f32)>,
+    delivery: &ImpactDeliveryResult,
+    p_mass_earth: f64,
+) -> TerraformingAtmosphere {
+    let (prev_water, prev_cov, prev_p_bar) = prev_vol.unwrap_or((0.0, 0.0, 0.0));
+    let (existing_liquid, existing_steam, seeded_p) = if prev_cov >= 0.005 {
+        let equiv_liquid = f64::from(prev_cov) * 0.0006;
+        let is_saturated_cap = prev_cov >= 0.849 && prev_water > 0.0005;
+        let liq = if is_saturated_cap {
+            prev_water.max(equiv_liquid)
+        } else {
+            equiv_liquid
+        };
+        let stm = if is_saturated_cap {
+            0.0
+        } else {
+            (prev_water - f64::from(prev_cov) * 0.0005).max(0.0)
+        };
+        (liq, stm, prev_p_bar.max(1.25))
+    } else {
+        (0.0, prev_water, prev_p_bar)
+    };
+
+    TerraformingAtmosphere {
+        co2_pressure_bar: seeded_p * 0.25 + delivery.delta_co2_bar,
+        nitrogen_pressure_bar: seeded_p * 0.75 + delivery.delta_nitrogen_bar,
+        surface_liquid_water_m_earth: existing_liquid + delivery.liquid_water_delivered_m_earth,
+        atmospheric_water_m_earth: existing_steam + delivery.steam_vapor_delivered_m_earth,
+        impact_dust_optical_depth: delivery.delta_dust_opacity,
+        total_bombarded_mass_earth: p_mass_earth,
+    }
+}
+
 fn apply_impact_delivery_to_target(
     commands: &mut Commands,
     target_ent: Entity,
@@ -317,19 +366,26 @@ fn apply_impact_delivery_to_target(
     let p_mass_earth = p_mass_solar / EARTH_MASS_SOLAR;
     let total_delivered_water =
         delivery.liquid_water_delivered_m_earth + delivery.steam_vapor_delivered_m_earth;
+    let prev_vol = opt_vol.as_ref().map(|v| {
+        (
+            v.delivered_water_m_earth,
+            v.ocean_coverage_frac,
+            v.atmospheric_pressure_bar,
+        )
+    });
 
     if let Some(mut vol) = opt_vol {
         vol.delivered_water_m_earth += total_delivered_water;
         vol.cometary_impact_count += 1;
-        vol.ocean_coverage_frac =
-            ((vol.delivered_water_m_earth / 0.0006) * 0.71).clamp(0.0, 0.98) as f32;
+        let cov_from_water = (vol.delivered_water_m_earth / 0.0005).clamp(0.0, 0.92) as f32;
+        vol.ocean_coverage_frac = vol.ocean_coverage_frac.max(cov_from_water).clamp(0.0, 0.98);
         vol.atmospheric_pressure_bar =
             (vol.atmospheric_pressure_bar + delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
                 .clamp(0.0, 150.0);
     } else if let Ok(mut cmd) = commands.get_entity(target_ent) {
         cmd.try_insert(VolatileInventory {
             delivered_water_m_earth: total_delivered_water,
-            ocean_coverage_frac: ((total_delivered_water / 0.0006) * 0.71).clamp(0.0, 0.98) as f32,
+            ocean_coverage_frac: (total_delivered_water / 0.0005).clamp(0.0, 0.92) as f32,
             atmospheric_pressure_bar: (delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
                 .clamp(0.01, 150.0),
             cometary_impact_count: 1,
@@ -344,14 +400,11 @@ fn apply_impact_delivery_to_target(
         terra.impact_dust_optical_depth += delivery.delta_dust_opacity;
         terra.total_bombarded_mass_earth += p_mass_earth;
     } else if let Ok(mut cmd) = commands.get_entity(target_ent) {
-        cmd.try_insert(TerraformingAtmosphere {
-            co2_pressure_bar: delivery.delta_co2_bar,
-            nitrogen_pressure_bar: delivery.delta_nitrogen_bar,
-            surface_liquid_water_m_earth: delivery.liquid_water_delivered_m_earth,
-            atmospheric_water_m_earth: delivery.steam_vapor_delivered_m_earth,
-            impact_dust_optical_depth: delivery.delta_dust_opacity,
-            total_bombarded_mass_earth: p_mass_earth,
-        });
+        cmd.try_insert(build_initial_terraforming_atmosphere(
+            prev_vol,
+            delivery,
+            p_mass_earth,
+        ));
     }
 
     if let Some(ref mut climate) = opt_climate {
@@ -373,15 +426,21 @@ pub fn update_terraforming_atmospheres(
         &mut PlanetaryClimate,
         &mut Composition,
         &Mass,
+        Option<&mut Temperature>,
     )>,
 ) {
     if !config.enable_thermodynamics || (time_warp.is_paused && !time_warp.step_once) {
         return;
     }
 
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
+    let dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
+    };
+    let relax = (2.0 * dt_yr).clamp(0.0, 1.0);
 
-    for (mut vol, mut terra, mut climate, mut comp, mass) in worlds_query.iter_mut() {
+    for (mut vol, mut terra, mut climate, mut comp, mass, opt_temp) in worlds_query.iter_mut() {
         update_body_terraforming_climate(
             &mut vol,
             &mut terra,
@@ -390,5 +449,12 @@ pub fn update_terraforming_atmospheres(
             mass.0,
             dt_yr,
         );
+        if let Some(mut temp) = opt_temp {
+            if temp.0 < 650.0 {
+                temp.0 = f64::from(climate.surface_temperature_k);
+            } else {
+                temp.0 += (f64::from(climate.surface_temperature_k) - temp.0) * relax;
+            }
+        }
     }
 }

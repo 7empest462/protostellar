@@ -103,7 +103,13 @@ pub fn update_trophies_panel(
                                 MilestoneId::CoreDifferentiation => "🌍 Core Differentiation",
                                 MilestoneId::StableMultiPlanet => "🌟 Multi-Planet Architecture",
                                 MilestoneId::GiantPlanetResonance => "🪐 2:1 Giant Resonance",
+                                MilestoneId::GiantPlanetEmergence => {
+                                    "🪐 Giant Planet Runaway Accretion"
+                                }
                                 MilestoneId::LateHeavyBombardment => "☄️ Late Heavy Bombardment",
+                                MilestoneId::PlanetesimalBombardment => {
+                                    "☄️ Organic Late Bombardment"
+                                }
                                 MilestoneId::VolatileOceanDelivery => "🌊 Volatile Ocean Genesis",
                                 MilestoneId::PlanetaryRingGenesis => "🪐 Planetary Ring Genesis",
                                 MilestoneId::DynamoMagneticShield => "🛡️ Dynamo Magnetic Shield",
@@ -123,6 +129,9 @@ pub fn update_trophies_panel(
                                 MilestoneId::SpiralArmsEmergence => "🌀 Spiral Arms Emergence",
                                 MilestoneId::TidalDisruption => "🍝 Spaghettification TDE",
                                 MilestoneId::KozaiTiltExchange => "🔄 Kozai-Lidov Tilt Exchange",
+                                MilestoneId::MagnetarSuperflare => "⚡ Magnetar Giant Flare",
+                                MilestoneId::GeomagneticSuperstorm => "🌌 Carrington Superstorm",
+                                MilestoneId::BinaryInspiral => "🌀 Relativistic Binary Inspiral",
                             };
                             col.spawn(Node {
                                 padding: UiRect::all(Val::Px(4.0)),

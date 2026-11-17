@@ -54,9 +54,9 @@ pub fn draw_planet_builder_preview(
         semilatus_dir: DVec3::new(0.0, 0.0, 1.0),
     };
 
-    let preview_points = generate_orbit_points(&preview_elements, 96);
+    let preview_points = generate_orbit_points(&preview_elements, 192);
     if preview_points.len() > 1 {
-        let prev_col = Color::srgba(0.20, 0.95, 1.0, 0.85 * pulse);
+        let prev_col = Color::srgba(0.20, 0.95, 1.0, 0.80 * pulse);
         for window in preview_points.windows(2) {
             if let [p0, p1] = window {
                 gizmos.line(*p0 + star_vec, *p1 + star_vec, prev_col);
@@ -68,19 +68,23 @@ pub fn draw_planet_builder_preview(
         position_at_true_anomaly(&preview_elements, preview_elements.true_anomaly)
     {
         let ghost_world = ghost_pt + star_vec;
-        gizmos.sphere(
-            Isometry3d::from_translation(ghost_world),
-            0.06 * pulse,
-            Color::srgba(1.0, 0.85, 0.25, 0.95),
-        );
-        gizmos.circle(
-            Isometry3d::new(
-                ghost_world,
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
-            0.12 * pulse,
-            Color::srgba(0.3, 0.95, 1.0, 0.70),
-        );
+        gizmos
+            .sphere(
+                Isometry3d::from_translation(ghost_world),
+                0.05 * pulse,
+                Color::srgba(1.0, 0.85, 0.25, 0.92),
+            )
+            .resolution(32);
+        gizmos
+            .circle(
+                Isometry3d::new(
+                    ghost_world,
+                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                ),
+                0.12 * pulse,
+                Color::srgba(0.3, 0.95, 1.0, 0.70),
+            )
+            .resolution(64);
     }
 
     let (opt_peri, opt_apo) = apsides_positions(&preview_elements);
@@ -117,28 +121,36 @@ fn draw_slingshot_origin(
         SlingshotArchetype::RoguePlanet => (Color::srgb(0.42, 0.35, 0.52), 0.085),
     };
 
-    gizmos.circle(
-        Isometry3d::new(p_orig, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-        0.20 * pulse,
-        archetype_col.with_alpha(0.85),
-    );
-    gizmos.circle(
-        Isometry3d::new(p_orig, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-        0.08,
-        Color::srgba(1.0, 1.0, 1.0, 0.60),
-    );
-    gizmos.sphere(
-        Isometry3d::from_translation(p_orig),
-        ghost_rad * pulse,
-        archetype_col.with_alpha(0.95),
-    );
+    gizmos
+        .circle(
+            Isometry3d::new(p_orig, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            0.20 * pulse,
+            archetype_col.with_alpha(0.85),
+        )
+        .resolution(64);
+    gizmos
+        .circle(
+            Isometry3d::new(p_orig, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            0.08,
+            Color::srgba(1.0, 1.0, 1.0, 0.60),
+        )
+        .resolution(48);
+    gizmos
+        .sphere(
+            Isometry3d::from_translation(p_orig),
+            ghost_rad * pulse,
+            archetype_col.with_alpha(0.95),
+        )
+        .resolution(32);
 
     if r_launch > 0.05 {
-        gizmos.circle(
-            Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            r_launch as f32,
-            Color::srgba(0.35, 0.55, 0.75, 0.20),
-        );
+        gizmos
+            .circle(
+                Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                r_launch as f32,
+                Color::srgba(0.35, 0.55, 0.75, 0.20),
+            )
+            .resolution(96);
     }
 }
 
@@ -220,7 +232,7 @@ fn draw_slingshot_orbit_forecast(
     pulse: f32,
 ) {
     if el.eccentricity < 1.0 && el.semi_major_axis > 0.0 {
-        let pts = generate_orbit_points(el, 96);
+        let pts = generate_orbit_points(el, 192);
         if pts.len() > 1 {
             let is_collision = el.periapsis <= 0.006;
             let orbit_col = if is_collision {
@@ -274,40 +286,29 @@ fn draw_slingshot_orbit_forecast(
         }
 
         let (opt_peri, opt_apo) = apsides_positions(el);
+        let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
         if let Some(peri) = opt_peri {
             let peri_world = peri + star_vec;
-            gizmos.sphere(
-                Isometry3d::from_translation(peri_world),
-                0.045,
-                Color::srgba(0.2, 1.0, 0.4, 0.95),
-            );
-            gizmos.circle(
-                Isometry3d::new(
-                    peri_world,
-                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                ),
-                0.09,
-                Color::srgba(0.2, 1.0, 0.4, 0.70),
-            );
+            gizmos
+                .circle(
+                    Isometry3d::new(peri_world, ring_rot),
+                    0.09,
+                    Color::srgba(0.2, 1.0, 0.4, 0.75),
+                )
+                .resolution(48);
         }
         if let Some(apo) = opt_apo {
             let apo_world = apo + star_vec;
-            gizmos.sphere(
-                Isometry3d::from_translation(apo_world),
-                0.045,
-                Color::srgba(1.0, 0.3, 0.2, 0.95),
-            );
-            gizmos.circle(
-                Isometry3d::new(
-                    apo_world,
-                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                ),
-                0.09,
-                Color::srgba(1.0, 0.3, 0.2, 0.70),
-            );
+            gizmos
+                .circle(
+                    Isometry3d::new(apo_world, ring_rot),
+                    0.09,
+                    Color::srgba(1.0, 0.3, 0.2, 0.75),
+                )
+                .resolution(48);
         }
     } else {
-        let hyp_points = generate_hyperbolic_orbit_points(el, 64);
+        let hyp_points = generate_hyperbolic_orbit_points(el, 128);
         if hyp_points.len() > 1 {
             let hyp_col = Color::srgba(0.85, 0.35, 1.0, 0.85 * pulse);
             for window in hyp_points.windows(2) {
@@ -403,38 +404,65 @@ pub fn draw_trajectory_prediction_gizmos(
     gizmos: &mut Gizmos,
     predictor: &crate::simulation::predictor::TrajectoryPredictorState,
     _star_vec: Vec3,
+    cam_pos: Option<Vec3>,
+    occluders: (Option<(Vec3, f32)>, Option<(Vec3, f32)>),
     elapsed: f32,
 ) {
     if !predictor.is_enabled || predictor.trajectory_points.len() < 2 {
         return;
     }
 
-    let pulse = 0.70 + 0.30 * (elapsed * 4.0).sin().abs();
+    let pulse = 0.72 + 0.28 * (elapsed * 4.0).sin().abs();
 
     // 1. Determine spline color based on active encounter severity
-    let spline_color = if let Some(enc) = &predictor.active_encounter {
+    let base_rgba = if let Some(enc) = &predictor.active_encounter {
         match enc.encounter_type {
             crate::simulation::predictor::EncounterType::DirectImpact => {
-                Color::srgba(1.0, 0.15, 0.20, 0.95 * pulse)
+                Srgba::new(1.0, 0.18, 0.22, 0.88 * pulse)
             }
             crate::simulation::predictor::EncounterType::RocheLobeCrossing => {
-                Color::srgba(1.0, 0.50, 0.15, 0.90 * pulse)
+                Srgba::new(1.0, 0.52, 0.18, 0.82 * pulse)
             }
             crate::simulation::predictor::EncounterType::HillSpherePenetration => {
-                Color::srgba(1.0, 0.85, 0.25, 0.85 * pulse)
+                Srgba::new(1.0, 0.86, 0.28, 0.74 * pulse)
             }
             crate::simulation::predictor::EncounterType::SafeFlyby => {
-                Color::srgba(0.20, 0.90, 0.65, 0.80)
+                Srgba::new(0.22, 0.90, 0.65, 0.72)
             }
         }
     } else {
-        Color::srgba(0.35, 0.75, 1.0, 0.65)
+        Srgba::new(0.35, 0.78, 1.0, 0.58)
     };
 
-    // 2. Draw forward trajectory spline
-    for window in predictor.trajectory_points.windows(2) {
-        if let [p0, p1] = window {
-            gizmos.line(*p0, *p1, spline_color);
+    // 2. Smooth forward trajectory arc with limb clearance + behind-sphere occlusion + arc fade
+    let total_segs = (predictor.trajectory_points.len() - 1).max(1) as f32;
+    for (idx, window) in predictor.trajectory_points.windows(2).enumerate() {
+        let [p0, p1] = window else {
+            continue;
+        };
+        let seg_mid = p0.midpoint(*p1);
+        let limb_clear = occluders.0.map_or(1.0, |(body_c, body_r)| {
+            let d = seg_mid.distance(body_c);
+            let inner = body_r * 1.10;
+            let outer = body_r * 1.95;
+            let t = ((d - inner) / (outer - inner).max(1e-6)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        });
+        let occ = super::orbits::combined_sphere_occlusion_fade(
+            seg_mid,
+            cam_pos,
+            occluders.0,
+            occluders.1,
+        );
+        let progress = idx as f32 / total_segs;
+        let arc_fade = (1.0 - progress).powf(0.95);
+        let a = base_rgba.alpha * limb_clear * occ * arc_fade;
+        if a > 0.015 {
+            gizmos.line(
+                *p0,
+                *p1,
+                Color::srgba(base_rgba.red, base_rgba.green, base_rgba.blue, a),
+            );
         }
     }
 
@@ -452,63 +480,62 @@ pub fn draw_trajectory_prediction_gizmos(
             enc.target_pos_at_encounter_au.z as f32,
         );
 
-        let badge_color = enc.encounter_type.badge_color();
-        let badge_rgba = badge_color.to_srgba();
+        let badge_rgba = enc.encounter_type.badge_color().to_srgba();
+        let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
 
         // Baseline connector between projectile/body and target center at closest approach
         gizmos.line(
             enc_world,
             tgt_world,
-            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.55),
+            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.42),
         );
 
         // Reticle radius based on encounter type
         let reticle_r = match enc.encounter_type {
-            crate::simulation::predictor::EncounterType::DirectImpact => 0.12 * pulse,
-            crate::simulation::predictor::EncounterType::RocheLobeCrossing => 0.16 * pulse,
-            crate::simulation::predictor::EncounterType::HillSpherePenetration => 0.20,
-            crate::simulation::predictor::EncounterType::SafeFlyby => 0.15,
+            crate::simulation::predictor::EncounterType::DirectImpact => 0.10 * pulse,
+            crate::simulation::predictor::EncounterType::RocheLobeCrossing => 0.14 * pulse,
+            crate::simulation::predictor::EncounterType::HillSpherePenetration => 0.18,
+            crate::simulation::predictor::EncounterType::SafeFlyby => 0.13,
         };
 
-        gizmos.circle(
-            Isometry3d::new(
-                enc_world,
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
+        super::orbits::draw_occluded_circle(
+            gizmos,
+            enc_world,
+            ring_rot,
             reticle_r,
-            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.90),
-        );
-
-        // Crosshairs at encounter point
-        let cross_len = reticle_r * 1.6;
-        gizmos.line(
-            enc_world - Vec3::X * cross_len,
-            enc_world + Vec3::X * cross_len,
             Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.85),
+            64,
+            cam_pos,
+            occluders,
         );
-        gizmos.line(
-            enc_world - Vec3::Z * cross_len,
-            enc_world + Vec3::Z * cross_len,
-            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.85),
-        );
+        gizmos
+            .circle(
+                Isometry3d::new(enc_world, ring_rot),
+                reticle_r * 0.25,
+                Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.90),
+            )
+            .resolution(32);
 
-        // Center beacon sphere
-        gizmos.sphere(
-            Isometry3d::from_translation(enc_world),
-            0.04 * pulse,
-            Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.95),
-        );
+        // Broken aerospace crosshairs leaving a clean gap around the center marker
+        let gap = reticle_r * 0.48;
+        let tip = reticle_r * 1.45;
+        let tick_col = Color::srgba(badge_rgba.red, badge_rgba.green, badge_rgba.blue, 0.78);
+        for axis in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z] {
+            gizmos.line(enc_world + axis * gap, enc_world + axis * tip, tick_col);
+        }
 
         // If penetrating Hill sphere or crossing Roche, visualize target boundary
         if enc.encounter_type != crate::simulation::predictor::EncounterType::SafeFlyby {
             let hill_r = (enc.target_hill_radius_au as f32).clamp(0.08, 2.5);
-            gizmos.circle(
-                Isometry3d::new(
-                    tgt_world,
-                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                ),
+            super::orbits::draw_occluded_circle(
+                gizmos,
+                tgt_world,
+                ring_rot,
                 hill_r,
-                Color::srgba(1.0, 0.85, 0.20, 0.35 * pulse),
+                Color::srgba(1.0, 0.85, 0.25, 0.28 * pulse),
+                96,
+                cam_pos,
+                occluders,
             );
         }
     }
@@ -559,11 +586,13 @@ pub fn draw_bombardment_projectiles_gizmo(
 
         // 3. Targeting corridor rings around the planet's atmospheric boundary
         let target_reticle_r = (t_rad.0 as f32 * 1.5).clamp(0.06, 1.2);
-        gizmos.circle(
-            Isometry3d::new(t_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            target_reticle_r * pulse,
-            Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.70),
-        );
+        gizmos
+            .circle(
+                Isometry3d::new(t_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                target_reticle_r * pulse,
+                Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.70),
+            )
+            .resolution(64);
 
         // Ground target crosshairs
         let cross_len = target_reticle_r * 1.4;

@@ -19,9 +19,9 @@ use protostellar::utils::constants::*;
 #[test]
 fn test_t2_r1_zero_and_negative_density_clamping() {
     // Adversarial: Negative or zero density inputs must clamp to zero and avoid NaN/division-by-zero
-    let raw_densities = [-1.0e-5, 0.0, -0.0, 1.0e-18];
+    let raw_densities: [f64; 4] = [-1.0e-5, 0.0, -0.0, 1.0e-18];
     for &raw_rho in &raw_densities {
-        let clamped = (raw_rho as f64).max(0.0);
+        let clamped = raw_rho.max(0.0);
         assert!(clamped >= 0.0);
         assert!(!clamped.is_nan());
 

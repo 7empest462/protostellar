@@ -29,6 +29,7 @@ pub fn spawn_cutaway_hud(root: &mut ChildSpawnerCommands) {
         root.spawn((
             CutawayCalloutPill(i),
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Node {
                 position_type: PositionType::Absolute,
                 display: Display::None,
@@ -50,6 +51,7 @@ pub fn spawn_cutaway_hud(root: &mut ChildSpawnerCommands) {
             card.spawn((
                 CutawayField::Title,
                 IgnoreUiPicking,
+                Pickable::IGNORE,
                 Text::new(""),
                 TextFont {
                     font_size: FontSize::Px(11.0),
@@ -62,6 +64,7 @@ pub fn spawn_cutaway_hud(root: &mut ChildSpawnerCommands) {
             card.spawn((
                 CutawayField::Subtitle,
                 IgnoreUiPicking,
+                Pickable::IGNORE,
                 Text::new(""),
                 TextFont {
                     font_size: FontSize::Px(9.0),

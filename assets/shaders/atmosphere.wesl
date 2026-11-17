@@ -316,11 +316,11 @@ fn evaluate_orbital_limb_clouds(
     let c_eddy = atmo_fbm(p_mid_rot * 11.0 - seed_ofs - vec3<f32>(sim_t * 0.042, 0.0, sim_t * 0.042));
     let c_cirrus = atmo_fbm(vec3<f32>(p_high_rot.x * 6.5, p_high_rot.y * 16.0, p_high_rot.z * 6.5) + vec3<f32>(sim_t * 0.034, 0.0, -sim_t * 0.030));
 
-    let base_thresh = 0.48 - cloud_cov * 0.22;
-    let dens_scale = clamp(cloud_cov * 1.35, 0.25, 1.0);
-    let alpha_m = clamp(((c_mid * 0.65 + c_eddy * 0.35) - base_thresh) * 2.8 * dens_scale, 0.0, 0.82);
-    let alpha_h = clamp((c_cirrus - (base_thresh + 0.04)) * 2.0 * dens_scale, 0.0, 0.48);
-    let cloud_alpha = (1.0 - (1.0 - alpha_m) * (1.0 - alpha_h)) * limb_presence * 0.78;
+    let base_thresh = 0.54 - cloud_cov * 0.14;
+    let dens_scale = clamp(cloud_cov * 1.25, 0.25, 1.0);
+    let alpha_m = clamp(((c_mid * 0.65 + c_eddy * 0.35) - base_thresh) * 2.4 * dens_scale, 0.0, 0.72);
+    let alpha_h = clamp((c_cirrus - (base_thresh + 0.05)) * 1.6 * dens_scale, 0.0, 0.38);
+    let cloud_alpha = (1.0 - (1.0 - alpha_m) * (1.0 - alpha_h)) * limb_presence * 0.45;
     if (cloud_alpha <= 0.005) {
         return vec4<f32>(0.0);
     }
@@ -571,9 +571,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let p_mie = dual_lobe_mie_phase(cos_theta, g);
     let p_iso = 1.0 / (4.0 * PI);
 
-    // Numerical single + multiple scattering raymarching (8 sample steps)
-    // Normalize step optical density by planetary radius / atmosphere thickness so optical depth is scale-invariant
-    let step_count = 8;
+    // Adaptive raymarch step count: 5 smooth steps on the front planetary disk,
+    // 7 steps on grazing limb / horizon views for crisp twilight scattering.
+    let step_count = select(7, 5, hit_ground && !is_surface_view);
     let step_size = (t_end - t_start) / f32(step_count);
     let pressure_scale = clamp(pow(max(pressure, 0.01), 0.28), 0.22, 2.2);
     let path_norm_unit = mix(max(r_planet_def * 0.22, 1e-6), max(atmo_thickness * 0.52, 1e-6), surface_blend);
@@ -590,6 +590,13 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let oval_colat = atmo.aurora_params.x;
     let oval_width = max(atmo.aurora_params.y, 0.03);
     let aurora_int = atmo.aurora_params.z;
+    let kp_index = atmo.aurora_params.w;
+    let atmo_sim_t = atmo.cloud_and_time_params.y;
+    let atmo_spin_angle = atmo.cloud_and_time_params.z;
+    let atmo_up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(s_axis.y) > 0.92);
+    let atmo_tu = normalize(cross(atmo_up, s_axis));
+    let atmo_tv = cross(s_axis, atmo_tu);
+    let is_giant_atmo = (atmo.optical_params.y > 20.0 || atmo.spin_axis.w > 0.02);
 
     for (var i = 0; i < step_count; i = i + 1) {
         let t_sample = t_start + (f32(i) + 0.5) * step_size;
@@ -653,28 +660,67 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         in_scatter += (single_slice + multi_slice) * mix(1.8, 3.4, surface_blend);
 
         // Volumetric polar auroral curtain emission (Ionospheric layer)
-        let is_giant_atmo = (atmo.optical_params.y > 20.0 || atmo.spin_axis.w > 0.02);
-        if (aurora_int > 0.05 && !is_giant_atmo) {
+        let giant_storm_active = is_giant_atmo && kp_index >= 3.5 && aurora_int > 0.30;
+        if (aurora_int > 0.04 && (!is_giant_atmo || giant_storm_active)) {
             let sin_lat = dot(norm_p, s_axis);
             let polar_co = acos(clamp(abs(sin_lat), 0.0, 1.0));
             let effective_colat = clamp(oval_colat, 0.16, 0.44);
             let d_oval = abs(polar_co - effective_colat);
-            let oval_ring = exp(-0.5 * (d_oval * d_oval) / (oval_width * oval_width));
-            
-            let step_atmo_thick = max(r_a_step - r_p_step, 1e-6);
-            let alt_frac = alt / step_atmo_thick;
-            let iono_layer = smoothstep(0.12, 0.40, alt_frac) * smoothstep(0.98, 0.65, alt_frac);
+            let oval_ring = exp(-0.5 * (d_oval * d_oval) / (oval_width * oval_width * 0.55));
+            let pole_fade = smoothstep(0.05, 0.14, polar_co);
 
-            // Emerald 557.7nm O(1S) fading into violet N2+ at base and red O(1D) at apex
-            let auroral_rgb = mix(vec3<f32>(0.12, 0.98, 0.42), vec3<f32>(0.45, 0.22, 0.95), smoothstep(0.25, 0.80, alt_frac));
-            
-            // Nightside enhancement from magnetotail reconnection
-            let night_mult = mix(2.2, 0.35, clamp(mu_s * 0.5 + 0.5, 0.0, 1.0));
+            // Sunlight drowns out optical auroras on the dayside; peak emission glows on twilight & nightside
+            let dayside_cusp = 0.02 * smoothstep(7.0, 9.0, kp_index);
+            let night_vis = max(smoothstep(0.06, -0.26, mu_s), dayside_cusp);
 
-            // Strictly polar factor
-            let polar_factor = smoothstep(0.65, 0.88, abs(sin_lat));
+            if (oval_ring * pole_fade * night_vis > 0.004) {
+                let step_atmo_thick = max(r_a_step - r_p_step, 1e-6);
+                let alt_frac = alt / step_atmo_thick;
+                let iono_layer = smoothstep(0.14, 0.42, alt_frac) * smoothstep(0.98, 0.62, alt_frac);
 
-            aurora_emission += auroral_rgb * (oval_ring * iono_layer * aurora_int * night_mult * polar_factor * (step_size / step_atmo_thick) * 3.0);
+                // Rippling Birkeland curtain filaments instead of an untextured blur torus
+                let az = atan2(dot(norm_p, atmo_tv), dot(norm_p, atmo_tu)) - atmo_spin_angle * 0.65;
+                let ray_coord = vec3<f32>(
+                    cos(az * 6.0 + atmo_sim_t * 0.25) * 2.1 + sin(az * 13.0 - atmo_sim_t * 0.40),
+                    sin(az * 6.0 + atmo_sim_t * 0.25) * 2.1 + cos(az * 11.0 + atmo_sim_t * 0.32),
+                    polar_co * 18.0 + atmo_sim_t * 0.16
+                );
+                let curtain_rays = smoothstep(0.28, 0.72, atmo_fbm(ray_coord));
+                let ripple = 0.85 + 0.15 * sin(az * 9.0 + atmo_sim_t * 2.8);
+
+                var auroral_rgb: vec3<f32>;
+                if (is_giant_atmo) {
+                    let h3_violet = vec3<f32>(0.50, 0.22, 0.92);
+                    let h2_cyan = vec3<f32>(0.18, 0.76, 0.95);
+                    auroral_rgb = mix(h3_violet, h2_cyan, smoothstep(0.25, 0.78, alt_frac));
+                } else {
+                    // N2+ violet lower border -> 557.7nm O green core -> 630.0nm O ruby apex
+                    let n2_violet = vec3<f32>(0.42, 0.18, 0.88);
+                    let o_emerald = vec3<f32>(0.08, 0.90, 0.36);
+                    let o_ruby = vec3<f32>(0.85, 0.14, 0.22);
+                    auroral_rgb = mix(
+                        mix(n2_violet, o_emerald, smoothstep(0.15, 0.38, alt_frac)),
+                        o_ruby,
+                        smoothstep(0.58, 0.90, alt_frac)
+                    );
+                }
+
+                // Subtle during quiet space weather, surging vividly during CME / Flare / Substorm activity
+                let storm_scale = smoothstep(1.3, 8.5, kp_index) * 1.15 + 0.08;
+                let polar_factor = smoothstep(0.65, 0.88, abs(sin_lat));
+                aurora_emission += auroral_rgb
+                    * (oval_ring
+                        * pole_fade
+                        * iono_layer
+                        * curtain_rays
+                        * ripple
+                        * aurora_int
+                        * storm_scale
+                        * night_vis
+                        * polar_factor
+                        * (step_size / step_atmo_thick)
+                        * 1.45);
+            }
         }
     }
 
@@ -696,7 +742,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let edge_fade = mix(orbital_edge_fade, 1.0, surface_blend);
 
     let alpha_base = clamp(1.0 - avg_transmission, 0.0, 1.0) * edge_fade;
-    let aurora_alpha = clamp(length(aurora_emission) * 0.6, 0.0, 0.85);
+    // Keep optical auroras translucent self-luminous emission so surface & clouds stay crisp underneath
+    let aurora_alpha = clamp(length(aurora_emission) * 0.18, 0.0, 0.30);
     let mu_ground = select(
         0.0,
         abs(dot(normalize((ray_origin + ray_dir * hit_planet.x) - center), ray_dir)),
@@ -704,7 +751,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     );
     let limb_weight = pow(1.0 - clamp(mu_ground, 0.0, 1.0), 2.0);
     let orbital_alpha = clamp(
-        alpha_base * mix(0.20, 0.92, limb_weight) + aurora_alpha * mix(0.45, 1.0, limb_weight),
+        alpha_base * mix(0.20, 0.92, limb_weight) + aurora_alpha * mix(0.18, 0.55, limb_weight),
         0.0,
         0.90
     );

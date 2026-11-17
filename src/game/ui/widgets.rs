@@ -7,12 +7,13 @@
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::input_focus::InputFocus;
 use bevy::picking::hover::Hovered;
+use bevy::picking::Pickable;
 use bevy::prelude::*;
 use bevy::text::{EditableText, FontSize, FontSource, TextCursorStyle};
 use bevy::ui::{BackgroundGradient, ColorStop, Gradient, LinearGradient, PositionType};
 use bevy::ui_widgets::{
-    Activate, Slider, SliderDragState, SliderOrientation, SliderPrecision, SliderRange, SliderStep,
-    SliderValue, TextInput, TrackClick, ValueChange,
+    slider_self_update, Activate, Slider, SliderDragState, SliderOrientation, SliderPrecision,
+    SliderRange, SliderStep, SliderValue, TextInput, TrackClick, ValueChange,
 };
 
 /// Returns the universal HUD `FontSource::List` ensuring full fallback coverage across
@@ -101,7 +102,11 @@ pub fn on_hud_slider_value_change(
 ) {
     if let Some(ref mut pend) = pending {
         if let Ok(hud_slider) = slider_query.get(trigger.source) {
-            pend.0.push((hud_slider.0, trigger.value));
+            if let Some(existing) = pend.0.iter_mut().find(|(k, _)| *k == hud_slider.0) {
+                existing.1 = trigger.value;
+            } else {
+                pend.0.push((hud_slider.0, trigger.value));
+            }
         }
     }
 }
@@ -290,7 +295,7 @@ pub fn spawn_hud_slider(
                     Hovered::default(),
                 ))
                 .with_children(|slider| {
-                    // Track background
+                    // Track background (Pickable::IGNORE so pointer events go straight to Slider)
                     slider
                         .spawn((
                             Node {
@@ -302,6 +307,7 @@ pub fn spawn_hud_slider(
                                 ..default()
                             },
                             BackgroundColor(Color::srgba(0.06, 0.12, 0.22, 0.85)),
+                            Pickable::IGNORE,
                         ))
                         .with_children(|track| {
                             // Filled gradient bar
@@ -317,6 +323,7 @@ pub fn spawn_hud_slider(
                                         ColorStop::auto(Color::srgb(0.35, 0.85, 1.0)),
                                     ]),
                                 )]),
+                                Pickable::IGNORE,
                                 HudSliderFill,
                             ));
                         });
@@ -336,6 +343,7 @@ pub fn spawn_hud_slider(
                         },
                         BackgroundColor(Color::srgb(0.9, 0.96, 1.0)),
                         BorderColor::from(Color::srgb(0.2, 0.7, 1.0)),
+                        Pickable::IGNORE,
                         HudSliderThumb,
                     ));
                 })
@@ -428,14 +436,18 @@ impl Plugin for ModernHudWidgetsPlugin {
             .init_resource::<PendingSliderChanges>()
             .init_resource::<SaveSlotUiState>()
             .add_observer(on_hud_button_activate)
+            .add_observer(slider_self_update)
             .add_observer(on_hud_slider_value_change)
             .add_systems(PostStartup, upgrade_hud_default_fonts)
             .add_systems(
                 Update,
                 (
                     upgrade_hud_default_fonts,
-                    crate::game::ui::widget_sync::sync_hud_sliders,
-                    crate::game::ui::widget_sync::apply_hud_slider_changes,
+                    (
+                        crate::game::ui::widget_sync::apply_hud_slider_changes,
+                        crate::game::ui::widget_sync::sync_hud_sliders,
+                    )
+                        .chain(),
                     crate::game::ui::widget_sync::sync_hud_text_inputs,
                     crate::game::ui::widget_sync::animate_hud_ui_transforms,
                 ),

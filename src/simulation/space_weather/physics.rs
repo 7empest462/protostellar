@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 
 use crate::simulation::components::Composition;
-use crate::simulation::space_weather::types::GeomagneticStormLevel;
+use crate::simulation::space_weather::types::{AuroralOvalState, GeomagneticStormLevel};
 
 /// Computes the auroral oval central co-latitude $\theta_A$ and angular Gaussian width $\Delta \theta_A$ (in radians).
 ///
@@ -28,6 +28,25 @@ pub fn calculate_auroral_oval_geometry(standoff_rp: f32) -> (f32, f32) {
     (colatitude, half_width)
 }
 
+/// Maps a planetary geomagnetic Kp index ($0.0 \le \text{Kp} \le 9.0$) to its NOAA storm tier.
+pub fn classify_kp_storm_level(kp: f32) -> GeomagneticStormLevel {
+    if kp < 2.0 {
+        GeomagneticStormLevel::Quiet
+    } else if kp < 4.0 {
+        GeomagneticStormLevel::Unsettled
+    } else if kp < 5.0 {
+        GeomagneticStormLevel::MinorStorm
+    } else if kp < 6.0 {
+        GeomagneticStormLevel::ModerateStorm
+    } else if kp < 7.0 {
+        GeomagneticStormLevel::StrongStorm
+    } else if kp < 8.5 {
+        GeomagneticStormLevel::SevereStorm
+    } else {
+        GeomagneticStormLevel::ExtremeStorm
+    }
+}
+
 /// Derives the planetary geomagnetic Kp index ($0.0 \le \text{Kp} \le 9.0$) and storm tier
 /// from magnetopause compression and solar wind dynamic ram pressure amplification.
 pub fn calculate_geomagnetic_kp(
@@ -43,27 +62,78 @@ pub fn calculate_geomagnetic_kp(
     let compression = (10.5 / standoff_rp.max(2.0)).max(0.6);
     let ram_boost = cme_density_mult.max(1.0).powf(0.35);
 
-    // Scaling relation: Kp ~ 1.5 * compression^1.4 * ram_boost^0.5
+    // Scaling relation: Kp ~ 1.35 * compression^1.4 * ram_boost
     let raw_kp = 1.35 * compression.powf(1.4) * ram_boost;
     let kp = raw_kp.clamp(0.0, 9.0);
 
-    let level = if kp < 2.0 {
-        GeomagneticStormLevel::Quiet
-    } else if kp < 4.0 {
-        GeomagneticStormLevel::Unsettled
-    } else if kp < 5.0 {
-        GeomagneticStormLevel::MinorStorm
-    } else if kp < 6.0 {
-        GeomagneticStormLevel::ModerateStorm
-    } else if kp < 7.0 {
-        GeomagneticStormLevel::StrongStorm
-    } else if kp < 8.5 {
-        GeomagneticStormLevel::SevereStorm
-    } else {
-        GeomagneticStormLevel::ExtremeStorm
-    };
+    (kp, classify_kp_storm_level(kp))
+}
 
-    (kp, level)
+/// Evaluates instantaneous magnetopause standoff, auroral oval geometry, Kp index, and visible intensity
+/// given solar wind ram standoff, transient storm excitation (`0.0..4.0`), and moon-torus currents.
+///
+/// In quiet solar wind (`Kp < 2.0`, `storm_excitation ~ 0`), optical emission stays very faint (~0.02-0.12)
+/// so sunlight washes out the oval on the dayside and only a delicate shimmer exists at night.
+/// During flares, CMEs, ignition shockwaves, or substorms, excitation pushes Kp into 4-9 and surges luminance.
+pub fn evaluate_auroral_storm_state(
+    base_standoff_rp: f32,
+    ram_multiplier: f32,
+    b_gauss: f32,
+    storm_excitation: f32,
+    moon_torus_boost: f32,
+) -> (f32, f32, f32, f32, f32, GeomagneticStormLevel) {
+    let exc = storm_excitation.max(0.0);
+    let effective_standoff_rp = (base_standoff_rp / (1.0 + exc * 0.35)).clamp(1.8, 60.0);
+    let (colatitude, half_width) = calculate_auroral_oval_geometry(effective_standoff_rp);
+    let (base_kp, _) = calculate_geomagnetic_kp(effective_standoff_rp, ram_multiplier, b_gauss);
+
+    let kp = (base_kp + exc * 2.15 + moon_torus_boost * 1.2).clamp(0.0, 9.0);
+    let level = classify_kp_storm_level(kp);
+
+    let b_scale = (b_gauss / 0.5).clamp(0.35, 2.2);
+    // Quiet optical floor stays low (~0.03-0.12) so planets do not show bright permanent white daylight stickers.
+    let quiet_floor =
+        ((kp / 2.0).clamp(0.0, 1.0) * 0.055 * b_scale + moon_torus_boost * 0.16).clamp(0.015, 0.22);
+    let storm_norm = ((kp - 1.6) / 7.4).clamp(0.0, 1.0);
+    let storm_luminance = if kp >= 2.0 || exc >= 0.08 {
+        (0.28 + 2.95 * storm_norm.powf(1.30)) * b_scale.max(0.75) + exc * 0.22
+    } else {
+        0.0
+    };
+    let intensity = (quiet_floor + storm_luminance).clamp(0.015, 3.8);
+
+    (
+        effective_standoff_rp,
+        colatitude,
+        half_width,
+        kp,
+        intensity,
+        level,
+    )
+}
+
+/// Packs `(oval_colatitude_rad, oval_width_rad, auroral_intensity, kp_index)` for planet and atmosphere shaders.
+pub fn calculate_aurora_shader_uniforms(
+    opt_aurora: Option<&AuroralOvalState>,
+    mag_gauss: f32,
+) -> Vec4 {
+    opt_aurora.map_or_else(
+        || {
+            if mag_gauss > 0.1 {
+                Vec4::new(0.315, 0.055, 0.04, 1.2)
+            } else {
+                Vec4::ZERO
+            }
+        },
+        |a| {
+            Vec4::new(
+                a.oval_colatitude_rad,
+                a.oval_width_rad,
+                a.auroral_intensity,
+                a.geomagnetic_kp_index,
+            )
+        },
+    )
 }
 
 /// Emission spectrum colors for the planetary auroral oval based on composition and atmospheric pressure.

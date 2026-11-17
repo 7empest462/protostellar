@@ -43,16 +43,18 @@ pub fn resolve_relativistic_host_context(
     if let Some(sat) = opt_sat {
         let r_orbit = sat.semi_major_axis_au.max(1e-6);
         let period = sat.orbital_period_years.max(1e-6);
-        let host_mass = (4.0 * PI * PI * r_orbit.powi(3) / (G_ASTRO * period * period)).max(1e-8);
+        let host_mass = (r_orbit.powi(3) / (period * period)).max(1e-8);
+        let (sin_a, cos_a) = sat.true_anomaly.sin_cos();
+        let rel_pos = DVec3::new(r_orbit * cos_a, 0.0, r_orbit * sin_a);
         return Some(RelativisticHostContext {
             host_entity: sat.parent,
             host_mass,
-            host_pos: body_pos,
+            host_pos: body_pos - rel_pos,
             host_vel: DVec3::ZERO,
             host_radius: 0.001,
             is_host_remnant: false,
             kerr_spin: None,
-            rel_pos: DVec3::new(r_orbit, 0.0, 0.0),
+            rel_pos,
             rel_vel: body_vel,
             semi_major_axis: r_orbit,
             eccentricity: 0.0,
@@ -218,7 +220,7 @@ fn apply_relativistic_kinematics_and_telemetry(
     body_type: BodyType,
     is_satellite: bool,
     m_body: f64,
-    dt_yr: f64,
+    _dt_yr: f64,
     effective_dt_yr: f64,
     pos: &mut SimPosition,
     vel: &mut SimVelocity,
@@ -235,7 +237,7 @@ fn apply_relativistic_kinematics_and_telemetry(
     // 1. Post-Newtonian (1PN) Precession Calculations
     let (rate_rad_yr, rate_arcsec_cy) = calculate_1pn_precession_rate(m_host, a, e);
     let advance_rad = calculate_1pn_precession_per_orbit(m_host, a, e);
-    let accumulated_delta = rate_rad_yr * dt_yr;
+    let accumulated_delta = rate_rad_yr * effective_dt_yr;
 
     // 2. Peters (1964) Gravitational Wave Radiation Calculations
     let power_watts = calculate_peters_gw_power(m_host, m_body, a, e);
@@ -302,7 +304,7 @@ fn apply_relativistic_kinematics_and_telemetry(
         rel_state.kerr_spin_param = a_star;
 
         if rel_config.enable_lense_thirring && lt_rate_rad_yr.abs() > 1e-15 {
-            let delta_omega = (lt_rate_rad_yr * dt_yr).clamp(-0.05, 0.05);
+            let delta_omega = (lt_rate_rad_yr * effective_dt_yr).clamp(-0.05, 0.05);
             let s_hat = if spin_axis.length_squared() > 1e-12 {
                 spin_axis.normalize()
             } else {
@@ -354,14 +356,17 @@ fn apply_relativistic_coalescence_outcome(
     host_entity: Entity,
     companion_entity: Entity,
     companion_name: &str,
+    companion_pos: DVec3,
+    companion_vel: DVec3,
+    companion_mass: f64,
     remnant_mass: f64,
     new_radius: f64,
     remnant_type: BodyType,
     star_query: &mut Query<
         (
             Entity,
-            &SimPosition,
-            &SimVelocity,
+            &mut SimPosition,
+            &mut SimVelocity,
             &mut Mass,
             &mut Radius,
             Option<&mut CelestialBody>,
@@ -372,10 +377,15 @@ fn apply_relativistic_coalescence_outcome(
     player_state: &mut Option<ResMut<PlayerInteractionState>>,
 ) {
     let mut merged_name = format!("Merged {remnant_type:?} ({remnant_mass:.2} M☉)");
-    if let Some((_, _, _, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) = star_query
-        .iter_mut()
-        .find(|(star_e, _, _, _, _, _, _)| *star_e == host_entity)
+    let mut updated_body_in_place = false;
+    if let Some((_, mut s_pos, mut s_vel, mut s_mass, mut s_rad, mut opt_s_body, mut opt_kerr)) =
+        star_query
+            .iter_mut()
+            .find(|(star_e, _, _, _, _, _, _)| *star_e == host_entity)
     {
+        let total_m = (s_mass.0 + companion_mass).max(1e-12);
+        s_pos.0 = (s_pos.0 * s_mass.0 + companion_pos * companion_mass) / total_m;
+        s_vel.0 = (s_vel.0 * s_mass.0 + companion_vel * companion_mass) / total_m;
         s_mass.0 = remnant_mass;
         s_rad.0 = new_radius;
         if let Some(ref mut b) = opt_s_body {
@@ -387,21 +397,24 @@ fn apply_relativistic_coalescence_outcome(
                 remnant_mass,
             );
             merged_name.clone_from(&b.name);
+            updated_body_in_place = true;
         }
         if let Some(ref mut kerr) = opt_kerr {
             kerr.recalculate(remnant_mass);
         }
     }
 
-    if let Ok(mut host_cmd) = commands.get_entity(host_entity) {
-        host_cmd.insert((
-            Mass(remnant_mass),
-            Radius(new_radius),
-            CelestialBody {
-                name: merged_name,
-                body_type: remnant_type,
-            },
-        ));
+    if !updated_body_in_place {
+        if let Ok(mut host_cmd) = commands.get_entity(host_entity) {
+            host_cmd.insert((
+                Mass(remnant_mass),
+                Radius(new_radius),
+                CelestialBody {
+                    name: merged_name,
+                    body_type: remnant_type,
+                },
+            ));
+        }
     }
 
     if let Some(ref mut ps) = player_state {
@@ -419,14 +432,15 @@ fn apply_relativistic_coalescence_outcome(
 pub fn update_relativity_evolution(
     rel_config: Res<RelativityConfig>,
     sim_time: Res<SimTime>,
+    time_warp: Option<Res<crate::simulation::resources::TimeWarp>>,
     _config: Res<SimulationConfig>,
     mut merger_events: MessageWriter<GravitationalWaveMergerEvent>,
     mut commands: Commands,
     mut star_query: Query<
         (
             Entity,
-            &SimPosition,
-            &SimVelocity,
+            &mut SimPosition,
+            &mut SimVelocity,
             &mut Mass,
             &mut Radius,
             Option<&mut CelestialBody>,
@@ -452,6 +466,13 @@ pub fn update_relativity_evolution(
     if !rel_config.enable_1pn_precession
         && !rel_config.enable_gw_radiation
         && !rel_config.enable_lense_thirring
+    {
+        return;
+    }
+
+    if time_warp
+        .as_deref()
+        .is_some_and(|tw| tw.is_paused && !tw.step_once)
     {
         return;
     }
@@ -518,6 +539,9 @@ pub fn update_relativity_evolution(
                     ctx.host_entity,
                     entity,
                     &body.name,
+                    pos.0,
+                    vel.0,
+                    m_body,
                     remnant_mass,
                     new_radius,
                     remnant_type,

@@ -72,6 +72,7 @@ pub fn inject_sci_fi_panel_frames(
                 With<TechTreePanelElement>,
                 With<CampaignPanelElement>,
                 With<HazardsPanelElement>,
+                With<super::SavesPanelElement>,
             )>,
         ),
     >,
@@ -111,6 +112,7 @@ pub fn inject_sci_fi_panel_frames(
                 Some(
                     HudPanelElement::TopLeftPill
                         | HudPanelElement::TopRightPill
+                        | HudPanelElement::AudioMuteBadge
                         | HudPanelElement::InspectorChip
                         | HudPanelElement::ScenarioPresetsPill
                         | HudPanelElement::TopControlsPill

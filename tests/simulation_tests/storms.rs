@@ -294,7 +294,7 @@ fn test_tidal_deformation_and_camera_adaptive_visual_radius() {
     // 3. Camera-adaptive visual radius shrinks smoothly on close-up and obeys 4.5% orbital cap
     let config = SimulationConfig::default();
     let r_far = compute_realistic_visual_radius(
-        0.0000426,
+        0.000_042_6,
         BodyType::TerrestrialPlanet,
         0.029,
         0.011,
@@ -302,7 +302,7 @@ fn test_tidal_deformation_and_camera_adaptive_visual_radius() {
         &config,
     );
     let r_close = compute_realistic_visual_radius(
-        0.0000426,
+        0.000_042_6,
         BodyType::TerrestrialPlanet,
         0.029,
         0.011,
@@ -320,7 +320,7 @@ fn test_tidal_deformation_and_camera_adaptive_visual_radius() {
 
     // 4. Earth-to-Moon relative size hierarchy must stay constant (~3.8x) whether viewing Earth,
     // viewing the Moon, or zoomed out to system scale.
-    let r_earth_phys = 0.0000426;
+    let r_earth_phys = 0.000_042_6;
     let r_moon_phys = r_earth_phys * 0.272;
     let earth_close = compute_realistic_visual_radius(
         r_earth_phys,
@@ -360,16 +360,15 @@ fn test_saturn_hd_stratigraphy_and_storm_state() {
     use protostellar::rendering::bodies::palettes::compute_gas_giant_palette;
 
     // 1. Verify Saturn and Proto-Saturn retain golden-butterscotch palette
-    let proto_saturn_color = compute_gas_giant_palette(0.000285, 263.8, "Proto-Saturn");
-    let mature_saturn_color = compute_gas_giant_palette(0.000285, 95.0, "Saturn");
+    let proto_saturn_color = compute_gas_giant_palette(0.000_285, 263.8, "Proto-Saturn");
+    let mature_saturn_color = compute_gas_giant_palette(0.000_285, 95.0, "Saturn");
 
     let p_rgb = proto_saturn_color.to_srgba();
     let m_rgb = mature_saturn_color.to_srgba();
 
     assert!(
         p_rgb.red > 0.85 && p_rgb.green > 0.75 && p_rgb.blue < 0.65,
-        "Proto-Saturn must have golden-sand butterscotch hue (R > 0.85, G > 0.75, B < 0.65), got: {:?}",
-        p_rgb
+        "Proto-Saturn must have golden-sand butterscotch hue (R > 0.85, G > 0.75, B < 0.65), got: {p_rgb:?}"
     );
     assert_eq!(
         p_rgb, m_rgb,
@@ -467,8 +466,7 @@ fn test_distant_optical_glint_photometry_and_dark_remnant_suppression() {
     let earth_glint = earth_col.to_srgba();
     assert!(
         earth_glint.blue > earth_glint.red && earth_w > 0.5,
-        "Earth distant glint must reflect Pale Blue Dot photometry (B > R), got {:?}",
-        earth_glint
+        "Earth distant glint must reflect Pale Blue Dot photometry (B > R), got {earth_glint:?}"
     );
 
     let mars_body = CelestialBody {
@@ -480,8 +478,7 @@ fn test_distant_optical_glint_photometry_and_dark_remnant_suppression() {
     let mars_glint = mars_col.to_srgba();
     assert!(
         mars_glint.red > mars_glint.blue,
-        "Mars distant glint must reflect ferric-ochre photometry (R > B), got {:?}",
-        mars_glint
+        "Mars distant glint must reflect ferric-ochre photometry (R > B), got {mars_glint:?}"
     );
 
     let neptune_body = CelestialBody {
@@ -500,8 +497,7 @@ fn test_distant_optical_glint_photometry_and_dark_remnant_suppression() {
     let neptune_glint = neptune_col.to_srgba();
     assert!(
         neptune_glint.blue > neptune_glint.red,
-        "Neptune distant glint must reflect cobalt-methane photometry (B > R), got {:?}",
-        neptune_glint
+        "Neptune distant glint must reflect cobalt-methane photometry (B > R), got {neptune_glint:?}"
     );
 }
 
@@ -530,7 +526,7 @@ fn test_synced_visual_radius_close_camera_framing_and_cutaway_consistency() {
         "Visual radius solver must be resilient to NaN/Inf inputs, got {r_nan}"
     );
 
-    let earth_phys = 0.0000426;
+    let earth_phys = 0.000_042_6;
     // Unsynced Transform::IDENTITY (scale = 1.0) on a planet must NOT resolve to 1.0 AU
     let unsynced = resolve_synced_visual_radius(
         Some(&Transform::IDENTITY),
@@ -630,8 +626,8 @@ fn test_distant_glints_and_reticles_persist_when_orbit_lines_off() {
             },
             Mass(3.0e-6),
             SimPosition(DVec3::new(1.0, 0.0, 0.0)),
-            SimVelocity(DVec3::new(0.0, 0.0, 6.28)),
-            Radius(0.0000426),
+            SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
+            Radius(0.000_042_6),
             Temperature(288.0),
             Composition::rocky(),
             Transform::from_translation(Vec3::X).with_scale(Vec3::splat(0.0029)),
@@ -652,7 +648,7 @@ fn test_distant_glints_and_reticles_persist_when_orbit_lines_off() {
         Mass(3.7e-8),
         SimPosition(DVec3::new(1.00257, 0.0, 0.0)),
         SimVelocity(DVec3::new(0.0, 0.0, 6.50)),
-        Radius(0.0000116),
+        Radius(0.000_011_6),
         Temperature(250.0),
         Composition::rocky(),
         Transform::from_translation(Vec3::new(1.00257, 0.0, 0.0)).with_scale(Vec3::splat(0.00075)),
@@ -710,7 +706,7 @@ fn test_surface_terrain_homogeneous_scale_sync_during_atmospheric_descent() {
                 body_type: BodyType::TerrestrialPlanet,
             },
             Mass(3.0e-6),
-            Radius(0.0000426),
+            Radius(0.000_042_6),
             Temperature(288.0),
             Composition::rocky(),
             SimPosition(DVec3::new(1.0, 0.0, 0.0)),
@@ -768,4 +764,89 @@ fn test_surface_terrain_homogeneous_scale_sync_during_atmospheric_descent() {
     } else {
         panic!("Expected PerspectiveProjection");
     }
+}
+
+#[test]
+fn test_dormant_minor_body_skips_shader_time_dirtying() {
+    use bevy::math::DVec3;
+    use protostellar::rendering::bodies::transforms::sync_celestial_transforms;
+    use protostellar::rendering::bodies::VisualAssets;
+    use protostellar::rendering::materials::{PlanetMaterial, PlanetMaterialExtension};
+    use protostellar::simulation::resources::{SimTime, SimulationConfig, TimeWarp};
+
+    let mut app = App::new();
+    let mut meshes = Assets::<Mesh>::default();
+    let mut materials = Assets::<PlanetMaterial>::default();
+
+    let dummy = meshes.add(Mesh::from(Sphere::new(1.0)));
+    app.insert_resource(VisualAssets::dummy(dummy));
+    app.insert_resource(SimulationConfig::default());
+    app.insert_resource(SimTime {
+        elapsed_years: 10.0,
+        current_dt_yr: 0.0,
+        visual_time_secs: 42.5,
+        step_count: 10,
+    });
+    app.insert_resource(TimeWarp::default());
+
+    let star_mat = materials.add(PlanetMaterial {
+        base: StandardMaterial::default(),
+        extension: PlanetMaterialExtension {
+            uniforms: PlanetUniforms::default(),
+        },
+    });
+    let ast_mat = materials.add(PlanetMaterial {
+        base: StandardMaterial::default(),
+        extension: PlanetMaterialExtension {
+            uniforms: PlanetUniforms::default(),
+        },
+    });
+    app.insert_resource(materials);
+    app.insert_resource(meshes);
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Radius(0.00465),
+        Temperature(5778.0),
+        Composition::default(),
+        SimPosition(DVec3::ZERO),
+        Transform::default(),
+        Mesh3d::default(),
+        MeshMaterial3d(star_mat.clone()),
+    ));
+
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Vesta".to_string(),
+            body_type: BodyType::Asteroid,
+        },
+        Mass(1.3e-10),
+        Radius(1.7e-6),
+        Temperature(165.0),
+        Composition::rocky(),
+        SimPosition(DVec3::new(2.36, 0.0, 0.0)),
+        Transform::default(),
+        Mesh3d::default(),
+        MeshMaterial3d(ast_mat.clone()),
+    ));
+
+    app.add_systems(Update, sync_celestial_transforms);
+    app.update();
+
+    let mats = app.world().resource::<Assets<PlanetMaterial>>();
+    let star_u = &mats.get(&star_mat).expect("star mat").extension.uniforms;
+    let ast_u = &mats.get(&ast_mat).expect("asteroid mat").extension.uniforms;
+    assert_eq!(
+        star_u.time, 42.5,
+        "Stars must receive live visual shader time"
+    );
+    assert_eq!(
+        ast_u.time, 0.0,
+        "Dormant cold minor asteroid must keep shader time=0.0 to avoid per-frame material dirtying"
+    );
 }

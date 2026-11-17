@@ -172,7 +172,7 @@ impl SimulationTelemetryHistory {
                 TelemetryMetric::Temperature => s.surface_temp_k,
                 TelemetryMetric::OceanCoverage => f64::from(s.ocean_coverage_frac * 100.0),
                 TelemetryMetric::AtmosphericPressure => f64::from(s.atmospheric_pressure_bar),
-                TelemetryMetric::Orbit => s.eccentricity,
+                TelemetryMetric::Orbit => s.semi_major_axis_au,
             })
             .collect();
 
@@ -288,7 +288,11 @@ fn calculate_orbital_elements(pos: DVec3, vel: DVec3, star_mass: f64) -> (f64, f
 
     if specific_energy >= 0.0 {
         // Hyperbolic or parabolic trajectory
-        let a = (mu / (2.0 * specific_energy.abs())).max(0.01);
+        let a = if specific_energy.abs() < 1e-12 {
+            r.max(0.01)
+        } else {
+            (mu / (2.0 * specific_energy.abs())).clamp(0.01, 1.0e6)
+        };
         let h_vec = pos.cross(vel);
         let h_sq = h_vec.length_squared();
         let e = (1.0 + (2.0 * specific_energy * h_sq) / (mu * mu))
@@ -317,17 +321,20 @@ pub fn record_planetary_telemetry(
     _disk_params: Res<DiskParameters>,
     mut telemetry: ResMut<SimulationTelemetryHistory>,
     star_query: Query<&Mass, With<CentralStar>>,
-    bodies_query: Query<(
-        Entity,
-        &CelestialBody,
-        &Mass,
-        &Radius,
-        &SimPosition,
-        &SimVelocity,
-        Option<&Temperature>,
-        Option<&VolatileInventory>,
-        Option<&BiosphereState>,
-    )>,
+    bodies_query: Query<
+        (
+            Entity,
+            &CelestialBody,
+            &Mass,
+            &Radius,
+            &SimPosition,
+            &SimVelocity,
+            Option<&Temperature>,
+            Option<&VolatileInventory>,
+            Option<&BiosphereState>,
+        ),
+        Without<crate::simulation::probes::SpaceProbe>,
+    >,
 ) {
     let t = sim_time.elapsed_years;
     let star_mass = star_query.iter().next().map_or(1.0, |m| m.0);

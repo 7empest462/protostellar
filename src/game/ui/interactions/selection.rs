@@ -101,12 +101,10 @@ fn select_and_toast_body(
         "🪐"
     } else if body_type == BodyType::IceGiant {
         "❄️"
-    } else if body_name.to_lowercase().contains("earth")
-        || body_name.to_lowercase().contains("habitable")
-        || body_name.to_lowercase().contains("1e")
-        || body_name.to_lowercase().contains("1f")
-        || body_name.to_lowercase().contains("1g")
-    {
+    } else if crate::utils::math::contains_any_ignore_ascii_case(
+        body_name,
+        &["earth", "habitable", "1e", "1f", "1g"],
+    ) {
         "🌍"
     } else {
         "🪨"
@@ -444,8 +442,8 @@ fn select_planetary_target(
     let target = sorted
         .iter()
         .find(|item| {
-            let n = item.6.name.to_lowercase();
-            n.contains(primary_name) || n.contains(fallback_name)
+            crate::utils::math::contains_ignore_ascii_case(&item.6.name, primary_name)
+                || crate::utils::math::contains_ignore_ascii_case(&item.6.name, fallback_name)
         })
         .or_else(|| sorted.first());
 
@@ -494,8 +492,7 @@ fn select_kuiper_target(
     let target = sorted
         .iter()
         .find(|item| {
-            let n = item.6.name.to_lowercase();
-            n.contains("kuiper") || n.contains("pluto")
+            crate::utils::math::contains_any_ignore_ascii_case(&item.6.name, &["kuiper", "pluto"])
         })
         .or_else(|| sorted.first());
 

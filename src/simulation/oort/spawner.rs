@@ -144,8 +144,8 @@ pub fn spawn_oort_cloud_swarm(
 
         let comp = Composition {
             metal_frac: 0.05,
-            silicate_frac: 0.10,
-            ice_frac: 0.80,
+            silicate_frac: 0.05,
+            ice_frac: 0.85,
             organics_frac: 0.05,
             gas_frac: 0.0,
         };

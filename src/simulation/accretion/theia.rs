@@ -84,13 +84,9 @@ pub fn is_explicit_earth(name: &str) -> bool {
 }
 
 pub fn is_explicit_theia(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("theia")
-        && !lower.contains("earth")
-        && !lower.contains("moon")
-        && !lower.contains("venus")
-        && !lower.contains("planet nine")
-        && !lower.contains("planet 9")
+    const EXCLUDED: [&str; 5] = ["earth", "moon", "venus", "planet nine", "planet 9"];
+    crate::utils::math::contains_ignore_ascii_case(name, "theia")
+        && !crate::utils::math::contains_any_ignore_ascii_case(name, &EXCLUDED)
 }
 
 fn locate_or_spawn_earth(
@@ -337,6 +333,7 @@ fn resolve_giant_impact_moon(
         );
     }
 
+    let initial_true_anomaly = rel_dir.z.atan2(rel_dir.x).rem_euclid(2.0 * PI);
     if let Ok(mut cmd) = commands.get_entity(theia_ent) {
         cmd.try_insert((
             Composition::rocky(),
@@ -345,7 +342,7 @@ fn resolve_giant_impact_moon(
                 parent: earth_ent,
                 semi_major_axis_au: orbit_dist_au,
                 orbital_period_years: p_moon_yr,
-                true_anomaly: 0.0,
+                true_anomaly: initial_true_anomaly,
             },
         ));
     }

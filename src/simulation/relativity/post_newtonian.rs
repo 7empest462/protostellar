@@ -224,9 +224,9 @@ pub fn calculate_gw_strain(chirp_mass_solar: f64, f_gw_hz: f64, distance_kpc: f6
     let d_au = distance_kpc * KPC_TO_AU;
     let f_gw_yr = f_gw_hz * YEAR_SECONDS;
 
-    // Dimensionless strain order of magnitude: h ~ (4 G / c^2 d) * (G M_chirp / c^2)^(2/3) * (pi f)^(2/3)
+    // Dimensionless strain order of magnitude: h ~ (4 / d) * (G M_chirp / c^2)^(5/3) * (pi f / c)^(2/3)
     let g_m_over_c2 = (G_ASTRO * chirp_mass_solar) / (c * c);
-    let omega_factor = (PI * f_gw_yr).powf(2.0 / 3.0);
+    let omega_factor = (PI * f_gw_yr / c).powf(2.0 / 3.0);
     let h = (4.0 / d_au) * g_m_over_c2.powf(5.0 / 3.0) * omega_factor;
     h.clamp(0.0, 1.0)
 }

@@ -164,22 +164,18 @@ fn verify_active_cascade_impactors(app: &mut App) {
             if spec_e < 0.0 {
                 let a = -G_ASTRO / (2.0 * spec_e);
                 let h = pos.0.cross(vel.0).length();
-                let e = ((1.0_f64 - (h * h) / (G_ASTRO * a)) as f64)
-                    .max(0.0_f64)
-                    .sqrt();
+                let e = (1.0_f64 - (h * h) / (G_ASTRO * a)).max(0.0_f64).sqrt();
                 let q = a * (1.0 - e);
                 assert!(
                     q <= 1.8,
-                    "Impactor perihelion ({:.2} AU) must cross inner planetary orbits!",
-                    q
+                    "Impactor perihelion ({q:.2} AU) must cross inner planetary orbits!"
                 );
             }
         }
     }
     assert!(
         impactor_count >= 5,
-        "Cascade spawner must generate multiple active impactors in ECS (found {})",
-        impactor_count
+        "Cascade spawner must generate multiple active impactors in ECS (found {impactor_count})"
     );
 }
 
@@ -243,8 +239,8 @@ fn verify_body_classification_rules() {
     let minor_cases = [
         ("Ceres", BodyType::Asteroid, 0.00015),
         ("Vesta", BodyType::Asteroid, 0.00004),
-        ("1P/Halley", BodyType::Comet, 0.000001),
-        ("C/1995 O1 Hale-Bopp", BodyType::Comet, 0.000005),
+        ("1P/Halley", BodyType::Comet, 0.000_001),
+        ("C/1995 O1 Hale-Bopp", BodyType::Comet, 0.000_005),
         ("Asteroid-2.7AU", BodyType::Asteroid, 0.00001),
         ("Comet-25.0AU", BodyType::Comet, 0.00001),
         ("Planetesimal-1.5AU", BodyType::Planetesimal, 0.00001),
@@ -463,13 +459,11 @@ fn test_spawn_protoplanetary_disk_spawns_pluto_and_planet_nine() {
     let world_names: Vec<&str> = system_worlds.iter().map(|w| w.name.as_str()).collect();
     assert!(
         world_names.iter().any(|n| n.contains("Pluto")),
-        "Major worlds selector bar must include Pluto: {:?}",
-        world_names
+        "Major worlds selector bar must include Pluto: {world_names:?}"
     );
     assert!(
         world_names.iter().any(|n| n.contains("Planet Nine")),
-        "Major worlds selector bar must include Planet Nine: {:?}",
-        world_names
+        "Major worlds selector bar must include Planet Nine: {world_names:?}"
     );
 }
 
@@ -546,8 +540,8 @@ fn setup_quick_selector_app() -> (App, Entity, Entity, Entity) {
             },
             SimPosition(earth_pos),
             SimVelocity(DVec3::ZERO),
-            Mass(0.000003003),
-            Radius(0.0000426),
+            Mass(0.000_003_003),
+            Radius(0.000_042_6),
             Composition::default(),
         ))
         .id();
@@ -562,8 +556,8 @@ fn setup_quick_selector_app() -> (App, Entity, Entity, Entity) {
             },
             SimPosition(jupiter_pos),
             SimVelocity(DVec3::ZERO),
-            Mass(0.000954),
-            Radius(0.000467),
+            Mass(0.000_954),
+            Radius(0.000_467),
             Composition::default(),
         ))
         .id();
@@ -608,9 +602,7 @@ fn verify_selector_bar_buttons(app: &App, bar_ent: Entity, jupiter_ent: Entity) 
                     text_count += 1;
                     assert!(
                         app.world().get::<Pickable>(gc) == Some(&Pickable::IGNORE),
-                        "Text node {:?} inside button {:?} must have Pickable::IGNORE so clicks register on parent button!",
-                        gc,
-                        btn_child
+                        "Text node {gc:?} inside button {btn_child:?} must have Pickable::IGNORE so clicks register on parent button!"
                     );
                 }
             }
@@ -695,8 +687,7 @@ fn verify_clean_recursive_despawn(app: &mut App, bar_ent: Entity) {
     for old_ent in initial_entities {
         assert!(
             app.world().get_entity(old_ent).is_err(),
-            "Entity {:?} should have been cleanly despawned during bar rebuild",
-            old_ent
+            "Entity {old_ent:?} should have been cleanly despawned during bar rebuild"
         );
     }
 }
@@ -924,4 +915,47 @@ fn test_planet_builder_presets() {
     state.apply_preset(BuilderPreset::EnceladusLike);
     assert_eq!(state.active_preset, BuilderPreset::EnceladusLike);
     assert!(state.ice_frac > 0.85);
+}
+
+#[test]
+fn test_hud_button_requires_activate_on_press_and_clears_stale_pressed() {
+    use bevy::prelude::*;
+    use protostellar::game::ui::{handle_ui_button_interactions, ActivatedHudButtons};
+    use protostellar::simulation::resources::PlayerInteractionState;
+
+    let (mut app, bar_ent, _cam_ent, jupiter_ent) = setup_quick_selector_app();
+    app.init_resource::<ActivatedHudButtons>();
+    app.init_resource::<ButtonInput<MouseButton>>();
+    app.add_systems(Update, handle_ui_button_interactions);
+    app.update();
+
+    let jupiter_btn = verify_selector_bar_buttons(&app, bar_ent, jupiter_ent);
+    assert!(
+        app.world()
+            .get::<bevy::ui_widgets::ActivateOnPress>(jupiter_btn)
+            .is_some(),
+        "HudButton must require ActivateOnPress so fast clicks register on first press"
+    );
+
+    // Simulate a missed release leaving `Pressed` attached while MouseButton::Left is up
+    app.world_mut()
+        .entity_mut(jupiter_btn)
+        .insert(bevy::ui::Pressed);
+    app.world_mut()
+        .resource_mut::<ActivatedHudButtons>()
+        .0
+        .push(jupiter_btn);
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .resource::<PlayerInteractionState>()
+            .selected_entity,
+        Some(jupiter_ent),
+        "ActivatedHudButtons must select target body immediately on press"
+    );
+    assert!(
+        app.world().get::<bevy::ui::Pressed>(jupiter_btn).is_none(),
+        "Stale Pressed component must be cleared when MouseButton::Left is not held"
+    );
 }

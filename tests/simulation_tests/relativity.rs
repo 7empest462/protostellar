@@ -16,7 +16,7 @@ use protostellar::utils::constants::*;
 fn test_mercury_1pn_precession_rate() {
     // Mercury: M = 1.0 M_sun, a = 0.387098 AU, e = 0.20563
     let m_sun = 1.0;
-    let a_mercury = 0.387098;
+    let a_mercury = 0.387_098;
     let e_mercury = 0.20563;
 
     let (rate_rad_yr, rate_arcsec_century) =
@@ -290,6 +290,7 @@ fn test_relativistic_state_save_load_serialization() {
         relativistic_state: Some(rel),
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&body_save).expect("Serialization must succeed");

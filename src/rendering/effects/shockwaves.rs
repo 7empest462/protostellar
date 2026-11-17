@@ -342,20 +342,27 @@ pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebri
     }
 }
 
-pub fn draw_au_guide_rings(gizmos: &mut Gizmos, star_vec: Vec3) {
+pub fn draw_au_guide_rings(
+    gizmos: &mut Gizmos,
+    star_vec: Vec3,
+    cam_pos: Option<Vec3>,
+    occluders: (Option<(Vec3, f32)>, Option<(Vec3, f32)>),
+) {
     let au_rings = [
-        (0.387f32, Color::srgba(0.85, 0.75, 0.65, 0.22)),
-        (0.723f32, Color::srgba(0.95, 0.85, 0.45, 0.22)),
-        (1.000f32, Color::srgba(0.35, 0.85, 1.00, 0.32)),
-        (1.524f32, Color::srgba(1.00, 0.45, 0.25, 0.22)),
-        (5.200f32, Color::srgba(1.00, 0.75, 0.35, 0.25)),
-        (9.580f32, Color::srgba(0.95, 0.85, 0.50, 0.22)),
-        (19.20f32, Color::srgba(0.45, 0.90, 1.00, 0.18)),
-        (30.05f32, Color::srgba(0.35, 0.65, 1.00, 0.16)),
-        (39.50f32, Color::srgba(0.65, 0.50, 0.95, 0.14)),
+        (0.387f32, Color::srgba(0.85, 0.75, 0.65, 0.14)),
+        (0.723f32, Color::srgba(0.95, 0.85, 0.45, 0.14)),
+        (1.000f32, Color::srgba(0.35, 0.85, 1.00, 0.22)),
+        (1.524f32, Color::srgba(1.00, 0.45, 0.25, 0.14)),
+        (5.200f32, Color::srgba(1.00, 0.75, 0.35, 0.16)),
+        (9.580f32, Color::srgba(0.95, 0.85, 0.50, 0.14)),
+        (19.20f32, Color::srgba(0.45, 0.90, 1.00, 0.12)),
+        (30.05f32, Color::srgba(0.35, 0.65, 1.00, 0.10)),
+        (39.50f32, Color::srgba(0.65, 0.50, 0.95, 0.09)),
     ];
     let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     for (r_au, col) in au_rings {
-        gizmos.circle(Isometry3d::new(star_vec, ring_rot), r_au, col);
+        super::orbits::draw_occluded_circle(
+            gizmos, star_vec, ring_rot, r_au, col, 128, cam_pos, occluders,
+        );
     }
 }

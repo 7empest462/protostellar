@@ -111,6 +111,9 @@ pub fn sync_milestone_discoveries_system(
     let Some(phase) = phase_manager else {
         return;
     };
+    if phase.milestones.iter().all(|m| !m.achieved) && !recorded_milestone_ids.is_empty() {
+        recorded_milestone_ids.clear();
+    }
     let current_year = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
 
     for milestone in &phase.milestones {

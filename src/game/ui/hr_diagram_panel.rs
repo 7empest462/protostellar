@@ -257,6 +257,7 @@ pub fn update_hr_diagram_ui(
     state: Res<HrDiagramPanelState>,
     star_query: Query<
         (
+            Entity,
             &CelestialBody,
             &Mass,
             Option<&Radius>,
@@ -269,43 +270,57 @@ pub fn update_hr_diagram_ui(
     >,
     mut plot_text: Query<&mut Text, (With<HrDiagramPlotText>, Without<HrDiagramDetailsText>)>,
     mut details_text: Query<&mut Text, (With<HrDiagramDetailsText>, Without<HrDiagramPlotText>)>,
+    mut last_sig: Local<Option<(Entity, u64)>>,
 ) {
+    use super::update::set_text_if_changed;
     if !state.is_open || state.is_minimized {
         return;
     }
 
-    let Some((body, mass, opt_rad, opt_temp, opt_lum, opt_ign, opt_evo)) = star_query.iter().next()
+    let Some((star_ent, body, mass, opt_rad, opt_temp, opt_lum, opt_ign, opt_evo)) =
+        star_query.iter().next()
     else {
         return;
     };
 
     let temp_val = opt_temp.map_or(5778.0, |t| t.0).max(100.0);
+    let rad_solar = opt_rad.map_or(1.0, |r| r.0 / SOLAR_RADIUS_AU);
     let lum_val = opt_lum.map_or_else(
         || {
-            let r_solar = opt_rad.map_or(1.0, |r| r.0 / SOLAR_RADIUS_AU);
             let t_ratio = temp_val / 5778.0;
-            (r_solar * r_solar * t_ratio.powi(4)).clamp(1e-5, 1e7)
+            (rad_solar * rad_solar * t_ratio.powi(4)).clamp(1e-5, 1e7)
         },
         |l| l.0.max(1e-5),
     );
+    let name_hash = body.name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+    });
+    let sig_hash = name_hash
+        ^ (body.body_type as u64)
+        ^ mass.0.to_bits()
+        ^ (rad_solar.to_bits() << 1)
+        ^ (temp_val.to_bits() << 2)
+        ^ (lum_val.to_bits() << 3)
+        ^ (u64::from(opt_ign.is_some_and(|i| i.is_ignited)) << 60)
+        ^ (opt_evo.map_or(0u64, |e| e.phase as u64) << 56);
+    if last_sig.as_ref() == Some(&(star_ent, sig_hash)) {
+        return;
+    }
+    *last_sig = Some((star_ent, sig_hash));
 
     let log_l = (lum_val as f32).log10();
     let log_t = (temp_val as f32).log10();
 
     if let Ok(mut text) = plot_text.single_mut() {
-        text.0 = render_ascii_hr_grid(log_l, log_t, &body.name);
+        set_text_if_changed(&mut text, render_ascii_hr_grid(log_l, log_t, &body.name));
     }
 
     if let Ok(mut text) = details_text.single_mut() {
-        text.0 = format_star_astrophysics_details(
-            body,
-            mass.0,
-            opt_rad.map_or(1.0, |r| r.0 / SOLAR_RADIUS_AU),
-            temp_val,
-            lum_val,
-            log_l,
-            opt_ign,
-            opt_evo,
+        set_text_if_changed(
+            &mut text,
+            format_star_astrophysics_details(
+                body, mass.0, rad_solar, temp_val, lum_val, log_l, opt_ign, opt_evo,
+            ),
         );
     }
 }

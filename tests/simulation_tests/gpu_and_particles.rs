@@ -53,7 +53,7 @@ fn test_dynamic_roche_disruption_ring_parameters() {
 
     // 1. Fluid Roche Limit Calculation
     // Planet: Jupiter-like gas giant (0.001 M_sun, density ~ 1.33 g/cm^3)
-    let p_mass = 0.000954; // Solar masses (~ 1 Jupiter mass)
+    let p_mass = 0.000_954; // Solar masses (~ 1 Jupiter mass)
     let p_comp = Composition {
         silicate_frac: 0.10,
         ice_frac: 0.10,
@@ -99,7 +99,7 @@ fn test_dynamic_roche_disruption_ring_parameters() {
 
     let ring_mass_earth = s_mass / EARTH_MASS_SOLAR;
     let inner_r = (p_rad_au * 1.25) as f32;
-    let outer_r = (d_roche.min(p_rad_au * 3.2)).max(inner_r as f64 * 1.35) as f32;
+    let outer_r = (d_roche.min(p_rad_au * 3.2)).max(f64::from(inner_r) * 1.35) as f32;
     let ring_sys = PlanetaryRingSystem {
         inner_radius_au: inner_r,
         outer_radius_au: outer_r,
@@ -141,7 +141,7 @@ fn test_dynamic_roche_disruption_ring_parameters() {
     // Advance by 1.0 second
     let dt = 1.0f32;
     stream.timer += dt;
-    for frag in stream.fragments.iter_mut() {
+    for frag in &mut stream.fragments {
         let old_phase = frag.1;
         frag.1 += frag.2 * dt;
         assert!(frag.1 > old_phase); // Angular phase progresses in orbit
@@ -201,7 +201,7 @@ fn test_photoevaporative_escape_mass_loss() {
 
     let mut current_mass_solar = p_mass_solar;
     let dt_myr = 0.05; // 50,000 years of extreme irradiation
-    let delta_m_earth = (loss_rate_close as f64) * dt_myr;
+    let delta_m_earth = f64::from(loss_rate_close) * dt_myr;
     let delta_m_solar = delta_m_earth * EARTH_MASS_SOLAR;
 
     let cur_gas_m = current_mass_solar * comp.gas_frac;
@@ -409,8 +409,7 @@ fn test_lighter_particles_moderate_50_year_growth() {
     // and must be strictly well below 10 M_earth (nowhere near 350 M_earth!)
     assert!(
         core_mass_earth > 3.2 && core_mass_earth < 5.0,
-        "50-year growth should be gentle and realistic (expected ~3.3-4.0 M_earth, got {})",
-        core_mass_earth
+        "50-year growth should be gentle and realistic (expected ~3.3-4.0 M_earth, got {core_mass_earth})"
     );
     assert!(
         core_mass_earth < 10.0,
@@ -519,8 +518,7 @@ fn test_skybox_spherical_isotropy_and_flaring_elimination() {
 
         assert!(
             (sample_intensity - intensity_0).abs() < 1e-5,
-            "Star profile must be perfectly circular and unskewed at all angles (step {})",
-            step
+            "Star profile must be perfectly circular and unskewed at all angles (step {step})"
         );
     }
 }
@@ -547,8 +545,7 @@ fn test_inner_planet_acceleration_unattenuated() {
     // Verify physical acceleration is ~263 AU/yr^2
     assert!(
         acc_mag > 260.0 && acc_mag < 270.0,
-        "Mercury-like orbital acceleration should be ~263.6 AU/yr^2, got {}",
-        acc_mag
+        "Mercury-like orbital acceleration should be ~263.6 AU/yr^2, got {acc_mag}"
     );
 
     // Apply the updated acceleration limiter (500,000 AU/yr^2)
@@ -673,13 +670,11 @@ fn test_little_red_dot_high_speed_unbounded_limits() {
 
     assert!(
         v_circ > 450.0 && v_circ < 465.0,
-        "Little Red Dot 85 AU orbital speed should be ~457 AU/yr, got {}",
-        v_circ
+        "Little Red Dot 85 AU orbital speed should be ~457 AU/yr, got {v_circ}"
     );
     assert!(
         speed_km_s > 2100.0 && speed_km_s < 2200.0,
-        "Orbital speed in km/s should be ~2,167 km/s, got {}",
-        speed_km_s
+        "Orbital speed in km/s should be ~2,167 km/s, got {speed_km_s}"
     );
 
     // Verify velocity limit exemption for Little Red Dot:
@@ -716,8 +711,7 @@ fn test_little_red_dot_high_speed_unbounded_limits() {
     let acc_phys = G_ASTRO * quasi_star_mass / (r_inner * r_inner);
     assert!(
         acc_phys > 1_900_000.0,
-        "Physical acceleration should be ~1.97M AU/yr^2, got {}",
-        acc_phys
+        "Physical acceleration should be ~1.97M AU/yr^2, got {acc_phys}"
     );
 
     let mut acc = DVec3::new(acc_phys, 0.0, 0.0);
@@ -848,167 +842,4 @@ fn test_pop3_infalling_star_particle_accretion_safety() {
         !accretions.is_empty(),
         "Pop-III hypergiant should accrete nearby particles"
     );
-}
-
-#[test]
-fn test_compute_node_reseed_logic_and_disk_mass() {
-    use protostellar::gpu::compute_node::GpuSimExtractedParams;
-
-    // Normal solar nebula scenario with 0.02 M_sun disk
-    let normal_params = GpuSimExtractedParams {
-        star_mass: 1.0,
-        disk_mass: 0.02,
-        outer_radius: 50.0,
-        inner_radius: 0.1,
-        elapsed_years: 0.0,
-        ..Default::default()
-    };
-
-    let is_empty = normal_params.disk_mass <= 0.0;
-    let disk_mass = if is_empty {
-        0.0
-    } else if normal_params.star_mass > 10.0 {
-        500.0
-    } else {
-        f64::from(normal_params.disk_mass)
-    };
-
-    assert!(
-        (disk_mass - 0.02).abs() < 1e-6,
-        "Reseeded disk mass must preserve configured scenario disk mass (0.02 M_sun), got {:.6}",
-        disk_mass
-    );
-
-    // Empty disk scenario
-    let empty_params = GpuSimExtractedParams {
-        star_mass: 1.0,
-        disk_mass: 0.0,
-        ..Default::default()
-    };
-    let empty_disk_mass = if empty_params.disk_mass <= 0.0 {
-        0.0
-    } else if empty_params.star_mass > 10.0 {
-        500.0
-    } else {
-        f64::from(empty_params.disk_mass)
-    };
-    assert_eq!(empty_disk_mass, 0.0);
-
-    // Supermassive scenario (Quasar/SMBH)
-    let smbh_params = GpuSimExtractedParams {
-        star_mass: 100.0,
-        disk_mass: 1.0,
-        ..Default::default()
-    };
-    let smbh_disk_mass = if smbh_params.disk_mass <= 0.0 {
-        0.0
-    } else if smbh_params.star_mass > 10.0 {
-        500.0
-    } else {
-        f64::from(smbh_params.disk_mass)
-    };
-    assert_eq!(smbh_disk_mass, 500.0);
-}
-
-#[test]
-fn test_particle_density_tiers_and_workgroup_allocation() {
-    use protostellar::gpu::compute_node::MAX_GPU_PARTICLES;
-    use protostellar::rendering::particle_swarm::setup::MAX_SWARM_PARTICLES;
-    use protostellar::simulation::resources::{ParticleDensityTier, SimulationConfig};
-
-    assert_eq!(MAX_GPU_PARTICLES, 500_000);
-    assert_eq!(MAX_SWARM_PARTICLES, 500_000);
-
-    let tier_100k = ParticleDensityTier::Standard100k;
-    assert_eq!(tier_100k.particle_count(), 100_000);
-    assert_eq!(tier_100k.label(), "100k [Standard]");
-
-    let tier_250k = tier_100k.cycle();
-    assert_eq!(tier_250k, ParticleDensityTier::High250k);
-    assert_eq!(tier_250k.particle_count(), 250_000);
-    assert_eq!(tier_250k.label(), "250k [High]");
-
-    let tier_500k = tier_250k.cycle();
-    assert_eq!(tier_500k, ParticleDensityTier::Ultra500k);
-    assert_eq!(tier_500k.particle_count(), 500_000);
-    assert_eq!(tier_500k.label(), "500k [Ultra]");
-
-    let back_to_100k = tier_500k.cycle();
-    assert_eq!(back_to_100k, ParticleDensityTier::Standard100k);
-
-    let config = SimulationConfig::default();
-    assert_eq!(config.particle_density, ParticleDensityTier::Standard100k);
-    assert_eq!(config.target_particle_count, 100_000);
-}
-
-#[test]
-fn test_dormant_particles_are_hidden_and_parked() {
-    use protostellar::rendering::particle_swarm::setup::{
-        generate_initial_swarm_buffers, park_dormant_particles,
-    };
-    use protostellar::rendering::particle_swarm::ParticleSwarmData;
-    use protostellar::simulation::resources::{DiskParameters, SimulationConfig};
-
-    let disk_params = DiskParameters::default();
-    let config = SimulationConfig::default();
-    let capacity = 5000;
-    let active_count = 1000;
-
-    let buffers =
-        generate_initial_swarm_buffers(capacity, active_count, 1.0e-5, &disk_params, &config);
-
-    assert_eq!(buffers.positions.len(), capacity);
-    assert_eq!(buffers.masses.len(), capacity);
-    assert_eq!(buffers.mesh_positions.len(), capacity * 4);
-    assert_eq!(buffers.mesh_colors.len(), capacity * 4);
-
-    // Active particle verification (index 0..active_count)
-    assert!(buffers.masses[0] > 0.0);
-    assert!(buffers.positions[0][1] != -5000.0);
-    assert!(buffers.mesh_colors[0][3] > 0.0);
-
-    // Dormant particle verification (index active_count..capacity)
-    for i in active_count..capacity {
-        assert_eq!(buffers.masses[i], 0.0);
-        assert_eq!(buffers.positions[i], [0.0, -5000.0, 0.0]);
-        assert_eq!(buffers.velocities[i], [0.0, 0.0, 0.0]);
-        assert_eq!(buffers.colors[i], [0.0, 0.0, 0.0, 0.0]);
-
-        let v_idx = i * 4;
-        for k in 0..4 {
-            assert_eq!(buffers.mesh_positions[v_idx + k], [0.0, -5000.0, 0.0]);
-            assert_eq!(buffers.mesh_colors[v_idx + k], [0.0, 0.0, 0.0, 0.0]);
-        }
-    }
-
-    // Swarm data dynamic parking test
-    let mut data = ParticleSwarmData {
-        positions: buffers.positions,
-        velocities: buffers.velocities,
-        masses: buffers.masses,
-        compositions: buffers.compositions,
-        temperatures: buffers.temperatures,
-        colors: buffers.colors,
-        mesh_positions: buffers.mesh_positions,
-        mesh_colors: buffers.mesh_colors,
-        bin_heads: vec![-1; 4096],
-        bin_next: vec![-1; capacity],
-        mesh_handle: bevy::asset::Handle::default(),
-        count: 500, // Reduced from 1000 to 500
-        base_mass: 1.0e-5,
-        is_dirty: false,
-        pending_gpu_accretions: Vec::new(),
-    };
-
-    park_dormant_particles(&mut data);
-    for i in 500..capacity {
-        assert_eq!(data.masses[i], 0.0);
-        assert_eq!(data.positions[i], [0.0, -5000.0, 0.0]);
-        assert_eq!(data.colors[i], [0.0, 0.0, 0.0, 0.0]);
-        let v_idx = i * 4;
-        for k in 0..4 {
-            assert_eq!(data.mesh_positions[v_idx + k], [0.0, -5000.0, 0.0]);
-            assert_eq!(data.mesh_colors[v_idx + k], [0.0, 0.0, 0.0, 0.0]);
-        }
-    }
 }

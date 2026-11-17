@@ -197,6 +197,21 @@ pub fn handle_hydrosphere_action(
         });
     }
 
+    if let Ok(mut cmd) = commands.get_entity(ent) {
+        cmd.entry::<crate::simulation::terraforming::TerraformingAtmosphere>()
+            .and_modify(move |mut terra| {
+                if is_dry {
+                    terra.surface_liquid_water_m_earth = 0.0;
+                    terra.atmospheric_water_m_earth = 0.0;
+                } else {
+                    terra.surface_liquid_water_m_earth = new_water_m_earth;
+                    if new_ocean_cov > 0.01 && terra.total_pressure_bar() < 1.0 {
+                        terra.nitrogen_pressure_bar = terra.nitrogen_pressure_bar.max(0.8);
+                    }
+                }
+            });
+    }
+
     let target_ice_frac = (f64::from(new_ocean_cov) * 0.08).clamp(0.0, 0.45);
     comp.ice_frac = target_ice_frac;
     *comp = comp.normalized();

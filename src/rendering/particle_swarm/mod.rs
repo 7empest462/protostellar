@@ -1,6 +1,7 @@
 //! High-performance real-time particle swarm renderer for glowing protoplanetary particles.
 
 pub mod billboards;
+pub mod material;
 pub mod promotions;
 pub mod setup;
 pub mod simulation;
@@ -12,7 +13,11 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
-pub use billboards::{sync_mesh_attributes, update_billboard_mesh_quads};
+pub use billboards::{
+    sync_mesh_attributes, update_billboard_mesh_quads, update_gpu_billboard_mesh,
+    update_gpu_billboard_mesh_selective, update_gpu_billboard_mesh_with_normals,
+};
+pub use material::{ParticleSwarmMaterial, ParticleSwarmUniforms};
 pub use promotions::{check_clump_promotions, replenish_cleared_particles, spawn_promoted_bodies};
 pub use setup::{create_soft_particle_texture, reseed_particle_swarm, setup_particle_swarm};
 pub use simulation::{
@@ -45,29 +50,37 @@ pub struct ParticleSwarmData {
     pub pending_gpu_accretions: Vec<(usize, f32)>,
 }
 
-fn flush_dirty_mesh_if_paused(
-    swarm: &mut Option<ResMut<ParticleSwarmData>>,
-    camera_query: &Query<&Transform, With<Camera>>,
-    disk_params: &DiskParameters,
+fn sync_swarm_material_render_scale(
     render_scale: f32,
-    meshes: &mut Assets<Mesh>,
+    opt_materials: &mut Option<ResMut<Assets<ParticleSwarmMaterial>>>,
+    mat_query: &Query<&MeshMaterial3d<ParticleSwarmMaterial>, With<ParticleSwarmMesh>>,
 ) {
-    if let Some(ref mut data) = swarm {
-        if data.is_dirty {
-            let (cam_right, cam_up) = camera_query.single().map_or((Vec3::X, Vec3::Y), |cam| {
-                (cam.right().as_vec3(), cam.up().as_vec3())
-            });
-            update_billboard_mesh_quads(data, cam_right, cam_up, disk_params, render_scale);
-            sync_mesh_attributes(data, meshes);
-            data.is_dirty = false;
+    let Some(materials) = opt_materials.as_deref_mut() else {
+        return;
+    };
+    for handle in mat_query.iter() {
+        if let Some(mat) = materials.get(&handle.0) {
+            if (mat.uniforms.params.x - render_scale).abs() <= 1e-5 {
+                continue;
+            }
+        }
+        if let Some(mut mat) = materials.get_mut(&handle.0) {
+            mat.uniforms.params.x = render_scale;
         }
     }
 }
 
-fn resolve_camera_basis(camera_query: &Query<&Transform, With<Camera>>) -> (Vec3, Vec3) {
-    camera_query.single().map_or((Vec3::X, Vec3::Y), |cam| {
-        (cam.right().as_vec3(), cam.up().as_vec3())
-    })
+fn flush_dirty_mesh_if_paused(
+    swarm: &mut Option<ResMut<ParticleSwarmData>>,
+    disk_params: &DiskParameters,
+    meshes: &mut Assets<Mesh>,
+) {
+    if let Some(ref mut data) = swarm {
+        if data.is_dirty {
+            update_gpu_billboard_mesh(data, disk_params, meshes);
+            data.is_dirty = false;
+        }
+    }
 }
 
 type StarAnchorTuple<'a> = (
@@ -146,8 +159,13 @@ fn step_protoplanetary_disk_mechanics(
     config: &mut SimulationConfig,
     speed_mult: f32,
     elapsed_years: f64,
-) {
-    let accreted_events = integrate_particles_and_collect_accretions(data, params);
+) -> bool {
+    let accreted_events = if params.gpu_active {
+        Vec::new()
+    } else {
+        integrate_particles_and_collect_accretions(data, params)
+    };
+    let had_accretions = !accreted_events.is_empty() || !data.pending_gpu_accretions.is_empty();
     let mut pending_accretions = std::mem::take(&mut data.pending_gpu_accretions);
     apply_particle_accretion_to_bodies(
         massive_query,
@@ -165,6 +183,7 @@ fn step_protoplanetary_disk_mechanics(
         process_particle_collisions_and_sticking(data, disk_params, speed_mult);
     }
 
+    let prev_active = config.active_particles;
     let current_ecs_count = massive_bodies.len();
     let is_massive_disk = params.star_m > 10.0;
     let (promotions, active_count) = check_clump_promotions(
@@ -174,7 +193,12 @@ fn step_protoplanetary_disk_mechanics(
         is_massive_disk,
         elapsed_years,
     );
+    let had_promotions = !promotions.is_empty();
     spawn_promoted_bodies(commands, promotions, disk_params, is_massive_disk);
+
+    if had_accretions || had_promotions {
+        data.is_dirty = true;
+    }
 
     replenish_cleared_particles(
         data,
@@ -184,8 +208,11 @@ fn step_protoplanetary_disk_mechanics(
         speed_mult,
         active_count,
     );
+
+    had_accretions || had_promotions || config.active_particles != prev_active
 }
 
+#[allow(clippy::too_many_arguments, reason = "Particle swarm ECS queries")]
 pub fn update_particle_swarm(
     mut commands: Commands,
     sim_time: Res<SimTime>,
@@ -215,62 +242,46 @@ pub fn update_particle_swarm(
         ),
         Without<CentralStar>,
     >,
-    camera_query: Query<&Transform, With<Camera>>,
     lhb_state: Option<Res<crate::game::phases::LateHeavyBombardmentState>>,
     mut swarm: Option<ResMut<ParticleSwarmData>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut opt_swarm_materials: Option<ResMut<Assets<ParticleSwarmMaterial>>>,
+    swarm_mat_query: Query<&MeshMaterial3d<ParticleSwarmMaterial>, With<ParticleSwarmMesh>>,
+    mut last_size_state: Local<(usize, f32, f64, bool, usize, u32)>,
 ) {
+    sync_swarm_material_render_scale(
+        config.particle_render_scale,
+        &mut opt_swarm_materials,
+        &swarm_mat_query,
+    );
+
     if time_warp.is_paused && !time_warp.step_once {
-        flush_dirty_mesh_if_paused(
-            &mut swarm,
-            &camera_query,
-            &disk_params,
-            config.particle_render_scale,
-            &mut meshes,
-        );
+        flush_dirty_mesh_if_paused(&mut swarm, &disk_params, &mut meshes);
         return;
     }
     let Some(mut data) = swarm else {
         return;
     };
 
-    let (cam_right, cam_up) = resolve_camera_basis(&camera_query);
-
     let is_galaxy_collision = disk_params.outer_radius_au >= 10_000.0;
     if is_galaxy_collision {
-        update_billboard_mesh_quads(
-            &mut data,
-            cam_right,
-            cam_up,
-            &disk_params,
-            config.particle_render_scale,
-        );
-        sync_mesh_attributes(&data, &mut meshes);
-        data.is_dirty = false;
+        if data.is_dirty {
+            update_gpu_billboard_mesh(&mut data, &disk_params, &mut meshes);
+            last_size_state.4 = data.count;
+            data.is_dirty = false;
+        }
         return;
     }
 
-    let defaults = (
-        SimPosition(DVec3::ZERO),
-        Mass(disk_params.central_star_mass),
-        IgnitionState {
-            core_temperature: 1.5e7,
-            fusion_fraction: 1.0,
-            is_ignited: true,
-            shockwave_radius: 0.0,
-        },
-        CelestialBody {
-            name: "Central Star".to_string(),
-            body_type: BodyType::YellowDwarf,
-        },
-    );
+    let defaults = default_central_star_fallback(disk_params.central_star_mass);
     let (star_pos, star_mass, ignition, opt_bhs, star_body) =
         resolve_anchor_star(&star_query, &defaults);
 
-    let massive_bodies: Vec<(Entity, DVec3, f64, BodyType)> = massive_query
+    let mut massive_bodies: Vec<(Entity, DVec3, f64, BodyType)> = massive_query
         .iter()
         .map(|(e, p, m, _, _, body, _)| (e, p.0, m.0, body.body_type))
         .collect();
+    massive_bodies.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
     let quasar_blown_out =
         opt_bhs.is_some_and(|s| s.is_blown_out) || star_body.body_type == BodyType::BlackHole;
@@ -302,7 +313,7 @@ pub fn update_particle_swarm(
         base_mass: data.base_mass,
     };
 
-    step_protoplanetary_disk_mechanics(
+    let masses_changed = step_protoplanetary_disk_mechanics(
         &mut commands,
         &mut data,
         &params,
@@ -314,14 +325,84 @@ pub fn update_particle_swarm(
         sim_time.elapsed_years,
     );
 
-    update_billboard_mesh_quads(
+    sync_swarm_billboard_mesh_selective(
         &mut data,
-        cam_right,
-        cam_up,
         &disk_params,
-        config.particle_render_scale,
+        &mut meshes,
+        &mut last_size_state,
+        masses_changed,
+        gpu_active,
+        sim_time.elapsed_years,
     );
-    sync_mesh_attributes(&data, &mut meshes);
+}
+
+fn default_central_star_fallback(
+    central_star_mass: f64,
+) -> (SimPosition, Mass, IgnitionState, CelestialBody) {
+    (
+        SimPosition(DVec3::ZERO),
+        Mass(central_star_mass),
+        IgnitionState {
+            core_temperature: 1.5e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 0.0,
+        },
+        CelestialBody {
+            name: "Central Star".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+    )
+}
+
+fn sync_swarm_billboard_mesh_selective(
+    data: &mut ParticleSwarmData,
+    disk_params: &DiskParameters,
+    meshes: &mut Assets<Mesh>,
+    last_size_state: &mut (usize, f32, f64, bool, usize, u32),
+    masses_changed: bool,
+    gpu_active: bool,
+    elapsed_years: f64,
+) {
+    let size_state = (
+        data.count,
+        data.base_mass,
+        disk_params.outer_radius_au,
+        gpu_active,
+    );
+    let size_params_changed = (
+        last_size_state.0,
+        last_size_state.1,
+        last_size_state.2,
+        last_size_state.3,
+    ) != size_state;
+    let count_changed = last_size_state.4 != data.count;
+
+    // In GPU compute mode, avoid rebuilding and re-uploading the 500k mesh on frames
+    // where neither GPU readback nor CPU mechanics dirtied particle state.
+    if !gpu_active || data.is_dirty {
+        let update_normals =
+            masses_changed || size_params_changed || count_changed || elapsed_years < 0.05;
+        let update_colors = update_normals || last_size_state.5.is_multiple_of(4);
+        let full_buffer_sync = last_size_state.4 == 0 || count_changed || size_params_changed;
+        update_gpu_billboard_mesh_selective(
+            data,
+            disk_params,
+            meshes,
+            update_colors,
+            update_normals,
+            full_buffer_sync,
+        );
+        if update_normals {
+            last_size_state.0 = size_state.0;
+            last_size_state.1 = size_state.1;
+            last_size_state.2 = size_state.2;
+            last_size_state.3 = size_state.3;
+        }
+        last_size_state.4 = data.count;
+        last_size_state.5 = last_size_state.5.wrapping_add(1);
+        data.is_dirty = false;
+    }
 }
 
 /// Plugin registering the 50,000 particle visual swarm.

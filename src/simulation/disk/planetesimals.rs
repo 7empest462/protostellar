@@ -342,9 +342,12 @@ pub fn dissipate_gas_disk(
     if t > particle_start_decay {
         let decay_progress = (t - particle_start_decay) / (lifetime - particle_start_decay);
         let remaining_frac = (1.0 - decay_progress).clamp(0.0, 1.0) as f32;
-        config.active_particles = (config.target_particle_count as f32 * remaining_frac) as u32;
+        let decayed_cap = (config.target_particle_count as f32 * remaining_frac) as u32;
+        config.active_particles = config.active_particles.min(decayed_cap);
     } else {
-        config.active_particles = config.target_particle_count as u32;
+        config.active_particles = config
+            .active_particles
+            .min(config.target_particle_count as u32);
     }
 }
 

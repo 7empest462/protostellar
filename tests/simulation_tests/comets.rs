@@ -537,3 +537,75 @@ fn test_jupiter_galilean_moons_simultaneous_eclipses_and_sibling_stability() {
         );
     }
 }
+
+#[test]
+fn test_circumbinary_luminosity_weighted_star_direction() {
+    use protostellar::rendering::bodies::resolve_star_direction;
+
+    let planet = Entity::from_raw_u32(1).unwrap();
+    let bright_primary = Entity::from_raw_u32(2).unwrap();
+    let dim_companion = Entity::from_raw_u32(3).unwrap();
+    let planet_pos = Vec3::ZERO;
+
+    // Bright 1.5 M_sun primary slightly farther than a dim white-dwarf companion:
+    // Flux weighting must keep day-side facing the luminous primary rather than snapping 180 deg.
+    let stars = vec![
+        (bright_primary, Vec3::new(-2.0, 0.0, 0.0), 4.13_f32),
+        (dim_companion, Vec3::new(1.5, 0.0, 0.0), 0.01_f32),
+    ];
+    let primary_pos = stars.first().map_or(Vec3::ZERO, |s| s.1);
+    let dir = resolve_star_direction(planet, planet_pos, primary_pos, &stars);
+    assert!(
+        dir.x < -0.95,
+        "Expected flux-weighted illumination toward bright primary (-X), got {dir:?}"
+    );
+}
+
+#[test]
+fn test_lunar_eclipse_and_parent_planetshine_on_moon() {
+    use protostellar::rendering::bodies::compute_eclipse_moons_data;
+
+    let jupiter_ent = Entity::from_raw_u32(10).unwrap();
+    let io_ent = Entity::from_raw_u32(11).unwrap();
+    let jupiter_pos = Vec3::new(5.2, 0.0, 0.0);
+    let jup_rad = 0.00565_f32;
+    let io_rad = 0.00045_f32;
+    let star_dir = Vec3::new(-1.0, 0.0, 0.0);
+
+    // Case 1: Io behind Jupiter relative to the Sun -> total lunar eclipse shadow
+    let io_behind = jupiter_pos + Vec3::new(0.012, 0.0, 0.0);
+    let bodies_eclipse = vec![
+        (jupiter_ent, jupiter_pos, jup_rad, Some(jupiter_ent)),
+        (io_ent, io_behind, io_rad, Some(jupiter_ent)),
+    ];
+    let (pos_ec, data_ec) =
+        compute_eclipse_moons_data(io_ent, io_behind, io_rad, star_dir, &bodies_eclipse);
+    let ec0_pos = pos_ec.first().copied().unwrap_or(Vec4::ZERO);
+    let ec0_data = data_ec.first().copied().unwrap_or(Vec4::ZERO);
+    assert_eq!(ec0_data.x, 1.0, "Parent planet must occupy eclipse slot 0");
+    assert!(
+        ec0_pos.w > 0.65,
+        "Parent planet normalized radius must exceed 0.65 moon cap (got {})",
+        ec0_pos.w
+    );
+
+    // Case 2: Io sunward of Jupiter -> no eclipse, but parent planetshine populates slot 0
+    let io_sunward = jupiter_pos + Vec3::new(-0.012, 0.0, 0.0);
+    let bodies_shine = vec![
+        (jupiter_ent, jupiter_pos, jup_rad, Some(jupiter_ent)),
+        (io_ent, io_sunward, io_rad, Some(jupiter_ent)),
+    ];
+    let (pos_sh, data_sh) =
+        compute_eclipse_moons_data(io_ent, io_sunward, io_rad, star_dir, &bodies_shine);
+    let sh0_pos = pos_sh.first().copied().unwrap_or(Vec4::ZERO);
+    let sh0_data = data_sh.first().copied().unwrap_or(Vec4::ZERO);
+    assert_eq!(
+        sh0_data.x, 1.0,
+        "Parent planet must supply night-side planetshine in slot 0"
+    );
+    assert!(
+        sh0_pos.truncate().dot(star_dir) <= -1.2,
+        "Planetshine companion must lie behind the moon relative to starlight (dot={})",
+        sh0_pos.truncate().dot(star_dir)
+    );
+}

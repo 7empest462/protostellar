@@ -33,6 +33,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
     root.spawn((
         HoverCardRoot,
         IgnoreUiPicking,
+        Pickable::IGNORE,
         Node {
             position_type: PositionType::Absolute,
             display: Display::None,
@@ -76,6 +77,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         card.spawn((
             HoverCardField::Title,
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Text::new(""),
             TextFont {
                 font_size: FontSize::Px(12.5),
@@ -88,6 +90,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         card.spawn((
             HoverCardField::Subhead,
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Text::new(""),
             TextFont {
                 font_size: FontSize::Px(10.0),
@@ -99,6 +102,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         // Divider
         card.spawn((
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Node {
                 height: Val::Px(1.0),
                 width: Val::Percent(100.0),
@@ -112,6 +116,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         card.spawn((
             HoverCardField::Metrics,
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Text::new(""),
             TextFont {
                 font_size: FontSize::Px(9.5),
@@ -124,6 +129,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         card.spawn((
             HoverCardField::Badges,
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Text::new(""),
             TextFont {
                 font_size: FontSize::Px(9.0),
@@ -135,6 +141,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         // Action hint
         card.spawn((
             IgnoreUiPicking,
+            Pickable::IGNORE,
             Text::new("🎯 Left Click to Focus & Inspect"),
             TextFont {
                 font_size: FontSize::Px(8.5),

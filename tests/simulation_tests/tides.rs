@@ -371,6 +371,7 @@ fn test_tidal_state_json_serialization() {
         relativistic_state: None,
         atmospheric_escape: None,
         kozai_lidov: None,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&body_save).expect("Serialization must succeed");

@@ -9,7 +9,14 @@ pub fn update_black_hole_accretion_jets(
     mut merge_reader: MessageReader<AccretionMergeEvent>,
     mut tde_reader: MessageReader<TidalDisruptionEvent>,
     time: Res<SimTime>,
+    time_warp: Option<Res<TimeWarp>>,
 ) {
+    if time_warp
+        .as_ref()
+        .is_some_and(|tw| tw.is_paused && !tw.step_once)
+    {
+        return;
+    }
     let dt_yr = time.current_dt_yr as f32;
 
     // Decrease timers

@@ -53,6 +53,19 @@ pub fn update_auto_generated_names(
                 _ => "Body",
             };
 
+            let before_hash = body.name.get(..hash_idx).unwrap_or("");
+            let already_matches = if is_captured {
+                before_hash
+                    .strip_prefix("Captured ")
+                    .and_then(|s| s.strip_suffix(' '))
+                    == Some(ideal_prefix)
+            } else {
+                before_hash.strip_suffix(' ') == Some(ideal_prefix)
+            };
+            if already_matches {
+                continue;
+            }
+
             let expected_name = if is_captured {
                 format!("Captured {ideal_prefix} {number_str}")
             } else {

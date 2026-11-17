@@ -152,6 +152,7 @@ fn compute_smbh_halo_and_friction_pull(
 #[inline]
 fn accumulate_massive_chunk_simd(
     pos: DVec3,
+    star_pos: DVec3,
     i: usize,
     star_index: Option<usize>,
     eff_softening_sq: f64,
@@ -181,12 +182,15 @@ fn accumulate_massive_chunk_simd(
     let mut az = (dir_scale * dz).reduce_add();
 
     if star_index.is_some_and(|s_idx| i != s_idx) {
-        let m_r_sq = mx * mx + my * my + mz * mz + soft;
+        let mrx = mx - f64x4::splat(star_pos.x);
+        let mry = my - f64x4::splat(star_pos.y);
+        let mrz = mz - f64x4::splat(star_pos.z);
+        let m_r_sq = mrx * mrx + mry * mry + mrz * mrz + soft;
         let m_dist = m_r_sq.sqrt();
         let ind_scale = -gm / (m_r_sq * m_dist);
-        ax += (ind_scale * mx).reduce_add();
-        ay += (ind_scale * my).reduce_add();
-        az += (ind_scale * mz).reduce_add();
+        ax += (ind_scale * mrx).reduce_add();
+        ay += (ind_scale * mry).reduce_add();
+        az += (ind_scale * mrz).reduce_add();
     }
 
     DVec3::new(ax, ay, az)
@@ -196,6 +200,7 @@ fn accumulate_massive_body_pulls(
     i: usize,
     body: &PhysicsBodyEntry,
     star_index: Option<usize>,
+    star_pos: DVec3,
     eff_softening_sq: f64,
     massive_data: &[(DVec3, DVec3, f64, f64, usize)],
     near_field: Option<&GmcNearField>,
@@ -231,13 +236,19 @@ fn accumulate_massive_body_pulls(
 
             if let Some(s_idx) = star_index {
                 if m_idx == s_idx {
-                    star_acc += pull;
+                    let reduced_factor = if m_mass > 1e-12 && b_mass < m_mass * 0.5 {
+                        (m_mass + b_mass) / m_mass
+                    } else {
+                        1.0
+                    };
+                    star_acc += pull * reduced_factor;
                 } else {
                     pert_acc += pull;
                     if i != s_idx {
-                        let m_r_sq = m_pos.length_squared() + eff_softening_sq;
+                        let m_rel = m_pos - star_pos;
+                        let m_r_sq = m_rel.length_squared() + eff_softening_sq;
                         let m_dist = m_r_sq.sqrt();
-                        pert_acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_pos;
+                        pert_acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_rel;
                     }
                 }
             } else {
@@ -277,8 +288,14 @@ fn accumulate_massive_body_pulls(
         let mut simd_acc = DVec3::ZERO;
         for slice in &mut chunks {
             if let Ok(chunk) = slice.try_into() {
-                simd_acc +=
-                    accumulate_massive_chunk_simd(pos, i, star_index, eff_softening_sq, chunk);
+                simd_acc += accumulate_massive_chunk_simd(
+                    pos,
+                    star_pos,
+                    i,
+                    star_index,
+                    eff_softening_sq,
+                    chunk,
+                );
             }
         }
         for m in chunks.remainder() {
@@ -315,6 +332,44 @@ pub fn compute_single_body_acc(
     elapsed_years: f64,
     near_field: Option<&GmcNearField>,
 ) -> DVec3 {
+    compute_single_body_acc_with_companion(
+        i,
+        body,
+        config,
+        star_mass,
+        star_index,
+        softening_sq,
+        massive_data,
+        tractor,
+        is_little_red_dot,
+        is_gmc_cluster,
+        cluster_com_mass,
+        elapsed_years,
+        near_field,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Physics kernel requires all integration state explicitly for performance"
+)]
+pub fn compute_single_body_acc_with_companion(
+    i: usize,
+    body: &PhysicsBodyEntry,
+    config: &SimulationConfig,
+    star_mass: f64,
+    star_index: Option<usize>,
+    softening_sq: f64,
+    massive_data: &[(DVec3, DVec3, f64, f64, usize)],
+    tractor: Option<(DVec3, f64)>,
+    is_little_red_dot: bool,
+    is_gmc_cluster: bool,
+    cluster_com_mass: (DVec3, f64),
+    elapsed_years: f64,
+    near_field: Option<&GmcNearField>,
+    inner_companion_radius: Option<f64>,
+) -> DVec3 {
     let mut pert_acc = DVec3::ZERO;
     let pos = body.pos;
     let vel = body.vel;
@@ -338,10 +393,20 @@ pub fn compute_single_body_acc(
         softening_sq
     };
 
+    let star_pos = if let Some(s_idx) = star_index {
+        massive_data
+            .iter()
+            .find(|(.., idx)| *idx == s_idx)
+            .map_or(DVec3::ZERO, |(p, ..)| *p)
+    } else {
+        DVec3::ZERO
+    };
+
     let (pair_pert_acc, star_acc) = accumulate_massive_body_pulls(
         i,
         body,
         star_index,
+        star_pos,
         eff_softening_sq,
         massive_data,
         near_field,
@@ -355,17 +420,16 @@ pub fn compute_single_body_acc(
         pert_acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
     }
 
-    let star_pos = if let Some(s_idx) = star_index {
-        massive_data
-            .iter()
-            .find(|(.., idx)| *idx == s_idx)
-            .map_or(DVec3::ZERO, |(p, ..)| *p)
-    } else {
-        DVec3::ZERO
-    };
-
-    let is_bound = is_body_bound_to_star(pos, vel, star_pos, star_mass, body.mass);
-    let mut acc = if is_bound {
+    let use_kepler = should_use_kepler_splitting(
+        pos,
+        vel,
+        body.mass,
+        b_type,
+        star_pos,
+        star_mass,
+        inner_companion_radius,
+    );
+    let mut acc = if use_kepler {
         pert_acc
     } else {
         pert_acc + star_acc

@@ -50,6 +50,7 @@ pub fn handle_player_tools(
         mut opt_hz,
         mut opt_trophies_panel,
         mut opt_hud_visibility,
+        mut opt_saves_panel,
     ): (
         Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
         Option<ResMut<crate::game::ui::types::TechTreePanelState>>,
@@ -61,6 +62,7 @@ pub fn handle_player_tools(
         Option<ResMut<crate::simulation::resources::HabitableZoneConfig>>,
         Option<ResMut<crate::game::ui::types::TrophiesPanelState>>,
         Option<ResMut<crate::game::ui::types::HudVisibilityState>>,
+        Option<ResMut<crate::game::ui::SavesPanelState>>,
     ),
     mut toast: ResMut<crate::game::ui::NotificationToast>,
     mut camera_query: Query<(&Transform, &mut PanOrbitCamera)>,
@@ -111,6 +113,7 @@ pub fn handle_player_tools(
         is_star_selected,
         opt_trophies_panel.as_deref_mut(),
         opt_hud_visibility.as_deref_mut(),
+        opt_saves_panel.as_deref_mut(),
     );
 
     handle_tab_selection(

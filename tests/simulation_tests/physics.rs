@@ -10,7 +10,7 @@ use protostellar::utils::math::*;
 #[test]
 fn test_astrophysical_constants() {
     // G = 4 * PI^2 in AU^3 / (M_sun * yr^2)
-    assert!((G_ASTRO - 39.47841760435743).abs() < 1e-10);
+    assert!((G_ASTRO - 39.478_417_604_357_43).abs() < 1e-10);
 
     // Earth orbital speed ~ 2 * PI AU/yr ~ 29.78 km/s
     let earth_v_au_yr = 2.0 * std::f64::consts::PI;
@@ -210,8 +210,7 @@ fn test_leapfrog_symplectic_energy_conservation() {
     // Symplectic Leapfrog energy drift should be tiny (< 1e-4) over 10 complete orbits
     assert!(
         drift < 1e-4,
-        "Leapfrog energy drift was too large: {:.6}",
-        drift
+        "Leapfrog energy drift was too large: {drift:.6}"
     );
     // Radius should remain within 0.1% of 1.0 AU
     assert!((pos.length() - 1.0).abs() < 1e-3);
@@ -258,10 +257,10 @@ fn test_mass_dependent_render_radius_scaling() {
     // 2. Unified visual radius (physical radius → power-law compression × exaggeration)
     let config = SimulationConfig::default();
     let sun_r = 0.00465_f64; // 1 R_sun in AU
-    let jupiter_r = 0.000477_f64; // Jupiter radius in AU
-    let earth_r = 0.0000426_f64; // Earth radius in AU
+    let jupiter_r = 0.000_477_f64; // Jupiter radius in AU
+    let earth_r = 0.000_042_6_f64; // Earth radius in AU
     let trappist1_star_r = 0.00056_f64; // TRAPPIST-1 (0.121 R_sun)
-    let trappist1e_r = 0.920 * 0.0000426_f64; // 0.920 R_Earth
+    let trappist1e_r = 0.920 * 0.000_042_6_f64; // 0.920 R_Earth
 
     let v_sun = config.calc_visual_radius(sun_r);
     let v_jupiter = config.calc_visual_radius(jupiter_r);
@@ -328,27 +327,24 @@ fn test_sample_disk_radius_distribution() {
     }
 
     // Inner zone should be ~25% (+/- 4%)
-    let frac_inner = count_inner as f64 / n_samples as f64;
+    let frac_inner = f64::from(count_inner) / f64::from(n_samples);
     assert!(
         (frac_inner - 0.25).abs() < 0.04,
-        "Inner fraction: {}",
-        frac_inner
+        "Inner fraction: {frac_inner}"
     );
 
     // Giant zone should be ~45% (+/- 5%)
-    let frac_giant = count_giant_zone as f64 / n_samples as f64;
+    let frac_giant = f64::from(count_giant_zone) / f64::from(n_samples);
     assert!(
         (frac_giant - 0.45).abs() < 0.05,
-        "Giant fraction: {}",
-        frac_giant
+        "Giant fraction: {frac_giant}"
     );
 
     // Outer zone should be ~15% (+/- 4%)
-    let frac_outer = count_outer as f64 / n_samples as f64;
+    let frac_outer = f64::from(count_outer) / f64::from(n_samples);
     assert!(
         (frac_outer - 0.15).abs() < 0.04,
-        "Outer fraction: {}",
-        frac_outer
+        "Outer fraction: {frac_outer}"
     );
 }
 
@@ -395,9 +391,11 @@ fn setup_high_time_warp_solar_system() -> StabilitySystem {
     use protostellar::simulation::resources::*;
 
     let mut app = App::new();
-    let mut config = SimulationConfig::default();
-    config.enable_gas_drag = false;
-    config.gas_density_scale = 0.0;
+    let config = SimulationConfig {
+        enable_gas_drag: false,
+        gas_density_scale: 0.0,
+        ..Default::default()
+    };
     app.insert_resource(config)
         .init_resource::<TimeWarp>()
         .init_resource::<SimTime>()
@@ -542,23 +540,19 @@ fn test_high_time_warp_orbital_stability() {
 
     assert!(
         (p_merc - 0.387).abs() < 0.01,
-        "Mercury radius diverged: {}",
-        p_merc
+        "Mercury radius diverged: {p_merc}"
     );
     assert!(
         (p_earth - 1.00).abs() < 0.02,
-        "Earth radius diverged: {}",
-        p_earth
+        "Earth radius diverged: {p_earth}"
     );
     assert!(
         (p_ceres - 2.77).abs() < 0.05,
-        "Ceres radius diverged: {}",
-        p_ceres
+        "Ceres radius diverged: {p_ceres}"
     );
     assert!(
         (p_jup - 5.20).abs() < 0.10,
-        "Jupiter radius diverged: {}",
-        p_jup
+        "Jupiter radius diverged: {p_jup}"
     );
 
     // Test 2: Run at 1,000,000x time warp for 10 frames (target_dt = 500 yr/frame -> 5,000 years total!)
@@ -592,18 +586,15 @@ fn test_high_time_warp_orbital_stability() {
     // After 5,250 years of simulated time at up to 1,000,000x speed, orbits must stay stable!
     assert!(
         (p_earth_warp - 1.00).abs() < 0.05,
-        "Earth flung out at 1,000,000x: {}",
-        p_earth_warp
+        "Earth flung out at 1,000,000x: {p_earth_warp}"
     );
     assert!(
         (p_ceres_warp - 2.77).abs() < 0.25,
-        "Ceres flung out of Asteroid Belt at 1,000,000x: {}",
-        p_ceres_warp
+        "Ceres flung out of Asteroid Belt at 1,000,000x: {p_ceres_warp}"
     );
     assert!(
         (p_jup_warp - 5.20).abs() < 0.20,
-        "Jupiter flung out at 1,000,000x: {}",
-        p_jup_warp
+        "Jupiter flung out at 1,000,000x: {p_jup_warp}"
     );
 }
 
@@ -658,7 +649,7 @@ fn test_full_simulation_speed_7_stability() {
             total_bodies += 1;
             let r = p.0.length();
             census.record(r);
-            let mu = 39.4784176;
+            let mu = 39.478_417_6;
             let vel = app.world().get::<SimVelocity>(b_ent).unwrap().0;
             let specific_energy = 0.5 * vel.length_squared() - mu / r;
 
@@ -684,17 +675,13 @@ fn test_full_simulation_speed_7_stability() {
     // All major planets must be present and bound (or merged via giant impact)
     assert!(
         major_planets_checked >= 8,
-        "Too few major planets found: {} (found: {:?})",
-        major_planets_checked,
-        found_names
+        "Too few major planets found: {major_planets_checked} (found: {found_names:?})"
     );
 
     // Over 90% of all generated bodies remain bound in the solar system
     assert!(
-        bound_bodies as f64 / total_bodies as f64 >= 0.90,
-        "Too many minor bodies ejected: {}/{} bound",
-        bound_bodies,
-        total_bodies
+        f64::from(bound_bodies) / f64::from(total_bodies) >= 0.90,
+        "Too many minor bodies ejected: {bound_bodies}/{total_bodies} bound"
     );
 
     // Belts must be actively populated after 25,000 years under 1,000,000x time warp
@@ -724,7 +711,7 @@ fn test_simd_f64x4_nbody_gravity_matches_analytical_precision() {
         (DVec3::ZERO, DVec3::ZERO, star_mass, SOLAR_RADIUS_AU, 0usize),
         (
             DVec3::new(1.0, 0.02, 0.0),
-            DVec3::new(0.0, 0.0, 6.28),
+            DVec3::new(0.0, 0.0, std::f64::consts::TAU),
             EARTH_MASS_SOLAR,
             EARTH_RADIUS_AU,
             1,
@@ -775,7 +762,7 @@ fn test_simd_f64x4_nbody_gravity_matches_analytical_precision() {
         body_type: BodyType::TerrestrialPlanet,
         satellite: None,
         is_central_star: false,
-        name: "Earth".to_string(),
+        role_flags: 0,
     };
     let simd_acc = compute_single_body_acc(
         1,
@@ -801,4 +788,87 @@ fn test_simd_f64x4_nbody_gravity_matches_analytical_precision() {
             + (G_ASTRO * m_mass / (m_sq * m_sq.sqrt())) * m_pos;
     }
     assert!((simd_acc - expected).length() / expected.length() < 1e-13);
+}
+
+#[test]
+fn test_spawn_protoplanetary_disk_and_compact_massive_sampling() {
+    use protostellar::simulation::disk::{sample_disk_radius, spawn_protoplanetary_disk};
+    use protostellar::simulation::resources::{DiskParameters, SimulationConfig};
+
+    let mut rng = fastrand::Rng::with_seed(1337);
+    let compact_params = DiskParameters {
+        central_star_mass: 0.09,
+        inner_radius_au: 0.015,
+        outer_radius_au: 1.0,
+        ..default()
+    };
+    for _ in 0..500 {
+        let (r, comp) = sample_disk_radius(&mut rng, &compact_params);
+        assert!(
+            (0.014..=1.01).contains(&r),
+            "Compact disk radius out of range: {r}"
+        );
+        let sum = comp.metal_frac
+            + comp.silicate_frac
+            + comp.ice_frac
+            + comp.organics_frac
+            + comp.gas_frac;
+        assert!((sum - 1.0).abs() < 1e-4);
+    }
+
+    let massive_params = DiskParameters {
+        central_star_mass: 30.0,
+        inner_radius_au: 2.0,
+        outer_radius_au: 250.0,
+        ..default()
+    };
+    for _ in 0..500 {
+        let (r, _) = sample_disk_radius(&mut rng, &massive_params);
+        assert!(
+            (1.9..=251.0).contains(&r),
+            "Massive disk radius out of range: {r}"
+        );
+    }
+
+    let mut app = App::new();
+    let default_params = DiskParameters::default();
+    let cfg = SimulationConfig::default();
+    let star_ent = {
+        let mut commands = app.world_mut().commands();
+
+        spawn_protoplanetary_disk(&mut commands, &default_params, &cfg)
+    };
+    app.world_mut().flush();
+
+    assert!(app.world().get::<CentralStar>(star_ent).is_some());
+    let mut saturn_rings = 0;
+    let mut storms = 0;
+    let mut q = app.world_mut().query::<(
+        &CelestialBody,
+        &SimPosition,
+        &SimVelocity,
+        Option<&PlanetaryRingSystem>,
+        Option<&AtmosphericStormState>,
+    )>();
+    for (b, pos, vel, opt_rings, opt_storm) in q.iter(app.world()) {
+        assert!(
+            pos.0.is_finite() && vel.0.is_finite(),
+            "Non-finite seed {}",
+            b.name
+        );
+        if b.name.contains("Saturn") && opt_rings.is_some() {
+            saturn_rings += 1;
+        }
+        if opt_storm.is_some() {
+            storms += 1;
+        }
+    }
+    assert_eq!(
+        saturn_rings, 1,
+        "Proto-Saturn must spawn with PlanetaryRingSystem"
+    );
+    assert!(
+        storms >= 3,
+        "Gas/Ice giants must attach AtmosphericStormState"
+    );
 }

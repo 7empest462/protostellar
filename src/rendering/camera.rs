@@ -5,10 +5,16 @@ use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
 use bevy::camera::{Exposure, Hdr};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::gizmos::config::GizmoLineJoint;
+use bevy::input::gestures::PinchGesture;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
 
+pub use crate::rendering::camera_picking::IgnoreUiPicking;
+use crate::rendering::camera_picking::{
+    handle_camera_target_picking, is_cursor_over_scroll_container, is_ui_interaction_blocking,
+    UiInteractionStateQuery, UiPickingNodesQuery,
+};
 use crate::rendering::post_processing::PostProcessingSettings;
 
 use crate::simulation::components::*;
@@ -65,11 +71,6 @@ pub struct PanOrbitCamera {
     pub surface_altitude_scale: f32,
 }
 
-/// Marker component for UI elements (such as floating holographic hover cards) that should not
-/// block 3D raycasting, camera drag controls, or entity hover targeting.
-#[derive(Component, Debug, Clone, Copy, Default)]
-pub struct IgnoreUiPicking;
-
 impl Default for PanOrbitCamera {
     fn default() -> Self {
         Self {
@@ -85,7 +86,7 @@ impl Default for PanOrbitCamera {
             min_radius: 0.005,
             max_radius: 3_000_000.0,
             orbit_sensitivity: 0.005,
-            zoom_sensitivity: 0.055,
+            zoom_sensitivity: 0.13,
             pan_sensitivity: 0.02,
             focus_transition_progress: 1.0,
             focus_transition_start: Vec3::ZERO,
@@ -228,7 +229,7 @@ fn is_little_red_dot(body: &CelestialBody) -> bool {
         || crate::utils::math::contains_ascii_case_insensitive(&body.name, "little red dot")
 }
 
-type CameraTargetsQuery<'w, 's> = Query<
+pub(crate) type CameraTargetsQuery<'w, 's> = Query<
     'w,
     's,
     (
@@ -240,17 +241,6 @@ type CameraTargetsQuery<'w, 's> = Query<
         Option<&'static Transform>,
     ),
     Without<PanOrbitCamera>,
->;
-
-type UiPickingNodesQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static ComputedNode,
-        &'static GlobalTransform,
-        Option<&'static InheritedVisibility>,
-    ),
-    (With<Node>, Without<IgnoreUiPicking>),
 >;
 
 fn compute_system_min_orbit_r(targets_query: &CameraTargetsQuery) -> (Vec3, f32) {
@@ -281,7 +271,7 @@ fn compute_system_min_orbit_r(targets_query: &CameraTargetsQuery) -> (Vec3, f32)
 }
 
 #[inline]
-fn resolve_camera_body_radii(
+pub(crate) fn resolve_camera_body_radii(
     opt_t: Option<&Transform>,
     radius_au: f64,
     body_type: BodyType,
@@ -383,180 +373,6 @@ fn update_camera_min_zoom_bounds(
     camera.radius = camera.radius.clamp(camera.min_radius, camera.max_radius);
 }
 
-fn is_cursor_over_active_ui(
-    window: &Window,
-    cursor_pos: Vec2,
-    ui_interaction_query: &Query<(&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>)>,
-    ui_nodes_query: &UiPickingNodesQuery,
-    opt_visibility: Option<&crate::game::ui::types::HudVisibilityState>,
-) -> bool {
-    let (w, h) = (window.width(), window.height());
-    let over_fixed_hud = match opt_visibility {
-        Some(v) if v.is_full_screen_clean => false,
-        Some(v) => {
-            let top = !(v.top_left_minimized && v.top_right_minimized);
-            let right = !(v.top_right_minimized
-                && v.top_controls_minimized
-                && v.scenarios_minimized
-                && !v.scenarios_is_open);
-            let bottom = !(v.bottom_center_minimized && v.bottom_right_minimized);
-            (top && cursor_pos.y <= 95.0)
-                || (!v.top_left_minimized && cursor_pos.x <= 360.0 && cursor_pos.y <= 340.0)
-                || (!v.inspector_minimized
-                    && cursor_pos.x <= 360.0
-                    && cursor_pos.y > 340.0
-                    && cursor_pos.y <= 700.0)
-                || (right && cursor_pos.x >= (w - 340.0) && cursor_pos.y <= 420.0)
-                || (bottom && cursor_pos.y >= (h - 75.0))
-        }
-        None => {
-            cursor_pos.y <= 95.0
-                || (cursor_pos.x <= 360.0 && cursor_pos.y <= 700.0)
-                || (cursor_pos.x >= (w - 340.0) && cursor_pos.y <= 420.0)
-                || cursor_pos.y >= (h - 75.0)
-        }
-    };
-    over_fixed_hud
-        || ui_interaction_query.iter().any(|(h, p)| h.get() || p)
-        || ui_nodes_query.iter().any(|(cnode, gt, opt_ivis)| {
-            if opt_ivis.is_some_and(|v| !v.get()) {
-                return false;
-            }
-            let size = cnode.size();
-            if size.x <= 1.0 || size.y <= 1.0 {
-                return false;
-            }
-            let half = size * 0.5;
-            let center = gt.translation().truncate();
-            let (min, max) = (center - half, center + half);
-            cursor_pos.x >= min.x
-                && cursor_pos.x <= max.x
-                && cursor_pos.y >= min.y
-                && cursor_pos.y <= max.y
-        })
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "3D raycast picking and screen-space fallback helper"
-)]
-fn handle_camera_target_picking(
-    window: &Window,
-    camera_comp: &Camera,
-    global_transform: &GlobalTransform,
-    targets_query: &CameraTargetsQuery,
-    player_state: &mut PlayerInteractionState,
-    camera: &mut PanOrbitCamera,
-    config: &SimulationConfig,
-    ui_interaction_query: &Query<(&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>)>,
-    ui_nodes_query: &UiPickingNodesQuery,
-    mouse_buttons: &ButtonInput<MouseButton>,
-    star_pos: Vec3,
-    min_orbit_r: f32,
-    opt_visibility: Option<&crate::game::ui::types::HudVisibilityState>,
-) {
-    if player_state.just_selected_via_ui {
-        player_state.just_selected_via_ui = false;
-        player_state.hovered_entity = None;
-        return;
-    }
-
-    if mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Middle) {
-        player_state.hovered_entity = None;
-    }
-
-    let Some(cursor_pos) = window.cursor_position() else {
-        player_state.hovered_entity = None;
-        return;
-    };
-
-    if is_cursor_over_active_ui(
-        window,
-        cursor_pos,
-        ui_interaction_query,
-        ui_nodes_query,
-        opt_visibility,
-    ) {
-        player_state.hovered_entity = None;
-        return;
-    }
-
-    let mut best_target: Option<Entity> = None;
-    let mut best_score = f32::MAX;
-
-    if let Ok(ray) = camera_comp.viewport_to_world(global_transform, cursor_pos) {
-        for (entity, pos, rad, body, _mass, opt_t) in targets_query.iter() {
-            let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-            let (vis_r, _) = resolve_camera_body_radii(
-                opt_t,
-                rad.0,
-                body.body_type,
-                (center - star_pos).length(),
-                min_orbit_r,
-                config,
-            );
-            let hit_radius = (vis_r * 4.0).clamp(0.015, 3.0);
-            let to_center = center - ray.origin;
-            let proj = to_center.dot(*ray.direction);
-            if proj > 0.0 {
-                let perp_dist = (to_center - *ray.direction * proj).length();
-                let score = perp_dist / hit_radius;
-                if perp_dist < hit_radius && score < best_score {
-                    best_score = score;
-                    best_target = Some(entity);
-                }
-            }
-        }
-    }
-
-    if best_target.is_none() {
-        let mut min_screen_dist = 42.0f32;
-        for (entity, pos, _rad, _body, _mass, _opt_t) in targets_query.iter() {
-            let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-            if let Ok(screen_pos) = camera_comp.world_to_viewport(global_transform, center) {
-                let dist = cursor_pos.distance(screen_pos);
-                if dist < min_screen_dist {
-                    min_screen_dist = dist;
-                    best_target = Some(entity);
-                }
-            }
-        }
-    }
-
-    player_state.hovered_entity = best_target;
-
-    if !mouse_buttons.just_pressed(MouseButton::Left)
-        || player_state.active_tool != PlayerTool::Inspect
-    {
-        return;
-    }
-
-    if let Some(hit_entity) = best_target.or(player_state.hovered_entity) {
-        player_state.selected_entity = Some(hit_entity);
-        if camera.target_entity != Some(hit_entity) {
-            if let Ok((_, pos, radius, body, _, _opt_t)) = targets_query.get(hit_entity) {
-                let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-                let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
-                    let visual_radius =
-                        config.calc_visual_radius_for_type(radius.0, body.body_type);
-                    0.015f32.max(config.calc_camera_framing_radius(visual_radius))
-                } else {
-                    crate::rendering::bodies::transforms::compute_close_camera_framing_radius(
-                        radius.0,
-                        body.body_type,
-                        (target_vec - star_pos).length(),
-                        min_orbit_r,
-                        config,
-                    )
-                };
-                camera.initiate_target_transition(hit_entity, target_vec, frame_radius);
-            } else {
-                camera.target_entity = Some(hit_entity);
-            }
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments, reason = "Keyboard camera flight helper")]
 fn handle_camera_keyboard_flight(
     keyboard_input: &ButtonInput<KeyCode>,
@@ -632,14 +448,21 @@ fn handle_camera_keyboard_flight(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Mouse orbit, zoom, pinch, and pan controls"
+)]
 fn handle_camera_mouse_controls(
     mouse_buttons: &ButtonInput<MouseButton>,
     keyboard_input: &ButtonInput<KeyCode>,
     mouse_motion_events: &mut MessageReader<MouseMotion>,
     mouse_wheel_events: &mut MessageReader<MouseWheel>,
+    pinch_events: Option<&Messages<PinchGesture>>,
+    pinch_cursor: &mut bevy::ecs::message::MessageCursor<PinchGesture>,
     camera: &mut PanOrbitCamera,
     transform: &Transform,
     cursor_over_ui: bool,
+    dt: f32,
 ) {
     let mut delta_yaw = 0.0;
     let mut delta_pitch = 0.0;
@@ -669,17 +492,30 @@ fn handle_camera_mouse_controls(
         }
         let delta = match ev.unit {
             MouseScrollUnit::Line => ev.y,
-            MouseScrollUnit::Pixel => ev.y / 24.0,
+            MouseScrollUnit::Pixel => ev.y / 14.0,
         };
         scroll += delta;
     }
 
-    // Keyboard zoom shortcuts (+ / -)
+    if let Some(pinches) = pinch_events {
+        for ev in pinch_cursor.read(pinches) {
+            if !cursor_over_ui {
+                scroll += ev.0 * 16.0;
+            }
+        }
+    }
+
+    // Keyboard zoom shortcuts (+ / -), normalized when real wall dt is available
+    let key_step = if dt >= 0.002 {
+        (dt.clamp(0.002, 0.25) * 60.0) * 0.6
+    } else {
+        0.6
+    };
     if keyboard_input.pressed(KeyCode::Equal) || keyboard_input.pressed(KeyCode::NumpadAdd) {
-        scroll += 0.6;
+        scroll += key_step;
     }
     if keyboard_input.pressed(KeyCode::Minus) || keyboard_input.pressed(KeyCode::NumpadSubtract) {
-        scroll -= 0.6;
+        scroll -= key_step;
     }
 
     if scroll.abs() > 0.0 {
@@ -773,9 +609,33 @@ fn slerp_unit_directions(d0: Vec3, d1: Vec3, fallback_up: Vec3, sigma: f32) -> V
     d1 * angle.cos() + e_perp * angle.sin()
 }
 
+#[inline]
+fn smooth_lerp_factor(rate_at_60hz: f32, dt: f32) -> f32 {
+    if dt < 0.002 {
+        // Keep fixed-step convergence for MinimalPlugins headless tests with sub-ms frame times.
+        return rate_at_60hz;
+    }
+    (1.0 - (1.0 - rate_at_60hz).powf(dt.clamp(0.002, 0.25) * 60.0)).clamp(0.0, 1.0)
+}
+
+#[inline]
+fn interpolate_log_radius(current: f32, target: f32, alpha: f32, min_r: f32, max_r: f32) -> f32 {
+    let cur = current.clamp(min_r, max_r).max(1e-6);
+    let tgt = target.clamp(min_r, max_r).max(1e-6);
+    if (tgt - cur).abs() <= 1e-6 {
+        return tgt;
+    }
+    let log_r = cur.ln() + (tgt.ln() - cur.ln()) * alpha;
+    log_r.exp().clamp(min_r, max_r)
+}
+
 fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3, Quat) {
-    camera.yaw += (camera.target_yaw - camera.yaw) * 0.22;
-    camera.pitch += (camera.target_pitch - camera.pitch) * 0.22;
+    let rot_alpha = smooth_lerp_factor(0.24, dt);
+    let zoom_alpha = smooth_lerp_factor(0.36, dt);
+    let focus_alpha = smooth_lerp_factor(0.18, dt);
+
+    camera.yaw += (camera.target_yaw - camera.yaw) * rot_alpha;
+    camera.pitch += (camera.target_pitch - camera.pitch) * rot_alpha;
     let rot = camera.orbital_rotation();
     let back_dir = rot * Vec3::Z;
 
@@ -783,8 +643,13 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
         if dt <= 0.0 {
             camera.focus_transition_progress = 1.0;
             camera.focus = camera.target_focus;
-            camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.28)
-                .clamp(camera.min_radius, camera.max_radius);
+            camera.radius = interpolate_log_radius(
+                camera.radius,
+                camera.target_radius,
+                zoom_alpha,
+                camera.min_radius,
+                camera.max_radius,
+            );
         } else if camera.focus_transition_progress < 1.0 {
             camera.focus_transition_progress =
                 (camera.focus_transition_progress + dt * 2.2).min(1.0);
@@ -825,13 +690,23 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
             }
         } else {
             camera.focus = camera.target_focus;
-            camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.28)
-                .clamp(camera.min_radius, camera.max_radius);
+            camera.radius = interpolate_log_radius(
+                camera.radius,
+                camera.target_radius,
+                zoom_alpha,
+                camera.min_radius,
+                camera.max_radius,
+            );
         }
     } else {
-        camera.focus = camera.focus.lerp(camera.target_focus, 0.14);
-        camera.radius = (camera.radius + (camera.target_radius - camera.radius) * 0.28)
-            .clamp(camera.min_radius, camera.max_radius);
+        camera.focus = camera.focus.lerp(camera.target_focus, focus_alpha);
+        camera.radius = interpolate_log_radius(
+            camera.radius,
+            camera.target_radius,
+            zoom_alpha,
+            camera.min_radius,
+            camera.max_radius,
+        );
     }
 
     let translation = camera.focus + back_dir * camera.radius;
@@ -865,13 +740,17 @@ pub fn update_pan_orbit_camera(
         ),
         With<PanOrbitCamera>,
     >,
-    ui_interaction_query: Query<(&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>)>,
+    ui_interaction_query: UiInteractionStateQuery,
     ui_nodes_query: UiPickingNodesQuery,
     time: Option<Res<Time>>,
     opt_visibility: Option<Res<crate::game::ui::types::HudVisibilityState>>,
     (focus, editable_query): (
         Option<Res<bevy::input_focus::InputFocus>>,
         Query<(), With<bevy::text::EditableText>>,
+    ),
+    (pinch_events, mut pinch_cursor): (
+        Option<Res<Messages<PinchGesture>>>,
+        Local<bevy::ecs::message::MessageCursor<PinchGesture>>,
     ),
 ) {
     let Ok((camera_comp, mut camera, mut transform, global_transform, opt_bloom)) =
@@ -926,7 +805,10 @@ pub fn update_pan_orbit_camera(
         }
     }
 
-    let cursor_over_ui = ui_interaction_query.iter().any(|(h, p)| h.get() || p);
+    let cursor_over_ui = ui_interaction_query
+        .iter()
+        .any(|(h, p, n, s, c)| is_ui_interaction_blocking(h, p, n, s, c))
+        || is_cursor_over_scroll_container(window.cursor_position(), &ui_nodes_query);
 
     handle_camera_target_picking(
         window,
@@ -962,9 +844,12 @@ pub fn update_pan_orbit_camera(
         &keyboard_input,
         &mut mouse_motion_events,
         &mut mouse_wheel_events,
+        pinch_events.as_deref(),
+        &mut pinch_cursor,
         &mut camera,
         &transform,
         cursor_over_ui,
+        dt,
     );
 
     let (translation, rot) = integrate_orbital_camera_pose(&mut camera, dt);

@@ -46,7 +46,7 @@ pub use structures::{
     VisualRingChild,
 };
 pub use transforms::{
-    compute_magma_incandescence, compute_magma_ocean_crust_fraction,
+    compute_magma_incandescence, compute_magma_ocean_crust_fraction, resolve_star_direction,
     sync_camera_adaptive_body_scales, sync_celestial_transforms,
 };
 

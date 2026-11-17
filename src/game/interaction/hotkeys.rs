@@ -22,6 +22,7 @@ fn close_other_modals(
     scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     hr_diagram: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
     visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    saves: Option<&mut crate::game::ui::SavesPanelState>,
 ) -> bool {
     let mut states = crate::game::ui::ModalPanelStates {
         builder: Some(builder),
@@ -33,6 +34,7 @@ fn close_other_modals(
         scrubber,
         hr_diagram,
         visibility,
+        saves,
     };
     states.close_conflicting_modals(keep_open)
 }
@@ -53,6 +55,7 @@ fn handle_escape_priority_stack(
     scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     hr_diagram: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
     visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    saves: Option<&mut crate::game::ui::SavesPanelState>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
     // Priority 1: If Surface Horizon Mode is active on any camera, exit surface mode back to orbital view
@@ -81,6 +84,7 @@ fn handle_escape_priority_stack(
         scrubber,
         hr_diagram,
         visibility,
+        saves,
     ) {
         toast.message = "✕ Closed Drawer / Modal Window [Esc]".to_string();
         toast.timer = 2.5;
@@ -123,6 +127,7 @@ pub fn handle_viewport_and_tool_hotkeys(
     is_star_selected: bool,
     mut opt_trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
     mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    mut opt_saves: Option<&mut crate::game::ui::SavesPanelState>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyN) && !is_star_selected {
         if let Some(ref mut predictor) = opt_predictor {
@@ -146,6 +151,7 @@ pub fn handle_viewport_and_tool_hotkeys(
         opt_hazards_panel.as_deref_mut(),
         opt_hr_state.as_deref_mut(),
         opt_visibility.as_deref_mut(),
+        opt_saves.as_deref_mut(),
         toast,
     );
     if keyboard.just_pressed(KeyCode::Comma) {
@@ -169,6 +175,7 @@ pub fn handle_viewport_and_tool_hotkeys(
             opt_scrubber.as_deref_mut(),
             opt_hr_state.as_deref_mut(),
             opt_visibility.as_deref_mut(),
+            opt_saves.as_deref_mut(),
             toast,
         );
     }
@@ -197,6 +204,7 @@ pub fn handle_viewport_and_tool_hotkeys(
                 opt_hz,
                 opt_trophies,
                 opt_visibility,
+                opt_saves,
                 toast,
             );
         }
@@ -217,6 +225,7 @@ fn handle_modal_toggle_hotkeys(
     mut opt_hazards_panel: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
     mut opt_hr_state: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
     mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    mut opt_saves: Option<&mut crate::game::ui::SavesPanelState>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
     if keyboard.just_pressed(KeyCode::KeyP) {
@@ -233,6 +242,7 @@ fn handle_modal_toggle_hotkeys(
                 opt_scrubber.as_deref_mut(),
                 opt_hr_state.as_deref_mut(),
                 opt_visibility.as_deref_mut(),
+                opt_saves.as_deref_mut(),
             );
         }
         toast.message = if builder_state.is_open {
@@ -257,6 +267,7 @@ fn handle_modal_toggle_hotkeys(
                 opt_scrubber.as_deref_mut(),
                 opt_hr_state.as_deref_mut(),
                 opt_visibility.as_deref_mut(),
+                opt_saves.as_deref_mut(),
             );
         }
         toast.message = if telemetry_state.is_open {
@@ -281,6 +292,7 @@ fn handle_modal_toggle_hotkeys(
                     Some(scrubber),
                     opt_hr_state,
                     opt_visibility,
+                    opt_saves,
                 );
             }
             toast.message = if scrubber.is_open {
@@ -354,6 +366,7 @@ fn handle_shift_tool_hotkeys(
     mut opt_hz: Option<&mut crate::simulation::resources::HabitableZoneConfig>,
     mut opt_trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
     mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    mut opt_saves: Option<&mut crate::game::ui::SavesPanelState>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
     if keyboard.just_pressed(KeyCode::KeyT) {
@@ -371,6 +384,7 @@ fn handle_shift_tool_hotkeys(
                     opt_scrubber.as_deref_mut(),
                     opt_hr_state.as_deref_mut(),
                     opt_visibility.as_deref_mut(),
+                    opt_saves.as_deref_mut(),
                 );
             }
             toast.message = if tech_state.is_open {
@@ -395,6 +409,7 @@ fn handle_shift_tool_hotkeys(
                     opt_scrubber.as_deref_mut(),
                     opt_hr_state.as_deref_mut(),
                     opt_visibility.as_deref_mut(),
+                    opt_saves.as_deref_mut(),
                 );
             }
             toast.message = if campaign_panel.is_open {
@@ -419,6 +434,7 @@ fn handle_shift_tool_hotkeys(
                     opt_scrubber.as_deref_mut(),
                     opt_hr_state.as_deref_mut(),
                     opt_visibility.as_deref_mut(),
+                    opt_saves.as_deref_mut(),
                 );
             }
             toast.message = if hazards_panel.is_open {
@@ -462,6 +478,7 @@ fn handle_shift_tool_hotkeys(
                     opt_scrubber,
                     Some(hr),
                     opt_visibility,
+                    opt_saves,
                 );
             }
             toast.message = if hr.is_open {
@@ -484,6 +501,141 @@ fn handle_shift_tool_hotkeys(
     }
 }
 
+fn handle_cosmic_event_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    is_shift: bool,
+    lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
+    glitch_events: Option<
+        &mut MessageWriter<crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
+    >,
+    oort_events: Option<&mut MessageWriter<crate::simulation::oort::TriggerOortCloudSwarmEvent>>,
+    toast: &mut crate::game::ui::NotificationToast,
+    scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
+) {
+    if is_shift && keyboard.just_pressed(KeyCode::KeyO) {
+        if let Some(oe) = oort_events {
+            oe.write(crate::simulation::oort::TriggerOortCloudSwarmEvent { comet_count: 48 });
+        }
+        toast.message =
+            "☄️ OORT CLOUD SWARM // Procedurally spawned 48 cometary bodies into Hills & Outer Oort reservoirs (200 - 25,000 AU)!"
+                .to_string();
+        toast.timer = 6.0;
+    }
+    if !keyboard.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+    if is_shift {
+        if let Some(ge) = glitch_events {
+            ge.write(
+                crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent::default(),
+            );
+        }
+        toast.message =
+            "⚡ RELATIVISTIC EVENT TRIGGERED // Pulsar glitch / Magnetar starquake & Alfvén burst launched!"
+                .to_string();
+        toast.timer = 6.0;
+        return;
+    }
+    let is_mmsn = scenario_state.is_none_or(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+    });
+    if is_mmsn {
+        lhb_state.is_active = true;
+        lhb_state.manual_trigger_requested = true;
+        toast.message =
+            "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
+                .to_string();
+        toast.timer = 8.0;
+    } else {
+        toast.message =
+            "ℹ️ Late Heavy Bombardment epoch is exclusive to the Solar Nebula (MMSN) scenario."
+                .to_string();
+        toast.timer = 5.0;
+    }
+}
+
+fn handle_scenario_preset_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    is_shift: bool,
+    scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
+) {
+    use crate::simulation::scenarios::{LoadScenarioEvent, ScenarioPreset};
+
+    if keyboard.just_pressed(KeyCode::F1) {
+        let preset = if is_shift {
+            ScenarioPreset::AccretionDiskGenesis
+        } else {
+            ScenarioPreset::SolarNebulaMmsn
+        };
+        scenario_events.write(LoadScenarioEvent(preset));
+    }
+    if is_shift && keyboard.just_pressed(KeyCode::F10) {
+        scenario_events.write(LoadScenarioEvent(ScenarioPreset::SagittariusAStar));
+    }
+    if is_shift && keyboard.just_pressed(KeyCode::F11) {
+        scenario_events.write(LoadScenarioEvent(ScenarioPreset::KozaiLidovTriple));
+    }
+    let preset_map = [
+        (KeyCode::F2, ScenarioPreset::Trappist1System),
+        (KeyCode::F3, ScenarioPreset::Kepler16Circumbinary),
+        (KeyCode::F4, ScenarioPreset::HotJupiterMigration),
+        (KeyCode::F5, ScenarioPreset::RoguePlanetFlyby),
+        (KeyCode::F6, ScenarioPreset::LittleRedDot),
+        (KeyCode::F7, ScenarioPreset::PulsarSystem),
+        (KeyCode::F9, ScenarioPreset::MagnetarOutburst),
+    ];
+    for (key, preset) in preset_map {
+        if keyboard.just_pressed(key) {
+            scenario_events.write(LoadScenarioEvent(preset));
+            break;
+        }
+    }
+}
+
+fn handle_compute_and_save_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    is_shift: bool,
+    config: &mut SimulationConfig,
+    save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+    load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::F8) {
+        config.enable_gpu_compute = !config.enable_gpu_compute;
+        if !config.enable_gpu_compute {
+            config.gpu_compute_active = false;
+        }
+        toast.message = if config.enable_gpu_compute {
+            format!(
+                "⚡ GPU COMPUTE: Enabled (WGPU Compute Dispatch @ {} Particles)",
+                config.target_particle_count
+            )
+        } else {
+            "🖥️ CPU FALLBACK: Active (Rayon Multithreading)".to_string()
+        };
+        toast.timer = 4.0;
+    }
+    if !keyboard.just_pressed(KeyCode::F12) {
+        return;
+    }
+    if is_shift {
+        if let Some(events) = load_events {
+            events.write(crate::simulation::serialization::LoadSystemEvent {
+                filename: "saves/quicksave.json".to_string(),
+            });
+        }
+        toast.message = "📂 Quick Loading solar system state [saves/quicksave.json]...".to_string();
+    } else {
+        if let Some(events) = save_events {
+            events.write(crate::simulation::serialization::SaveSystemEvent {
+                filename: "saves/quicksave.json".to_string(),
+            });
+        }
+        toast.message = "💾 Quick Saved solar system state [saves/quicksave.json]".to_string();
+    }
+    toast.timer = 4.0;
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Scenario and system hotkey handler"
@@ -493,145 +645,27 @@ pub fn handle_scenario_and_system_hotkeys(
     config: &mut SimulationConfig,
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
-    mut save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-    mut load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
-    mut glitch_events: Option<
+    save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
+    load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
+    glitch_events: Option<
         &mut MessageWriter<crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
     >,
-    mut oort_events: Option<
-        &mut MessageWriter<crate::simulation::oort::TriggerOortCloudSwarmEvent>,
-    >,
+    oort_events: Option<&mut MessageWriter<crate::simulation::oort::TriggerOortCloudSwarmEvent>>,
     toast: &mut crate::game::ui::NotificationToast,
     scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
 ) {
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-    if is_shift && keyboard.just_pressed(KeyCode::KeyO) {
-        if let Some(ref mut oe) = oort_events {
-            oe.write(crate::simulation::oort::TriggerOortCloudSwarmEvent { comet_count: 48 });
-        }
-        toast.message =
-            "☄️ OORT CLOUD SWARM // Procedurally spawned 48 cometary bodies into Hills & Outer Oort reservoirs (200 - 25,000 AU)!"
-                .to_string();
-        toast.timer = 6.0;
-    }
-    if keyboard.just_pressed(KeyCode::KeyG) {
-        if is_shift {
-            if let Some(ref mut ge) = glitch_events {
-                ge.write(
-                    crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent::default(
-                    ),
-                );
-            }
-            toast.message =
-                "⚡ RELATIVISTIC EVENT TRIGGERED // Pulsar glitch / Magnetar starquake & Alfvén burst launched!"
-                    .to_string();
-            toast.timer = 6.0;
-        } else {
-            let is_mmsn = scenario_state.is_none_or(|s| {
-                s.current_preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
-            });
-            if is_mmsn {
-                lhb_state.is_active = true;
-                lhb_state.manual_trigger_requested = true;
-                toast.message =
-                    "☄️ LATE HEAVY BOMBARDMENT TRIGGERED // Cometary ocean-seeding shower inbound!"
-                        .to_string();
-                toast.timer = 8.0;
-            } else {
-                toast.message =
-                    "ℹ️ Late Heavy Bombardment epoch is exclusive to the Solar Nebula (MMSN) scenario."
-                        .to_string();
-                toast.timer = 5.0;
-            }
-        }
-    }
-    if keyboard.just_pressed(KeyCode::F1) {
-        let preset = if is_shift {
-            crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
-        } else {
-            crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
-        };
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(preset));
-    }
-    if is_shift && keyboard.just_pressed(KeyCode::F10) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::SagittariusAStar,
-        ));
-    }
-    if is_shift && keyboard.just_pressed(KeyCode::F11) {
-        scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(
-            crate::simulation::scenarios::ScenarioPreset::KozaiLidovTriple,
-        ));
-    }
-    let preset_map = [
-        (
-            KeyCode::F2,
-            crate::simulation::scenarios::ScenarioPreset::Trappist1System,
-        ),
-        (
-            KeyCode::F3,
-            crate::simulation::scenarios::ScenarioPreset::Kepler16Circumbinary,
-        ),
-        (
-            KeyCode::F4,
-            crate::simulation::scenarios::ScenarioPreset::HotJupiterMigration,
-        ),
-        (
-            KeyCode::F5,
-            crate::simulation::scenarios::ScenarioPreset::RoguePlanetFlyby,
-        ),
-        (
-            KeyCode::F6,
-            crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
-        ),
-        (
-            KeyCode::F7,
-            crate::simulation::scenarios::ScenarioPreset::PulsarSystem,
-        ),
-        (
-            KeyCode::F9,
-            crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst,
-        ),
-    ];
-    for (key, preset) in preset_map {
-        if keyboard.just_pressed(key) {
-            scenario_events.write(crate::simulation::scenarios::LoadScenarioEvent(preset));
-            break;
-        }
-    }
-    if keyboard.just_pressed(KeyCode::F8) {
-        config.enable_gpu_compute = !config.enable_gpu_compute;
-        if !config.enable_gpu_compute {
-            config.gpu_compute_active = false;
-        }
-        let status = if config.enable_gpu_compute {
-            "⚡ GPU COMPUTE: Enabled (WGPU Compute Dispatch @ 100,000 Particles)"
-        } else {
-            "🖥️ CPU FALLBACK: Active (Rayon Multithreading)"
-        };
-        toast.message = status.to_string();
-        toast.timer = 4.0;
-    }
-    if keyboard.just_pressed(KeyCode::F12) {
-        if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
-            if let Some(ref mut events) = load_events {
-                events.write(crate::simulation::serialization::LoadSystemEvent {
-                    filename: "saves/quicksave.json".to_string(),
-                });
-            }
-            toast.message =
-                "📂 Quick Loading solar system state [saves/quicksave.json]...".to_string();
-            toast.timer = 4.0;
-        } else {
-            if let Some(ref mut events) = save_events {
-                events.write(crate::simulation::serialization::SaveSystemEvent {
-                    filename: "saves/quicksave.json".to_string(),
-                });
-            }
-            toast.message = "💾 Quick Saved solar system state [saves/quicksave.json]".to_string();
-            toast.timer = 4.0;
-        }
-    }
+    handle_cosmic_event_hotkeys(
+        keyboard,
+        is_shift,
+        lhb_state,
+        glitch_events,
+        oort_events,
+        toast,
+        scenario_state,
+    );
+    handle_scenario_preset_hotkeys(keyboard, is_shift, scenario_events);
+    handle_compute_and_save_hotkeys(keyboard, is_shift, config, save_events, load_events, toast);
 }
 
 pub fn handle_theia_hotkey(

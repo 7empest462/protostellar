@@ -38,8 +38,10 @@ pub fn is_canonical_named_body(name: &str) -> bool {
         "little red dot",
         "tde supermassive",
     ];
-    let lower = name.to_lowercase();
-    CANONICAL_KEYS.iter().any(|k| lower.contains(k))
+    if crate::utils::math::contains_any_ignore_ascii_case(name, &["super-jupiter", "(moon)"]) {
+        return false;
+    }
+    crate::utils::math::contains_any_ignore_ascii_case(name, CANONICAL_KEYS)
 }
 
 /// Updates the name of a merged primary celestial body according to physical classification regimes,
@@ -103,14 +105,98 @@ pub fn update_merged_body_name(
 
     // 5. Planetary classifications
     let is_named_minor = name.contains("Comet") || name.contains("Asteroid");
-    if updated_type.is_planet() && (is_named_minor || !name.starts_with("Planet")) {
+    let is_giant_reclass = name.starts_with("Super-Jupiter") && updated_type != BodyType::GasGiant;
+    if updated_type.is_planet()
+        && (is_named_minor || is_giant_reclass || !name.starts_with("Planet"))
+    {
         *name = match updated_type {
             BodyType::TerrestrialPlanet => "Planet (Terrestrial World)".to_string(),
-            BodyType::SuperEarth => "Planet (Super-Earth)".to_string(),
-            BodyType::GasGiant => "Planet (Gas Giant)".to_string(),
+            BodyType::SuperEarth => {
+                let mass_mj = total_mass / crate::utils::constants::JUPITER_MASS_SOLAR;
+                if mass_mj >= 0.2 {
+                    format!("Mega-Earth ({mass_mj:.1} M_J)")
+                } else {
+                    "Planet (Super-Earth)".to_string()
+                }
+            }
+            BodyType::GasGiant => {
+                let mass_mj = total_mass / crate::utils::constants::JUPITER_MASS_SOLAR;
+                if mass_mj >= 1.0 {
+                    format!("Super-Jupiter ({mass_mj:.1} M_J)")
+                } else {
+                    "Planet (Gas Giant)".to_string()
+                }
+            }
             BodyType::IceGiant => "Planet (Ice Giant)".to_string(),
             BodyType::Protoplanet => "Protoplanet (Embryo)".to_string(),
             _ => name.clone(),
         };
     }
+}
+
+/// Strips trailing mass or classification parenthetical tags (such as `" (1.5 M_J)"`
+/// or `" (Gas Giant)"`) from a parent planet's name when deriving satellite names.
+pub fn clean_moon_parent_name(parent_name: &str) -> String {
+    let mut trimmed = parent_name.trim();
+    while trimmed.ends_with(')') {
+        let Some(open_idx) = trimmed.rfind(" (") else {
+            break;
+        };
+        let Some(prefix) = trimmed.get(..open_idx) else {
+            break;
+        };
+        let candidate = prefix.trim();
+        if candidate.is_empty() {
+            break;
+        }
+        trimmed = candidate;
+    }
+    trimmed.to_string()
+}
+
+/// Formats a positive integer as a Roman numeral for sequential moon designations (`I`, `II`, ...).
+pub fn format_roman_numeral(num: usize) -> String {
+    const NUMERALS: &[(usize, &str)] = &[
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let mut remaining = num.max(1);
+    let mut out = String::new();
+    for &(value, symbol) in NUMERALS {
+        while remaining >= value {
+            out.push_str(symbol);
+            remaining -= value;
+        }
+    }
+    out
+}
+
+/// Resolves a clean satellite designation (`"The Moon"` for Earth+Theia or `"{Parent} {Roman} (Moon)"`).
+pub fn resolve_satellite_moon_name(
+    parent_name: &str,
+    secondary_name: &str,
+    existing_satellites: usize,
+) -> String {
+    let is_canonical_earth_theia = (parent_name.contains("Earth")
+        && !parent_name.contains("Super-Earth")
+        && !parent_name.contains("Planet Nine")
+        && !parent_name.contains("Venus"))
+        && (secondary_name.contains("Theia") || secondary_name.contains("Moon"));
+    if is_canonical_earth_theia && existing_satellites == 0 {
+        return "The Moon".to_string();
+    }
+    let base = clean_moon_parent_name(parent_name);
+    let roman = format_roman_numeral(existing_satellites + 1);
+    format!("{base} {roman} (Moon)")
 }

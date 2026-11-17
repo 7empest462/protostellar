@@ -93,6 +93,7 @@ pub fn sync_geological_evolution_system(
         Option<&mut VolatileInventory>,
         Option<&mut PlanetaryClimate>,
         Option<&mut Temperature>,
+        Has<crate::simulation::terraforming::TerraformingAtmosphere>,
     )>,
 ) {
     if time_warp
@@ -108,7 +109,7 @@ pub fn sync_geological_evolution_system(
     if let Some(ref player_state) = opt_player_state {
         if player_state.is_changed() {
             if let Some(selected) = player_state.selected_entity {
-                if let Ok((entity, body, ref opt_sel_geo, _, _, _)) = query.get(selected) {
+                if let Ok((entity, body, ref opt_sel_geo, _, _, _, _)) = query.get(selected) {
                     let is_terrestrial = matches!(
                         body.body_type,
                         BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
@@ -137,7 +138,7 @@ pub fn sync_geological_evolution_system(
 
     // Ensure target_entity aligns with target_planet chosen in UI
     let target_needs_sync = scrubber.target_entity.is_none_or(|ent| {
-        query.get(ent).map_or(true, |(_, body, _, _, _, _)| {
+        query.get(ent).map_or(true, |(_, body, _, _, _, _, _)| {
             !matches!(
                 body.body_type,
                 BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
@@ -145,12 +146,15 @@ pub fn sync_geological_evolution_system(
         })
     });
     if target_needs_sync {
-        if let Some((ent, _, opt_geo, _, _, _)) = query.iter().find(|(_, body, _, _, _, _)| {
-            matches!(
-                body.body_type,
-                BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
-            ) && EpochTargetPlanet::try_detect_from_name(&body.name) == Some(scrubber.target_planet)
-        }) {
+        if let Some((ent, _, opt_geo, _, _, _, _)) =
+            query.iter().find(|(_, body, _, _, _, _, _)| {
+                matches!(
+                    body.body_type,
+                    BodyType::TerrestrialPlanet | BodyType::SuperEarth | BodyType::Protoplanet
+                ) && EpochTargetPlanet::try_detect_from_name(&body.name)
+                    == Some(scrubber.target_planet)
+            })
+        {
             scrubber.target_entity = Some(ent);
             if scrubber.auto_advance {
                 if let Some(geo) = opt_geo {
@@ -163,7 +167,8 @@ pub fn sync_geological_evolution_system(
         }
     }
 
-    for (entity, body, mut opt_geo, mut opt_vol, mut opt_climate, mut opt_temp) in query.iter_mut()
+    for (entity, body, mut opt_geo, mut opt_vol, mut opt_climate, mut opt_temp, has_terraforming) in
+        query.iter_mut()
     {
         let is_terrestrial = matches!(
             body.body_type,
@@ -207,6 +212,7 @@ pub fn sync_geological_evolution_system(
                 geo,
                 current_epoch,
                 &scrubber,
+                has_terraforming,
                 opt_vol.as_deref_mut(),
                 opt_climate.as_deref_mut(),
                 opt_temp.as_deref_mut(),
@@ -257,6 +263,7 @@ fn apply_manual_scrub_step(
     geo: &mut GeologicalState,
     current_epoch: GeologicalEpoch,
     scrubber: &TimelineScrubber,
+    has_terraforming: bool,
     opt_vol: Option<&mut VolatileInventory>,
     opt_climate: Option<&mut PlanetaryClimate>,
     opt_temp: Option<&mut Temperature>,
@@ -280,8 +287,8 @@ fn apply_manual_scrub_step(
             geo.continental_drift_phase = calculate_continental_drift_phase(target_age);
             geo.supercontinent_aggregation = geo.epoch.canonical_aggregation();
         }
-    } else {
-        // Sustain chosen epoch temperature, volatiles, and climate on target planet
+    } else if !has_terraforming {
+        // Sustain chosen epoch temperature, volatiles, and climate on target planet unless actively terraforming
         let canonical_temp = geo.epoch.canonical_temperature_k();
         if let Some(temp) = opt_temp {
             temp.0 = canonical_temp;

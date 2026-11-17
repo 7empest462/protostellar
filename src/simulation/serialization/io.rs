@@ -21,30 +21,264 @@ pub fn decode_system_seed_json(seed: &str) -> Result<SystemSaveData, String> {
     serde_json::from_str(json_str).map_err(|e| e.to_string())
 }
 
-/// Scans the `saves/` and workspace directory for save files (`.json`, `.bin`, `.postcard`)
-/// and returns sorted unique slot stems (e.g. `["quicksave", "trappist_custom"]`).
-pub fn list_save_slots() -> Vec<String> {
-    let mut slots = Vec::new();
-    let dirs = [Path::new("saves"), Path::new(".")];
-    for dir in dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                        if matches!(ext, "json" | "bin" | "postcard") {
-                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                                if !slots.contains(&stem.to_string()) {
-                                    slots.push(stem.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
+/// Metadata summary for a saved solar system slot on disk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaveSlotEntry {
+    pub slot_name: String,
+    pub file_path: String,
+    pub scenario_preset: Option<crate::simulation::scenarios::ScenarioPreset>,
+    pub body_count: usize,
+    pub timestamp_epoch_yr: f64,
+    pub step_count: u64,
+    pub format_tag: &'static str,
+    pub modified_secs: u64,
+}
+
+const SAVE_FILE_EXTENSIONS: [&str; 3] = ["json", "postcard", "bin"];
+
+fn matching_save_extension(path_str: &str) -> Option<&'static str> {
+    let ext = Path::new(path_str).extension()?.to_str()?;
+    SAVE_FILE_EXTENSIONS
+        .iter()
+        .copied()
+        .find(|allowed| ext.eq_ignore_ascii_case(allowed))
+}
+
+/// Sanitizes an arbitrary save slot name into a safe single-segment file stem.
+/// Strips redundant `.json`/`.postcard`/`.bin` extensions and replaces unsafe characters.
+pub fn sanitize_save_slot_name(raw: &str) -> String {
+    let mut stem = raw.trim().to_string();
+    while let Some(ext) = matching_save_extension(&stem) {
+        let strip_len = ext.len().saturating_add(1);
+        stem.truncate(stem.len().saturating_sub(strip_len));
+    }
+
+    let mut out = String::with_capacity(stem.len());
+    let mut prev_underscore = false;
+    for ch in stem.chars() {
+        let safe = ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-');
+        if safe {
+            out.push(ch);
+            prev_underscore = false;
+        } else if !prev_underscore && !out.is_empty() {
+            out.push('_');
+            prev_underscore = true;
+        }
+    }
+    while out.ends_with('_') || out.ends_with('.') {
+        out.pop();
+    }
+    if out.len() > 48 {
+        let mut cut = 48;
+        while cut > 0 && !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        while out.ends_with('_') {
+            out.pop();
+        }
+    }
+    if out.is_empty() {
+        "quicksave".to_string()
+    } else {
+        out
+    }
+}
+
+/// Resolves a user-entered slot name (or `.postcard`/`.bin`/`.json` filename) to a write path in `saves/`.
+pub fn resolve_save_path_for_write(slot_or_file: &str) -> String {
+    let trimmed = slot_or_file.trim();
+    let ext = matching_save_extension(trimmed).unwrap_or("json");
+    let sanitized = sanitize_save_slot_name(trimmed);
+    format!("saves/{sanitized}.{ext}")
+}
+
+/// Resolves a slot name or filename for loading, preferring exact existing files then `saves/<stem>.{json,postcard,bin}`.
+pub fn resolve_save_path_for_read(slot_or_file: &str) -> String {
+    let trimmed = slot_or_file.trim();
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return normalize_save_path(trimmed);
+    }
+    if !trimmed.is_empty() {
+        let direct_in_saves = format!("saves/{trimmed}");
+        if Path::new(&direct_in_saves).is_file() {
+            return direct_in_saves;
+        }
+        if Path::new(trimmed).is_file() {
+            return trimmed.to_string();
+        }
+    }
+
+    let stem = sanitize_save_slot_name(trimmed);
+    for dir in ["saves", "."] {
+        for ext in SAVE_FILE_EXTENSIONS {
+            let candidate = if dir == "." {
+                format!("{stem}.{ext}")
+            } else {
+                format!("{dir}/{stem}.{ext}")
+            };
+            if Path::new(&candidate).is_file() {
+                return candidate;
             }
         }
     }
+    format!("saves/{stem}.json")
+}
+
+fn format_tag_for_path(path: &Path) -> &'static str {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("bin") || ext.eq_ignore_ascii_case("postcard") => {
+            "BIN"
+        }
+        _ => "JSON",
+    }
+}
+
+fn modified_unix_secs(path: &Path) -> u64 {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |dur| dur.as_secs())
+}
+
+fn read_save_slot_entry(path: &Path) -> Option<SaveSlotEntry> {
+    if !path.is_file() {
+        return None;
+    }
+    let ext = path.extension().and_then(|s| s.to_str())?;
+    if !SAVE_FILE_EXTENSIONS
+        .iter()
+        .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+    {
+        return None;
+    }
+    let stem = path.file_stem().and_then(|s| s.to_str())?;
+    let file_path = path.to_string_lossy().into_owned();
+    let data = load_system_from_file(&file_path).ok()?;
+    Some(SaveSlotEntry {
+        slot_name: stem.to_string(),
+        file_path,
+        scenario_preset: data.scenario_preset,
+        body_count: data.bodies.len(),
+        timestamp_epoch_yr: data.timestamp_epoch_yr,
+        step_count: data.step_count,
+        format_tag: format_tag_for_path(path),
+        modified_secs: modified_unix_secs(path),
+    })
+}
+
+/// Collects valid saved system entries from a specific directory, sorted newest-first.
+pub fn list_save_slot_entries_in_dir(dir: &Path) -> Vec<SaveSlotEntry> {
+    let mut entries = Vec::new();
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return entries;
+    };
+    for dir_entry in read_dir.flatten() {
+        if let Some(slot_entry) = read_save_slot_entry(&dir_entry.path()) {
+            entries.push(slot_entry);
+        }
+    }
+    entries.sort_by(|a, b| {
+        b.modified_secs
+            .cmp(&a.modified_secs)
+            .then_with(|| a.slot_name.cmp(&b.slot_name))
+    });
+    entries
+}
+
+/// Scans `saves/` and the workspace root for valid saved system files, sorted newest-first.
+pub fn list_save_slot_entries() -> Vec<SaveSlotEntry> {
+    let mut entries = list_save_slot_entries_in_dir(Path::new("saves"));
+    for root_entry in list_save_slot_entries_in_dir(Path::new(".")) {
+        let already_listed = entries
+            .iter()
+            .any(|existing| existing.slot_name == root_entry.slot_name);
+        if !already_listed {
+            entries.push(root_entry);
+        }
+    }
+    entries.sort_by(|a, b| {
+        b.modified_secs
+            .cmp(&a.modified_secs)
+            .then_with(|| a.slot_name.cmp(&b.slot_name))
+    });
+    entries
+}
+
+/// Generates the next available scenario-tagged slot name inside `dir` (e.g. `"trappist1_01"`).
+pub fn suggest_next_slot_name_in_dir(
+    dir: &Path,
+    preset: Option<crate::simulation::scenarios::ScenarioPreset>,
+) -> String {
+    let prefix = preset.map_or("custom_system", |p| p.save_slot_slug());
+    let existing: Vec<String> = list_save_slot_entries_in_dir(dir)
+        .into_iter()
+        .map(|entry| entry.slot_name)
+        .collect();
+    for idx in 1..=999_u32 {
+        let candidate = format!("{prefix}_{idx:02}");
+        let taken_in_entries = existing
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&candidate));
+        let taken_on_disk = SAVE_FILE_EXTENSIONS
+            .iter()
+            .any(|ext| dir.join(format!("{candidate}.{ext}")).exists());
+        if !taken_in_entries && !taken_on_disk {
+            return candidate;
+        }
+    }
+    format!("{prefix}_snapshot")
+}
+
+/// Generates the next available scenario-tagged save slot name in `saves/`.
+pub fn suggest_next_slot_name(
+    preset: Option<crate::simulation::scenarios::ScenarioPreset>,
+) -> String {
+    suggest_next_slot_name_in_dir(Path::new("saves"), preset)
+}
+
+/// Safely deletes a save file by path or slot name (refusing parent-traversal paths).
+pub fn delete_save_slot_file(path_or_slot: &str) -> Result<String, String> {
+    let trimmed = path_or_slot.trim();
+    if trimmed.is_empty() {
+        return Err("Save slot path cannot be empty".to_string());
+    }
+    if trimmed.contains("..") {
+        return Err("Invalid save path".to_string());
+    }
+    let resolved = resolve_save_path_for_read(trimmed);
+    let path = Path::new(&resolved);
+    if !path.is_file() {
+        return Err(format!("Save file '{resolved}' does not exist"));
+    }
+    let is_valid_save_ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| {
+            SAVE_FILE_EXTENSIONS
+                .iter()
+                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+        });
+    if !is_valid_save_ext {
+        return Err("Refusing to delete non-save file".to_string());
+    }
+    if load_system_from_file(&resolved).is_err() {
+        return Err("Refusing to delete file that is not a valid save snapshot".to_string());
+    }
+    std::fs::remove_file(path).map_err(|err| format!("Failed to delete '{resolved}': {err}"))?;
+    Ok(resolved)
+}
+
+/// Scans `saves/` and the workspace root for valid save files (`.json`, `.bin`, `.postcard`)
+/// and returns sorted unique slot stems (e.g. `["quicksave", "trappist1_01"]`).
+pub fn list_save_slots() -> Vec<String> {
+    let mut slots: Vec<String> = list_save_slot_entries()
+        .into_iter()
+        .map(|entry| entry.slot_name)
+        .collect();
     slots.sort();
+    slots.dedup();
     if slots.is_empty() {
         slots.push("quicksave".to_string());
     }
@@ -109,5 +343,109 @@ pub fn load_system_from_file(path_str: &str) -> Result<SystemSaveData, std::io::
         let data: SystemSaveData = serde_json::from_str(&content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::simulation::scenarios::ScenarioPreset;
+
+    fn sample_save_data(
+        preset: Option<ScenarioPreset>,
+        epoch_yr: f64,
+        step_count: u64,
+    ) -> SystemSaveData {
+        use super::super::types::{ConfigSave, EventFlagsSave, TimeWarpSave};
+        use crate::simulation::resources::DiskParameters;
+
+        SystemSaveData {
+            version: 1,
+            timestamp_epoch_yr: epoch_yr,
+            step_count,
+            time_warp: TimeWarpSave::default(),
+            disk_parameters: DiskParameters::default(),
+            config_save: ConfigSave::default(),
+            bodies: Vec::new(),
+            event_flags: EventFlagsSave::default(),
+            scenario_preset: preset,
+        }
+    }
+
+    #[test]
+    fn test_sanitize_and_resolve_save_paths() {
+        assert_eq!(sanitize_save_slot_name(""), "quicksave");
+        assert_eq!(sanitize_save_slot_name("   ...  "), "quicksave");
+        assert_eq!(sanitize_save_slot_name("my_run.json"), "my_run");
+        assert_eq!(sanitize_save_slot_name("alpha.json.json"), "alpha");
+        assert_eq!(
+            sanitize_save_slot_name("trappist/bad: name?.postcard"),
+            "trappist_bad_name"
+        );
+        assert_eq!(
+            resolve_save_path_for_write("trappist_custom.json"),
+            "saves/trappist_custom.json"
+        );
+        assert_eq!(
+            resolve_save_path_for_write("deep_binary.postcard"),
+            "saves/deep_binary.postcard"
+        );
+    }
+
+    #[test]
+    fn test_multi_save_listing_scenario_suggestions_and_safe_delete() {
+        let dir = Path::new("target/test_multi_save_slots_unit");
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).expect("create test directory");
+
+        // Write arbitrary non-save JSON and verify it is ignored
+        let rogue_json = dir.join("not_a_save.json");
+        std::fs::write(&rogue_json, "{\"hello\": \"world\"}").expect("write rogue json");
+
+        let trappist_path = dir.join("trappist1_01.json");
+        let mmsn_path = dir.join("solar_nebula_01.postcard");
+        save_system_to_file(
+            &sample_save_data(Some(ScenarioPreset::Trappist1System), 42.5, 1200),
+            &trappist_path.to_string_lossy(),
+        )
+        .expect("save trappist");
+        save_system_to_file(
+            &sample_save_data(Some(ScenarioPreset::SolarNebulaMmsn), 1500.0, 9999),
+            &mmsn_path.to_string_lossy(),
+        )
+        .expect("save solar nebula");
+
+        let entries = list_save_slot_entries_in_dir(dir);
+        assert_eq!(entries.len(), 2, "Only valid save files should be listed");
+        assert!(entries.iter().any(|e| {
+            e.slot_name == "trappist1_01"
+                && e.scenario_preset == Some(ScenarioPreset::Trappist1System)
+                && e.format_tag == "JSON"
+        }));
+        assert!(entries.iter().any(|e| {
+            e.slot_name == "solar_nebula_01"
+                && e.scenario_preset == Some(ScenarioPreset::SolarNebulaMmsn)
+                && e.format_tag == "BIN"
+        }));
+
+        // Next suggested slot increments past existing trappist1_01
+        let next_trappist =
+            suggest_next_slot_name_in_dir(dir, Some(ScenarioPreset::Trappist1System));
+        assert_eq!(next_trappist, "trappist1_02");
+        let next_kepler =
+            suggest_next_slot_name_in_dir(dir, Some(ScenarioPreset::Kepler16Circumbinary));
+        assert_eq!(next_kepler, "kepler16_01");
+
+        // Refuse parent-traversal and non-save JSON deletion
+        assert!(delete_save_slot_file("../Cargo.toml").is_err());
+        assert!(delete_save_slot_file(&rogue_json.to_string_lossy()).is_err());
+        assert!(rogue_json.exists(), "Non-save JSON must not be deleted");
+
+        // Deleting a valid save removes only that file
+        delete_save_slot_file(&trappist_path.to_string_lossy()).expect("delete valid save");
+        assert!(!trappist_path.exists());
+        assert!(mmsn_path.exists());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

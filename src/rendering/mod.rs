@@ -2,6 +2,7 @@
 
 pub mod bodies;
 pub mod camera;
+pub(crate) mod camera_picking;
 pub mod effects;
 pub mod gas_clouds;
 pub mod materials;
@@ -64,6 +65,7 @@ impl Plugin for RenderingPlugin {
                 MaterialPlugin::<CircumstellarMaterial>::default(),
                 PostProcessingPlugin,
             ))
+            .add_plugins(MaterialPlugin::<particle_swarm::ParticleSwarmMaterial>::default())
             .add_systems(
                 Startup,
                 (

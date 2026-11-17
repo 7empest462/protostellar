@@ -10,13 +10,20 @@ use super::types::ScrollableInspector;
 /// Handles mouse wheel scrolling for any scrollable UI panel (Inspector, Quick Selector, etc).
 pub fn handle_inspector_scroll(
     mut mouse_wheel: MessageReader<MouseWheel>,
-    mut scroll_query: Query<(Entity, &mut ScrollPosition, &ComputedNode)>,
+    mut scroll_query: Query<(
+        Entity,
+        &mut ScrollPosition,
+        &ComputedNode,
+        Option<&bevy::ui::UiGlobalTransform>,
+        Option<&Node>,
+    )>,
     interaction_query: Query<(
         Entity,
         &bevy::picking::hover::Hovered,
         Has<bevy::ui::Pressed>,
     )>,
     parent_query: Query<&ChildOf>,
+    windows: Query<&Window>,
 ) {
     let mut total_delta_y = 0.0;
     for ev in mouse_wheel.read() {
@@ -30,10 +37,29 @@ pub fn handle_inspector_scroll(
         return;
     }
 
-    for (scroll_entity, mut scroll_position, computed) in scroll_query.iter_mut() {
-        if is_inspector_hovered(scroll_entity, &interaction_query, &parent_query) {
-            // ComputedNode sizes are in the same logical pixel space. No scale factor needed.
-            let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0);
+    let cursor_pos = windows.single().ok().and_then(Window::cursor_position);
+
+    for (scroll_entity, mut scroll_position, computed, opt_ui_gt, opt_node) in
+        scroll_query.iter_mut()
+    {
+        if opt_node.is_some_and(|n| n.display == Display::None) {
+            continue;
+        }
+        // ComputedNode sizes are in the same logical pixel space. No scale factor needed.
+        let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0);
+        if max_offset_y <= 0.5 {
+            continue;
+        }
+        let over_rect = cursor_pos.zip(opt_ui_gt).is_some_and(|(pos, ui_gt)| {
+            let inv = computed.inverse_scale_factor();
+            let half = computed.size() * inv * 0.5;
+            let center = ui_gt.translation * inv;
+            pos.x >= center.x - half.x
+                && pos.x <= center.x + half.x
+                && pos.y >= center.y - half.y
+                && pos.y <= center.y + half.y
+        });
+        if over_rect || is_inspector_hovered(scroll_entity, &interaction_query, &parent_query) {
             scroll_position.y = (scroll_position.y + total_delta_y).clamp(0.0, max_offset_y);
         }
     }

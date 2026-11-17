@@ -86,6 +86,7 @@ pub struct CollisionContext<'a, 'c1, 'c2, 'q1, 'q2, 'm1, 'm2, 'm3, 'm4, 'm5> {
     pub pending_despawns: &'a mut SmallVec<[Entity; 32]>,
     pub star_mass: f64,
     pub sim_time_years: f64,
+    pub dt_yr: f64,
 }
 
 pub fn sort_collision_pair(b1: &BodySnapshot, b2: &BodySnapshot) -> SortedPair {

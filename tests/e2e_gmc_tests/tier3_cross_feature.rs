@@ -20,7 +20,7 @@ fn test_t3_fluid_advection_triggers_jeans_collapse() {
     let sigma_v = 0.5; // km/s
     let m_jeans_initial = calculate_turbulent_jeans_mass_solar(cell_density, temp_k, sigma_v);
 
-    let cell_vol = GMC_CELL_VOLUME_AU3 as f64;
+    let cell_vol = f64::from(GMC_CELL_VOLUME_AU3);
     let initial_cell_mass = cell_density * cell_vol;
     assert!(
         initial_cell_mass < m_jeans_initial,
@@ -71,7 +71,7 @@ fn test_t3_protostar_ignition_drives_cavity_carving() {
         sink_radius_au: 15.0,
         radiation_pressure_factor: 0.1,
         is_ignited: 0,
-        _pad: [0, 0],
+        padding: [0, 0],
     };
     let cavity_r_pre = calculate_ionization_cavity_radius_au(45.0, ambient_density, false);
     assert_eq!(cavity_r_pre, 0.0);

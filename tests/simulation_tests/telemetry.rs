@@ -24,13 +24,13 @@ fn test_telemetry_ring_buffer_capacity_and_eviction() {
 
     for i in 1..=10 {
         history.push_sample(PlanetaryTelemetrySample {
-            sim_time_yr: i as f64 * 100.0,
+            sim_time_yr: f64::from(i) * 100.0,
             body_name: "Test-World".to_string(),
-            mass_earth: 1.0 + (i as f64 * 0.1),
+            mass_earth: 1.0 + (f64::from(i) * 0.1),
             radius_km: 6371.0,
             semi_major_axis_au: 1.0,
             eccentricity: 0.01,
-            surface_temp_k: 280.0 + i as f64,
+            surface_temp_k: 280.0 + f64::from(i),
             atmospheric_pressure_bar: 1.0,
             ocean_coverage_frac: 0.7,
             habitability_score: 0.8,

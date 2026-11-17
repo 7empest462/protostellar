@@ -88,9 +88,7 @@ fn test_kerr_isco_analytical_shifts() {
     let isco_prog = calculate_kerr_isco_radius(mass_solar, 0.9999);
     assert!(
         (isco_prog - r_g).abs() < 0.15 * r_g,
-        "Near-extremal prograde ISCO must approach ~1 r_g (got {:.6}, r_g = {:.6})",
-        isco_prog,
-        r_g
+        "Near-extremal prograde ISCO must approach ~1 r_g (got {isco_prog:.6}, r_g = {r_g:.6})"
     );
     assert!(
         isco_prog < isco_schwa,
@@ -226,8 +224,10 @@ fn test_sagittarius_a_scenario_initializes_kerr_metric() {
 fn test_little_red_dot_blowout_reveals_supermassive_black_hole() {
     let mut app = App::new();
     app.init_resource::<TimeWarp>();
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 0.1;
+    let sim_time = SimTime {
+        current_dt_yr: 0.1,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let bh_core_mass = 400_000.0;

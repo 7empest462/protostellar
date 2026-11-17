@@ -127,9 +127,13 @@ pub fn step_pulsar_glitches_system(
         }
     }
 
-    let dt_years = sim_time
-        .as_ref()
-        .map_or(0.016, |s| s.current_dt_yr.max(1e-6));
+    let dt_years = sim_time.as_ref().map_or(0.016, |s| {
+        if s.current_dt_yr > 0.0 {
+            s.current_dt_yr
+        } else {
+            1e-6
+        }
+    });
     let elapsed_years = sim_time.as_ref().map_or(0.0, |s| s.elapsed_years);
     let dt_sec = dt_years * 31_557_600.0;
 

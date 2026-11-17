@@ -48,7 +48,10 @@ pub fn update_atmospheric_escape_evolution(
             Option<&PlanetaryClimate>,
             Option<&mut AtmosphericEscapeState>,
         ),
-        Without<CentralStar>,
+        (
+            Without<CentralStar>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
     >,
 ) {
     if (!config.enable_thermodynamics || time_warp.is_paused) && !time_warp.step_once {
@@ -60,7 +63,11 @@ pub fn update_atmospheric_escape_evolution(
         return;
     };
 
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
+    let dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
+    };
     let l_xuv_watts = calculate_stellar_xuv_luminosity(star_lum.0, sim_time.elapsed_years);
 
     for (

@@ -86,11 +86,13 @@ pub fn draw_circumstellar_habitable_zone_and_frost_lines(
 
     // 4. Inner Scorching / Volatile Sublimation Line (0.20 sqrt(L) AU)
     let r_soot = 0.20 * scale;
-    gizmos.circle(
-        Isometry3d::new(star_pos, ring_rot),
-        r_soot,
-        Color::srgba(1.00, 0.40, 0.15, 0.30),
-    );
+    gizmos
+        .circle(
+            Isometry3d::new(star_pos, ring_rot),
+            r_soot,
+            Color::srgba(1.00, 0.40, 0.15, 0.22),
+        )
+        .resolution(128);
 }
 
 fn draw_conservative_habitable_zone(
@@ -99,19 +101,21 @@ fn draw_conservative_habitable_zone(
     ring_rot: Quat,
     scale: f32,
 ) {
-    // Stepped concentric rings to form a lush semi-transparent green annular band
+    // Stepped concentric high-res rings forming a translucent observatory annular band
     let steps = [
-        (0.95, Color::srgba(0.20, 0.90, 0.45, 0.40)),
-        (1.07, Color::srgba(0.22, 0.94, 0.50, 0.42)),
-        (1.20, Color::srgba(0.25, 0.98, 0.55, 0.48)),
-        (1.35, Color::srgba(0.20, 0.92, 0.52, 0.45)),
-        (1.50, Color::srgba(0.15, 0.86, 0.58, 0.40)),
-        (1.67, Color::srgba(0.10, 0.80, 0.62, 0.38)),
+        (0.95, Color::srgba(0.20, 0.90, 0.45, 0.26)),
+        (1.07, Color::srgba(0.22, 0.94, 0.50, 0.22)),
+        (1.20, Color::srgba(0.25, 0.98, 0.55, 0.26)),
+        (1.35, Color::srgba(0.20, 0.92, 0.52, 0.22)),
+        (1.50, Color::srgba(0.15, 0.86, 0.58, 0.20)),
+        (1.67, Color::srgba(0.10, 0.80, 0.62, 0.24)),
     ];
 
     for (fraction, color) in steps {
         let r = fraction * scale;
-        gizmos.circle(Isometry3d::new(star_pos, ring_rot), r, color);
+        gizmos
+            .circle(Isometry3d::new(star_pos, ring_rot), r, color)
+            .resolution(128);
     }
 }
 
@@ -123,49 +127,52 @@ fn draw_optimistic_habitable_shelves(
 ) {
     // Recent Venus inner optimistic boundary (0.75 - 0.95)
     let r_opt_in = 0.75 * scale;
-    gizmos.circle(
-        Isometry3d::new(star_pos, ring_rot),
-        r_opt_in,
-        Color::srgba(0.85, 0.90, 0.25, 0.25),
-    );
+    gizmos
+        .circle(
+            Isometry3d::new(star_pos, ring_rot),
+            r_opt_in,
+            Color::srgba(0.85, 0.90, 0.25, 0.18),
+        )
+        .resolution(128);
 
     // Early Mars outer optimistic boundary (1.67 - 1.77)
     let r_opt_out = 1.77 * scale;
-    gizmos.circle(
-        Isometry3d::new(star_pos, ring_rot),
-        r_opt_out,
-        Color::srgba(0.20, 0.75, 0.92, 0.25),
-    );
+    gizmos
+        .circle(
+            Isometry3d::new(star_pos, ring_rot),
+            r_opt_out,
+            Color::srgba(0.20, 0.75, 0.92, 0.18),
+        )
+        .resolution(128);
 }
 
 fn draw_water_ice_snow_line(gizmos: &mut Gizmos, star_pos: Vec3, ring_rot: Quat, scale: f32) {
     let r_snow = 2.70 * scale;
 
-    // Double concentric frosty cyan ring
-    gizmos.circle(
-        Isometry3d::new(star_pos, ring_rot),
-        r_snow,
-        Color::srgba(0.40, 0.85, 1.00, 0.65),
-    );
-    gizmos.circle(
-        Isometry3d::new(star_pos, ring_rot),
-        r_snow * 1.015,
-        Color::srgba(0.55, 0.90, 1.00, 0.35),
-    );
+    // Double concentric high-res frosty cyan hairline ring
+    gizmos
+        .circle(
+            Isometry3d::new(star_pos, ring_rot),
+            r_snow,
+            Color::srgba(0.42, 0.86, 1.00, 0.42),
+        )
+        .resolution(128);
+    gizmos
+        .circle(
+            Isometry3d::new(star_pos, ring_rot),
+            r_snow * 1.012,
+            Color::srgba(0.55, 0.90, 1.00, 0.22),
+        )
+        .resolution(128);
 
-    // 8 Ice-crystal tick markers placed radially along the frost line
-    let tick_length = (0.06 * scale).clamp(0.04, 0.8);
+    // Fine radial vernier ticks along the frost line
+    let tick_length = (0.045 * scale).clamp(0.025, 0.55);
     for k in 0..8 {
         let angle = (k as f32) * FRAC_PI_4;
         let dir_x = angle.cos();
         let dir_z = angle.sin();
 
-        let pt_inner = star_pos
-            + Vec3::new(
-                dir_x * (r_snow - tick_length),
-                0.0,
-                dir_z * (r_snow - tick_length),
-            );
+        let pt_inner = star_pos + Vec3::new(dir_x * r_snow, 0.0, dir_z * r_snow);
         let pt_outer = star_pos
             + Vec3::new(
                 dir_x * (r_snow + tick_length),
@@ -173,18 +180,7 @@ fn draw_water_ice_snow_line(gizmos: &mut Gizmos, star_pos: Vec3, ring_rot: Quat,
                 dir_z * (r_snow + tick_length),
             );
 
-        gizmos.line(pt_inner, pt_outer, Color::srgba(0.65, 0.92, 1.00, 0.75));
-
-        // Transverse diamond tick
-        let perp_x = -dir_z;
-        let perp_z = dir_x;
-        let pt_center = star_pos + Vec3::new(dir_x * r_snow, 0.0, dir_z * r_snow);
-        let perp_offset = Vec3::new(perp_x, 0.0, perp_z) * (tick_length * 0.4);
-        gizmos.line(
-            pt_center - perp_offset,
-            pt_center + perp_offset,
-            Color::srgba(0.65, 0.92, 1.00, 0.75),
-        );
+        gizmos.line(pt_inner, pt_outer, Color::srgba(0.65, 0.92, 1.00, 0.48));
     }
 }
 

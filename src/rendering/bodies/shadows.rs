@@ -147,19 +147,41 @@ pub fn compute_eclipse_moons_data(
     let inv_vis_r = 1.0 / visual_radius.max(1e-5);
     let max_unbound_moon_dist_sq = (visual_radius * 40.0).max(0.025).powi(2);
 
+    // If `entity` is a satellite, resolve its host parent entity (`p != Some(e)` filters out
+    // self-tagged host planets so planets never treat themselves as having a parent).
+    let my_parent = all_moons.iter().find_map(|&(e, _, _, p)| {
+        if e == entity && p.is_some_and(|parent| parent != e) {
+            p
+        } else {
+            None
+        }
+    });
+    let mut parent_planetshine: Option<Vec4> = None;
+
     for &(m_ent, m_pos, m_rad, opt_parent) in all_moons {
         if m_ent == entity {
             continue;
         }
         let d_vec = m_pos - planet_pos;
         let d_len_sq = d_vec.length_squared();
-        let is_child_moon = opt_parent == Some(entity)
+        let is_child_moon = (opt_parent == Some(entity) && m_ent != entity)
             || (opt_parent.is_none() && d_len_sq < max_unbound_moon_dist_sq);
-        if !is_child_moon {
+        let is_my_parent = my_parent == Some(m_ent);
+        if !is_child_moon && !is_my_parent {
             continue;
         }
         let s = d_vec.dot(star_dir);
         if s <= 0.0 {
+            if is_my_parent {
+                // Moon's night side faces the sunlit hemisphere of its parent planet -> planetshine
+                let mut norm_pos = d_vec * inv_vis_r;
+                let s_norm = norm_pos.dot(star_dir);
+                if s_norm > -1.25 {
+                    norm_pos -= star_dir * (1.25 + s_norm);
+                }
+                let norm_rad = (m_rad * inv_vis_r).clamp(0.08, 8.0);
+                parent_planetshine = Some(Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad));
+            }
             continue;
         }
         let d_perp_sq = (d_len_sq - s * s).max(0.0);
@@ -173,7 +195,8 @@ pub fn compute_eclipse_moons_data(
         if s_norm < 1.30 {
             norm_pos += star_dir * (1.30 - s_norm);
         }
-        let norm_rad = (m_rad * inv_vis_r).clamp(0.08, 0.65);
+        let max_norm_rad = if is_my_parent { 8.0 } else { 0.65 };
+        let norm_rad = (m_rad * inv_vis_r).clamp(0.08, max_norm_rad);
         let entry = (
             d_perp_sq,
             Vec4::new(norm_pos.x, norm_pos.y, norm_pos.z, norm_rad),
@@ -205,6 +228,15 @@ pub fn compute_eclipse_moons_data(
         if dist_sq.is_finite() {
             *dst_pos = pos;
             *dst_data = active_data;
+        }
+    }
+
+    if let Some(ps_pos) = parent_planetshine {
+        if let (Some(dst_pos), Some(dst_data)) = (moons_pos.first_mut(), moons_data.first_mut()) {
+            if dst_data.x < 0.5 {
+                *dst_pos = ps_pos;
+                *dst_data = active_data;
+            }
         }
     }
     (moons_pos, moons_data)

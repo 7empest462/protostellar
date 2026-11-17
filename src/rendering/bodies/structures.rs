@@ -201,7 +201,7 @@ pub fn sync_planetary_rings(
                 for child in children.iter() {
                     if ring_children_query.get(child).is_ok() {
                         if let Ok(mut cmd) = commands.get_entity(child) {
-                            cmd.despawn();
+                            cmd.try_despawn();
                         }
                     }
                 }
@@ -646,7 +646,7 @@ pub fn sync_magnetar_structures(
         })
         .or_else(|| {
             magnetar_query.iter().find(|(_, body, _)| {
-                body.name.to_lowercase().contains("magnetar")
+                crate::utils::math::contains_ignore_ascii_case(&body.name, "magnetar")
                     && !body.name.contains("Clump")
                     && !body.name.contains("Ejecta")
             })

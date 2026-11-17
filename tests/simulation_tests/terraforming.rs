@@ -587,13 +587,13 @@ fn test_guided_bombardment_orbiting_target_zero_miss() {
 fn test_hydrosphere_sea_level_adjustments() {
     let mut comp = Composition::rocky();
     let mut vol = VolatileInventory {
-        delivered_water_m_earth: 0.000426,
+        delivered_water_m_earth: 0.000_426,
         ocean_coverage_frac: 0.71,
         atmospheric_pressure_bar: 1.0,
         cometary_impact_count: 5,
     };
     let mut terra = TerraformingAtmosphere {
-        surface_liquid_water_m_earth: 0.000426,
+        surface_liquid_water_m_earth: 0.000_426,
         atmospheric_water_m_earth: 0.0,
         co2_pressure_bar: 0.0004,
         nitrogen_pressure_bar: 0.78,
@@ -624,7 +624,7 @@ fn test_hydrosphere_sea_level_adjustments() {
     assert_eq!(climate.climate_regime, ClimateRegime::TemperateHabitable);
 
     // 2. Add water (+10% sea level -> ~81%)
-    terra.surface_liquid_water_m_earth = (0.81 * 0.0006) as f64;
+    terra.surface_liquid_water_m_earth = 0.81 * 0.0006;
     update_body_terraforming_climate(
         &mut vol,
         &mut terra,
@@ -688,5 +688,162 @@ fn test_climate_boiling_steam_cloud_transition() {
     assert_eq!(
         climate.albedo, 0.72,
         "Venusian steam runaway must have high reflectivity albedo"
+    );
+}
+
+fn setup_cooled_earth_comet_impact_app() -> (App, Entity, Entity) {
+    use protostellar::simulation::components::{
+        IgnitionState, Luminosity, PlanetaryEngulfmentEvent, SupernovaEvent,
+    };
+    use protostellar::simulation::thermodynamics::{update_thermodynamics, StarIgnitionEvent};
+
+    let mut app = App::new();
+    app.init_resource::<SimTime>();
+    app.init_resource::<TimeWarp>();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<DiskParameters>();
+    app.init_resource::<EnergyMonitor>();
+    app.init_resource::<PlayerInteractionState>();
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    app.add_message::<BombardmentEvent>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_message::<SupernovaEvent>();
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Luminosity(1.0),
+        Temperature(5778.0),
+        IgnitionState {
+            core_temperature: 1.5e7,
+            fusion_fraction: 1.0,
+            is_ignited: true,
+            shockwave_radius: 30.0,
+        },
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration::default(),
+        Radius(SOLAR_RADIUS_AU),
+    ));
+
+    // Cooled Earth with 85% pebble-accreted ocean coverage and NO prior TerraformingAtmosphere
+    let v_circ = (G_ASTRO * 1.0 / 1.0).sqrt();
+    let target_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Cooled-Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU),
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, v_circ)),
+            SimAcceleration::default(),
+            Temperature(315.0),
+            Composition::rocky(),
+            VolatileInventory {
+                delivered_water_m_earth: 0.000_425,
+                ocean_coverage_frac: 0.85,
+                atmospheric_pressure_bar: 1.06,
+                cometary_impact_count: 0,
+            },
+            PlanetaryClimate {
+                surface_temperature_k: 315.0,
+                equilibrium_temperature_k: 255.0,
+                greenhouse_delta_k: 60.0,
+                albedo: 0.30,
+                ice_coverage_frac: 0.0,
+                cloud_coverage_frac: 0.56,
+                climate_regime: ClimateRegime::TemperateHabitable,
+                polar_ice_cap_latitude_deg: 90.0,
+            },
+            InternalDifferentiation::default(),
+        ))
+        .id();
+
+    let proj_ent = launch_targeted_bombardment(
+        &mut app.world_mut().commands(),
+        target_ent,
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, v_circ),
+        EARTH_MASS_SOLAR,
+        EARTH_RADIUS_AU,
+        "Cooled-Earth",
+        BombardmentType::IcyComet,
+        0.0,
+    );
+
+    app.add_systems(
+        Update,
+        (
+            protostellar::simulation::physics::step_physics_simulation,
+            update_thermodynamics,
+            update_guided_bombardment_projectiles,
+            update_terraforming_atmospheres,
+        )
+            .chain(),
+    );
+
+    (app, target_ent, proj_ent)
+}
+
+#[test]
+fn test_guided_comet_impact_preserves_and_grows_existing_85_percent_oceans() {
+    let (mut app, target_ent, proj_ent) = setup_cooled_earth_comet_impact_app();
+
+    let dt = 0.0005f64;
+    for _ in 0..25 {
+        {
+            let mut sim_time = app.world_mut().resource_mut::<SimTime>();
+            sim_time.elapsed_years += dt;
+            sim_time.current_dt_yr = dt;
+        }
+        app.update();
+    }
+
+    assert!(
+        app.world().get_entity(proj_ent).is_err(),
+        "Guided comet projectile must have impacted target"
+    );
+
+    let vol = app
+        .world()
+        .get::<VolatileInventory>(target_ent)
+        .expect("Target must keep VolatileInventory");
+    let terra = app
+        .world()
+        .get::<TerraformingAtmosphere>(target_ent)
+        .expect("Target must have TerraformingAtmosphere");
+    let temp = app
+        .world()
+        .get::<Temperature>(target_ent)
+        .expect("Temperature")
+        .0;
+    let climate = app
+        .world()
+        .get::<PlanetaryClimate>(target_ent)
+        .expect("Climate");
+    assert!(
+        vol.delivered_water_m_earth > 0.0005,
+        "Icy comet must add to pre-existing 85% ocean water instead of replacing it: got {:.6}",
+        vol.delivered_water_m_earth
+    );
+    assert!(
+        vol.ocean_coverage_frac >= 0.85,
+        "Earth at 85% sea level must NOT lose ocean coverage after icy comet impact: got {:.4} (temp={:.2}, climate_t={:.2}, t_eq={:.2}, liq={:.6}, steam={:.6}, p_co2={:.3}, p_n2={:.3})",
+        vol.ocean_coverage_frac,
+        temp,
+        climate.surface_temperature_k,
+        climate.equilibrium_temperature_k,
+        terra.surface_liquid_water_m_earth,
+        terra.atmospheric_water_m_earth,
+        terra.co2_pressure_bar,
+        terra.nitrogen_pressure_bar,
     );
 }

@@ -63,11 +63,19 @@ fn main(
     let min_r = max(uniforms.inner_radius * 0.5, 0.001);
     var r = max(sqrt(dx * dx + dz * dz), min_r);
     var phi = atan2(dz, dx);
+    let prev_phi = phi;
 
     // Effective stellar mass (radiation pressure reduces effective gravity by ~0.05%)
     let m_eff = uniforms.star_mass * (1.0 - 0.0005);
     let omega = sqrt(uniforms.g_const * m_eff / (r * r * r));
     let v_k = omega * r;
+    let v_circ_prev = vec3<f32>(-v_k * sin(prev_phi), 0.0, v_k * cos(prev_phi));
+    let has_prev_vel = dot(p.vel_temp.xyz, p.vel_temp.xyz) > 1.0e-10;
+    let v_pert = select(
+        vec3<f32>(0.0, 0.0, 0.0),
+        (p.vel_temp.xyz - v_circ_prev) * exp(-2.5 * uniforms.dt),
+        has_prev_vel,
+    );
 
     // Smooth orbital phase advance
     phi = phi + omega * uniforms.dt;
@@ -79,11 +87,13 @@ fn main(
         let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
         let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
         let drag_rate = min(0.000005 * gas_density, 0.0005);
-        // Inner terrestrial silicate sublimation front & aerodynamic trap (~0.35 AU)
+        // Inner terrestrial silicate sublimation front (~0.35 AU) & snow-line cold-finger trap (~2.7 AU)
         let inner_trap_boundary = max(uniforms.inner_radius * 2.0, 0.35);
         let inner_retention = clamp((r - inner_trap_boundary) / 0.85, -0.25, 1.0);
+        let dr_snow = r - 2.7;
+        let snow_trap = 1.0 - 1.80 * exp(-(dr_snow * dr_snow) / (2.0 * 0.25 * 0.25));
         let max_mig = select(r * 0.005, r * 0.0012, r < 2.0);
-        let migration = clamp(r * drag_rate * uniforms.dt * inner_retention, -r * 0.001, max_mig);
+        let migration = clamp(r * drag_rate * uniforms.dt * inner_retention * snow_trap, -r * 0.001, max_mig);
         r = max(r - migration, uniforms.inner_radius * 0.95);
     }
 
@@ -112,8 +122,8 @@ fn main(
     pos.y = clamp(pos.y * exp(-0.02 * uniforms.dt), -h_disk * 2.5, h_disk * 2.5);
     pos.z = star.z + r * sin(phi);
 
-    // Baseline circular velocity
-    var vel = vec3<f32>(-v_k * sin(phi), 0.0, v_k * cos(phi));
+    // Baseline circular velocity plus carried non-circular perturbation
+    var vel = vec3<f32>(-v_k * sin(phi), 0.0, v_k * cos(phi)) + v_pert;
 
     // Phase 2: Planetary Perturbations & Hill-Sphere Resonant Clearing (cached via workgroup LDS)
     var a_pert = vec3<f32>(0.0, 0.0, 0.0);
@@ -130,7 +140,7 @@ fn main(
         let dist = sqrt(dist_sq);
 
         // Planetary Accretion Check: If particle enters physical/bound envelope, absorb it!
-        let p_dist_au = max(length(mb.xyz), 0.001);
+        let p_dist_au = max(length(mb.xyz - star), 0.001);
         let hill_r = p_dist_au * pow(m_body_mass / (3.0 * uniforms.star_mass), 0.3333333);
         let physical_r = clamp(0.0000426 * pow(m_body_mass / 0.000003003, 0.3333333), 0.00001, 0.010);
         let is_massive = uniforms.star_mass > 10.0;
@@ -169,9 +179,9 @@ fn main(
         a_pert = a_pert * (max_a / a_mag);
     }
 
-    // Apply acceleration perturbations smoothly
+    // Apply acceleration perturbations and carried non-circular drift smoothly
     vel = vel + a_pert * uniforms.dt;
-    pos = pos + a_pert * (0.5 * uniforms.dt * uniforms.dt);
+    pos = pos + v_pert * uniforms.dt + a_pert * (0.5 * uniforms.dt * uniforms.dt);
     pos.y = clamp(pos.y, -h_disk * 2.8, h_disk * 2.8);
 
     // Enforce cosmic speed limit (AU/yr)

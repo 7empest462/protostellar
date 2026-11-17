@@ -49,9 +49,9 @@ pub struct SimulationConfig {
 /// Selectable particle swarm density tier for GPU Keplerian orbit mechanics and N-body simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ParticleDensityTier {
-    #[default]
     Standard100k,
     High250k,
+    #[default]
     Ultra500k,
 }
 
@@ -91,14 +91,14 @@ impl Default for SimulationConfig {
             enable_gas_drag: true,
             enable_accretion: true,
             enable_thermodynamics: true,
-            target_particle_count: 100_000,
+            target_particle_count: 500_000,
             accretion_rate_multiplier: 120.0,
             gas_density_scale: 1.0,
-            active_particles: 100_000,
-            particle_render_scale: 0.3,
+            active_particles: 500_000,
+            particle_render_scale: 0.12,
             size_exaggeration: 1.0,
             min_body_visual_radius: 0.0006,
-            particle_density: ParticleDensityTier::Standard100k,
+            particle_density: ParticleDensityTier::Ultra500k,
             enable_gpu_compute: true,
             gpu_compute_active: false,
         }

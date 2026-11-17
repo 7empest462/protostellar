@@ -193,7 +193,7 @@ pub fn update_thermodynamics(
     mut bodies_query: Query<
         (
             Entity,
-            &Mass,
+            &mut Mass,
             &SimPosition,
             &mut SimVelocity,
             &mut Temperature,
@@ -206,14 +206,22 @@ pub fn update_thermodynamics(
             Option<&mut BiosphereState>,
             Option<&SatelliteOf>,
         ),
-        (Without<CentralStar>, Without<IgnitionState>),
+        (
+            Without<CentralStar>,
+            Without<IgnitionState>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
     >,
 ) {
     if (!config.enable_thermodynamics || time_warp.is_paused) && !time_warp.step_once {
         return;
     }
 
-    let dt_yr = sim_time.current_dt_yr.max(config.base_dt_yr);
+    let dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
+    };
     let is_gmc = scenario_state.is_some_and(|s| {
         s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
     });
@@ -253,7 +261,7 @@ fn update_disk_bodies_thermodynamics(
     bodies_query: &mut Query<
         (
             Entity,
-            &Mass,
+            &mut Mass,
             &SimPosition,
             &mut SimVelocity,
             &mut Temperature,
@@ -266,7 +274,11 @@ fn update_disk_bodies_thermodynamics(
             Option<&mut BiosphereState>,
             Option<&SatelliteOf>,
         ),
-        (Without<CentralStar>, Without<IgnitionState>),
+        (
+            Without<CentralStar>,
+            Without<IgnitionState>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
     >,
     stars_info: &[StarThermoInfo],
     dt_yr: f64,
@@ -275,7 +287,7 @@ fn update_disk_bodies_thermodynamics(
 ) {
     for (
         body_ent,
-        b_mass,
+        mut b_mass,
         pos,
         mut vel,
         mut p_temp,
@@ -311,7 +323,7 @@ fn update_disk_bodies_thermodynamics(
         update_body_thermodynamics(
             commands,
             body_ent,
-            b_mass.0,
+            &mut b_mass,
             rel_pos,
             &mut vel,
             &mut p_temp,
@@ -440,6 +452,8 @@ fn apply_stellar_wind_and_outer_thaw(
 
     if star_lum > 500.0 && (25.0..=65.0).contains(&r) && comp.ice_frac > 0.25 {
         if let Some(ref mut vol) = opt_vol {
+            vol.delivered_water_m_earth =
+                (vol.delivered_water_m_earth + 0.000_01 * dt_yr).min(0.0005 * 0.85);
             vol.ocean_coverage_frac = (vol.ocean_coverage_frac + 0.02 * dt_yr as f32).min(0.85);
             vol.atmospheric_pressure_bar =
                 (vol.atmospheric_pressure_bar + 0.03 * dt_yr as f32).min(1.2);
@@ -447,32 +461,26 @@ fn apply_stellar_wind_and_outer_thaw(
     }
 }
 
-fn apply_shockwave_ice_sublimation(comp: &mut Composition, r: f64, shockwave_r: f64, dt_yr: f64) {
+fn apply_shockwave_ice_sublimation(
+    mass: &mut Mass,
+    comp: &mut Composition,
+    r: f64,
+    shockwave_r: f64,
+    dt_yr: f64,
+) {
     if shockwave_r > r && r < 2.7 && comp.ice_frac > 0.001 {
         let sublimated = (comp.ice_frac * 0.15 * dt_yr).min(comp.ice_frac);
-        comp.ice_frac -= sublimated;
-        comp.silicate_frac += sublimated * 0.7;
-        comp.metal_frac += sublimated * 0.3;
-
-        let sum = comp.silicate_frac
-            + comp.metal_frac
-            + comp.ice_frac
-            + comp.organics_frac
-            + comp.gas_frac;
-        if sum > 0.0 {
-            comp.silicate_frac /= sum;
-            comp.metal_frac /= sum;
-            comp.ice_frac /= sum;
-            comp.organics_frac /= sum;
-            comp.gas_frac /= sum;
-        }
+        let dm_lost = mass.0 * sublimated;
+        mass.0 = (mass.0 - dm_lost).max(1e-15);
+        comp.ice_frac = (comp.ice_frac - sublimated).max(0.0);
+        *comp = comp.normalized();
     }
 }
 
 fn update_body_thermodynamics(
     commands: &mut Commands,
     body_ent: Entity,
-    b_mass_solar: f64,
+    b_mass: &mut Mass,
     pos: DVec3,
     vel: &mut SimVelocity,
     p_temp: &mut Temperature,
@@ -496,6 +504,7 @@ fn update_body_thermodynamics(
         return;
     }
 
+    let b_mass_solar = b_mass.0;
     let r = pos.length().max(1e-4);
     let period_hrs = opt_spin.map_or(24.0, |s| s.rotation_period_hours);
 
@@ -547,5 +556,5 @@ fn update_body_thermodynamics(
         elapsed_years,
     );
 
-    apply_shockwave_ice_sublimation(comp, r, shockwave_r, dt_yr);
+    apply_shockwave_ice_sublimation(b_mass, comp, r, shockwave_r, dt_yr);
 }

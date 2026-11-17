@@ -38,7 +38,9 @@ pub enum MilestoneId {
     CoreDifferentiation,
     StableMultiPlanet,
     GiantPlanetResonance,
+    GiantPlanetEmergence,
     LateHeavyBombardment,
+    PlanetesimalBombardment,
     VolatileOceanDelivery,
     PlanetaryRingGenesis,
     DynamoMagneticShield,
@@ -59,6 +61,10 @@ pub enum MilestoneId {
     QuasarIgnition,
     TidalDisruption,
     KozaiTiltExchange,
+    // High-Energy & Magnetospheric Telemetry
+    MagnetarSuperflare,
+    GeomagneticSuperstorm,
+    BinaryInspiral,
 }
 
 /// A scientific discovery milestone tracking solar system emergence.
@@ -252,6 +258,103 @@ pub fn default_milestones() -> Vec<ScientificMilestone> {
     ]
 }
 
+/// Dedicated 13 scientific milestones for Disk Genesis (organic planet formation with no starter planets).
+pub fn genesis_milestones() -> Vec<ScientificMilestone> {
+    vec![
+        ScientificMilestone {
+            id: MilestoneId::DustCoagulation,
+            title: "🌱 1. Dust Coagulation",
+            prompt: "Observe microscopic grains clumping past the snow line into planetesimals.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::PlanetesimalGrowth,
+            title: "☄️ 2. Oligarchic Embryo Growth",
+            prompt: "Accrete enough disk solids to form a self-gravitating protoplanetary embryo (>0.005 M⊕).",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::StellarIgnition,
+            title: "⭐ 3. T-Tauri Protostellar Ignition",
+            prompt: "Protostellar contraction heats the core to 10 MK, igniting fusion and clearing inner gas.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::GapClearing,
+            title: "🪐 4. Annular Gap Clearing",
+            prompt: "Grow a major planet whose Hill sphere gravitationally clears an annular disk lane.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::CoreDifferentiation,
+            title: "🌍 5. Core Differentiation",
+            prompt: "Achieve iron core / silicate mantle gravitational settling inside a rocky world.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::StableMultiPlanet,
+            title: "🌟 6. Multi-Planet Architecture",
+            prompt: "Build a multi-planet system with three or more organically formed planets.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::GiantPlanetEmergence,
+            title: "🪐 7. Giant Planet Runaway Accretion",
+            prompt: "Grow a planetary core beyond the snow line massive enough to become a Gas Giant or Ice Giant.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::PlanetesimalBombardment,
+            title: "☄️ 8. Organic Late Bombardment",
+            prompt: "Young planets scatter leftover outer planetesimals and icy comets into the inner disk.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::VolatileOceanDelivery,
+            title: "🌊 9. Volatile Ocean Genesis",
+            prompt: "Endogenous pebble volatiles and cometary impacts condense into liquid surface oceans.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::PlanetaryRingGenesis,
+            title: "🪐 10. Planetary Ring Genesis",
+            prompt: "Tidally disrupt an icy moon or captured planetesimal inside a planet's Roche limit to form ring systems.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::DynamoMagneticShield,
+            title: "🛡️ 11. Dynamo Magnetic Shield",
+            prompt: "Generate a convective molten iron core and planetary rotation to sustain a magnetosphere (>0.15 G).",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::BiosphereGenesis,
+            title: "🌱 12. Biosphere Genesis",
+            prompt: "Evolve photosynthetic microbial life on a magnetically shielded temperate world with liquid oceans.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+        ScientificMilestone {
+            id: MilestoneId::StellarMetamorphosis,
+            title: "🌟 13. Stellar Metamorphosis & White Dwarf Remnant",
+            prompt: "Witness the central star expand into a Red Giant, engulf inner worlds, and contract into a White Dwarf.",
+            achieved: false,
+            achieve_timestamp: None,
+        },
+    ]
+}
+
 /// Dedicated 5 scientific milestones for Giant Molecular Cloud (GMC) collapse and cluster formation.
 pub fn gmc_cluster_milestones() -> Vec<ScientificMilestone> {
     vec![
@@ -296,6 +399,7 @@ pub fn gmc_cluster_milestones() -> Vec<ScientificMilestone> {
 #[derive(Default)]
 struct SystemStats {
     planets: usize,
+    giant_planets: usize,
     protoplanets: usize,
     planetesimals: usize,
     asteroids: usize,
@@ -310,51 +414,101 @@ struct SystemStats {
     is_red_giant_or_wd: bool,
     has_black_hole: bool,
     stars_count: usize,
+    has_hot_jupiter: bool,
+    has_active_kozai: bool,
+    has_close_relativistic_orbit: bool,
+    has_accreting_compact_object: bool,
+    has_magnetar_flare: bool,
+    has_geomagnetic_storm: bool,
+    has_binary_inspiral: bool,
 }
 
-#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
+type PhaseStarQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Mass,
+        &'static IgnitionState,
+        Option<&'static StellarEvolutionState>,
+        Option<&'static CelestialBody>,
+        Option<&'static crate::simulation::neutron_stars::types::MagnetarCrustStress>,
+    ),
+    With<CentralStar>,
+>;
+
+type PhaseBodiesCoreOptions<'a> = (
+    Option<&'a InternalDifferentiation>,
+    Option<&'a VolatileInventory>,
+    Option<&'a PlanetaryRingSystem>,
+    Option<&'a BiosphereState>,
+);
+
+type PhaseBodiesTelemetryOptions<'a> = (
+    Option<&'a crate::simulation::kozai_lidov::KozaiLidovState>,
+    Option<&'a crate::simulation::relativity::RelativisticState>,
+    Option<&'a crate::simulation::neutron_stars::types::MagnetarCrustStress>,
+    Option<&'a crate::simulation::space_weather::AuroralOvalState>,
+);
+
+type PhaseBodiesQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Mass,
+        &'static CelestialBody,
+        &'static SimPosition,
+        PhaseBodiesCoreOptions<'static>,
+        PhaseBodiesTelemetryOptions<'static>,
+    ),
+    Without<CentralStar>,
+>;
+
 fn collect_system_statistics(
-    star_query: &Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
-    bodies_query: &Query<
-        (
-            &Mass,
-            &CelestialBody,
-            &SimPosition,
-            Option<&InternalDifferentiation>,
-            Option<&VolatileInventory>,
-            Option<&PlanetaryRingSystem>,
-            Option<&BiosphereState>,
-        ),
-        Without<CentralStar>,
-    >,
+    star_query: &PhaseStarQuery,
+    bodies_query: &PhaseBodiesQuery,
     phase_mgr: &mut PhaseManager,
 ) -> SystemStats {
     let mut stats = SystemStats::default();
 
-    for (mass, body, pos, opt_diff, opt_vol, opt_rings, opt_bio) in bodies_query.iter() {
+    for (
+        mass,
+        body,
+        pos,
+        (opt_diff, opt_vol, opt_rings, opt_bio),
+        (opt_kozai, opt_rel, opt_stress, opt_aurora),
+    ) in bodies_query.iter()
+    {
         if body.body_type == BodyType::BlackHole {
             stats.has_black_hole = true;
+            if mass.0 >= 10.0 {
+                stats.has_accreting_compact_object = true;
+            }
         }
         if body.body_type.is_star_or_remnant() {
             stats.stars_count += 1;
         }
+        let dist_au = pos.0.length();
         match body.body_type {
-            BodyType::TerrestrialPlanet
-            | BodyType::SuperEarth
-            | BodyType::GasGiant
-            | BodyType::IceGiant => stats.planets += 1,
+            BodyType::TerrestrialPlanet | BodyType::SuperEarth => stats.planets += 1,
+            BodyType::GasGiant | BodyType::IceGiant => {
+                stats.planets += 1;
+                stats.giant_planets += 1;
+                if dist_au > 0.0 && dist_au <= 0.15 {
+                    stats.has_hot_jupiter = true;
+                }
+            }
             BodyType::Protoplanet => stats.protoplanets += 1,
             BodyType::Asteroid => {
                 stats.asteroids += 1;
-                stats.belt_census.record(pos.0.length());
+                stats.belt_census.record(dist_au);
             }
             BodyType::Comet => {
                 stats.comets += 1;
-                stats.belt_census.record(pos.0.length());
+                stats.belt_census.record(dist_au);
             }
             BodyType::Planetesimal | BodyType::DustGrain => {
                 stats.planetesimals += 1;
-                stats.belt_census.record(pos.0.length());
+                stats.belt_census.record(dist_au);
             }
             _ => {}
         }
@@ -377,6 +531,23 @@ fn collect_system_statistics(
                 stats.has_biosphere = true;
             }
         }
+        if opt_kozai.is_some_and(|k| k.is_in_resonance) {
+            stats.has_active_kozai = true;
+        }
+        if let Some(rel) = opt_rel {
+            if rel.precession_rate_arcsec_century >= 100.0 || rel.beta_v_over_c >= 0.005 {
+                stats.has_close_relativistic_orbit = true;
+            }
+            if rel.is_coalescing || rel.gw_luminosity_watts >= 1.0e30 {
+                stats.has_binary_inspiral = true;
+            }
+        }
+        if opt_stress.is_some_and(|s| s.burst_active || s.total_starquakes_count > 0) {
+            stats.has_magnetar_flare = true;
+        }
+        if opt_aurora.is_some_and(|a| a.geomagnetic_kp_index >= 7.0) {
+            stats.has_geomagnetic_storm = true;
+        }
         stats.remaining_disk_mass += mass.0;
     }
 
@@ -388,10 +559,16 @@ fn collect_system_statistics(
     phase_mgr.belt_census = stats.belt_census.clone();
     phase_mgr.disk_mass_remaining = stats.remaining_disk_mass;
 
-    if let Ok((mass, ignition, opt_evo)) = star_query.single() {
+    if let Ok((mass, ignition, opt_evo, opt_body, opt_stress)) = star_query.single() {
         stats.stars_count += 1;
         phase_mgr.star_mass = mass.0;
         phase_mgr.is_star_ignited = ignition.is_ignited;
+        if opt_body.is_some_and(|b| b.body_type == BodyType::BlackHole) && mass.0 >= 10.0 {
+            stats.has_accreting_compact_object = true;
+        }
+        if opt_stress.is_some_and(|s| s.burst_active || s.total_starquakes_count > 0) {
+            stats.has_magnetar_flare = true;
+        }
         if let Some(evo) = opt_evo {
             if matches!(
                 evo.phase,
@@ -431,7 +608,11 @@ fn evaluate_scientific_milestones(
             MilestoneId::CoreDifferentiation => stats.has_differentiated,
             MilestoneId::StableMultiPlanet => stats.planets >= 3,
             MilestoneId::GiantPlanetResonance => lhb_state.resonance_crossed,
+            MilestoneId::GiantPlanetEmergence => stats.giant_planets >= 1,
             MilestoneId::LateHeavyBombardment => lhb_state.is_active,
+            MilestoneId::PlanetesimalBombardment => {
+                lhb_state.is_active && (stats.planets >= 1 || lhb_state.comets_scattered > 0)
+            }
             MilestoneId::VolatileOceanDelivery => stats.total_delivered_water >= 0.0005,
             MilestoneId::PlanetaryRingGenesis => stats.has_rings,
             MilestoneId::DynamoMagneticShield => stats.has_dynamo,
@@ -453,11 +634,20 @@ fn evaluate_scientific_milestones(
             }
             MilestoneId::GmcClusterNucleus => stats.has_black_hole || current_sim_yr >= 2500.0,
             MilestoneId::TrappistSurvival => current_sim_yr >= 1000.0 && stats.planets >= 6,
-            MilestoneId::HotJupiterParked => current_sim_yr >= 200.0,
-            MilestoneId::SgrACloseApproach => current_sim_yr >= 50.0,
-            MilestoneId::QuasarIgnition => current_sim_yr >= 20.0,
+            MilestoneId::HotJupiterParked => stats.has_hot_jupiter || current_sim_yr >= 200.0,
+            MilestoneId::SgrACloseApproach => {
+                stats.has_close_relativistic_orbit || current_sim_yr >= 50.0
+            }
+            MilestoneId::QuasarIgnition => {
+                stats.has_accreting_compact_object || current_sim_yr >= 20.0
+            }
             MilestoneId::TidalDisruption => current_sim_yr >= 10.0,
-            MilestoneId::KozaiTiltExchange => current_sim_yr >= 100.0,
+            MilestoneId::KozaiTiltExchange => stats.has_active_kozai || current_sim_yr >= 100.0,
+            MilestoneId::MagnetarSuperflare => stats.has_magnetar_flare || current_sim_yr >= 50.0,
+            MilestoneId::GeomagneticSuperstorm => {
+                stats.has_geomagnetic_storm || current_sim_yr >= 80.0
+            }
+            MilestoneId::BinaryInspiral => stats.has_binary_inspiral || current_sim_yr >= 120.0,
         };
 
         if passed {
@@ -472,6 +662,38 @@ fn evaluate_scientific_milestones(
         phase_mgr.latest_unlocked_milestone = Some(name);
         phase_mgr.milestone_toast_timer = 6.0;
     }
+
+    unlock_dynamic_physical_trophies(stats, phase_mgr, global_trophies);
+}
+
+fn unlock_dynamic_physical_trophies(
+    stats: &SystemStats,
+    phase_mgr: &mut PhaseManager,
+    global_trophies: &mut GlobalTrophies,
+) {
+    let candidates = [
+        (
+            stats.has_magnetar_flare,
+            MilestoneId::MagnetarSuperflare,
+            "⚡ Magnetar Giant Flare",
+        ),
+        (
+            stats.has_geomagnetic_storm,
+            MilestoneId::GeomagneticSuperstorm,
+            "🌌 Carrington Superstorm",
+        ),
+        (
+            stats.has_binary_inspiral,
+            MilestoneId::BinaryInspiral,
+            "🌀 Relativistic Binary Inspiral",
+        ),
+    ];
+    for (condition, id, label) in candidates {
+        if condition && global_trophies.unlocked.insert(id) {
+            phase_mgr.latest_unlocked_milestone = Some(label.to_string());
+            phase_mgr.milestone_toast_timer = 6.0;
+        }
+    }
 }
 
 fn evaluate_system_phase_transitions(
@@ -480,22 +702,43 @@ fn evaluate_system_phase_transitions(
     lhb_state: &mut LateHeavyBombardmentState,
     next_phase: &mut NextState<SystemPhase>,
     current_sim_yr: f64,
+    is_genesis: bool,
 ) {
-    if (current_sim_yr >= 800.0 || lhb_state.resonance_crossed)
+    let lhb_ready = if is_genesis {
+        stats.planets >= 1 && (current_sim_yr >= 800.0 || lhb_state.resonance_crossed)
+    } else {
+        current_sim_yr >= 800.0 || lhb_state.resonance_crossed
+    };
+    let lhb_description = if is_genesis {
+        "☄️ Late Bombardment Epoch! Young planets gravitationally scatter outer planetesimals and icy comets inward."
+    } else {
+        "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward."
+    };
+
+    if lhb_ready
         && matches!(
             phase_mgr.current_phase,
-            SystemPhase::StarIgnition | SystemPhase::PlanetaryAccretion
+            SystemPhase::ProtoplanetaryDisk
+                | SystemPhase::StarIgnition
+                | SystemPhase::PlanetaryAccretion
         )
     {
         lhb_state.is_active = true;
         phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
-        phase_mgr.phase_description =
-            "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
+        phase_mgr.phase_description = lhb_description;
         next_phase.set(SystemPhase::LateHeavyBombardment);
         return;
     }
 
     match phase_mgr.current_phase {
+        SystemPhase::ProtoplanetaryDisk if is_genesis => {
+            if stats.planets + stats.protoplanets >= 1 {
+                phase_mgr.current_phase = SystemPhase::PlanetaryAccretion;
+                phase_mgr.phase_description =
+                    "Planetesimals are actively coalescing into planetary embryos.";
+                next_phase.set(SystemPhase::PlanetaryAccretion);
+            }
+        }
         SystemPhase::StarIgnition => {
             if stats.planets + stats.protoplanets >= 1 {
                 phase_mgr.current_phase = SystemPhase::PlanetaryAccretion;
@@ -505,11 +748,10 @@ fn evaluate_system_phase_transitions(
             }
         }
         SystemPhase::PlanetaryAccretion => {
-            if current_sim_yr >= 800.0 || lhb_state.resonance_crossed {
+            if lhb_ready {
                 lhb_state.is_active = true;
                 phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
-                phase_mgr.phase_description =
-                    "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
+                phase_mgr.phase_description = lhb_description;
                 next_phase.set(SystemPhase::LateHeavyBombardment);
             }
         }
@@ -532,7 +774,11 @@ fn evaluate_system_phase_transitions(
 }
 
 /// Evaluates phase transition conditions based on astrophysical state.
-#[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "bevy ECS query is complex"
+)]
 pub fn monitor_phase_transitions(
     time: Res<Time>,
     sim_time: Res<SimTime>,
@@ -541,20 +787,18 @@ pub fn monitor_phase_transitions(
     mut phase_mgr: ResMut<PhaseManager>,
     mut global_trophies: ResMut<GlobalTrophies>,
     mut ignition_events: MessageReader<StarIgnitionEvent>,
-    star_query: Query<(&Mass, &IgnitionState, Option<&StellarEvolutionState>), With<CentralStar>>,
-    bodies_query: Query<
-        (
-            &Mass,
-            &CelestialBody,
-            &SimPosition,
-            Option<&InternalDifferentiation>,
-            Option<&VolatileInventory>,
-            Option<&PlanetaryRingSystem>,
-            Option<&BiosphereState>,
-        ),
-        Without<CentralStar>,
-    >,
+    mut load_events: Option<MessageReader<crate::simulation::scenarios::LoadScenarioEvent>>,
+    opt_scenario: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    star_query: PhaseStarQuery,
+    bodies_query: PhaseBodiesQuery,
 ) {
+    if load_events
+        .as_mut()
+        .is_some_and(|r| r.read().next().is_some())
+    {
+        return;
+    }
+
     let dt = time.delta_secs();
     if phase_mgr.milestone_toast_timer > 0.0 {
         phase_mgr.milestone_toast_timer -= dt;
@@ -563,11 +807,21 @@ pub fn monitor_phase_transitions(
     let stats = collect_system_statistics(&star_query, &bodies_query, &mut phase_mgr);
     lhb_state.water_delivered_earth_masses = stats.total_delivered_water;
 
+    let is_genesis = opt_scenario.as_deref().is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
+    });
+
     for _ in ignition_events.read() {
-        phase_mgr.current_phase = SystemPhase::StarIgnition;
-        phase_mgr.phase_description =
-            "⭐ Hydrogen fusion has ignited in the core! Radiation pressure sweeps the inner disk.";
-        next_phase.set(SystemPhase::StarIgnition);
+        let can_enter_ignition_phase = matches!(
+            phase_mgr.current_phase,
+            SystemPhase::MolecularCloudCollapse | SystemPhase::ProtoplanetaryDisk
+        );
+        if can_enter_ignition_phase || !is_genesis {
+            phase_mgr.current_phase = SystemPhase::StarIgnition;
+            phase_mgr.phase_description =
+                "⭐ Hydrogen fusion has ignited in the core! Radiation pressure sweeps the inner disk.";
+            next_phase.set(SystemPhase::StarIgnition);
+        }
     }
 
     if lhb_state.manual_trigger_requested {
@@ -577,8 +831,11 @@ pub fn monitor_phase_transitions(
         lhb_state.migration_progress = 0.0;
         lhb_state.time_active_years = 0.0;
         phase_mgr.current_phase = SystemPhase::LateHeavyBombardment;
-        phase_mgr.phase_description =
-            "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward.";
+        phase_mgr.phase_description = if is_genesis {
+            "☄️ Late Bombardment Epoch! Young planets gravitationally scatter outer planetesimals and icy comets inward."
+        } else {
+            "☄️ Late Heavy Bombardment! Giant planet resonance migrates ice giants and flings icy cometary showers inward."
+        };
         next_phase.set(SystemPhase::LateHeavyBombardment);
     }
 
@@ -596,5 +853,6 @@ pub fn monitor_phase_transitions(
         &mut lhb_state,
         &mut next_phase,
         current_sim_yr,
+        is_genesis,
     );
 }

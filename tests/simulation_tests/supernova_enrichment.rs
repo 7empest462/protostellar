@@ -26,8 +26,10 @@ fn test_massive_star_supernova_evolution_in_gmc_cluster() {
     app.add_message::<PlanetaryEngulfmentEvent>();
 
     // Set GMC scenario state
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
     let star_entity = app
@@ -139,8 +141,7 @@ fn test_persistent_remnant_metallicity_sampling() {
     let z_inside = pool.sample_metallicity(Vec3::new(25.0, 0.0, 0.0));
     assert!(
         z_inside >= 0.006,
-        "Inside remnant, metallicity Z must be enriched (got {:.4})",
-        z_inside
+        "Inside remnant, metallicity Z must be enriched (got {z_inside:.4})"
     );
 
     // Sample far outside remnant shell (distance 200 AU)
@@ -158,9 +159,11 @@ fn test_gen2_jeans_collapse_spawns_rocky_planetary_system() {
 
     app.insert_resource(GmcCollapseEventReceiver { rx });
 
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
-    scenario_state.scenario_time_years = 100.0;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        scenario_time_years: 100.0,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
     app.add_systems(Update, receive_gmc_collapse_events);
@@ -258,9 +261,11 @@ fn test_gen1_jeans_collapse_spawns_pristine_system() {
 
     app.insert_resource(GmcCollapseEventReceiver { rx });
 
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
-    scenario_state.scenario_time_years = 100.0;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        scenario_time_years: 100.0,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
     app.add_systems(Update, receive_gmc_collapse_events);

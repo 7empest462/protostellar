@@ -241,7 +241,7 @@ fn test_supernova_blast_interacts_with_planets_and_asteroids() {
             },
             SimPosition(DVec3::new(1.5, 0.0, 0.0)),
             SimVelocity(DVec3::ZERO),
-            Mass(0.000003),
+            Mass(0.000_003),
             Temperature(280.0),
         ))
         .id();

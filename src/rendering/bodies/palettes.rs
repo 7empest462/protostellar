@@ -583,7 +583,9 @@ pub fn resolve_planet_type_and_subtype(
     if contains_ascii_case_insensitive(name, "mars") {
         return (3, 1.0);
     }
-    if contains_ascii_case_insensitive(name, "moon")
+    let trimmed = name.trim();
+    if trimmed.eq_ignore_ascii_case("the moon")
+        || trimmed.eq_ignore_ascii_case("moon")
         || contains_ascii_case_insensitive(name, "luna")
     {
         return (3, 2.0);

@@ -175,8 +175,7 @@ fn test_time_warp_keyboard_presets_1_through_8() {
         assert_eq!(
             time_warp.human_readable_speed(),
             expected_desc,
-            "Key {:?} speed description mismatch",
-            key
+            "Key {key:?} speed description mismatch"
         );
     }
 }
@@ -360,9 +359,7 @@ fn test_time_warp_hour_presets_and_visual_clock() {
         let tw_kb = app.world().resource::<TimeWarp>();
         assert!(
             (tw_kb.multiplier - expected_mult).abs() < 1e-9,
-            "Shift+{:?} must activate {}",
-            digit_key,
-            expected_label
+            "Shift+{digit_key:?} must activate {expected_label}"
         );
         assert_eq!(tw_kb.human_readable_speed(), expected_label);
     }

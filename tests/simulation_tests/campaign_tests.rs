@@ -18,26 +18,25 @@ fn test_campaign_mission_definitions_and_objectives() {
     ];
 
     for m in missions {
-        assert!(!m.title().is_empty());
-        assert!(!m.subtitle().is_empty());
-        assert!(!m.briefing().is_empty());
-        assert!(!m.difficulty().is_empty());
+        assert_ne!(m.title(), "");
+        assert_ne!(m.subtitle(), "");
+        assert_ne!(m.briefing(), "");
+        assert_ne!(m.difficulty(), "");
         assert!(m.science_reward() > 0);
         assert!(m.reward_science() > 0.0);
 
         let objectives = create_mission_objectives(m);
         assert!(
             objectives.len() >= 2,
-            "Mission {:?} should have at least 2 objectives",
-            m
+            "Mission {m:?} should have at least 2 objectives"
         );
         for obj in &objectives {
-            assert!(!obj.id.is_empty());
-            assert!(!obj.title.is_empty());
-            assert!(!obj.description.is_empty());
+            assert_ne!(obj.id, "");
+            assert_ne!(obj.title, "");
+            assert_ne!(obj.description, "");
             assert!(obj.target_value > 0.0);
             assert_eq!(obj.progress_fraction(), 0.0);
-            assert!(!obj.format_progress().is_empty());
+            assert_ne!(obj.format_progress(), "");
         }
     }
 }

@@ -316,8 +316,7 @@ fn verify_extreme_time_warp_disk_stability() {
     );
     assert!(
         proto_mass > 10.0 * EARTH_MASS_SOLAR && proto_mass < 500.0 * EARTH_MASS_SOLAR,
-        "Pebble accretion mass must be safely bounded by dt clamp at 1,000,000x warp (got {:.4e})",
-        proto_mass
+        "Pebble accretion mass must be safely bounded by dt clamp at 1,000,000x warp (got {proto_mass:.4e})"
     );
 
     // Verify planetesimal spawning did not exceed max_ecs_bodies despite huge time_since_last

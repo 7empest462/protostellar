@@ -149,6 +149,13 @@ fn spawn_save_slot_row(card: &mut ChildSpawnerCommands) {
         );
         create_compact_button(
             slot_row,
+            UiButtonAction::ToggleSavesPanel,
+            "🗂",
+            Color::srgba(0.06, 0.18, 0.30, 0.90),
+            Color::srgb(0.45, 0.90, 1.0),
+        );
+        create_compact_button(
+            slot_row,
             UiButtonAction::CopySystemSeedClipboard,
             "📋 Seed",
             Color::srgba(0.14, 0.10, 0.24, 0.90),
@@ -286,6 +293,13 @@ fn spawn_main_tool_shortcuts(col: &mut ChildSpawnerCommands) {
     );
     create_compact_button(
         col,
+        UiButtonAction::ToggleSavesPanel,
+        "🗂 Saves",
+        Color::srgba(0.06, 0.18, 0.30, 0.90),
+        Color::srgb(0.45, 0.90, 1.0),
+    );
+    create_compact_button(
+        col,
         UiButtonAction::QuickSave,
         "💾 Save [F12]",
         Color::srgba(0.08, 0.14, 0.22, 0.90),
@@ -382,7 +396,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
     ))
     .with_children(|badge| {
         badge.spawn((
-            Text::new("✨ Swarm: 100k [Standard]"),
+            Text::new("✨ Swarm: 500k [Ultra]"),
             TextFont {
                 font_size: FontSize::Px(10.5),
                 ..default()
@@ -519,9 +533,50 @@ pub(crate) fn spawn_simulation_metrics_column(right_row: &mut ChildSpawnerComman
             ..default()
         })
         .with_children(|col| {
-            spawn_top_right_pill(col);
+            col.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::FlexEnd,
+                column_gap: Val::Px(4.0),
+                ..default()
+            })
+            .with_children(|top_pills| {
+                spawn_audio_mute_badge(top_pills);
+                spawn_top_right_pill(top_pills);
+            });
             spawn_simulation_metrics_card(col);
         });
+}
+
+fn spawn_audio_mute_badge(col: &mut ChildSpawnerCommands) {
+    col.spawn((
+        HudButton,
+        UiButtonAction::ToggleAudioMute,
+        HudPanelElement::AudioMuteBadge,
+        Node {
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(2.5)),
+            margin: UiRect::all(Val::Px(1.5)),
+            display: Display::Flex,
+            border: UiRect::all(Val::Px(1.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+        BorderColor::all(Color::srgba(0.28, 0.55, 0.85, 0.6)),
+    ))
+    .with_children(|pill| {
+        pill.spawn((
+            Text::new("🔇 Sound: OFF [M]"),
+            TextFont {
+                font_size: FontSize::Px(10.5),
+                ..default()
+            },
+            TextColor(Color::srgb(0.68, 0.76, 0.90)),
+            HudDynamicText::AudioMuteBadge,
+            Pickable::IGNORE,
+        ));
+    });
 }
 
 fn spawn_top_right_pill(col: &mut ChildSpawnerCommands) {

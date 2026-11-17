@@ -29,8 +29,7 @@ fn test_dipole_spin_down_rate_scaling() {
     let ratio = dot_nu_strong / dot_nu_weak;
     assert!(
         (ratio - 100.0).abs() < 1e-4,
-        "Dipole braking must scale quadratically with magnetic field B (got ratio: {})",
-        ratio
+        "Dipole braking must scale quadratically with magnetic field B (got ratio: {ratio})"
     );
 }
 
@@ -41,8 +40,10 @@ fn test_pulsar_glitch_vortex_unpinning_jump() {
     app.add_plugins(NeutronStarPlugin);
 
     app.init_resource::<TimeWarp>();
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 0.01;
+    let sim_time = SimTime {
+        current_dt_yr: 0.01,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let state = PulsarGlitchState {
@@ -132,8 +133,10 @@ fn test_magnetar_magnetic_strain_and_starquake_rupture() {
     app.add_plugins(NeutronStarPlugin);
 
     app.init_resource::<TimeWarp>();
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 0.0002; // ~1.75 hours (light travels ~12.6 AU)
+    let sim_time = SimTime {
+        current_dt_yr: 0.0002, // ~1.75 hours (light travels ~12.6 AU)
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let stress = MagnetarCrustStress {
@@ -210,8 +213,10 @@ fn test_relativistic_alfven_blast_wave_expansion() {
     app.add_plugins(NeutronStarPlugin);
 
     app.init_resource::<TimeWarp>();
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 0.001; // ~8.7 hours
+    let sim_time = SimTime {
+        current_dt_yr: 0.001, // ~8.7 hours
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let source_magnetar = app.world_mut().spawn_empty().id();
@@ -255,8 +260,10 @@ fn test_manual_starquake_trigger_event() {
     app.add_plugins(NeutronStarPlugin);
 
     app.init_resource::<TimeWarp>();
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 0.01;
+    let sim_time = SimTime {
+        current_dt_yr: 0.01,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let magnetar_ent = app
@@ -310,8 +317,10 @@ fn test_neutron_star_and_oort_telemetry_formatting() {
     assert!(out.contains("Spin Frequency:"));
     assert!(out.contains("160.770 Hz"));
 
-    let mut stress = MagnetarCrustStress::default();
-    stress.accumulated_magnetic_strain = 0.11;
+    let stress = MagnetarCrustStress {
+        accumulated_magnetic_strain: 0.11,
+        ..Default::default()
+    };
     let mut out_stress = String::new();
     append_magnetar_stress_telemetry(&mut out_stress, &stress);
     assert!(out_stress.contains("ULTRA-STRONG MAGNETAR CRUST"));

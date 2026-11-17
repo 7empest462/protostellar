@@ -26,6 +26,7 @@ pub enum ActiveModalKind {
     EpochScrubber,
     HrDiagram,
     ScenarioPresets,
+    SavesManager,
 }
 
 /// Mutable reference bundle of all floating drawer and modal states.
@@ -40,6 +41,7 @@ pub struct ModalPanelStates<'a> {
     pub scrubber: Option<&'a mut TimelineScrubber>,
     pub hr_diagram: Option<&'a mut HrDiagramPanelState>,
     pub visibility: Option<&'a mut HudVisibilityState>,
+    pub saves: Option<&'a mut crate::game::ui::saves_panel::SavesPanelState>,
 }
 
 impl ModalPanelStates<'_> {
@@ -123,6 +125,15 @@ impl ModalPanelStates<'_> {
                 }
             }
         }
+        if keep_open != ActiveModalKind::SavesManager {
+            if let Some(ref mut saves) = self.saves {
+                if saves.is_open {
+                    saves.is_open = false;
+                    saves.pending_delete_idx = None;
+                    closed_any = true;
+                }
+            }
+        }
 
         closed_any
     }
@@ -141,6 +152,7 @@ impl ModalPanelStates<'_> {
                 .visibility
                 .as_ref()
                 .is_some_and(|v| v.scenarios_is_open)
+            || self.saves.as_ref().is_some_and(|s| s.is_open)
     }
 
     /// If the given button action opened a modal or drawer, automatically closes all conflicting ones.
@@ -193,6 +205,9 @@ impl ModalPanelStates<'_> {
                     .is_some_and(|v| v.scenarios_is_open) =>
             {
                 Some(ActiveModalKind::ScenarioPresets)
+            }
+            UiButtonAction::ToggleSavesPanel if self.saves.as_ref().is_some_and(|s| s.is_open) => {
+                Some(ActiveModalKind::SavesManager)
             }
             _ => None,
         };

@@ -72,8 +72,7 @@ fn test_t4_s1_open_cluster_genesis_from_cold_gmc_core() {
     assert!(has_binary, "Must establish binary companion Beta");
     assert!(
         total_stellar_mass > 10.0 && total_stellar_mass < 15.0,
-        "Total stellar mass must be ~11.3 M_sun (got {:.2})",
-        total_stellar_mass
+        "Total stellar mass must be ~11.3 M_sun (got {total_stellar_mass:.2})"
     );
 
     // 3. Extended cloud disk parameters

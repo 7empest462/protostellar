@@ -75,9 +75,10 @@ fn compute_gravity_at(pos: vec3<f32>, current_t: f32) -> vec3<f32> {
         let f_grav = uniforms.g_const * m_body_mass * inv_dist3;
         a_total = a_total + to_body * f_grav;
         
-        let offset = pos - current_mb_pos;
-        let h_mass = max(mb_vel.w, uniforms.halo_mass);
-        a_total = a_total + get_nfw_acceleration(offset, h_mass);
+        if (mb_vel.w > 0.0) {
+            let offset = pos - current_mb_pos;
+            a_total = a_total + get_nfw_acceleration(offset, mb_vel.w);
+        }
     }
     return a_total;
 }

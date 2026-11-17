@@ -95,11 +95,44 @@ impl Default for AuroralOvalState {
         Self {
             magnetopause_standoff_rp: 10.5,
             oval_colatitude_rad: 0.315, // ~18.0° co-latitude (72.0° latitude)
-            oval_width_rad: 0.065,      // ~3.7° width
-            auroral_intensity: 0.85,
-            geomagnetic_kp_index: 1.5,
+            oval_width_rad: 0.055,      // ~3.1° quiet high-latitude oval width
+            auroral_intensity: 0.04,    // Sub-visual baseline in quiet solar wind
+            geomagnetic_kp_index: 1.2,
             storm_level: GeomagneticStormLevel::Quiet,
             flutter_phase: 0.0,
+        }
+    }
+}
+
+/// Ephemeral magnetospheric storm & substorm excitation accumulator attached alongside `AuroralOvalState`.
+/// Keeps `AuroralOvalState` save serialization layout stable while tracking transient storm recovery.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct AuroralStormExcitation {
+    /// Decaying ring-current / magnetotail storm excitation energy (0.0 = quiet, 1.0..4.0 = storm).
+    pub excitation: f32,
+    /// Accumulated clock (seconds) driving cyclic magnetotail substorm pulses & recovery pacing.
+    pub substorm_clock_secs: f32,
+    /// Last stellar ignition blast radius observed crossing this world's orbit.
+    pub last_blast_radius_au: f32,
+}
+
+/// Natural coronal flare & CME activity cadence tracker attached to stars.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct StellarActivityClock {
+    /// Accumulated simulated years toward the next natural coronal flare / CME cycle.
+    pub sim_years_accum: f32,
+    /// Accumulated real-time seconds (for interactive real-time space weather cadence).
+    pub realtime_secs_accum: f32,
+    /// Sequential count of natural eruptions emitted by this star.
+    pub eruption_count: u32,
+}
+
+impl Default for StellarActivityClock {
+    fn default() -> Self {
+        Self {
+            sim_years_accum: 0.0,
+            realtime_secs_accum: 0.0,
+            eruption_count: 0,
         }
     }
 }

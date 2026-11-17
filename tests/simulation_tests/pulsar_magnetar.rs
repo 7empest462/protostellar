@@ -430,28 +430,23 @@ fn test_magnetar_scenario_orbital_stability_and_field_attachment() {
 
     assert!(
         magnetar_dist < 1e-6,
-        "Magnetar must stay at center (0,0,0), found at {}",
-        magnetar_dist
+        "Magnetar must stay at center (0,0,0), found at {magnetar_dist}"
     );
     assert!(
-        valkyrie_dist >= 0.40 && valkyrie_dist <= 0.60,
-        "Valkyrie must remain in stable orbit around ~0.48 AU, found at {}",
-        valkyrie_dist
+        (0.40..=0.60).contains(&valkyrie_dist),
+        "Valkyrie must remain in stable orbit around ~0.48 AU, found at {valkyrie_dist}"
     );
     assert!(
-        pyre_dist >= 0.70 && pyre_dist <= 1.05,
-        "Pyre must remain in stable orbit around ~0.85 AU, found at {}",
-        pyre_dist
+        (0.70..=1.05).contains(&pyre_dist),
+        "Pyre must remain in stable orbit around ~0.85 AU, found at {pyre_dist}"
     );
     assert!(
-        clump_dist >= 1.40 && clump_dist <= 1.95,
-        "SGR Ejecta Clump must remain in stable orbit around ~1.65 AU, found at {}",
-        clump_dist
+        (1.40..=1.95).contains(&clump_dist),
+        "SGR Ejecta Clump must remain in stable orbit around ~1.65 AU, found at {clump_dist}"
     );
     assert!(
-        lbv_dist >= 17.0 && lbv_dist <= 19.5,
-        "LBV 1806-20 must remain in stable cluster orbit around ~18.0 AU, found at {}",
-        lbv_dist
+        (17.0..=19.5).contains(&lbv_dist),
+        "LBV 1806-20 must remain in stable cluster orbit around ~18.0 AU, found at {lbv_dist}"
     );
 
     {
@@ -475,9 +470,10 @@ fn test_pulsar_beam_polar_taper_and_magnetar_field_symmetry() {
     };
 
     let pulsar_mesh = generate_pulsar_beam_mesh();
-    let pulsar_positions = match pulsar_mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(VertexAttributeValues::Float32x3(pos)) => pos,
-        _ => panic!("Expected Float32x3 position attributes in pulsar mesh"),
+    let Some(VertexAttributeValues::Float32x3(pulsar_positions)) =
+        pulsar_mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else {
+        panic!("Expected Float32x3 position attributes in pulsar mesh");
     };
 
     let mut base_radii = Vec::new();
@@ -496,30 +492,23 @@ fn test_pulsar_beam_polar_taper_and_magnetar_field_symmetry() {
         !base_radii.is_empty(),
         "Pulsar beam mesh must have base vertices at y = 0"
     );
-    let max_base_r = base_radii
-        .iter()
-        .copied()
-        .fold(0.0f32, |acc, val| acc.max(val));
+    let max_base_r = base_radii.iter().copied().fold(0.0f32, f32::max);
     assert!(
         max_base_r <= 0.0010,
-        "Pulsar beam base radius must be tightly tapered at the pole (< 0.0010 AU), found {}",
-        max_base_r
+        "Pulsar beam base radius must be tightly tapered at the pole (< 0.0010 AU), found {max_base_r}"
     );
 
-    let max_tip_r = tip_radii
-        .iter()
-        .copied()
-        .fold(0.0f32, |acc, val| acc.max(val));
+    let max_tip_r = tip_radii.iter().copied().fold(0.0f32, f32::max);
     assert!(
         max_tip_r >= 6.0,
-        "Pulsar beam must flare outward to >= 6.0 AU at tip, found {}",
-        max_tip_r
+        "Pulsar beam must flare outward to >= 6.0 AU at tip, found {max_tip_r}"
     );
 
     let magnetar_mesh = generate_magnetar_field_loops_mesh();
-    let magnetar_positions = match magnetar_mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(VertexAttributeValues::Float32x3(pos)) => pos,
-        _ => panic!("Expected Float32x3 position attributes in magnetar mesh"),
+    let Some(VertexAttributeValues::Float32x3(magnetar_positions)) =
+        magnetar_mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else {
+        panic!("Expected Float32x3 position attributes in magnetar mesh");
     };
 
     let mut min_x = f32::MAX;
@@ -538,29 +527,19 @@ fn test_pulsar_beam_polar_taper_and_magnetar_field_symmetry() {
     let z_asymmetry = (max_z.abs() - min_z.abs()).abs();
     assert!(
         x_asymmetry < 0.05,
-        "Magnetar magnetic field must be symmetric across X axis (+X: {}, -X: {}, diff: {})",
-        max_x,
-        min_x,
-        x_asymmetry
+        "Magnetar magnetic field must be symmetric across X axis (+X: {max_x}, -X: {min_x}, diff: {x_asymmetry})"
     );
     assert!(
         z_asymmetry < 0.05,
-        "Magnetar magnetic field must be symmetric across Z axis (+Z: {}, -Z: {}, diff: {})",
-        max_z,
-        min_z,
-        z_asymmetry
+        "Magnetar magnetic field must be symmetric across Z axis (+Z: {max_z}, -Z: {min_z}, diff: {z_asymmetry})"
     );
 
     assert!(
         max_x >= 5.0 && min_x <= -5.0,
-        "Magnetar field loops must extend to outer tier in both +X and -X directions (+X: {}, -X: {})",
-        max_x,
-        min_x
+        "Magnetar field loops must extend to outer tier in both +X and -X directions (+X: {max_x}, -X: {min_x})"
     );
     assert!(
         max_z >= 5.0 && min_z <= -5.0,
-        "Magnetar field loops must extend to outer tier in both +Z and -Z directions (+Z: {}, -Z: {})",
-        max_z,
-        min_z
+        "Magnetar field loops must extend to outer tier in both +Z and -Z directions (+Z: {max_z}, -Z: {min_z})"
     );
 }

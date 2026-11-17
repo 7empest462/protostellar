@@ -76,6 +76,24 @@ pub fn infer_scenario_preset(
     }
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "Optional astrophysical subsystem components"
+)]
+type ExtraBodyComponents<'w> = (
+    Option<&'w crate::simulation::geology::GeologicalState>,
+    Option<&'w crate::simulation::terraforming::TerraformingAtmosphere>,
+    Option<&'w VolcanicState>,
+    Option<&'w AtmosphericStormState>,
+    Option<&'w crate::simulation::relativity::kerr::KerrBlackHole>,
+    Option<&'w crate::simulation::neutron_stars::PulsarGlitchState>,
+    Option<&'w crate::simulation::neutron_stars::MagnetarCrustStress>,
+    Option<&'w crate::simulation::oort::OortComet>,
+    Option<&'w crate::simulation::space_weather::StellarFlareState>,
+    Option<&'w crate::simulation::space_weather::AuroralOvalState>,
+    Option<&'w crate::simulation::accretion::CataclysmicVariable>,
+);
+
 #[allow(clippy::type_complexity, reason = "Query for full body serialization")]
 type BodySerializeQuery<'w, 's> = Query<
     'w,
@@ -111,9 +129,37 @@ type BodySerializeQuery<'w, 's> = Query<
             Option<&'static KozaiLidovState>,
             Has<CentralStar>,
         ),
+        ExtraBodyComponents<'static>,
     ),
     Without<crate::simulation::probes::SpaceProbe>,
 >;
+
+fn extract_extra_body_components(save: &mut CelestialBodySave, extra: ExtraBodyComponents<'_>) {
+    let (
+        opt_geo,
+        opt_terra,
+        opt_volc,
+        opt_storm,
+        opt_kerr,
+        opt_glitch,
+        opt_stress,
+        opt_oort,
+        opt_flare,
+        opt_aurora,
+        opt_cv,
+    ) = extra;
+    save.geological_state = opt_geo.copied();
+    save.terraforming = opt_terra.copied();
+    save.volcanic_state = opt_volc.copied();
+    save.atmospheric_storm = opt_storm.copied();
+    save.kerr_black_hole = opt_kerr.copied();
+    save.pulsar_glitch = opt_glitch.cloned();
+    save.magnetar_stress = opt_stress.cloned();
+    save.oort_comet = opt_oort.cloned();
+    save.stellar_flare = opt_flare.copied();
+    save.auroral_oval = opt_aurora.copied();
+    save.cataclysmic_variable = opt_cv.copied();
+}
 
 /// Extracts celestial bodies into serializable records.
 fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySave> {
@@ -147,6 +193,7 @@ fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySa
             opt_kozai,
             is_star,
         ),
+        extra,
     ) in bodies_query.iter()
     {
         let satellite = opt_sat.map(|sat| SatelliteSave {
@@ -159,7 +206,7 @@ fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySa
             true_anomaly: sat.true_anomaly,
         });
 
-        bodies.push(CelestialBodySave {
+        let mut body_save = CelestialBodySave {
             name: body.name.clone(),
             body_type: body.body_type,
             position: pos.0,
@@ -186,7 +233,10 @@ fn collect_bodies_save(bodies_query: &BodySerializeQuery) -> Vec<CelestialBodySa
             relativistic_state: opt_rel.copied(),
             atmospheric_escape: opt_escape.copied(),
             kozai_lidov: opt_kozai.cloned(),
-        });
+            ..Default::default()
+        };
+        extract_extra_body_components(&mut body_save, extra);
+        bodies.push(body_save);
     }
 
     bodies
@@ -346,8 +396,45 @@ fn spawn_saved_body(commands: &mut Commands, save: &CelestialBodySave) -> Entity
     if save.is_central_star {
         cmd.insert(CentralStar);
     }
+    insert_extra_body_components(&mut cmd, save);
 
     cmd.id()
+}
+
+fn insert_extra_body_components(cmd: &mut EntityCommands, save: &CelestialBodySave) {
+    if let Some(geo) = save.geological_state {
+        cmd.insert(geo);
+    }
+    if let Some(terra) = save.terraforming {
+        cmd.insert(terra);
+    }
+    if let Some(volc) = save.volcanic_state {
+        cmd.insert(volc);
+    }
+    if let Some(storm) = save.atmospheric_storm {
+        cmd.insert(storm);
+    }
+    if let Some(kerr) = save.kerr_black_hole {
+        cmd.insert(kerr);
+    }
+    if let Some(ref glitch) = save.pulsar_glitch {
+        cmd.insert(glitch.clone());
+    }
+    if let Some(ref stress) = save.magnetar_stress {
+        cmd.insert(stress.clone());
+    }
+    if let Some(ref comet) = save.oort_comet {
+        cmd.insert(comet.clone());
+    }
+    if let Some(flare) = save.stellar_flare {
+        cmd.insert(flare);
+    }
+    if let Some(aurora) = save.auroral_oval {
+        cmd.insert(aurora);
+    }
+    if let Some(cv) = save.cataclysmic_variable {
+        cmd.insert(cv);
+    }
 }
 
 fn despawn_active_bodies(

@@ -372,85 +372,162 @@ pub fn update_telemetry_graph_ui(
         &mut BackgroundColor,
         &mut BorderColor,
     )>,
+    mut last_sig: Local<Option<(TelemetryMetric, usize, u64)>>,
 ) {
+    use super::update::{set_display_if_changed, set_text_if_changed, set_text_str_if_changed};
     let Ok(mut panel_node) = panel_query.single_mut() else {
         return;
     };
 
     if !panel_state.is_open {
-        panel_node.display = Display::None;
+        set_display_if_changed(&mut panel_node, Display::None);
         return;
     }
-    panel_node.display = Display::Flex;
+    set_display_if_changed(&mut panel_node, Display::Flex);
 
-    // 1. Update metric button highlight colors
-    for (btn_metric, mut bg, mut border) in metric_btn_query.iter_mut() {
-        if btn_metric.0 == panel_state.selected_metric {
-            *bg = BackgroundColor(Color::srgba(0.12, 0.35, 0.45, 0.95));
-            *border = BorderColor::all(Color::srgb(0.4, 0.95, 1.0));
-        } else {
-            *bg = BackgroundColor(Color::srgba(0.04, 0.08, 0.14, 0.85));
-            *border = BorderColor::all(Color::srgba(0.2, 0.4, 0.6, 0.5));
-        }
+    let metric = panel_state.selected_metric;
+    let sample_count = telemetry_history.sample_count();
+    let stats = telemetry_history.get_metric_stats(metric);
+    let current_sig = compute_telemetry_ui_sig(&telemetry_history, metric, sample_count, stats);
+    if last_sig.as_ref() == Some(&current_sig) {
+        return;
     }
+    *last_sig = Some(current_sig);
+
+    sync_telemetry_metric_buttons(metric, &mut metric_btn_query);
 
     // 2. Update Tracked Celestial Body Header
     if let Ok(mut title_text) = body_title_query.single_mut() {
-        title_text.0 = format!(
-            "Tracking: {} | Buffer: {} / {} samples",
-            telemetry_history.tracked_name,
-            telemetry_history.sample_count(),
-            telemetry_history.max_samples
+        set_text_if_changed(
+            &mut title_text,
+            format!(
+                "Tracking: {} | Buffer: {} / {} samples",
+                telemetry_history.tracked_name, sample_count, telemetry_history.max_samples
+            ),
         );
     }
 
     // 3. Update Numeric Readout Statistics
-    let metric = panel_state.selected_metric;
-    let (latest, min, max, mean) = telemetry_history.get_metric_stats(metric);
-
     if let Ok(mut readout_text) = readout_query.single_mut() {
-        let (val_fmt, unit) = match metric {
-            TelemetryMetric::Habitability => (
-                format!("Current: {latest:.1}% | Mean: {mean:.1}%"),
-                format!("Range: [{min:.1}% - {max:.1}%] | (0% Sterile - 100% Eden)"),
-            ),
-            TelemetryMetric::Temperature => (
-                format!(
-                    "Current: {latest:.1} K ({:.1} °C) | Mean: {mean:.1} K",
-                    latest - 273.15
-                ),
-                format!("Range: [{min:.1} K - {max:.1} K]"),
-            ),
-            TelemetryMetric::OceanCoverage => (
-                format!("Current: {latest:.1}% | Mean: {mean:.1}%"),
-                format!("Range: [{min:.1}% - {max:.1}%] Surface Liquid H₂O"),
-            ),
-            TelemetryMetric::AtmosphericPressure => (
-                format!("Current: {latest:.2} bar | Mean: {mean:.2} bar"),
-                format!("Range: [{min:.2} bar - {max:.2} bar] (1 bar = 1 atm)"),
-            ),
-            TelemetryMetric::Orbit => (
-                format!("Current Semi-Major Axis: {latest:.3} AU"),
-                format!("Range: [{min:.3} AU - {max:.3} AU] | Mean: {mean:.3} AU"),
-            ),
-        };
-
-        readout_text.0 = format!(">> {val_fmt}\n>> {unit}");
+        let (latest, min, max, mean) = stats;
+        set_text_if_changed(
+            &mut readout_text,
+            format_telemetry_readout(metric, latest, min, max, mean),
+        );
     }
 
     // 4. Update Unicode Sparkline Graph
     if let Ok(mut sparkline_text) = sparkline_query.single_mut() {
         let sparkline = telemetry_history.generate_sparkline(metric, 36);
-        sparkline_text.0 = format!(
-            "{sparkline}\n[History: {} samples]",
-            telemetry_history.sample_count()
+        set_text_if_changed(
+            &mut sparkline_text,
+            format!("{sparkline}\n[History: {sample_count} samples]"),
         );
     }
 
     // 5. Update Export Feedback Text
     if let Ok(mut export_text) = export_status_query.single_mut() {
         if let Some(ref status) = telemetry_history.last_export_status {
-            export_text.0.clone_from(status);
+            set_text_str_if_changed(&mut export_text, status);
         }
     }
+}
+
+fn compute_telemetry_ui_sig(
+    telemetry_history: &SimulationTelemetryHistory,
+    metric: TelemetryMetric,
+    sample_count: usize,
+    (latest, min, max, mean): (f64, f64, f64, f64),
+) -> (TelemetryMetric, usize, u64) {
+    let tracked_hash = telemetry_history
+        .tracked_name
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+        });
+    let export_hash = telemetry_history
+        .last_export_status
+        .as_deref()
+        .map_or(0u64, |s| {
+            s.bytes().fold(0x517C_C1B7_2722_0A95_u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+            })
+        });
+    let sig_hash = tracked_hash
+        ^ export_hash
+        ^ (telemetry_history.max_samples as u64)
+        ^ latest.to_bits()
+        ^ (min.to_bits() << 16)
+        ^ (max.to_bits() << 32)
+        ^ (mean.to_bits() << 8);
+    (metric, sample_count, sig_hash)
+}
+
+fn sync_telemetry_metric_buttons(
+    metric: TelemetryMetric,
+    metric_btn_query: &mut Query<(
+        &TelemetryMetricButton,
+        &mut BackgroundColor,
+        &mut BorderColor,
+    )>,
+) {
+    use super::update::{set_bg_color_if_changed, set_border_color_if_changed};
+    let selected_bg = BackgroundColor(Color::srgba(0.12, 0.35, 0.45, 0.95));
+    let selected_border = BorderColor::all(Color::srgb(0.4, 0.95, 1.0));
+    let unselected_bg = BackgroundColor(Color::srgba(0.04, 0.08, 0.14, 0.85));
+    let unselected_border = BorderColor::all(Color::srgba(0.2, 0.4, 0.6, 0.5));
+    for (btn_metric, mut bg, mut border) in metric_btn_query.iter_mut() {
+        let is_selected = btn_metric.0 == metric;
+        set_bg_color_if_changed(
+            &mut bg,
+            if is_selected {
+                selected_bg
+            } else {
+                unselected_bg
+            },
+        );
+        set_border_color_if_changed(
+            &mut border,
+            if is_selected {
+                selected_border
+            } else {
+                unselected_border
+            },
+        );
+    }
+}
+
+fn format_telemetry_readout(
+    metric: TelemetryMetric,
+    latest: f64,
+    min: f64,
+    max: f64,
+    mean: f64,
+) -> String {
+    let (val_fmt, unit) = match metric {
+        TelemetryMetric::Habitability => (
+            format!("Current: {latest:.1}% | Mean: {mean:.1}%"),
+            format!("Range: [{min:.1}% - {max:.1}%] | (0% Sterile - 100% Eden)"),
+        ),
+        TelemetryMetric::Temperature => (
+            format!(
+                "Current: {latest:.1} K ({:.1} °C) | Mean: {mean:.1} K",
+                latest - 273.15
+            ),
+            format!("Range: [{min:.1} K - {max:.1} K]"),
+        ),
+        TelemetryMetric::OceanCoverage => (
+            format!("Current: {latest:.1}% | Mean: {mean:.1}%"),
+            format!("Range: [{min:.1}% - {max:.1}%] Surface Liquid H₂O"),
+        ),
+        TelemetryMetric::AtmosphericPressure => (
+            format!("Current: {latest:.2} bar | Mean: {mean:.2} bar"),
+            format!("Range: [{min:.2} bar - {max:.2} bar] (1 bar = 1 atm)"),
+        ),
+        TelemetryMetric::Orbit => (
+            format!("Current Semi-Major Axis: {latest:.3} AU"),
+            format!("Range: [{min:.3} AU - {max:.3} AU] | Mean: {mean:.3} AU"),
+        ),
+    };
+    format!(">> {val_fmt}\n>> {unit}")
 }

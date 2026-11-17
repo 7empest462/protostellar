@@ -295,5 +295,8 @@ pub fn replenish_cleared_particles(
         }
     }
 
+    if active_count != config.active_particles {
+        data.is_dirty = true;
+    }
     config.active_particles = active_count;
 }

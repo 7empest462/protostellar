@@ -149,9 +149,8 @@ fn calculate_gas_growth_step(
     let remaining_gas_capacity = if env.is_massive_disk {
         (env.max_gas_mass - m).max(0.0)
     } else {
-        let max_g = m * env.max_gas_frac;
-        let current_g = m * comp_gas_frac;
-        let frac_remaining = (max_g - current_g).max(0.0);
+        let frac_remaining =
+            (m * (env.max_gas_frac - comp_gas_frac) / (1.0 - env.max_gas_frac).max(1e-6)).max(0.0);
         let mass_remaining = (env.max_gas_mass - m).max(0.0);
         frac_remaining.min(mass_remaining)
     };
@@ -187,8 +186,16 @@ fn apply_gas_accretion_to_body(
     mass.0 = new_mass;
 
     *comp = comp.mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas);
-    if !is_massive_disk {
-        comp.gas_frac = comp.gas_frac.min(max_gas_frac);
+    if !is_massive_disk && comp.gas_frac > max_gas_frac {
+        let non_gas =
+            (comp.silicate_frac + comp.metal_frac + comp.ice_frac + comp.organics_frac).max(1e-8);
+        let scale = (1.0 - max_gas_frac).max(0.0) / non_gas;
+        comp.silicate_frac *= scale;
+        comp.metal_frac *= scale;
+        comp.ice_frac *= scale;
+        comp.organics_frac *= scale;
+        comp.gas_frac = max_gas_frac;
+        *comp = comp.normalized();
     }
 
     let updated_type = if body.body_type == BodyType::BlackHole {
@@ -217,8 +224,10 @@ fn apply_gas_accretion_to_body(
 
     update_gas_accretion_body_name(body, updated_type, new_mass, r_au);
 
-    if let Some(temp) = opt_temp {
-        update_stellar_surface_temp(&mut temp.0, new_mass);
+    if updated_type != BodyType::BlackHole {
+        if let Some(temp) = opt_temp {
+            update_stellar_surface_temp(&mut temp.0, new_mass);
+        }
     }
     if let Some(diff) = opt_diff {
         diff.recalculate(new_mass, new_radius, comp);
@@ -319,6 +328,45 @@ fn update_gas_accretion_body_name(
     }
 }
 
+type NebularGasBodyItem<'a> = (
+    Entity,
+    &'a mut Mass,
+    &'a SimPosition,
+    &'a mut Radius,
+    &'a mut Composition,
+    &'a mut CelestialBody,
+    Option<&'a mut InternalDifferentiation>,
+    Option<&'a mut SpinState>,
+    Option<&'a mut VolatileInventory>,
+    Option<&'a mut Temperature>,
+    Option<&'a IgnitionState>,
+);
+
+fn maybe_ignite_gas_accreted_star(
+    commands: &mut Commands,
+    entity: Entity,
+    mass_solar: f64,
+    body: &CelestialBody,
+    opt_ign: Option<&IgnitionState>,
+) {
+    if body.body_type.is_star_or_remnant() && !body.body_type.is_remnant() && opt_ign.is_none() {
+        commands.entity(entity).insert((
+            IgnitionState {
+                core_temperature: 1.2e7,
+                fusion_fraction: 1.0,
+                is_ignited: true,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState::default(),
+            Luminosity((mass_solar * 2.5).max(0.5)),
+        ));
+        bevy::log::info!(
+            "🔥 {} has accreted enough gas to ignite into a star!",
+            body.name
+        );
+    }
+}
+
 /// Accretes gas envelope onto protoplanetary cores / stellar seeds from the ambient gas disk.
 #[allow(
     clippy::too_many_arguments,
@@ -334,19 +382,7 @@ pub fn direct_nebular_gas_accretion(
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     star_query: Query<&IgnitionState, With<CentralStar>>,
     mut bodies_query: Query<
-        (
-            Entity,
-            &mut Mass,
-            &SimPosition,
-            &mut Radius,
-            &mut Composition,
-            &mut CelestialBody,
-            Option<&mut InternalDifferentiation>,
-            Option<&mut SpinState>,
-            Option<&mut VolatileInventory>,
-            Option<&mut Temperature>,
-            Option<&IgnitionState>,
-        ),
+        NebularGasBodyItem<'_>,
         (
             Without<CentralStar>,
             Without<crate::simulation::terraforming::BombardmentProjectile>,
@@ -372,7 +408,12 @@ pub fn direct_nebular_gas_accretion(
     }
 
     let is_ignited = star_query.iter().next().is_some_and(|ig| ig.is_ignited);
-    let dt_yr = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(10.0);
+    let raw_dt = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
+    };
+    let dt_yr = raw_dt.min(10.0);
     let star_mass = disk_params.central_star_mass;
     let is_massive_disk =
         disk_params.disk_mass > 0.001 && (star_mass > 10.0 || disk_params.outer_radius_au > 100.0);
@@ -404,10 +445,7 @@ pub fn direct_nebular_gas_accretion(
         let (max_gas_mass, max_gas_frac, runaway_threshold_m_earth) =
             calculate_gas_capacity_limits(r_au, is_massive_disk, &disk_params);
 
-        if m >= max_gas_mass {
-            continue;
-        }
-        if !is_massive_disk && comp.gas_frac >= max_gas_frac {
+        if m >= max_gas_mass || (!is_massive_disk && comp.gas_frac >= max_gas_frac) {
             continue;
         }
 
@@ -442,27 +480,7 @@ pub fn direct_nebular_gas_accretion(
                 opt_vol.as_deref_mut(),
                 opt_temp.as_deref_mut(),
             );
-
-            // If body accreted enough gas to become a star, ignite it (stars only, never remnants)!
-            if body.body_type.is_star_or_remnant()
-                && !body.body_type.is_remnant()
-                && opt_ign.is_none()
-            {
-                commands.entity(entity).insert((
-                    IgnitionState {
-                        core_temperature: 1.2e7,
-                        fusion_fraction: 1.0,
-                        is_ignited: true,
-                        shockwave_radius: 0.0,
-                    },
-                    StellarEvolutionState::default(),
-                    Luminosity((mass.0 * 2.5).max(0.5)),
-                ));
-                bevy::log::info!(
-                    "🔥 {} has accreted enough gas to ignite into a star!",
-                    body.name
-                );
-            }
+            maybe_ignite_gas_accreted_star(&mut commands, entity, mass.0, &body, opt_ign);
         }
     }
 }

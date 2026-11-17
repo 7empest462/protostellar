@@ -33,7 +33,7 @@ fn test_fluid_roche_limit_disruption_radius() {
     let d_roche_km: f64 = 2.44 * r_primary_km * (rho_primary / rho_moon).cbrt();
 
     // d_roche should be ~ 125,380 km (~ 2.15 Saturn radii), exactly inside Saturn's ring system!
-    assert!(d_roche_km > 120000.0 && d_roche_km < 130000.0);
+    assert!(d_roche_km > 120_000.0 && d_roche_km < 130_000.0);
     assert!((d_roche_km / r_primary_km - 2.15).abs() < 0.1);
 }
 
@@ -61,9 +61,9 @@ fn test_dynamo_magnetic_field_scaling() {
     let mut diff = InternalDifferentiation {
         is_differentiated: true,
         differentiation_fraction: 1.0,
-        core_radius_au: 0.000023,
-        mantle_radius_au: 0.000042,
-        crust_thickness_au: 0.000001,
+        core_radius_au: 0.000_023,
+        mantle_radius_au: 0.000_042,
+        crust_thickness_au: 0.000_001,
         ocean_ice_thickness_au: 0.0,
         magnetic_field_gauss: 0.0,
         core_temp_k: 4500.0,
@@ -156,7 +156,7 @@ fn classify_saturn_encounter(
     let p = ImpactParams {
         primary_mass: 95.0 * EARTH_MASS_SOLAR,
         secondary_mass,
-        primary_radius_au: 0.000389,
+        primary_radius_au: 0.000_389,
         secondary_radius_au,
         primary_type: BodyType::GasGiant,
         secondary_type,
@@ -177,7 +177,7 @@ fn test_saturn_system_impact_regime_classifications() {
     // 1. Small icy moon passing inside Roche limit (0.00060 < 0.00095) -> Disrupted
     let disrupt_regime = classify_saturn_encounter(
         0.0001 * EARTH_MASS_SOLAR,
-        0.000005,
+        0.000_005,
         BodyType::Comet,
         0.00060,
         0.35,
@@ -189,7 +189,7 @@ fn test_saturn_system_impact_regime_classifications() {
     // 2. Titan embryo passing outside Roche limit (0.0035 > 0.00095) -> Captured into Moon
     let moon_regime = classify_saturn_encounter(
         0.002 * EARTH_MASS_SOLAR,
-        0.000015,
+        0.000_015,
         BodyType::Protoplanet,
         0.0035,
         0.65,
@@ -210,8 +210,8 @@ fn test_inner_terrestrial_hit_and_run_classification() {
     // Two protoplanetary embryos near the Sun (0.5 AU) colliding at high orbital velocity
     let primary_mass = 0.35 * EARTH_MASS_SOLAR;
     let secondary_mass = 0.15 * EARTH_MASS_SOLAR;
-    let primary_radius_au = 0.000042;
-    let secondary_radius_au = 0.000030;
+    let primary_radius_au = 0.000_042;
+    let secondary_radius_au = 0.000_030;
     let d_roche = 0.00010;
 
     let p = ImpactParams {
@@ -221,7 +221,7 @@ fn test_inner_terrestrial_hit_and_run_classification() {
         secondary_radius_au,
         primary_type: BodyType::Protoplanet,
         secondary_type: BodyType::Protoplanet,
-        min_dist: 0.000070,
+        min_dist: 0.000_070,
         b: 0.55,     // oblique angle
         v_rel: 12.0, // AU/yr (~57 km/s)
         v_esc: 7.5,  // AU/yr -> u = 1.6 > 1.10
@@ -314,20 +314,16 @@ fn test_dry_or_scorching_planets_have_zero_ice_caps() {
     let surface_temp_k = 280.0f64; // cold enough for ice if water existed
 
     let has_water = ocean_frac > 0.01 || dry_comp.ice_frac as f32 > 0.005;
-    let ice_coverage = if !has_water {
-        0.0
-    } else {
+    let ice_coverage = if has_water {
         match ClimateRegime::TemperateHabitable {
             ClimateRegime::SnowballIceAge => 1.0,
-            ClimateRegime::TemperateHabitable => {
-                if surface_temp_k < 290.0 {
-                    ((290.0 - surface_temp_k as f32) / 35.0 * 0.35).clamp(0.0, 0.35)
-                } else {
-                    0.0
-                }
+            ClimateRegime::TemperateHabitable if surface_temp_k < 290.0 => {
+                ((290.0 - surface_temp_k as f32) / 35.0 * 0.35).clamp(0.0, 0.35)
             }
             _ => 0.0,
         }
+    } else {
+        0.0
     };
     assert!(
         ice_coverage < 1e-6,
@@ -363,13 +359,13 @@ fn test_interpenetrating_bodies_unconditionally_merge() {
     use protostellar::simulation::components::BodyType;
     use protostellar::utils::constants::EARTH_MASS_SOLAR;
 
-    let r1 = 0.000042;
-    let r2 = 0.000030;
+    let r1 = 0.000_042;
+    let r2 = 0.000_030;
     let r_contact = r1 + r2; // 0.000072
 
     // Two bodies interpenetrating halfway inside each other (dist = 0.000035 < 0.90 * r_contact)
-    let dist = 0.000035;
-    let min_dist = 0.000032;
+    let dist = 0.000_035;
+    let min_dist = 0.000_032;
     assert!(
         is_physically_interpenetrating(dist, min_dist, r1, r2, r_contact),
         "Overlapping bodies must be detected as interpenetrating"
@@ -400,10 +396,10 @@ fn test_interpenetrating_bodies_unconditionally_merge() {
 fn test_satellite_inside_parent_cleans_up_and_merges() {
     use protostellar::simulation::components::SatelliteOf;
 
-    let parent_radius = 0.000050; // AU
+    let parent_radius = 0.000_050; // AU
     let sat = SatelliteOf {
         parent: bevy::prelude::Entity::PLACEHOLDER,
-        semi_major_axis_au: 0.000030, // Inside parent radius!
+        semi_major_axis_au: 0.000_030, // Inside parent radius!
         orbital_period_years: 0.01,
         true_anomaly: 0.0,
     };
@@ -504,7 +500,7 @@ fn test_record_impact_crater_basin_and_capacity_limit() {
             planet_ent,
             Vec3::new(1.0, 0.0, 0.0),
             0.15 + i as f32 * 0.01,
-            i as f64 * 100.0,
+            f64::from(i) * 100.0,
             1.0,
         );
         app.update();
@@ -575,8 +571,10 @@ fn test_impact_basin_thermal_relaxation() {
 
     let mut app = App::new();
     app.insert_resource(TimeWarp::default());
-    let mut sim_time = SimTime::default();
-    sim_time.current_dt_yr = 50.0;
+    let sim_time = SimTime {
+        current_dt_yr: 50.0,
+        ..Default::default()
+    };
     app.insert_resource(sim_time);
 
     let basin = ImpactBasin {
@@ -621,10 +619,10 @@ fn test_planet_uniforms_impact_basins_layout() {
     let uniforms = PlanetUniforms::default();
     assert_eq!(uniforms.impact_basins_pos.len(), 4);
     assert_eq!(uniforms.impact_basins_data.len(), 4);
-    for pos in uniforms.impact_basins_pos.iter() {
+    for pos in &uniforms.impact_basins_pos {
         assert_eq!(*pos, Vec4::ZERO);
     }
-    for data in uniforms.impact_basins_data.iter() {
+    for data in &uniforms.impact_basins_data {
         assert_eq!(*data, Vec4::ZERO);
     }
 }
@@ -704,7 +702,7 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
 
     let save = SystemSaveData {
         version: 1,
-        timestamp_epoch_yr: std::f64::consts::PI * 1234.5678901234567,
+        timestamp_epoch_yr: std::f64::consts::PI * 1_234.567_890_123_456_7,
         step_count: 98_765,
         time_warp: TimeWarpSave::default(),
         disk_parameters: DiskParameters::default(),
@@ -712,8 +710,8 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
         bodies: vec![CelestialBodySave {
             name: "Earth".to_string(),
             body_type: BodyType::TerrestrialPlanet,
-            position: DVec3::new(0.9999999999999999, -1e-15, 0.12345678901234568),
-            velocity: DVec3::new(-0.012345678901234567, 0.0, 6.283185307179586),
+            position: DVec3::new(0.999_999_999_999_999_9, -1e-15, 0.123_456_789_012_345_68),
+            velocity: DVec3::new(-0.012_345_678_901_234_567, 0.0, std::f64::consts::TAU),
             mass: EARTH_MASS_SOLAR,
             radius: EARTH_RADIUS_AU,
             temperature: 288.15,
@@ -736,6 +734,7 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
             relativistic_state: None,
             atmospheric_escape: None,
             kozai_lidov: None,
+            ..Default::default()
         }],
         event_flags: EventFlagsSave::default(),
         scenario_preset: None,
@@ -803,5 +802,37 @@ fn test_impact_crater_ocean_shoreline_cutoff_in_planet_shader() {
                 "planet.wgsl must not paint persistent static rings onto liquid ocean pixels",
             ),
         ],
+    );
+}
+
+#[test]
+fn test_terrestrial_ocean_and_cloud_shader_thresholds() {
+    let planet_src = include_str!("../../assets/shaders/planet.wesl");
+    let atmo_src = include_str!("../../assets/shaders/atmosphere.wesl");
+
+    let (_, terrestrial_block) = planet_src
+        .split_once("if (planet.planet_type == 3u) {")
+        .expect("TerrestrialPlanet fragment branch must exist in planet.wesl");
+
+    assert!(
+        !terrestrial_block
+            .contains("if (has_water_or_ice_oceans && elev < sea_level) {\n            elev = sea_level"),
+        "TerrestrialPlanet fragment shader must NOT overwrite elev = sea_level, which makes underwater bathymetry unreachable"
+    );
+    assert!(
+        terrestrial_block.contains("else if (has_oceans && elev < sea_level)"),
+        "TerrestrialPlanet fragment shader must reach underwater ocean bathymetry branch"
+    );
+    assert!(
+        terrestrial_block.contains("temp <= 420.0"),
+        "TerrestrialPlanet liquid ocean cutoff must accommodate high-pressure cooled oceans above 380 K"
+    );
+    assert!(
+        planet_src.contains("let base_thresh = select(0.55, 0.50, is_super_earth)"),
+        "Cloud shader must keep clear ocean windows open at temperate cloud densities"
+    );
+    assert!(
+        atmo_src.contains("let base_thresh = 0.54 - cloud_cov * 0.14;"),
+        "Orbital limb clouds must not blanket the center disk over temperate oceans"
     );
 }

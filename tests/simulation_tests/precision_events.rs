@@ -68,7 +68,7 @@ fn setup_theia_integrated_physics_app() -> (App, Entity, Entity) {
             Mass(earth_mass),
             Radius(earth_rad),
             Temperature(288.0),
-            comp.clone(),
+            comp,
             diff,
             CelestialBody {
                 name: "Proto-Earth".to_string(),
@@ -359,19 +359,18 @@ fn test_theia_intercept_with_planet_nine_at_380_au_selects_earth_and_forms_moon(
     let moon_dist_to_earth = (moon_pos - earth_pos).length();
     assert!(
         moon_dist_to_earth < 0.05,
-        "The Moon must orbit close to Earth (< 0.05 AU), found dist: {} AU",
-        moon_dist_to_earth
+        "The Moon must orbit close to Earth (< 0.05 AU), found dist: {moon_dist_to_earth} AU"
     );
 }
 
 struct FullSolarSystemEntities {
-    merc_ent: Entity,
-    venus_ent: Entity,
-    earth_ent: Entity,
-    embryo_ent: Entity,
-    theia_ent: Entity,
-    mars_ent: Entity,
-    p9_ent: Entity,
+    merc: Entity,
+    venus: Entity,
+    earth: Entity,
+    embryo: Entity,
+    theia: Entity,
+    mars: Entity,
+    p9: Entity,
 }
 
 fn spawn_inner_solar_system(app: &mut App, star_mass: f64) -> (Entity, Entity, Entity, Entity) {
@@ -565,13 +564,13 @@ fn spawn_full_test_solar_system(app: &mut App) -> FullSolarSystemEntities {
     let (theia_ent, mars_ent, p9_ent) = spawn_outer_solar_system(app, star_mass);
 
     FullSolarSystemEntities {
-        merc_ent,
-        venus_ent,
-        earth_ent,
-        embryo_ent,
-        theia_ent,
-        mars_ent,
-        p9_ent,
+        merc: merc_ent,
+        venus: venus_ent,
+        earth: earth_ent,
+        embryo: embryo_ent,
+        theia: theia_ent,
+        mars: mars_ent,
+        p9: p9_ent,
     }
 }
 
@@ -585,13 +584,13 @@ fn test_theia_intercept_with_full_solar_system_selects_earth_not_venus_or_embryo
         .add_systems(Update, update_theia_rendezvous);
 
     let FullSolarSystemEntities {
-        merc_ent,
-        venus_ent,
-        earth_ent,
-        embryo_ent,
-        theia_ent,
-        mars_ent,
-        p9_ent,
+        merc: merc_ent,
+        venus: venus_ent,
+        earth: earth_ent,
+        embryo: embryo_ent,
+        theia: theia_ent,
+        mars: mars_ent,
+        p9: p9_ent,
     } = spawn_full_test_solar_system(&mut app);
 
     // Request on-demand Moon formation
@@ -637,8 +636,7 @@ fn test_theia_intercept_with_full_solar_system_selects_earth_not_venus_or_embryo
     let venus_dist = (venus_pos.x * venus_pos.x + venus_pos.z * venus_pos.z).sqrt();
     assert!(
         (venus_dist - 0.72).abs() < 0.05,
-        "Venus must remain in Venus orbit ~0.72 AU, found: {} AU",
-        venus_dist
+        "Venus must remain in Venus orbit ~0.72 AU, found: {venus_dist} AU"
     );
 
     // 2. Verify Embryo-1.0AU is UNTOUCHED
@@ -675,8 +673,7 @@ fn test_theia_intercept_with_full_solar_system_selects_earth_not_venus_or_embryo
     let earth_dist = (earth_pos.x * earth_pos.x + earth_pos.z * earth_pos.z).sqrt();
     assert!(
         (earth_dist - 1.00).abs() < 0.10,
-        "Earth must be in 1.00 AU orbit, found: {} AU",
-        earth_dist
+        "Earth must be in 1.00 AU orbit, found: {earth_dist} AU"
     );
 
     // 5. Verify Theia is transformed into The Moon in orbit around Earth
@@ -696,8 +693,7 @@ fn test_theia_intercept_with_full_solar_system_selects_earth_not_venus_or_embryo
     let moon_earth_dist = (moon_pos - earth_pos).length();
     assert!(
         moon_earth_dist < 0.05,
-        "The Moon must be near Earth (< 0.05 AU), found: {} AU",
-        moon_earth_dist
+        "The Moon must be near Earth (< 0.05 AU), found: {moon_earth_dist} AU"
     );
 
     // 6. Verify count of Earths in the entire simulation is EXACTLY ONE!

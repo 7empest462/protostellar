@@ -103,14 +103,27 @@ pub fn handle_orbital_adjustment(
     };
 
     if let Some(ent) = player_state.selected_entity {
-        if let Ok((_, _, _, mut pos, mut vel, _, body, ..)) = selected_query.get_mut(ent) {
-            pos.0 *= mult;
-            let r = pos.0.length();
-            let v_mag = (G_ASTRO * star_mass / r).sqrt();
-            let mut orbit_tangent = DVec3::new(-pos.0.z, 0.0, pos.0.x);
-            if orbit_tangent.length_squared() > 1e-6 {
-                orbit_tangent = orbit_tangent.normalize();
+        if let Ok((_, _, _, mut pos, mut vel, _, body, is_star, ..)) = selected_query.get_mut(ent) {
+            if is_star.is_some() || body.body_type.is_star_or_remnant() {
+                toast.message = format!(
+                    "⚠️ Cannot adjust orbital radius of central star {}",
+                    body.name
+                );
+                toast.timer = 3.0;
+                return true;
             }
+            pos.0 *= mult;
+            let r = pos.0.length().max(1e-4);
+            if pos.0.length_squared() <= 1e-12 {
+                pos.0 = DVec3::new(r, 0.0, 0.0);
+            }
+            let v_mag = (G_ASTRO * star_mass.max(0.0) / r).sqrt();
+            let raw_tangent = DVec3::new(-pos.0.z, 0.0, pos.0.x);
+            let orbit_tangent = if raw_tangent.length_squared() > 1e-6 {
+                raw_tangent.normalize()
+            } else {
+                DVec3::Z
+            };
             vel.0 = orbit_tangent * v_mag;
             toast.message = format!("🚀 {} Orbit {} {:.2} AU", body.name, label, r);
             toast.timer = 4.0;
@@ -125,8 +138,15 @@ pub fn handle_composition_cycle(
     toast: &mut NotificationToast,
 ) {
     if let Some(ent) = player_state.selected_entity {
-        if let Ok((_, mut mass, mut radius, _, _, mut comp, body, ..)) = selected_query.get_mut(ent)
+        if let Ok((_, mut mass, mut radius, _, _, mut comp, body, is_star, ..)) =
+            selected_query.get_mut(ent)
         {
+            if is_star.is_some() || body.body_type.is_star_or_remnant() {
+                toast.message =
+                    format!("⚠️ Cannot overwrite stellar composition for {}", body.name);
+                toast.timer = 3.0;
+                return;
+            }
             if comp.silicate_frac > 0.5 {
                 *comp = Composition::icy();
                 toast.message = format!(

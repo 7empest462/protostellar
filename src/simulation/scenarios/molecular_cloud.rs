@@ -648,7 +648,12 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
     } else {
         DVec3::new(1.0, 0.0, 0.0)
     };
-    let bitangent = tangent.cross(DVec3::Y).normalize();
+    let up_ref = if tangent.y.abs() > 0.99 {
+        DVec3::X
+    } else {
+        DVec3::Y
+    };
+    let bitangent = tangent.cross(up_ref).normalize();
 
     let embryos = get_gmc_promotion_embryos(star_name, star_mass, metallicity);
     let embryo_count = embryos.len();

@@ -156,8 +156,7 @@ fn test_black_hole_planets_maintain_steady_visual_radius_never_pulse() {
         );
         assert_eq!(
             vis_r, earth_normal,
-            "Earth (1.0 AU) must maintain steady visual radius and never shrink or pulse when inner debris plunges to {:.3} AU",
-            min_r
+            "Earth (1.0 AU) must maintain steady visual radius and never shrink or pulse when inner debris plunges to {min_r:.3} AU"
         );
     }
 
@@ -190,8 +189,7 @@ fn test_black_hole_planets_maintain_steady_visual_radius_never_pulse() {
         );
         assert!(
             vis >= prev_vis,
-            "Visual radius must increase monotonically across transition zone: {:.4} >= {:.4} at r_orb = {:.3}",
-            vis, prev_vis, r_orb
+            "Visual radius must increase monotonically across transition zone: {vis:.4} >= {prev_vis:.4} at r_orb = {r_orb:.3}"
         );
         prev_vis = vis;
     }
@@ -738,9 +736,10 @@ fn test_milkomeda_natural_approach_merger() {
             .iter(app.world())
             .filter(|b| b.body_type == BodyType::BlackHole)
             .count();
-        if black_hole_count == 0 {
-            panic!("ALL BLACK HOLES WERE LOST at T = {elapsed:.2} yr!");
-        }
+        assert!(
+            black_hole_count != 0,
+            "ALL BLACK HOLES WERE LOST at T = {elapsed:.2} yr!"
+        );
     }
 
     let black_holes: Vec<(Entity, String, Mass)> = app
@@ -780,11 +779,8 @@ fn test_sagittarius_a_ignition_and_aging_immunity() {
         let world = app.world();
         (
             world.get::<CelestialBody>(sgr_a_ent).unwrap().clone(),
-            world.get::<IgnitionState>(sgr_a_ent).unwrap().clone(),
-            world
-                .get::<StellarEvolutionState>(sgr_a_ent)
-                .unwrap()
-                .clone(),
+            *world.get::<IgnitionState>(sgr_a_ent).unwrap(),
+            *world.get::<StellarEvolutionState>(sgr_a_ent).unwrap(),
         )
     };
 

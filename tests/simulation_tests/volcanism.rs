@@ -359,3 +359,180 @@ fn test_snowball_earth_and_frozen_planets_exclude_cryotectonic_fractures() {
         )],
     );
 }
+
+#[test]
+fn test_procedural_moon_naming_shader_and_mega_earth_gas_envelope() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::rendering::bodies::palettes::resolve_planet_type_and_subtype;
+    use protostellar::simulation::accretion::collisions::naming::{
+        clean_moon_parent_name, is_canonical_named_body, resolve_satellite_moon_name,
+        update_merged_body_name,
+    };
+    use protostellar::simulation::components::{PlanetaryClimate, VolatileInventory};
+    use protostellar::simulation::resources::TimeWarp;
+    use protostellar::simulation::thermodynamics::retained_gas_envelope_bar;
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, EARTH_RADIUS_AU, JUPITER_MASS_SOLAR};
+
+    let rocky_comp = Composition {
+        metal_frac: 0.21,
+        silicate_frac: 0.75,
+        ice_frac: 0.04,
+        gas_frac: 0.0,
+        organics_frac: 0.0,
+    };
+
+    // Procedural moons must not hijack Earth's Moon (subtype 2.0) landmark shader
+    let (m_type, m_sub) =
+        resolve_planet_type_and_subtype(BodyType::Moon, "Super-Jupiter I (Moon)", &rocky_comp);
+    assert_eq!(m_type, 3);
+    assert!((m_sub - 0.0).abs() < 1e-5);
+
+    // Clean sequential moon naming strips parent mass tags and increments Roman numerals
+    assert_eq!(
+        clean_moon_parent_name("Super-Jupiter (1.5 M_J)"),
+        "Super-Jupiter"
+    );
+    assert_eq!(
+        resolve_satellite_moon_name("Super-Jupiter (1.5 M_J)", "Proto-Planet #12", 0),
+        "Super-Jupiter I (Moon)"
+    );
+    assert_eq!(
+        resolve_satellite_moon_name("Super-Jupiter (1.5 M_J)", "Proto-Planet #15", 1),
+        "Super-Jupiter II (Moon)"
+    );
+    assert!(!is_canonical_named_body("Super-Jupiter (1.5 M_J)"));
+
+    let mut reclass_name = "Super-Jupiter (1.5 M_J)".to_string();
+    update_merged_body_name(
+        &mut reclass_name,
+        "Proto-Planet #9",
+        BodyType::SuperEarth,
+        1.5 * JUPITER_MASS_SOLAR,
+    );
+    assert_eq!(reclass_name, "Mega-Earth (1.5 M_J)");
+
+    // Mega-Earth with 4% H2/He gas must bind a crushing atmospheric envelope; 0.0011 M_earth moons must not
+    let mega_bar = retained_gas_envelope_bar(1.5 * JUPITER_MASS_SOLAR, 0.04);
+    assert!(
+        mega_bar > 400.0,
+        "Expected >400 bar envelope, got {mega_bar}"
+    );
+    assert_eq!(
+        retained_gas_envelope_bar(0.0011 * EARTH_MASS_SOLAR, 0.04),
+        0.0
+    );
+
+    // End-to-end thermodynamics check for a 1.5 M_J Mega-Earth with 4% gas
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        bevy::state::app::StatesPlugin,
+        protostellar::simulation::SimulationPlugin,
+    ));
+    app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
+    {
+        let mut tw = app.world_mut().resource_mut::<TimeWarp>();
+        tw.is_paused = false;
+        tw.multiplier = 100.0;
+    }
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Genesis Protostar".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.33),
+        Radius(0.006),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        Temperature(5800.0),
+        Composition::default(),
+    ));
+    let mega_earth_comp = Composition {
+        metal_frac: 0.21,
+        silicate_frac: 0.71,
+        ice_frac: 0.04,
+        gas_frac: 0.04,
+        organics_frac: 0.0,
+    };
+    let (se_type, _) =
+        resolve_planet_type_and_subtype(BodyType::SuperEarth, &reclass_name, &mega_earth_comp);
+    assert_eq!(se_type, 6);
+
+    let mega_ent = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: reclass_name,
+                body_type: BodyType::SuperEarth,
+            },
+            Mass(1.5 * JUPITER_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 8.0),
+            SimPosition(DVec3::new(5.6, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, 2.5)),
+            Temperature(250.0),
+            mega_earth_comp,
+            VolatileInventory {
+                delivered_water_m_earth: 0.0,
+                ocean_coverage_frac: 0.0,
+                atmospheric_pressure_bar: 0.0,
+                cometary_impact_count: 0,
+            },
+            PlanetaryClimate::default(),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+
+    let vol = app.world().get::<VolatileInventory>(mega_ent).unwrap();
+    let climate = app.world().get::<PlanetaryClimate>(mega_ent).unwrap();
+    assert!(
+        vol.atmospheric_pressure_bar > 400.0,
+        "1.5 M_J Mega-Earth with 4% gas must sustain high pressure, got {}",
+        vol.atmospheric_pressure_bar
+    );
+    assert!(
+        climate.cloud_coverage_frac >= 0.45,
+        "1.5 M_J Mega-Earth with 4% gas must form dense clouds, got {}",
+        climate.cloud_coverage_frac
+    );
+}
+
+#[test]
+fn test_quick_bar_moon_isolation_and_super_jupiter_labeling() {
+    use protostellar::game::ui::{
+        body_to_button_colors, body_to_button_label, is_canonical_major_planet, is_major_body,
+    };
+    use protostellar::simulation::components::BodyType;
+    use protostellar::utils::constants::{EARTH_MASS_SOLAR, JUPITER_MASS_SOLAR};
+
+    assert!(!is_canonical_major_planet(
+        "Super-Jupiter (1.5 M_J) I (Moon)"
+    ));
+    assert!(!is_major_body(
+        "Super-Jupiter (1.5 M_J) I (Moon)",
+        BodyType::Moon,
+        false,
+        0.0011 * EARTH_MASS_SOLAR
+    ));
+    assert!(is_major_body(
+        "Super-Jupiter (1.5 M_J)",
+        BodyType::GasGiant,
+        false,
+        1.5 * JUPITER_MASS_SOLAR
+    ));
+
+    let moon_label =
+        body_to_button_label("Super-Jupiter (1.5 M_J) I (Moon)", BodyType::Moon, false);
+    let jup_label = body_to_button_label("Super-Jupiter (1.5 M_J)", BodyType::GasGiant, false);
+    assert_ne!(moon_label, jup_label);
+    assert!(!moon_label.contains('…') && !moon_label.contains("..."));
+    assert!(moon_label.contains('I'));
+
+    let (moon_bg, _) =
+        body_to_button_colors("Super-Jupiter (1.5 M_J) I (Moon)", BodyType::Moon, false);
+    let (jup_bg, _) = body_to_button_colors("Super-Jupiter (1.5 M_J)", BodyType::GasGiant, false);
+    assert_ne!(moon_bg, jup_bg);
+}

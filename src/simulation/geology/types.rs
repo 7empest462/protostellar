@@ -19,13 +19,14 @@ pub enum EpochTargetPlanet {
 impl EpochTargetPlanet {
     /// Detects the target planet archetype from a body name if it matches Earth, Mars, or Venus.
     pub fn try_detect_from_name(name: &str) -> Option<Self> {
-        let lower = name.to_lowercase();
-        if lower.contains("mars") {
+        use crate::utils::math::contains_ignore_ascii_case;
+        if contains_ignore_ascii_case(name, "mars") {
             Some(Self::Mars)
-        } else if lower.contains("venus") {
+        } else if contains_ignore_ascii_case(name, "venus") {
             Some(Self::Venus)
-        } else if (lower.contains("earth") && !lower.contains("super-earth"))
-            || lower.contains("terra")
+        } else if (contains_ignore_ascii_case(name, "earth")
+            && !contains_ignore_ascii_case(name, "super-earth"))
+            || contains_ignore_ascii_case(name, "terra")
         {
             Some(Self::Earth)
         } else {

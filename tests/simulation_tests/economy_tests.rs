@@ -42,8 +42,8 @@ fn test_tech_tree_prerequisites_and_unlocking() {
     let nodes = UnlockedTechs::all_nodes();
     assert_eq!(nodes.len(), 9);
     for node in nodes {
-        assert!(!node.name.is_empty());
-        assert!(!node.description.is_empty());
+        assert_ne!(node.name, "");
+        assert_ne!(node.description, "");
         assert!(node.cost > 0.0);
     }
 
@@ -162,8 +162,6 @@ fn test_dyson_swarm_amplification() {
     let boosted_rate = app.world().resource::<ScienceData>().passive_rate_per_sec;
     assert!(
         boosted_rate >= initial_rate * 2.0,
-        "Expected boosted rate, got initial: {}, boosted: {}",
-        initial_rate,
-        boosted_rate
+        "Expected boosted rate, got initial: {initial_rate}, boosted: {boosted_rate}"
     );
 }

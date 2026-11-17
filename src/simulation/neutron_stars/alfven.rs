@@ -78,9 +78,13 @@ pub fn step_magnetar_crust_stress_and_starquakes_system(
         }
     }
 
-    let dt_years = sim_time
-        .as_ref()
-        .map_or(0.016, |s| s.current_dt_yr.max(1e-6));
+    let dt_years = sim_time.as_ref().map_or(0.016, |s| {
+        if s.current_dt_yr > 0.0 {
+            s.current_dt_yr
+        } else {
+            1e-6
+        }
+    });
 
     let mut manual_entities = Vec::new();
     let mut trigger_all = false;
@@ -130,16 +134,13 @@ pub fn step_magnetar_crust_stress_and_starquakes_system(
                 },
                 SimPosition(pos.0),
             ));
-        }
-
-        // 2. Flare cooldown and lightcurve decay
-        if stress.burst_active {
+        } else if stress.burst_active {
+            // 2. Flare cooldown and lightcurve decay
             stress.burst_cooldown_years -= dt_years;
             let decay_factor = (stress.burst_cooldown_years / 0.35).clamp(0.0, 1.0);
 
             if let Some(ref mut lum) = opt_lum {
-                lum.0 =
-                    10_000.0 + stress.peak_flare_luminosity_solar * (decay_factor * decay_factor);
+                lum.0 = 10.0 + stress.peak_flare_luminosity_solar * (decay_factor * decay_factor);
             }
             if let Some(ref mut em) = opt_em {
                 em.synchrotron_intensity = (15.0 * decay_factor as f32).max(1.0);
@@ -167,23 +168,28 @@ pub fn step_alfven_blast_waves_system(
         }
     }
 
-    let dt_years = sim_time
-        .as_ref()
-        .map_or(0.016, |s| s.current_dt_yr.max(1e-6));
+    let dt_years = sim_time.as_ref().map_or(0.016, |s| {
+        if s.current_dt_yr > 0.0 {
+            s.current_dt_yr
+        } else {
+            1e-6
+        }
+    });
     let dt_sec = dt_years * 31_557_600.0;
 
     for (entity, mut wave, opt_pos) in blast_waves_query.iter_mut() {
-        let delta_r = wave.expansion_speed_au_yr * dt_years;
+        let delta_r = (wave.expansion_speed_au_yr * dt_years.min(0.001))
+            .clamp(0.05, wave.max_radius_au * 0.65);
         let old_r = wave.radius_au;
         let new_r = old_r + delta_r;
         wave.radius_au = new_r;
         wave.age_seconds += dt_sec;
 
         // Inverse-square geometric attenuation of the propagating pulse
-        let attenuation = (old_r / new_r.max(0.05)).powi(2);
+        let radial_ratio = old_r.max(1.0) / new_r.max(1.0);
+        let attenuation = radial_ratio.powi(2);
         wave.luminosity_solar = (wave.luminosity_solar * attenuation).max(0.0);
-        wave.synchrotron_brightness =
-            (wave.synchrotron_brightness * (old_r / new_r) as f32).max(0.0);
+        wave.synchrotron_brightness = (wave.synchrotron_brightness * radial_ratio as f32).max(0.0);
 
         if let Some(mut pos) = opt_pos {
             // Centered on shock origin

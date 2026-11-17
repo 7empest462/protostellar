@@ -59,7 +59,7 @@ fn test_geomagnetic_kp_derivation() {
 
     // Moderate CME storm: standoff 6.5, multiplier 8.0, B = 0.5 G
     let (kp_mod, level_mod) = calculate_geomagnetic_kp(6.5, 8.0, 0.5);
-    assert!(kp_mod >= 5.0 && kp_mod <= 7.0);
+    assert!((5.0..=7.0).contains(&kp_mod));
     assert!(
         level_mod == GeomagneticStormLevel::ModerateStorm
             || level_mod == GeomagneticStormLevel::StrongStorm
@@ -303,5 +303,190 @@ fn test_auroral_oval_ecs_update() {
     assert!(aurora.magnetopause_standoff_rp > 8.0);
     assert!(aurora.oval_colatitude_rad > 0.2 && aurora.oval_colatitude_rad < 0.5);
     assert!(aurora.oval_width_rad > 0.03);
-    assert!(aurora.auroral_intensity > 0.5);
+    assert!(
+        aurora.geomagnetic_kp_index < 2.0,
+        "Quiet baseline Earth Kp should remain below storm levels: {}",
+        aurora.geomagnetic_kp_index
+    );
+    assert_eq!(aurora.storm_level, GeomagneticStormLevel::Quiet);
+    assert!(
+        aurora.auroral_intensity > 0.0 && aurora.auroral_intensity < 0.25,
+        "Quiet baseline aurora should remain sub-visual rather than pegged high: {}",
+        aurora.auroral_intensity
+    );
+}
+
+#[test]
+fn test_aurora_surges_on_space_weather_events_and_fades_back_to_quiet() {
+    let mut app = App::new();
+    app.insert_resource(SimTime {
+        elapsed_years: 0.0,
+        current_dt_yr: 0.0005,
+        step_count: 0,
+        ..Default::default()
+    });
+    app.insert_resource(TimeWarp {
+        multiplier: 1.0,
+        is_paused: false,
+        step_once: false,
+    });
+    app.add_message::<CmeShockwaveEvent>();
+
+    let star = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Sol".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            CentralStar,
+            Mass(1.0),
+            SimPosition(DVec3::ZERO),
+            IgnitionState {
+                is_ignited: true,
+                shockwave_radius: 0.0,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    let earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            Radius(EARTH_RADIUS_AU),
+            Composition {
+                silicate_frac: 0.70,
+                metal_frac: 0.30,
+                ice_frac: 0.0,
+                organics_frac: 0.0,
+                gas_frac: 0.0,
+            },
+            VolatileInventory {
+                atmospheric_pressure_bar: 1.0,
+                ..Default::default()
+            },
+            InternalDifferentiation {
+                is_differentiated: true,
+                magnetic_field_gauss: 0.5,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.add_systems(
+        Update,
+        (
+            update_stellar_flares_system,
+            update_planetary_auroral_ovals_system,
+        )
+            .chain(),
+    );
+
+    // 1. Quiet solar wind: aurora stays faint
+    app.update();
+    let quiet_int = app
+        .world()
+        .get::<AuroralOvalState>(earth)
+        .unwrap()
+        .auroral_intensity;
+    assert!(
+        quiet_int < 0.25,
+        "Baseline quiet aurora should stay faint: {quiet_int}"
+    );
+
+    // 2. Solar blast / ignition shockwave sweeps past 1.0 AU -> aurora surges vividly
+    app.world_mut()
+        .get_mut::<IgnitionState>(star)
+        .unwrap()
+        .shockwave_radius = 1.0;
+    app.update();
+
+    let storm_aurora = *app.world().get::<AuroralOvalState>(earth).unwrap();
+    assert!(
+        storm_aurora.auroral_intensity > 1.0,
+        "Ignition/CME blast must light up aurora brightly: {}",
+        storm_aurora.auroral_intensity
+    );
+    assert!(
+        storm_aurora.geomagnetic_kp_index >= 5.0,
+        "Blast shock must elevate Kp into storm tier: {}",
+        storm_aurora.geomagnetic_kp_index
+    );
+
+    // 3. Clear blast and advance simulated recovery -> aurora fades gradually back to quiet
+    app.world_mut()
+        .get_mut::<IgnitionState>(star)
+        .unwrap()
+        .shockwave_radius = 0.0;
+    app.world_mut()
+        .get_mut::<StellarFlareState>(star)
+        .unwrap()
+        .flare_frequency = 0.0;
+    app.world_mut().resource_mut::<SimTime>().current_dt_yr = 0.05;
+    for _ in 0..4 {
+        app.update();
+    }
+
+    let recovered = app.world().get::<AuroralOvalState>(earth).unwrap();
+    assert!(
+        recovered.auroral_intensity < 0.25,
+        "After storm recovery, aurora should fade back down to quiet baseline: {}",
+        recovered.auroral_intensity
+    );
+    assert_eq!(recovered.storm_level, GeomagneticStormLevel::Quiet);
+}
+
+#[test]
+fn test_natural_stellar_flare_cycle_and_volcanic_moon_torus() {
+    let mut app = App::new();
+    app.insert_resource(SimTime {
+        elapsed_years: 0.0,
+        current_dt_yr: 0.20,
+        step_count: 0,
+        ..Default::default()
+    });
+    app.insert_resource(TimeWarp {
+        multiplier: 1.0,
+        is_paused: false,
+        step_once: false,
+    });
+    app.add_message::<CmeShockwaveEvent>();
+
+    let star = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Protostar".to_string(),
+                body_type: BodyType::Protostar,
+            },
+            CentralStar,
+            Mass(1.0),
+            SimPosition(DVec3::ZERO),
+            StellarFlareState {
+                flare_frequency: 2.0,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.add_systems(Update, update_stellar_flares_system);
+    // Advance until natural flare clock threshold triggers a flare + CME
+    for _ in 0..4 {
+        app.update();
+    }
+    let flare = app.world().get::<StellarFlareState>(star).unwrap();
+    assert!(
+        flare.cme_active || flare.current_flare_intensity > 0.0,
+        "Active flare_frequency star must naturally emit periodic flares/CMEs"
+    );
+
+    // Shader uniform packer falls back to quiet intensity when unattached
+    let quiet_fallback = calculate_aurora_shader_uniforms(None, 0.5);
+    assert!(quiet_fallback.z > 0.0 && quiet_fallback.z < 0.15);
+    assert_eq!(calculate_aurora_shader_uniforms(None, 0.0), Vec4::ZERO);
 }

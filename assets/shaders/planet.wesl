@@ -93,7 +93,7 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
             let has_water_or_ice_oceans = has_volatiles
                 && ocean_frac > 0.01
                 && planet.temperature >= 150.0
-                && planet.temperature <= 380.0
+                && planet.temperature <= 420.0
                 && pressure_bar >= 0.006;
             let has_oceans = has_water_or_ice_oceans && !is_snowball;
             let sea_level = clamp(0.18 + ocean_frac * 0.40, 0.18, 0.76);
@@ -148,7 +148,7 @@ fn get_vertex_displacement(p_surf: vec3<f32>) -> f32 {
 
             let has_water_or_ice_oceans = has_volatiles
                 && (ocean_frac > 0.005 || is_snowball)
-                && planet.temperature <= 380.0
+                && planet.temperature <= 420.0
                 && (p_type == 6u || planet.temperature >= 150.0)
                 && pressure_bar >= 0.006;
             let has_oceans = has_water_or_ice_oceans && !is_snowball;
@@ -1867,17 +1867,20 @@ fn evaluate_multilayer_clouds_and_shadows(
     let s_mid = sample_multilayer_cloud_decks(p_view_mid, spin_angle, t, seed, is_super_earth);
     let s_high = sample_multilayer_cloud_decks(p_view_high, spin_angle, t, seed, is_super_earth);
 
-    let base_thresh = select(0.49, 0.44, is_super_earth) - effective_cloud_density * 0.24 - substellar_cloud_boost;
-    let dens_scale = clamp(effective_cloud_density * 1.40, 0.28, 1.0);
+    let base_thresh = select(0.55, 0.50, is_super_earth)
+        - effective_cloud_density * 0.14
+        - substellar_cloud_boost
+        - boil_steam_factor * 0.14;
+    let dens_scale = clamp(effective_cloud_density * 1.25, 0.28, 1.0);
 
-    let alpha_low = clamp((s_low.low_cumulus - (base_thresh + 0.03)) * 2.6 * dens_scale, 0.0, 0.72);
-    let alpha_mid = clamp((s_mid.mid_frontal - base_thresh) * 3.0 * dens_scale, 0.0, 0.90);
-    let alpha_high = clamp((s_high.high_cirrus - (base_thresh - 0.05)) * 1.9 * dens_scale, 0.0, 0.52);
+    let alpha_low = clamp((s_low.low_cumulus - (base_thresh + 0.03)) * 2.4 * dens_scale, 0.0, 0.65);
+    let alpha_mid = clamp((s_mid.mid_frontal - base_thresh) * 2.8 * dens_scale, 0.0, 0.84);
+    let alpha_high = clamp((s_high.high_cirrus - (base_thresh + 0.01)) * 1.8 * dens_scale, 0.0, 0.36);
 
     // Front-to-back multi-layer compositing (high cirrus over mid frontal/cyclone over low cumulus)
     let alpha_low_mid = 1.0 - (1.0 - alpha_low) * (1.0 - alpha_mid);
     let raw_total_alpha = 1.0 - (1.0 - alpha_low_mid) * (1.0 - alpha_high);
-    let max_alpha = mix(select(0.84, 0.93, is_super_earth), 0.98, boil_steam_factor);
+    let max_alpha = mix(select(0.82, 0.90, is_super_earth), 0.98, boil_steam_factor);
     let total_alpha = clamp(raw_total_alpha, 0.0, max_alpha);
 
     // -------------------------------------------------------------------------
@@ -2370,9 +2373,9 @@ fn fragment(
     // (Culled entirely for stars, gas/ice giants, black holes, and quasi-stars)
     let surf_fw = length(fwidth(p_surf * 16.0));
     let is_solid_crust = (planet.planet_type == 3u || planet.planet_type == 4u || planet.planet_type == 6u || planet.planet_type == 8u || planet.planet_type == 9u);
-    if (is_solid_crust) {
+    let micro_lod = 1.0 - smoothstep(0.16, 0.72, surf_fw);
+    if (is_solid_crust && micro_lod > 0.005) {
         let eps_frag = 0.002;
-        let micro_lod = 1.0 - smoothstep(0.16, 0.60, surf_fw) * 0.70;
         let p_dx = normalize(p_surf + vec3<f32>(eps_frag, 0.0, 0.0));
         let p_dy = normalize(p_surf + vec3<f32>(0.0, eps_frag, 0.0));
         let p_dz = normalize(p_surf + vec3<f32>(0.0, 0.0, eps_frag));
@@ -2817,7 +2820,7 @@ fn fragment(
         let trench_zone = smoothstep(0.05, 0.0, abs(elev - 0.38) - 0.02);
         let trench_depth = trench_zone * 0.10;
 
-        let has_oceans = has_volatiles && ocean_frac > 0.01 && temp <= 380.0 && pressure_bar >= 0.006;
+        let has_oceans = has_volatiles && ocean_frac > 0.01 && temp <= 420.0 && pressure_bar >= 0.006;
         let sea_level = clamp(0.18 + ocean_frac * 0.45, 0.20, 0.80);
         let primordial_shelf_elev = 0.48;
 
@@ -2980,8 +2983,8 @@ fn fragment(
         }
         
         // Massive 3-Layer Atmospheric Cloud Circulation, Coriolis Cyclones, Cast Shadows & Runaway Steam Deck
-        if ((has_volatiles || gas > 0.05 || ocean_frac > 0.005) && (pressure_bar >= 0.02 || gas > 0.15)) {
-            let boil_steam_factor = clamp((temp - 345.0) / 35.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles);
+        if ((has_volatiles || gas > 0.015 || ocean_frac > 0.005) && (pressure_bar >= 0.02 || gas > 0.035)) {
+            let boil_steam_factor = clamp((temp - 380.0) / 45.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles);
             let effective_cloud_density = mix(cloud_density, 1.0, boil_steam_factor);
             let substellar_cloud_boost = select(0.0, smoothstep(-0.10, 0.65, substellar_cos) * 0.08, is_tidally_locked);
 
@@ -3323,7 +3326,7 @@ fn fragment(
         let sea_level = clamp(0.18 + ocean_frac * 0.40, 0.18, 0.76);
         let primordial_shelf_elev = 0.46;
         let is_snowball = ice_frac >= 0.50 || (temp < 255.0 && (has_volatiles || ice_frac > 0.005 || ocean_frac > 0.0001));
-        let has_water_or_ice_oceans = (has_volatiles || is_snowball) && (ocean_frac > 0.005 || is_snowball) && temp <= 380.0 && pressure_bar >= 0.006;
+        let has_water_or_ice_oceans = (has_volatiles || is_snowball) && (ocean_frac > 0.005 || is_snowball) && temp <= 420.0 && pressure_bar >= 0.006;
         let has_oceans = has_water_or_ice_oceans && !is_snowball;
 
         let land_weight = smoothstep(0.28, 0.48, continent_mask);
@@ -3352,15 +3355,12 @@ fn fragment(
             evaluate_canonical_terrestrial_elevation(p_surf, t_sub),
             t_sub >= 1.0 && t_sub != 4.0
         );
-        if (has_water_or_ice_oceans && elev < sea_level) {
-            elev = sea_level + select(0.0, 0.003, is_snowball);
-        }
 
         // Slight albedo desaturation helper (kills candy primaries)
         let desat = 0.18;
 
         // A. Molten Magma Ocean
-        if ((temp >= 1100.0 || lava_frac > 0.65) && (!has_volatiles || ocean_frac < 0.04 || temp > 380.0)) {
+        if ((temp >= 1100.0 || lava_frac > 0.65) && (!has_volatiles || ocean_frac < 0.04 || temp > 420.0)) {
             let magma = evaluate_magma_ocean_surface(p_surf, elev, temp, lava_frac, t);
             color = magma.color;
             pbr_input.material.emissive = vec4<f32>(magma.emissive, 1.0);
@@ -3368,7 +3368,7 @@ fn fragment(
             pbr_input.material.metallic = magma.metallic;
         }
         // B. Venusian runaway greenhouse deck (with Akatsuki / Mariner 10 UV Bow-Shaped "Y-Wave")
-        else if (temp >= 380.0 && (gas > 0.05 || cloud_density > 0.5 || pressure_bar > 5.0)) {
+        else if (temp >= 410.0 && !has_oceans && (gas > 0.05 || cloud_density > 0.5 || pressure_bar > 5.0)) {
             let super_rot = rotate_y(p_tilted, planet.spin_angle * 4.0 + t * 0.008);
             let clouds = fbm_lod(super_rot * 4.5 + vec3<f32>(t * 0.006, 0.0, t * 0.006));
             let v_band_deriv = length(fwidth(lat * 8.0));
@@ -3721,7 +3721,7 @@ fn fragment(
             }
 
             // 3-Layer Dynamic Clouds (Cumulus, Frontal/Coriolis Cyclones, Ice Cirrus) + 3D Ray-Cast Ground & Ocean Shadows
-            let boil_steam_factor = clamp((temp - 345.0) / 35.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles && (pressure_bar >= 0.02 || gas > 0.005));
+            let boil_steam_factor = clamp((temp - 380.0) / 45.0, 0.0, 1.0) * select(0.0, 1.0, has_water_volatiles && (pressure_bar >= 0.02 || gas > 0.005));
             let effective_cloud_density = select(0.0, mix(cloud_density, 1.0, boil_steam_factor), pressure_bar >= 0.02 || gas > 0.005);
             let substellar_cloud_boost = select(0.0, smoothstep(-0.10, 0.65, substellar_cos) * 0.08, is_tidally_locked);
 
@@ -4243,18 +4243,19 @@ fn fragment(
 
         let effective_aurora_int = select(
             aurora_int,
-            clamp(mag_gauss * 0.8, 0.0, 2.0),
-            aurora_int <= 0.01 && mag_gauss > 0.15
+            0.03,
+            aurora_int <= 0.005 && mag_gauss > 0.15
         );
-        let effective_colat = clamp(select(oval_colat, 0.28, oval_colat <= 0.01), 0.16, 0.44);
+        let effective_colat = clamp(select(oval_colat, 0.315, oval_colat <= 0.01), 0.16, 0.44);
 
         let is_giant_atmo = (planet.planet_type == 1u || planet.planet_type == 2u);
+        let giant_storm_night = is_giant_atmo && NdotL < -0.05 && (effective_aurora_int > 0.30 || kp_index >= 3.5);
 
-        // Terrestrial visible-light auroral curtains (oxygen 557.7nm / nitrogen 391.4nm) on rocky worlds.
-        // Gas giants & ice giants (H2/He) emit predominantly far-UV and x-ray, invisible in optical daylight.
-        if (effective_aurora_int > 0.08
+        // Terrestrial visible-light auroral curtains (oxygen 557.7nm / nitrogen 391.4nm),
+        // plus nightside H3+/UV-violet storm auroras on gas/ice giants.
+        if (effective_aurora_int > 0.04
             && pressure_bar >= 0.05
-            && !is_giant_atmo)
+            && (!is_giant_atmo || giant_storm_night))
         {
             // Symmetrical angle from nearest magnetic/rotational pole:
             // polar_angle is abs(sin_lat) = abs(dot(norm, s_axis)), which is cos(colatitude from nearest pole).
@@ -4274,40 +4275,40 @@ fn fragment(
                 // Symmetrical azimuthal coordinate around true 3D spin axis
                 let az = atan2(p_tilted.z, p_tilted.x);
                 let ray_noise = fbm(vec3<f32>(az * 16.0 + t * 0.35, sin_lat * 24.0, t * 0.20));
-                let curtain_rays = smoothstep(0.32, 0.70, ray_noise);
+                let curtain_rays = smoothstep(0.32, 0.72, ray_noise);
 
                 let edge_ratio = d_oval / oval_width;
 
-                // Color palette: Earth has emerald oxygen 557.7nm + ruby nitrogen.
-                // Gas / Ice giants (H2/He) emit predominantly UV and faint visible H3+ violet/cyan
+                // Color palette: Earth has emerald oxygen 557.7nm + violet N2+ / ruby 630nm.
+                // Gas / Ice giants (H2/He) emit predominantly UV-violet/cyan H3+
                 var auroral_col: vec3<f32>;
                 if (is_giant_atmo) {
-                    let violet_h3 = vec3<f32>(0.35, 0.30, 0.90);
-                    let cyan_h2 = vec3<f32>(0.20, 0.75, 0.95);
+                    let violet_h3 = vec3<f32>(0.42, 0.25, 0.90);
+                    let cyan_h2 = vec3<f32>(0.18, 0.75, 0.95);
                     auroral_col = mix(violet_h3, cyan_h2, smoothstep(0.2, 0.8, edge_ratio));
                 } else {
-                    let emerald_core = vec3<f32>(0.12, 0.98, 0.42);
-                    let violet_edge = vec3<f32>(0.45, 0.20, 0.95);
-                    let ruby_fringe = vec3<f32>(0.95, 0.15, 0.25);
+                    let emerald_core = vec3<f32>(0.09, 0.92, 0.38);
+                    let violet_edge = vec3<f32>(0.44, 0.18, 0.90);
+                    let ruby_fringe = vec3<f32>(0.88, 0.14, 0.22);
                     auroral_col = mix(
                         emerald_core,
-                        mix(violet_edge, ruby_fringe, smoothstep(0.6, 1.2, edge_ratio)),
-                        smoothstep(0.3, 0.9, edge_ratio)
+                        mix(violet_edge, ruby_fringe, smoothstep(0.55, 1.15, edge_ratio)),
+                        smoothstep(0.28, 0.88, edge_ratio)
                     );
                 }
 
-                // In broad daylight (NdotL > 0.05), auroras are washed out by sunlight!
-                // For gas giants, daylight washes out faint auroras completely; on nightside it glows softly.
+                // In broad daylight (NdotL > 0.06), auroras are drowned out by sunlight!
+                let dayside_cusp = 0.02 * smoothstep(7.0, 9.0, kp_index);
                 let night_side_mult = select(
-                    smoothstep(0.15, -0.35, NdotL) * 1.15 + 0.10,
-                    smoothstep(0.00, -0.40, NdotL) * 0.75,
+                    max(smoothstep(0.06, -0.26, NdotL), dayside_cusp),
+                    smoothstep(-0.04, -0.38, NdotL) * 0.65,
                     is_giant_atmo
                 );
 
                 let storm_flicker = sin(t * 4.0 + az * 8.0) * 0.10 + 0.90;
 
-                // Quiet ~0.8, strong storm ~2.2
-                let intensity_scale = mix(0.8, 2.2, clamp(kp_index / 9.0, 0.0, 1.0));
+                // Quiet ~0.08 whisper on nightside; storms ramp dramatically with Kp
+                let intensity_scale = smoothstep(1.3, 8.5, kp_index) * 1.35 + 0.08;
 
                 aurora_glow = auroral_col
                     * (oval_ring
@@ -4317,7 +4318,8 @@ fn fragment(
                         * effective_aurora_int
                         * night_side_mult
                         * storm_flicker
-                        * intensity_scale);
+                        * intensity_scale
+                        * 0.62);
 
                 // Strictly polar factor: zero out below 45° latitude, full strength at > 62° latitude
                 let polar_factor = smoothstep(0.65, 0.88, polar_angle);

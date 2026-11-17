@@ -105,21 +105,19 @@ pub fn handle_tab_selection(
     };
     let icon = if target.is_central_star || target.body_type.is_star_or_remnant() {
         "☀️"
-    } else if target.name.to_lowercase().contains("earth")
-        || target.name.to_lowercase().contains("habitable")
-        || target.name.to_lowercase().contains("1e")
-        || target.name.to_lowercase().contains("1f")
-        || target.name.to_lowercase().contains("1g")
-    {
+    } else if crate::utils::math::contains_any_ignore_ascii_case(
+        &target.name,
+        &["earth", "habitable", "1e", "1f", "1g"],
+    ) {
         "🌍"
     } else if target.body_type == BodyType::GasGiant
-        || target.name.to_lowercase().contains("jupiter")
-        || target.name.to_lowercase().contains("saturn")
+        || crate::utils::math::contains_any_ignore_ascii_case(&target.name, &["jupiter", "saturn"])
     {
         "🪐"
-    } else if target.name.to_lowercase().contains("rogue")
-        || target.name.to_lowercase().contains("nemesis")
-    {
+    } else if crate::utils::math::contains_any_ignore_ascii_case(
+        &target.name,
+        &["rogue", "nemesis"],
+    ) {
         "☄️"
     } else {
         "🪨"

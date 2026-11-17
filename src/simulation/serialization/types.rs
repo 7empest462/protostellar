@@ -135,6 +135,72 @@ pub struct CelestialBodySave {
     pub atmospheric_escape: Option<AtmosphericEscapeState>,
     #[serde(default)]
     pub kozai_lidov: Option<KozaiLidovState>,
+    #[serde(default)]
+    pub geological_state: Option<crate::simulation::geology::GeologicalState>,
+    #[serde(default)]
+    pub terraforming: Option<crate::simulation::terraforming::TerraformingAtmosphere>,
+    #[serde(default)]
+    pub volcanic_state: Option<VolcanicState>,
+    #[serde(default)]
+    pub atmospheric_storm: Option<AtmosphericStormState>,
+    #[serde(default)]
+    pub kerr_black_hole: Option<crate::simulation::relativity::kerr::KerrBlackHole>,
+    #[serde(default)]
+    pub pulsar_glitch: Option<crate::simulation::neutron_stars::PulsarGlitchState>,
+    #[serde(default)]
+    pub magnetar_stress: Option<crate::simulation::neutron_stars::MagnetarCrustStress>,
+    #[serde(default)]
+    pub oort_comet: Option<crate::simulation::oort::OortComet>,
+    #[serde(default)]
+    pub stellar_flare: Option<crate::simulation::space_weather::StellarFlareState>,
+    #[serde(default)]
+    pub auroral_oval: Option<crate::simulation::space_weather::AuroralOvalState>,
+    #[serde(default)]
+    pub cataclysmic_variable: Option<crate::simulation::accretion::CataclysmicVariable>,
+}
+
+impl Default for CelestialBodySave {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            body_type: BodyType::TerrestrialPlanet,
+            position: DVec3::ZERO,
+            velocity: DVec3::ZERO,
+            mass: 0.0,
+            radius: 0.0,
+            temperature: 0.0,
+            luminosity: 0.0,
+            composition: Composition::default(),
+            spin: SpinState::default(),
+            differentiation: None,
+            volatile_inventory: None,
+            ring_system: None,
+            basins: None,
+            climate: None,
+            biosphere: None,
+            electromagnetic: None,
+            is_central_star: false,
+            ignition_state: None,
+            stellar_evolution: None,
+            black_hole_state: None,
+            satellite: None,
+            tidal_state: None,
+            relativistic_state: None,
+            atmospheric_escape: None,
+            kozai_lidov: None,
+            geological_state: None,
+            terraforming: None,
+            volcanic_state: None,
+            atmospheric_storm: None,
+            kerr_black_hole: None,
+            pulsar_glitch: None,
+            magnetar_stress: None,
+            oort_comet: None,
+            stellar_flare: None,
+            auroral_oval: None,
+            cataclysmic_variable: None,
+        }
+    }
 }
 
 /// Message event to request saving the active system state to disk.

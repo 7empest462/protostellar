@@ -29,13 +29,14 @@ pub fn update_hud_visibility(
     opt_lagrange: Option<Res<LagrangeOverlayConfig>>,
     opt_hz: Option<Res<HabitableZoneConfig>>,
     opt_config: Option<Res<SimulationConfig>>,
+    opt_audio: Option<Res<crate::game::audio::CosmicAudioState>>,
     mut panel_nodes: ParamSet<(
         Query<(&mut Node, &HudPanelElement)>,
         Query<&mut Node, With<PlanetBuilderPanel>>,
         Query<&mut Node, With<TelemetryGraphPanel>>,
         Query<&mut Node, With<HrDiagramPanel>>,
     )>,
-    mut text_query: Query<(&mut Text, &HudDynamicText)>,
+    mut text_query: Query<(&mut Text, Option<&mut TextColor>, &HudDynamicText)>,
     names_query: Query<&CelestialBody>,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
     mut tab_buttons_query: Query<
@@ -71,6 +72,7 @@ pub fn update_hud_visibility(
         opt_lagrange.as_deref(),
         opt_hz.as_deref(),
         opt_config.as_deref(),
+        opt_audio.as_deref(),
     );
     update_inspector_tab_highlights(&mut tab_buttons_query, hud_visibility.active_inspector_tab);
 }
@@ -116,9 +118,8 @@ fn update_panel_nodes(
             | HudPanelElement::ParticleDensityBadge
             | HudPanelElement::TrajectoryPredictorBadge
             | HudPanelElement::LagrangePointsBadge
-            | HudPanelElement::HabitableZoneBadge => {
-                flex_or_none(!hud_visibility.is_full_screen_clean)
-            }
+            | HudPanelElement::HabitableZoneBadge
+            | HudPanelElement::AudioMuteBadge => flex_or_none(!hud_visibility.is_full_screen_clean),
             HudPanelElement::TopLeftPanel => flex_or_none(!hud_visibility.top_left_minimized),
             HudPanelElement::TopLeftPill => flex_or_none(hud_visibility.top_left_minimized),
             HudPanelElement::TopRightPanel => flex_or_none(!hud_visibility.top_right_minimized),
@@ -189,8 +190,12 @@ fn update_hr_diagram_drawer(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Reads optional simulation and HUD states to synchronize badge text labels"
+)]
 fn update_dynamic_badges(
-    text_query: &mut Query<(&mut Text, &HudDynamicText)>,
+    text_query: &mut Query<(&mut Text, Option<&mut TextColor>, &HudDynamicText)>,
     hud_visibility: &HudVisibilityState,
     player_state: &PlayerInteractionState,
     names_query: &Query<&CelestialBody>,
@@ -198,8 +203,9 @@ fn update_dynamic_badges(
     opt_lagrange: Option<&LagrangeOverlayConfig>,
     opt_hz: Option<&HabitableZoneConfig>,
     opt_config: Option<&SimulationConfig>,
+    opt_audio: Option<&crate::game::audio::CosmicAudioState>,
 ) {
-    for (mut text, dynamic_text) in text_query.iter_mut() {
+    for (mut text, mut opt_color, dynamic_text) in text_query.iter_mut() {
         match dynamic_text {
             HudDynamicText::FullScreenBadge => {
                 text.0 = if hud_visibility.is_full_screen_clean {
@@ -215,7 +221,7 @@ fn update_dynamic_badges(
                 text.0 = format!("OVERLAY: {} [V]", player_state.overlay_mode.display_name());
             }
             HudDynamicText::ParticleDensityBadge => {
-                let label = opt_config.map_or("100k [Standard]", |c| c.particle_density.label());
+                let label = opt_config.map_or("500k [Ultra]", |c| c.particle_density.label());
                 text.0 = format!("✨ Swarm: {label}");
             }
             HudDynamicText::TrajectoryPredictorBadge => {
@@ -242,6 +248,21 @@ fn update_dynamic_badges(
                 } else {
                     "🌱 Hab Zone: OFF".to_string()
                 };
+            }
+            HudDynamicText::AudioMuteBadge => {
+                let is_on = opt_audio.is_some_and(|a| a.enabled);
+                text.0 = if is_on {
+                    "🔊 Sound: ON [M]".to_string()
+                } else {
+                    "🔇 Sound: OFF [M]".to_string()
+                };
+                if let Some(ref mut color) = opt_color {
+                    color.0 = if is_on {
+                        Color::srgb(0.35, 0.98, 0.65)
+                    } else {
+                        Color::srgb(0.68, 0.76, 0.90)
+                    };
+                }
             }
             HudDynamicText::InspectorChip => {
                 if let Some(target) = player_state.selected_entity {

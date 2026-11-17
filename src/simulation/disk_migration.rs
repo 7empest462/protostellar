@@ -110,8 +110,8 @@ pub fn apply_type_i_torque_acc(
         return;
     }
 
-    let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.05);
-    let a_t = migration_tangential_acc(mass, r_cyl, star_mass, gas_density_scale, body_type);
+    let r_3d = pos.length().max(0.05);
+    let a_t = migration_tangential_acc(mass, r_3d, star_mass, gas_density_scale, body_type);
     if a_t.abs() < 1e-18 {
         return;
     }

@@ -15,8 +15,7 @@ fn test_jeans_instability_physics_and_sound_speed() {
     let c_s_km_s = c_s_au_yr * AU_PER_YR_TO_KM_PER_S;
     assert!(
         (c_s_km_s - 0.274).abs() < 0.03,
-        "GMC sound speed at 15 K should be ~0.27 km/s (got {:.3} km/s)",
-        c_s_km_s
+        "GMC sound speed at 15 K should be ~0.27 km/s (got {c_s_km_s:.3} km/s)"
     );
 
     // 2. Thermal Jeans mass in dense pre-stellar core clump (rho ~ 5e-11 M_sun / AU^3)
@@ -24,8 +23,7 @@ fn test_jeans_instability_physics_and_sound_speed() {
     let m_jeans_th = calculate_jeans_mass_solar(rho_dense_clump, GMC_CLOUD_TEMPERATURE_K);
     assert!(
         m_jeans_th > 0.10 && m_jeans_th < 1.0,
-        "Thermal Jeans mass in dense clump should be 0.1 - 1.0 M_sun (got {:.3} M_sun)",
-        m_jeans_th
+        "Thermal Jeans mass in dense clump should be 0.1 - 1.0 M_sun (got {m_jeans_th:.3} M_sun)"
     );
 
     // 3. Turbulent Jeans mass with core-scale transonic dispersion (sigma_v = 0.65 km/s)
@@ -33,8 +31,7 @@ fn test_jeans_instability_physics_and_sound_speed() {
         calculate_turbulent_jeans_mass_solar(rho_dense_clump, GMC_CLOUD_TEMPERATURE_K, 0.65);
     assert!(
         m_jeans_core > 1.0 && m_jeans_core < 4.0,
-        "Core turbulent Jeans mass should be 1.0 - 4.0 M_sun (got {:.3} M_sun)",
-        m_jeans_core
+        "Core turbulent Jeans mass should be 1.0 - 4.0 M_sun (got {m_jeans_core:.3} M_sun)"
     );
 
     // 4. Cloud-scale turbulent dispersion (sigma_v = 1.6 km/s) yielding massive parent clump
@@ -42,8 +39,7 @@ fn test_jeans_instability_physics_and_sound_speed() {
         calculate_turbulent_jeans_mass_solar(rho_dense_clump, GMC_CLOUD_TEMPERATURE_K, 1.6);
     assert!(
         m_jeans_cloud > 10.0 && m_jeans_cloud < 20.0,
-        "Parent clump turbulent Jeans mass should be 10.0 - 20.0 M_sun (got {:.3} M_sun)",
-        m_jeans_cloud
+        "Parent clump turbulent Jeans mass should be 10.0 - 20.0 M_sun (got {m_jeans_cloud:.3} M_sun)"
     );
 }
 
@@ -148,8 +144,7 @@ fn test_molecular_cloud_cluster_scenario_spawning_and_hierarchy() {
             let dist = pos.0.length();
             assert!(
                 dist > 20.0 && dist < 60.0,
-                "Infalling binary companion Beta should be in close orbit (got {:.1} AU)",
-                dist
+                "Infalling binary companion Beta should be in close orbit (got {dist:.1} AU)"
             );
             assert!(
                 vel.0.length() > 0.0,
@@ -171,8 +166,7 @@ fn test_molecular_cloud_cluster_scenario_spawning_and_hierarchy() {
 
     assert!(
         protostar_count >= 7,
-        "Cluster should spawn at least 7 protostellar seeds (found {})",
-        protostar_count
+        "Cluster should spawn at least 7 protostellar seeds (found {protostar_count})"
     );
     assert_eq!(
         brown_dwarf_count, 1,
@@ -188,8 +182,7 @@ fn test_molecular_cloud_cluster_scenario_spawning_and_hierarchy() {
     );
     assert!(
         total_mass > 10.0 && total_mass < 15.0,
-        "Total stellar seed cluster mass should be ~11 M_sun (got {:.2} M_sun)",
-        total_mass
+        "Total stellar seed cluster mass should be ~11 M_sun (got {total_mass:.2} M_sun)"
     );
 }
 
@@ -336,8 +329,7 @@ fn test_auto_spawn_planetesimals_guarded_against_gmc_cluster() {
         .count();
     assert!(
         disk_body_count > 0,
-        "auto_spawn_planetesimals must spawn bodies when SolarNebulaMmsn disk is active (found {})",
-        disk_body_count
+        "auto_spawn_planetesimals must spawn bodies when SolarNebulaMmsn disk is active (found {disk_body_count})"
     );
 }
 
@@ -538,8 +530,10 @@ fn test_gmc_protostar_stabilization_promotion_attaches_disk_and_embryos() {
     use bevy::math::DVec3;
 
     let mut app = App::new();
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
     app.init_resource::<GmcClusterDiskManager>();
     app.add_systems(Update, promote_stabilized_gmc_protostars);
@@ -640,8 +634,7 @@ fn test_gmc_protostar_stabilization_promotion_attaches_disk_and_embryos() {
         let dist = (pos - DVec3::new(10.0, 0.0, 5.0)).length();
         assert!(
             dist > 0.3 && dist < 20.0,
-            "Embryo {name} must orbit host star within circumstellar disk bounds (got {:.2} AU)",
-            dist
+            "Embryo {name} must orbit host star within circumstellar disk bounds (got {dist:.2} AU)"
         );
         assert!(
             vel.length() > 0.0,
@@ -655,8 +648,10 @@ fn test_gmc_active_full_disk_capping() {
     use bevy::math::DVec3;
 
     let mut app = App::new();
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
     // Enforce a strict cap of 3 active full disks
@@ -764,8 +759,10 @@ fn test_gmc_active_full_disk_capping() {
 #[test]
 fn test_gmc_circumstellar_disk_photoevaporation_lifetime() {
     let mut app = App::new();
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
     app.init_resource::<SimulationConfig>();
     app.init_resource::<TimeWarp>();
@@ -814,14 +811,15 @@ fn test_gmc_circumstellar_disk_photoevaporation_lifetime() {
 
 #[test]
 fn test_gmc_cluster_orbital_speed_and_dark_matter_stability() {
+    use bevy::math::DVec3;
+
     // 1. Initial protostar stage (3.5 M☉ central seed)
     // Dark Matter halo (8000 M☉) and cloud core (50 M☉) dominate outer gravity
     let r = 120.0;
     let v_early = calculate_gmc_orbital_speed(r, 3.5, 8000.0, 50.0);
     assert!(
         v_early > 15.0 && v_early < 30.0,
-        "Early orbital speed at r=120 AU must be balanced by dark matter and core (got {:.2} AU/yr)",
-        v_early
+        "Early orbital speed at r=120 AU must be balanced by dark matter and core (got {v_early:.2} AU/yr)"
     );
 
     // 2. Intermediate-Mass Black Hole stage (1000 M☉)
@@ -836,13 +834,10 @@ fn test_gmc_cluster_orbital_speed_and_dark_matter_stability() {
     // Keplerian circular speed around 100,000 M☉ at 120 AU: sqrt(39.478 * 100,000 / 120) ~ 181.4 AU/yr
     assert!(
         v_smbh > 170.0 && v_smbh < 220.0,
-        "Supermassive black hole orbital speed must provide full Keplerian circular support (got {:.2} AU/yr)",
-        v_smbh
+        "Supermassive black hole orbital speed must provide full Keplerian circular support (got {v_smbh:.2} AU/yr)"
     );
 
     // 4. Verification that newly formed star with calculate_gmc_orbital_speed maintains a stable, bound orbit
-    use bevy::math::DVec3;
-
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.init_resource::<SimulationConfig>();
@@ -854,8 +849,10 @@ fn test_gmc_cluster_orbital_speed_and_dark_matter_stability() {
     app.init_resource::<protostellar::game::phases::LateHeavyBombardmentState>();
 
     // Active GMC cluster scenario preset
-    let mut scenario_state = ActiveScenarioState::default();
-    scenario_state.current_preset = ScenarioPreset::MolecularCloudCluster;
+    let scenario_state = ActiveScenarioState {
+        current_preset: ScenarioPreset::MolecularCloudCluster,
+        ..Default::default()
+    };
     app.insert_resource(scenario_state);
 
     let _smbh = app
@@ -912,8 +909,7 @@ fn test_gmc_cluster_orbital_speed_and_dark_matter_stability() {
     // The star must stay in a stable orbit around 120 AU and NOT plunge into the central black hole (r < 10 AU)
     assert!(
         end_r > 90.0 && end_r < 150.0,
-        "Orbiting star must remain stably bound around SMBH (r = {:.2} AU)",
-        end_r
+        "Orbiting star must remain stably bound around SMBH (r = {end_r:.2} AU)"
     );
     // Check that it actively rotated along Z
     assert!(

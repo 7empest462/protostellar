@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 use crate::simulation::components::{
-    CelestialBody, CentralStar, Mass, Radius, SimPosition, SimVelocity,
+    BodyType, CelestialBody, CentralStar, Mass, Radius, SimPosition, SimVelocity,
 };
 use crate::simulation::resources::{PlayerInteractionState, SlingshotState};
-use crate::utils::constants::{AU_TO_KM, G_ASTRO};
+use crate::utils::constants::{AU_TO_KM, EARTH_MASS_SOLAR, G_ASTRO};
 use crate::utils::math::{state_vectors_to_orbital_elements, OrbitalElements};
 
 /// Velocity conversion factor: 1 AU/yr in km/s (~4.74047 km/s)
@@ -162,7 +162,7 @@ pub fn propagate_kepler_position_velocity(
         return None;
     }
 
-    let mu = G_ASTRO * central_mass.max(0.01);
+    let mu = G_ASTRO * central_mass.max(1e-12);
     let e = elements.eccentricity;
     let nu_0 = elements.true_anomaly;
 
@@ -227,25 +227,24 @@ pub fn find_closest_encounter(
 ) -> (Vec<Vec3>, Option<PredictedEncounter>) {
     let steps = 100;
     let dt_step = horizon_yr / (steps as f64);
-    let mut trajectory_points = Vec::with_capacity(steps + 1);
+    let mut source_samples: Vec<Option<DVec3>> = Vec::with_capacity(steps + 1);
 
     for i in 0..=steps {
         let t = (i as f64) * dt_step;
-        if let Some((pos, _)) = propagate_kepler_position_velocity(source_elements, t, star_mass) {
-            let world_pos = pos + star_pos;
-            trajectory_points.push(Vec3::new(
-                world_pos.x as f32,
-                world_pos.y as f32,
-                world_pos.z as f32,
-            ));
-        }
+        let sample =
+            propagate_kepler_position_velocity(source_elements, t, star_mass).map(|(pos, _)| pos);
+        source_samples.push(sample);
     }
+
+    let trajectory_points =
+        build_visual_trajectory_points(source_elements, star_mass, star_pos, horizon_yr);
 
     let mut best_encounter: Option<PredictedEncounter> = None;
 
     for target in targets {
         if let Some(enc) = check_single_target_encounter(
             source_elements,
+            &source_samples,
             source_radius_au,
             star_mass,
             star_pos,
@@ -268,8 +267,48 @@ pub fn find_closest_encounter(
     (trajectory_points, best_encounter)
 }
 
+/// Samples a smooth single-orbit (or finite hyperbolic) forward trajectory arc so short-period
+/// orbits never connect multi-orbit jumps as jagged straight polygon chords.
+fn build_visual_trajectory_points(
+    source_elements: &OrbitalElements,
+    star_mass: f64,
+    star_pos: DVec3,
+    horizon_yr: f64,
+) -> Vec<Vec3> {
+    let is_bound = source_elements.eccentricity < 1.0
+        && source_elements.period_years.is_finite()
+        && source_elements.period_years > 1e-6;
+    let visual_horizon = if is_bound {
+        horizon_yr.min(source_elements.period_years * 0.92)
+    } else {
+        horizon_yr.min(15.0)
+    };
+    let visual_steps = if is_bound { 192 } else { 144 };
+    let dt = visual_horizon / (visual_steps as f64);
+    let mut points = Vec::with_capacity(visual_steps + 1);
+
+    for i in 0..=visual_steps {
+        let t = (i as f64) * dt;
+        if let Some((pos, _)) = propagate_kepler_position_velocity(source_elements, t, star_mass) {
+            let world_pos = pos + star_pos;
+            points.push(Vec3::new(
+                world_pos.x as f32,
+                world_pos.y as f32,
+                world_pos.z as f32,
+            ));
+        }
+    }
+
+    points
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Single-target close-encounter scanner requires precomputed source positions and orbital parameters"
+)]
 fn check_single_target_encounter(
     source_elements: &OrbitalElements,
+    source_samples: &[Option<DVec3>],
     source_radius_au: f64,
     star_mass: f64,
     star_pos: DVec3,
@@ -287,12 +326,19 @@ fn check_single_target_encounter(
     let roche_r = target.radius_au * 2.44;
     let collision_r = target.radius_au + source_radius_au;
 
-    for i in 0..=steps {
-        let t = (i as f64) * dt_step;
-        let Some((src_pos, _)) = propagate_kepler_position_velocity(source_elements, t, star_mass)
-        else {
+    // Pre-reject non-overlapping radial bands (|r_src - r_tgt| >= ||r_src| - |r_tgt||)
+    let encounter_margin = hill_r * 2.0;
+    if source_elements.apoapsis + encounter_margin < target.elements.periapsis
+        || target.elements.apoapsis + encounter_margin < source_elements.periapsis
+    {
+        return None;
+    }
+
+    for (i, opt_src_pos) in source_samples.iter().enumerate().take(steps + 1) {
+        let &Some(src_pos) = opt_src_pos else {
             continue;
         };
+        let t = (i as f64) * dt_step;
         let Some((tgt_pos, _)) = propagate_kepler_position_velocity(&target.elements, t, star_mass)
         else {
             continue;
@@ -420,6 +466,7 @@ pub fn update_trajectory_predictor(
             Without<crate::simulation::probes::SpaceProbe>,
         ),
     >,
+    mut target_candidates: Local<Vec<TargetCandidate>>,
 ) {
     if !predictor_state.is_enabled {
         predictor_state.trajectory_points.clear();
@@ -433,7 +480,7 @@ pub fn update_trajectory_predictor(
         return;
     };
 
-    let mut target_candidates = Vec::new();
+    target_candidates.clear();
     let mut selected_source: Option<(OrbitalElements, f64, String)> = None;
 
     // Determine source elements: Slingshot drag or Selected entity
@@ -480,13 +527,24 @@ pub fn update_trajectory_predictor(
         if player_state.selected_entity == Some(entity) {
             continue;
         }
+        if matches!(
+            body.body_type,
+            BodyType::Planetesimal
+                | BodyType::Asteroid
+                | BodyType::Comet
+                | BodyType::DustGrain
+                | BodyType::DebrisRing
+        ) && mass.0 < EARTH_MASS_SOLAR * 0.01
+        {
+            continue;
+        }
 
         let rel_pos = pos.0 - star_pos.0;
         let rel_vel = vel.0 - star_vel.0;
         if let Some(el) = state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass.0, mass.0) {
             target_candidates.push(TargetCandidate {
                 entity,
-                name: body.name.clone(),
+                name: String::new(),
                 elements: el,
                 radius_au: rad.0,
                 mass_solar: mass.0,
@@ -495,7 +553,7 @@ pub fn update_trajectory_predictor(
     }
 
     let horizon = predictor_state.forecast_horizon_yr;
-    let (pts, encounter) = find_closest_encounter(
+    let (pts, mut encounter) = find_closest_encounter(
         &src_elements,
         src_radius,
         star_mass.0,
@@ -503,6 +561,14 @@ pub fn update_trajectory_predictor(
         &target_candidates,
         horizon,
     );
+
+    if let Some(ref mut enc) = encounter {
+        if enc.target_name.is_empty() {
+            if let Ok((_, body, _, _, _, _)) = bodies_query.get(enc.target_entity) {
+                enc.target_name.clone_from(&body.name);
+            }
+        }
+    }
 
     predictor_state.trajectory_points = pts;
     predictor_state.active_encounter = encounter;

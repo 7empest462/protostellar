@@ -36,11 +36,10 @@ fn test_hyperbolic_orbit_points_generation() {
 
     // All points must be finite
     for pt in &points {
-        assert!(pt.is_finite(), "Trajectory point must be finite: {:?}", pt);
+        assert!(pt.is_finite(), "Trajectory point must be finite: {pt:?}");
         assert!(
             pt.length() <= 2000.0,
-            "Trajectory point must not exceed sanity bounds: {:?}",
-            pt
+            "Trajectory point must not exceed sanity bounds: {pt:?}"
         );
     }
 
@@ -53,8 +52,7 @@ fn test_hyperbolic_orbit_points_generation() {
     let peri_dist = peri.length();
     assert!(
         (peri_dist - 1.5).abs() < 0.01,
-        "Periapsis distance should be 1.5 AU, got {:.4}",
-        peri_dist
+        "Periapsis distance should be 1.5 AU, got {peri_dist:.4}"
     );
 
     // Test position_at_true_anomaly at nu = 0
@@ -149,7 +147,7 @@ fn test_satellite_moon_orbit_anchoring_math() {
 
     // Parent planet (Jupiter-mass) at 5.2 AU moving at circular Keplerian velocity
     let jupiter_pos = DVec3::new(5.2, 0.0, 0.0);
-    let jupiter_mass = 0.000954; // Solar masses (~1 M_Jup)
+    let jupiter_mass = 0.000_954; // Solar masses (~1 M_Jup)
     let star_mass = 1.0;
     let v_jup = (G_ASTRO * star_mass / 5.2).sqrt();
     let jupiter_vel = DVec3::new(0.0, 0.0, v_jup);
@@ -162,7 +160,7 @@ fn test_satellite_moon_orbit_anchoring_math() {
 
     let moon_abs_pos = jupiter_pos + moon_rel_pos;
     let moon_abs_vel = jupiter_vel + moon_rel_vel;
-    let moon_mass = 0.00000005; // tiny
+    let moon_mass = 0.000_000_05; // tiny
 
     // Relative to parent planet:
     let rel_pos = moon_abs_pos - jupiter_pos;
@@ -537,7 +535,7 @@ fn test_accretion_inner_loop_no_duplicate_mergers() {
     sched.run(app.world_mut());
 
     let world = app.world();
-    let mass1 = world.get::<Mass>(b1).map(|m| m.0).unwrap_or(0.0);
+    let mass1 = world.get::<Mass>(b1).map_or(0.0, |m| m.0);
     assert!(
         mass1 >= m1,
         "Primary body mass must either increase or remain identical, got {mass1}"
@@ -747,4 +745,27 @@ fn test_gpu_readback_buffer_recycling() {
         .try_recv()
         .expect("Buffer must be recycled");
     assert_eq!(recycled.capacity(), 1024);
+}
+
+#[test]
+fn test_sphere_occlusion_fade_hides_behind_planet_and_keeps_foreground() {
+    use bevy::prelude::Vec3;
+    use protostellar::rendering::effects::orbits::sphere_occlusion_fade;
+
+    let cam = Some(Vec3::new(0.0, 0.0, 10.0));
+    let planet_c = Vec3::ZERO;
+    let planet_r = 1.0_f32;
+
+    // Point on near/front side of planet stays completely visible (1.0)
+    assert!(
+        (sphere_occlusion_fade(Vec3::new(0.0, 0.0, 2.0), cam, planet_c, planet_r) - 1.0).abs()
+            < 1e-5
+    );
+    // Point directly behind planet core is fully occluded (0.0)
+    assert!(sphere_occlusion_fade(Vec3::new(0.0, 0.0, -3.0), cam, planet_c, planet_r) < 1e-5);
+    // Point outside silhouette limb remains visible (1.0)
+    assert!(
+        (sphere_occlusion_fade(Vec3::new(2.0, 0.0, -3.0), cam, planet_c, planet_r) - 1.0).abs()
+            < 1e-5
+    );
 }

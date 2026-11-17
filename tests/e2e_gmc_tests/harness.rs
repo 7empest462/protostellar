@@ -69,7 +69,7 @@ pub struct GpuSinkParticle {
     pub sink_radius_au: f32,
     pub radiation_pressure_factor: f32,
     pub is_ignited: u32,
-    pub _pad: [u32; 2],
+    pub padding: [u32; 2],
 }
 
 impl Default for GpuSinkParticle {
@@ -79,7 +79,7 @@ impl Default for GpuSinkParticle {
             sink_radius_au: 15.0,
             radiation_pressure_factor: 1.0,
             is_ignited: 0,
-            _pad: [0, 0],
+            padding: [0, 0],
         }
     }
 }
@@ -95,7 +95,7 @@ pub struct VolumetricNebulaUniform {
     pub scattering_albedo: f32,
     pub phase_g: f32,
     pub num_stars: u32,
-    pub _pad: u32,
+    pub padding: u32,
 }
 
 impl Default for VolumetricNebulaUniform {
@@ -108,7 +108,7 @@ impl Default for VolumetricNebulaUniform {
             scattering_albedo: 0.85,
             phase_g: 0.65,
             num_stars: 1,
-            _pad: 0,
+            padding: 0,
         }
     }
 }

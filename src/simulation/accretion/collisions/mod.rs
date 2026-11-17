@@ -1,9 +1,11 @@
 //! Collision detection and accretion physics processing.
 
+pub mod giant_impact;
 pub mod handlers;
 pub mod naming;
 pub mod types;
 
+pub use giant_impact::*;
 pub use handlers::*;
 pub use naming::*;
 pub use types::*;
@@ -23,6 +25,10 @@ use super::impact_regimes::{
 };
 
 /// Detects close-contact collisions and processes physical collision regimes.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Accretion and collision processing requires ECS queries, events, and persistent scratch buffers"
+)]
 pub fn process_accretion_and_collisions(
     mut commands: Commands,
     sim_time: Res<SimTime>,
@@ -35,13 +41,17 @@ pub fn process_accretion_and_collisions(
     mut roche_events: MessageWriter<RocheDisruptionEvent>,
     mut tde_events: Option<MessageWriter<TidalDisruptionEvent>>,
     mut bodies_query: AccretionQuery,
+    mut snapshots: Local<Vec<BodySnapshot>>,
+    mut merged_away: Local<FxHashSet<Entity>>,
+    mut newly_formed_moons: Local<FxHashSet<Entity>>,
+    mut broadphase_scratch: Local<(Vec<SmallVec<[usize; 8]>>, Vec<[f64; 3]>)>,
 ) {
     if time_warp.is_paused && !time_warp.step_once {
         return;
     }
 
     let mut star_mass = 1.0;
-    let mut snapshots: Vec<BodySnapshot> = Vec::with_capacity(bodies_query.iter().len());
+    snapshots.clear();
     for (e, m, pos, vel, _, rad, temp, comp, body, _, spin, sat, star) in bodies_query.iter() {
         if star.is_some() {
             star_mass = m.0;
@@ -56,17 +66,18 @@ pub fn process_accretion_and_collisions(
             comp: *comp,
             body_type: body.body_type,
             spin: spin.map_or(DVec3::ZERO, |s| s.spin_vector),
-            name: body.name.clone(),
+            name: String::new(),
             is_central: star.is_some(),
             satellite_parent: sat.map(|s| s.parent),
         });
     }
 
-    let mut merged_away: FxHashSet<Entity> = FxHashSet::default();
-    let mut newly_formed_moons: FxHashSet<Entity> = FxHashSet::default();
+    merged_away.clear();
+    newly_formed_moons.clear();
     let mut pending_despawns: SmallVec<[Entity; 32]> = SmallVec::new();
 
-    let candidate_pairs = build_kdtree_broadphase_candidates(&snapshots);
+    let (candidate_pairs, points_scratch) = &mut *broadphase_scratch;
+    build_kdtree_broadphase_candidates_into(&snapshots, candidate_pairs, points_scratch);
     let n = snapshots.len();
     for i in 0..n {
         let Some(e1) = snapshots.get(i).map(|s| s.entity) else {
@@ -101,11 +112,35 @@ pub fn process_accretion_and_collisions(
                 }
             }
 
-            let Some(b2) = snapshots.get(j).cloned() else {
+            let (Some(b1), Some(b2)) = (match i.cmp(&j) {
+                std::cmp::Ordering::Less => {
+                    let (left, right) = snapshots.split_at_mut(j);
+                    (left.get_mut(i), right.first_mut())
+                }
+                std::cmp::Ordering::Greater => {
+                    let (left, right) = snapshots.split_at_mut(i);
+                    (right.first_mut(), left.get_mut(j))
+                }
+                std::cmp::Ordering::Equal => continue,
+            }) else {
                 continue;
             };
-            let Some(b1) = snapshots.get_mut(i) else {
-                continue;
+
+            if b1.name.is_empty() {
+                if let Ok((_, _, _, _, _, _, _, _, body, ..)) = bodies_query.get(b1.entity) {
+                    b1.name.clone_from(&body.name);
+                }
+            }
+            if b2.name.is_empty() {
+                if let Ok((_, _, _, _, _, _, _, _, body, ..)) = bodies_query.get(b2.entity) {
+                    b2.name.clone_from(&body.name);
+                }
+            }
+
+            let raw_dt_yr = if sim_time.current_dt_yr > 0.0 {
+                sim_time.current_dt_yr
+            } else {
+                config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
             };
 
             let mut ctx = CollisionContext {
@@ -122,9 +157,10 @@ pub fn process_accretion_and_collisions(
                 pending_despawns: &mut pending_despawns,
                 star_mass,
                 sim_time_years: sim_time.elapsed_years,
+                dt_yr: raw_dt_yr,
             };
 
-            process_body_pair(&mut ctx, &config, &time_warp, b1, &b2);
+            process_body_pair(&mut ctx, &config, b1, b2);
         }
     }
 
@@ -156,19 +192,20 @@ fn within_box_reach(p1: DVec3, p2: DVec3, reach: f64) -> bool {
         && (p1.z - p2.z).abs() <= reach
 }
 
-fn collect_single_body_candidates(
+fn collect_single_body_candidates_into(
     i: usize,
     s1: &BodySnapshot,
     snapshots: &[BodySnapshot],
     tree: &kiddo::ImmutableKdTree<f64, 3>,
     bh_indices: &[usize],
-) -> SmallVec<[usize; 8]> {
+    cand_i: &mut SmallVec<[usize; 8]>,
+) {
     const STANDARD_REACH: f64 = 6.0;
     const STANDARD_SQ_RADIUS: f64 = 3.0 * STANDARD_REACH * STANDARD_REACH;
 
-    let mut cand_i = SmallVec::new();
+    cand_i.clear();
     if !s1.pos.is_finite() {
-        return cand_i;
+        return;
     }
     if s1.body_type == BodyType::BlackHole {
         for (j, s2) in snapshots.iter().enumerate().skip(i + 1) {
@@ -176,7 +213,7 @@ fn collect_single_body_candidates(
                 cand_i.push(j);
             }
         }
-        return cand_i;
+        return;
     }
 
     let neighbors = tree
@@ -207,18 +244,28 @@ fn collect_single_body_candidates(
     }
 
     cand_i.sort_unstable();
-    cand_i
 }
 
-/// Builds a 3D KD-tree (`kiddo::ImmutableKdTree<f64, 3>`) over `snapshots` and returns, for each body `i`,
-/// the sorted list of candidate indices `j > i` within its 3D spatial interaction reach.
-pub fn build_kdtree_broadphase_candidates(snapshots: &[BodySnapshot]) -> Vec<SmallVec<[usize; 8]>> {
+fn build_kdtree_broadphase_candidates_into(
+    snapshots: &[BodySnapshot],
+    out_candidates: &mut Vec<SmallVec<[usize; 8]>>,
+    points: &mut Vec<[f64; 3]>,
+) {
     let n = snapshots.len();
+    for v in out_candidates.iter_mut() {
+        v.clear();
+    }
+    if out_candidates.len() < n {
+        out_candidates.resize_with(n, SmallVec::new);
+    } else {
+        out_candidates.truncate(n);
+    }
     if n < 2 {
-        return vec![SmallVec::new(); n];
+        return;
     }
 
-    let mut points: Vec<[f64; 3]> = Vec::with_capacity(n);
+    points.clear();
+    points.reserve(n.saturating_sub(points.capacity()));
     let mut bh_indices: SmallVec<[usize; 4]> = SmallVec::new();
     for (idx, s) in snapshots.iter().enumerate() {
         let pt = if s.pos.is_finite() {
@@ -231,15 +278,24 @@ pub fn build_kdtree_broadphase_candidates(snapshots: &[BodySnapshot]) -> Vec<Sma
             bh_indices.push(idx);
         }
     }
-    let Ok(tree) = kiddo::ImmutableKdTree::<f64, 3>::new_from_slice(&points) else {
-        return vec![SmallVec::new(); n];
+    let Ok(tree) = kiddo::ImmutableKdTree::<f64, 3>::new_from_slice(points) else {
+        return;
     };
 
-    snapshots
-        .iter()
-        .enumerate()
-        .map(|(i, s1)| collect_single_body_candidates(i, s1, snapshots, &tree, &bh_indices))
-        .collect()
+    for (i, s1) in snapshots.iter().enumerate() {
+        if let Some(slot) = out_candidates.get_mut(i) {
+            collect_single_body_candidates_into(i, s1, snapshots, &tree, &bh_indices, slot);
+        }
+    }
+}
+
+/// Builds a 3D KD-tree (`kiddo::ImmutableKdTree<f64, 3>`) over `snapshots` and returns, for each body `i`,
+/// the sorted list of candidate indices `j > i` within its 3D spatial interaction reach.
+pub fn build_kdtree_broadphase_candidates(snapshots: &[BodySnapshot]) -> Vec<SmallVec<[usize; 8]>> {
+    let mut out = Vec::new();
+    let mut points = Vec::new();
+    build_kdtree_broadphase_candidates_into(snapshots, &mut out, &mut points);
+    out
 }
 
 pub fn is_physically_interpenetrating(
@@ -438,9 +494,8 @@ fn is_theia_earth_snapshot(b1: &BodySnapshot, b2: &BodySnapshot) -> bool {
 fn process_body_pair(
     ctx: &mut CollisionContext,
     config: &SimulationConfig,
-    time_warp: &TimeWarp,
     b1: &mut BodySnapshot,
-    b2: &BodySnapshot,
+    b2: &mut BodySnapshot,
 ) {
     let r_rel = b1.pos - b2.pos;
     let dist = r_rel.length();
@@ -480,11 +535,11 @@ fn process_body_pair(
         let r_min = b1.pos.length().min(b2.pos.length());
         (0.20 * r_min / v_rel.max(1e-2)).min(0.005)
     } else if b1.body_type == BodyType::BlackHole || b2.body_type == BodyType::BlackHole {
-        (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(25.0)
+        ctx.dt_yr.min(25.0)
     } else {
         0.05
     };
-    let dt = (config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)).min(max_linear_dt);
+    let dt = ctx.dt_yr.min(max_linear_dt);
     let v_rel_vec = b1.vel - b2.vel;
     let (min_dist, r_closest) = compute_closest_approach(r_rel, v_rel_vec, dist, dt);
 
@@ -507,10 +562,10 @@ fn process_body_pair(
     if !can_candidate_moon && !is_theia_earth && interpenetrating {
         let pair = sort_collision_pair(b1, b2);
         if pair.p_type == BodyType::BlackHole && pair.s_type != BodyType::BlackHole {
-            handle_tidal_disruption_event(ctx, &pair, min_dist, b1);
+            handle_tidal_disruption_event(ctx, &pair, min_dist, b1, b2);
             return;
         }
-        handle_inelastic_merger(ctx, &pair, v_rel, b1);
+        handle_inelastic_merger(ctx, &pair, v_rel, b1, b2);
         return;
     }
 
@@ -535,7 +590,7 @@ fn process_body_pair(
 fn execute_collision_regimes(
     ctx: &mut CollisionContext,
     b1: &mut BodySnapshot,
-    b2: &BodySnapshot,
+    b2: &mut BodySnapshot,
     min_dist: f64,
     r_closest: DVec3,
     v_rel_vec: DVec3,
@@ -605,21 +660,29 @@ fn execute_collision_regimes(
     };
 
     if pair.p_type == BodyType::BlackHole && pair.s_type != BodyType::BlackHole {
-        handle_tidal_disruption_event(ctx, &pair, min_dist, b1);
+        handle_tidal_disruption_event(ctx, &pair, min_dist, b1, b2);
         return;
     }
 
     match regime {
         ImpactRegime::EmbeddedMerge | ImpactRegime::Merger => {
-            handle_inelastic_merger(ctx, &pair, v_rel, b1);
+            handle_inelastic_merger(ctx, &pair, v_rel, b1, b2);
         }
         ImpactRegime::Disrupt => {
             handle_roche_disruption(ctx, &pair, min_dist, d_roche, p_rad_au);
         }
         ImpactRegime::GiantImpactMoon => {
-            handle_giant_impact_moon(ctx, &pair, b, r_closest, r_contact, b1);
+            handle_giant_impact_moon(ctx, &pair, b, r_closest, r_contact, b1, b2);
         }
         ImpactRegime::HitAndRun | ImpactRegime::Graze => {
+            // `r_closest` and `v_rel_vec` were computed in `(b1 - b2)` order; orient them in
+            // `(primary - secondary)` order so impulse and separation push bodies apart cleanly
+            // regardless of ECS iteration order.
+            let sign = if pair.primary_entity == b1.entity {
+                1.0
+            } else {
+                -1.0
+            };
             handle_grazing_bounce(
                 ctx,
                 pair.primary_entity,
@@ -628,8 +691,8 @@ fn execute_collision_regimes(
                 pair.s_m,
                 pair.p_is_central,
                 false,
-                r_closest,
-                v_rel_vec,
+                r_closest * sign,
+                v_rel_vec * sign,
                 v_rel_km_s,
                 b,
                 r_contact,

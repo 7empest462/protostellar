@@ -32,6 +32,7 @@ pub fn spawn_rogue_star(commands: &mut Commands, intensity: f32) -> Entity {
             Radius(0.082), // ~0.08 R☉ (~0.9 R_Jup)
             SimPosition(start_pos),
             SimVelocity(entry_vel),
+            SimAcceleration::default(),
             Composition {
                 metal_frac: 0.01,
                 silicate_frac: 0.02,

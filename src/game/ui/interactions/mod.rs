@@ -53,6 +53,8 @@ pub struct UiOptionalState<'w> {
     pub hr_diagram: Option<ResMut<'w, HrDiagramPanelState>>,
     pub lagrange_config: Option<ResMut<'w, LagrangeOverlayConfig>>,
     pub hz_config: Option<ResMut<'w, HabitableZoneConfig>>,
+    pub saves_panel: Option<ResMut<'w, crate::game::ui::SavesPanelState>>,
+    pub audio_state: Option<ResMut<'w, crate::game::audio::CosmicAudioState>>,
 }
 
 /// Campaign state and mission event writer bundle.
@@ -72,6 +74,7 @@ pub struct UiSimulationContext<'w> {
     pub sim_time: Res<'w, SimTime>,
     pub lhb_state: ResMut<'w, crate::game::phases::LateHeavyBombardmentState>,
     pub theia_state: Option<ResMut<'w, crate::simulation::accretion::TheiaImpactState>>,
+    pub swarm: Option<ResMut<'w, crate::rendering::particle_swarm::ParticleSwarmData>>,
 }
 
 /// UI widget queries for button hover, click styling, and tooltip updates.
@@ -108,7 +111,8 @@ pub struct UiSerializationWriters<'w> {
         Option<MessageWriter<'w, crate::simulation::serialization::CopySystemSeedClipboardEvent>>,
     pub paste_seed_events:
         Option<MessageWriter<'w, crate::simulation::serialization::PasteSystemSeedClipboardEvent>>,
-    pub slot_state: Option<Res<'w, crate::game::ui::widgets::SaveSlotUiState>>,
+    pub slot_state: Option<ResMut<'w, crate::game::ui::widgets::SaveSlotUiState>>,
+    pub scenario_state: Option<Res<'w, crate::simulation::scenarios::ActiveScenarioState>>,
 }
 
 fn handle_hover_interaction(
@@ -146,6 +150,7 @@ fn enforce_modal_exclusion_for_action(
         scrubber: optional.scrubber.as_deref_mut(),
         hr_diagram: optional.hr_diagram.as_deref_mut(),
         visibility: Some(&mut core.hud_visibility),
+        saves: optional.saves_panel.as_deref_mut(),
     };
     states.enforce_mutual_exclusion_for_action(action);
 }
@@ -165,7 +170,8 @@ fn dispatch_pressed_button_action(
     paste_seed_events: Option<
         &mut MessageWriter<crate::simulation::serialization::PasteSystemSeedClipboardEvent>,
     >,
-    slot_name: &str,
+    slot_state: Option<&mut crate::game::ui::widgets::SaveSlotUiState>,
+    scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
     optional: &mut UiOptionalState,
     campaign: &mut UiCampaignParams,
     camera_query: &mut Query<&mut PanOrbitCamera>,
@@ -179,24 +185,15 @@ fn dispatch_pressed_button_action(
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
 ) {
-    if *action == UiButtonAction::CycleParticleDensity {
-        config.particle_density = config.particle_density.cycle();
-        config.target_particle_count = config.particle_density.particle_count() as usize;
-        core.toast.message = format!(
-            "✨ Particle Swarm Density: {}",
-            config.particle_density.label()
-        );
-        core.toast.timer = 3.0;
-        return;
-    }
-
     if dispatch_system_and_tool_actions(
         action,
         save_events,
         load_events,
         copy_seed_events,
         paste_seed_events,
-        slot_name,
+        slot_state,
+        optional.saves_panel.as_deref_mut(),
+        scenario_state,
         &mut core.quick_bar_state,
         &mut core.time_warp,
         &mut core.hud_visibility,
@@ -213,6 +210,7 @@ fn dispatch_pressed_button_action(
         optional.hr_diagram.as_deref_mut(),
         optional.lagrange_config.as_deref_mut(),
         optional.hz_config.as_deref_mut(),
+        optional.audio_state.as_deref_mut(),
         &mut core.toast,
     ) {
         enforce_modal_exclusion_for_action(action, core, optional, campaign);
@@ -330,10 +328,33 @@ fn handle_spawn_oort_swarm_action(
     true
 }
 
+fn handle_cycle_particle_density(toast: &mut NotificationToast, sim: &mut UiSimulationContext) {
+    sim.config.particle_density = sim.config.particle_density.cycle();
+    sim.config.target_particle_count = sim.config.particle_density.particle_count() as usize;
+    if let Some(ref mut swarm) = sim.swarm {
+        crate::rendering::particle_swarm::reseed_particle_swarm(
+            swarm,
+            &sim.disk_params,
+            &sim.config,
+        );
+        sim.config.active_particles = if sim.disk_params.disk_mass > 0.0 {
+            swarm.count as u32
+        } else {
+            0
+        };
+    }
+    toast.message = format!(
+        "✨ Particle Swarm Density: {}",
+        sim.config.particle_density.label()
+    );
+    toast.timer = 3.0;
+}
+
 /// Handles interactive clicks, tab navigation, and hover highlights on all on-screen HUD buttons.
 pub fn handle_ui_button_interactions(
     mut widgets: UiButtonWidgets,
     mut activated_buttons: Option<ResMut<crate::game::ui::widgets::ActivatedHudButtons>>,
+    mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     mut core: UiCoreState,
     mut sim: UiSimulationContext,
     mut selected_query: SelectedWorldQuery,
@@ -392,19 +413,26 @@ pub fn handle_ui_button_interactions(
                 actions_to_dispatch.push((ent, *action));
             }
         }
+        // Recover cleanly if a pointer release happened outside the button or after a fast click,
+        // preventing a permanently stuck `Pressed` state from starving camera wheel zoom.
+        if !mouse_buttons.is_some_and(|mb| mb.pressed(MouseButton::Left)) {
+            for (ent, _, _, _, _, _, pressed) in widgets.buttons.iter() {
+                if pressed {
+                    commands.entity(ent).remove::<bevy::ui::Pressed>();
+                }
+            }
+        }
     } else {
         for (ent, _) in &actions_to_dispatch {
             commands.entity(*ent).remove::<bevy::ui::Pressed>();
         }
     }
 
-    let default_slot = "quicksave".to_string();
-    let slot_name = ser
-        .slot_state
-        .as_ref()
-        .map_or(default_slot.as_str(), |s| s.slot_name.as_str());
-
     for (_ent, action) in actions_to_dispatch {
+        if action == UiButtonAction::CycleParticleDensity {
+            handle_cycle_particle_density(&mut core.toast, &mut sim);
+            continue;
+        }
         dispatch_pressed_button_action(
             &action,
             &mut core,
@@ -412,7 +440,8 @@ pub fn handle_ui_button_interactions(
             ser.load_events.as_mut(),
             ser.copy_seed_events.as_mut(),
             ser.paste_seed_events.as_mut(),
-            slot_name,
+            ser.slot_state.as_deref_mut(),
+            ser.scenario_state.as_deref(),
             &mut optional,
             &mut campaign,
             &mut camera_query,

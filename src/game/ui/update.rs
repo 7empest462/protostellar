@@ -14,30 +14,230 @@ use crate::utils::constants::*;
 use super::telemetry_format::*;
 use super::types::*;
 
+fn push_cosmic_toast(
+    toast: &mut NotificationToast,
+    event_log: &mut CosmicEventLog,
+    timestamp_yr: f64,
+    icon: &'static str,
+    msg: String,
+    target_entity: Option<Entity>,
+) {
+    event_log.push(timestamp_yr, icon, msg.clone(), target_entity);
+    toast.message = msg;
+    toast.timer = 6.0;
+}
+
 pub fn handle_roche_disruption_toasts(
     mut roche_events: MessageReader<RocheDisruptionEvent>,
     mut toast: ResMut<NotificationToast>,
+    mut event_log: Option<ResMut<CosmicEventLog>>,
+    sim_time: Option<Res<SimTime>>,
 ) {
+    let timestamp_yr = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
     for event in roche_events.read() {
-        toast.message = format!(
+        let msg = format!(
             "💥 TIDAL DISRUPTION! Moon \"{}\" shredded into glowing planetary ring around \"{}\"!",
             event.disrupted_name, event.primary_name
         );
-        toast.timer = 6.0;
+        if let Some(ref mut log) = event_log {
+            push_cosmic_toast(
+                &mut toast,
+                log,
+                timestamp_yr,
+                "💥",
+                msg,
+                Some(event.primary_entity),
+            );
+        } else {
+            toast.message = msg;
+            toast.timer = 6.0;
+        }
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct CosmicEventsReaders<'w, 's> {
+    pub cme: MessageReader<'w, 's, crate::simulation::space_weather::CmeShockwaveEvent>,
+    pub kozai: MessageReader<'w, 's, crate::simulation::kozai_lidov::KozaiDisruptionEvent>,
+    pub stripped:
+        MessageReader<'w, 's, crate::simulation::atmosphere_escape::AtmosphericStrippedEvent>,
+    pub gw_merger:
+        MessageReader<'w, 's, crate::simulation::relativity::GravitationalWaveMergerEvent>,
+    pub supernova: MessageReader<'w, 's, SupernovaEvent>,
+    pub tde: MessageReader<'w, 's, crate::simulation::accretion::TidalDisruptionEvent>,
+    pub moon: MessageReader<'w, 's, crate::simulation::accretion::MoonFormationEvent>,
+}
+
+/// Surfaces major astrophysical simulation events to the HUD toast banner and bounded event log.
+pub fn handle_cosmic_event_toasts(
+    mut readers: CosmicEventsReaders,
+    mut toast: ResMut<NotificationToast>,
+    mut event_log: ResMut<CosmicEventLog>,
+    sim_time: Option<Res<SimTime>>,
+    bodies: Query<&CelestialBody>,
+) {
+    let timestamp_yr = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
+
+    for ev in readers.cme.read() {
+        let target_name = bodies.get(ev.target).map_or("System", |b| b.name.as_str());
+        let msg = format!(
+            "⚡ CME SHOCKWAVE! Class x{:.1} flare strikes {} at {:.2} AU!",
+            ev.flare_intensity, target_name, ev.orbital_radius_au
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            timestamp_yr,
+            "⚡",
+            msg,
+            Some(ev.target),
+        );
+    }
+
+    for ev in readers.kozai.read() {
+        let msg = format!(
+            "🔄 KOZAI-LIDOV DISRUPTION! \"{}\" pumped to e={:.3}, grazed {:.3} AU!",
+            ev.body_name, ev.peak_eccentricity, ev.periastron_au
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            timestamp_yr,
+            "🔄",
+            msg,
+            Some(ev.disrupted_entity),
+        );
+    }
+
+    for ev in readers.stripped.read() {
+        let msg = format!(
+            "💨 ATMOSPHERE STRIPPED! \"{}\" lost volatile envelope ({:.3} M⊕ left)!",
+            ev.name, ev.remaining_mass_earth
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            ev.time_yr.max(timestamp_yr),
+            "💨",
+            msg,
+            Some(ev.planet),
+        );
+    }
+
+    for ev in readers.gw_merger.read() {
+        let remnant_label = format_body_inspector_type(ev.remnant_type, ev.remnant_mass_solar);
+        let msg = format!(
+            "🌊 GRAVITATIONAL-WAVE MERGER! {:.2} M☉ {} formed (ΔE_GW={:.3} M☉c², {:.0} Hz)!",
+            ev.remnant_mass_solar,
+            remnant_label,
+            ev.radiated_gw_mass_solar,
+            ev.peak_gw_frequency_hz
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            timestamp_yr,
+            "🌊",
+            msg,
+            Some(ev.merged_entity),
+        );
+    }
+
+    for ev in readers.supernova.read() {
+        let remnant_label = format_body_inspector_type(ev.remnant_type, ev.remnant_mass_solar);
+        let msg = format!(
+            "🌟 SUPERNOVA DETONATION! \"{}\" collapsed to {:.2} M☉ {} ({:.0} km/s shock)!",
+            ev.star_name, ev.remnant_mass_solar, remnant_label, ev.shockwave_velocity_km_s
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            timestamp_yr,
+            "🌟",
+            msg,
+            Some(ev.star_entity),
+        );
+    }
+
+    for ev in readers.tde.read() {
+        let msg = format!(
+            "🕳️ SPAGHETTIFICATION TDE! \"{}\" tidally shredded by \"{}\"!",
+            ev.disrupted_name, ev.bh_name
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            timestamp_yr,
+            "🕳️",
+            msg,
+            Some(ev.bh_entity),
+        );
+    }
+
+    for ev in readers.moon.read() {
+        let parent_name = bodies
+            .get(ev.parent_entity)
+            .map_or("Parent World", |b| b.name.as_str());
+        let msg = format!(
+            "🌙 MOON FORMED! Coalesced in orbit around \"{}\" at {:.4} AU!",
+            parent_name, ev.orbital_radius_au
+        );
+        push_cosmic_toast(
+            &mut toast,
+            &mut event_log,
+            timestamp_yr,
+            "🌙",
+            msg,
+            Some(ev.moon_entity),
+        );
+    }
+}
+
+struct DisplayUppercase<'a>(&'a str);
+
+impl std::fmt::Display for DisplayUppercase<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for ch in self.0.chars() {
+            for up in ch.to_uppercase() {
+                std::fmt::Write::write_char(f, up)?;
+            }
+        }
+        Ok(())
     }
 }
 
 #[inline]
-fn set_text_if_changed(text: &mut Text, next: String) {
+pub(crate) fn set_text_if_changed(text: &mut Text, next: String) {
     if text.0 != next {
         text.0 = next;
     }
 }
 
 #[inline]
-fn set_text_str_if_changed(text: &mut Text, next: &str) {
+pub(crate) fn set_text_str_if_changed(text: &mut Text, next: &str) {
     if text.0 != next {
         next.clone_into(&mut text.0);
+    }
+}
+
+#[inline]
+pub(crate) fn set_display_if_changed(node: &mut Node, next: Display) {
+    if node.display != next {
+        node.display = next;
+    }
+}
+
+#[inline]
+pub(crate) fn set_border_color_if_changed(border: &mut BorderColor, next: BorderColor) {
+    if *border != next {
+        *border = next;
+    }
+}
+
+#[inline]
+pub(crate) fn set_bg_color_if_changed(bg: &mut BackgroundColor, next: BackgroundColor) {
+    if *bg != next {
+        *bg = next;
     }
 }
 
@@ -68,7 +268,7 @@ fn update_toast_text(
         if let Ok(((pos, vel, mass, rad, temp, _comp, body), ..)) =
             bodies_query.get(selected_entity)
         {
-            let type_name = format_body_inspector_type(body.body_type, mass.0).to_uppercase();
+            let type_name = format_body_inspector_type(body.body_type, mass.0);
             let m_earth = mass.0 / EARTH_MASS_SOLAR;
             let mass_str = if mass.0 >= 0.01 {
                 format!(
@@ -99,8 +299,8 @@ fn update_toast_text(
                 toast_text,
                 format!(
                     ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
-                    body.name.to_uppercase(),
-                    type_name,
+                    DisplayUppercase(&body.name),
+                    DisplayUppercase(type_name),
                     mass_str,
                     rad_str,
                     dist_au,
@@ -128,7 +328,11 @@ fn update_header_stats(
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
     lhb_state: &crate::game::phases::LateHeavyBombardmentState,
+    opt_scenario: Option<&crate::simulation::scenarios::ActiveScenarioState>,
 ) {
+    let is_genesis = opt_scenario.is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
+    });
     let time_formatted = if sim_time.elapsed_years > 1_000_000.0 {
         format!("{:.2} Myr", sim_time.elapsed_years / 1_000_000.0)
     } else if sim_time.elapsed_years > 1_000.0 {
@@ -145,7 +349,11 @@ fn update_header_stats(
             "PLANETARY ACCRETION & EMBRYO GROWTH"
         }
         crate::game::phases::SystemPhase::LateHeavyBombardment => {
-            "LATE HEAVY BOMBARDMENT (2:1 RESONANCE & MIGRATION)"
+            if is_genesis {
+                "PLANETESIMAL SCATTERING & BOMBARDMENT"
+            } else {
+                "LATE HEAVY BOMBARDMENT (2:1 RESONANCE & MIGRATION)"
+            }
         }
         crate::game::phases::SystemPhase::MatureSolarSystem => "MATURE SOLAR SYSTEM",
         crate::game::phases::SystemPhase::StellarMetamorphosis => {
@@ -172,13 +380,22 @@ fn update_header_stats(
         );
 
     let lhb_info = if lhb_state.is_active {
-        format!(
-            "\n☄️ LHB MIGRATION: {:.0}% (Resonance: {:.2}:1 | Impactors Scattered: {} | Water Delivered: {:.5} M⊕)",
-            lhb_state.migration_progress * 100.0,
-            lhb_state.resonance_ratio,
-            lhb_state.comets_scattered,
-            lhb_state.water_delivered_earth_masses
-        )
+        if is_genesis {
+            format!(
+                "\n☄️ BOMBARDMENT EPOCH: {:.0}% (Impactors Scattered: {} | Water Delivered: {:.5} M⊕)",
+                lhb_state.migration_progress * 100.0,
+                lhb_state.comets_scattered,
+                lhb_state.water_delivered_earth_masses
+            )
+        } else {
+            format!(
+                "\n☄️ LHB MIGRATION: {:.0}% (Resonance: {:.2}:1 | Impactors Scattered: {} | Water Delivered: {:.5} M⊕)",
+                lhb_state.migration_progress * 100.0,
+                lhb_state.resonance_ratio,
+                lhb_state.comets_scattered,
+                lhb_state.water_delivered_earth_masses
+            )
+        }
     } else if phase_mgr.current_phase == crate::game::phases::SystemPhase::SpiralGalaxyEvolution {
         "\n🌀 SPIRAL ARMS: Lin-Shu Waves | Pattern: 14 kyr | Pitch: 18° | Arm Resonance: Active"
             .to_string()
@@ -254,7 +471,11 @@ fn update_time_warp_diagnostics(
             tool_str,
             player_state.overlay_mode.display_name(),
             config.size_exaggeration,
-            if config.enable_gpu_compute { "WGPU Compute (100k)" } else { "CPU Multithread" },
+            if config.enable_gpu_compute {
+                format!("WGPU Compute ({}k)", config.target_particle_count / 1000)
+            } else {
+                "CPU Multithread".to_string()
+            },
             config.accretion_rate_multiplier,
             drift_pct,
             sim_time.step_count,
@@ -345,6 +566,8 @@ fn update_inspector_body_telemetry(
     )>,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
+    visual_time: f32,
+    audio_enabled: bool,
 ) {
     let Ok((
         (pos, vel, mass, rad, temp, comp, body),
@@ -428,7 +651,9 @@ fn update_inspector_body_telemetry(
         super::inspector_panel::append_circumstellar_disk_telemetry(&mut next_telemetry, disk);
     }
 
-    if let Ok((opt_glitch, opt_stress, opt_comet)) = neutron_oort_hud_query.get(selected_entity) {
+    let (opt_glitch, opt_stress) = if let Ok((opt_glitch, opt_stress, opt_comet)) =
+        neutron_oort_hud_query.get(selected_entity)
+    {
         if let Some(glitch) = opt_glitch {
             append_pulsar_glitch_telemetry(&mut next_telemetry, glitch);
         }
@@ -438,7 +663,25 @@ fn update_inspector_body_telemetry(
         if let Some(comet) = opt_comet {
             append_oort_comet_telemetry(&mut next_telemetry, comet);
         }
-    }
+        (opt_glitch, opt_stress)
+    } else {
+        (None, None)
+    };
+
+    let opt_aurora = space_weather_hud_query
+        .get(selected_entity)
+        .ok()
+        .and_then(|(opt_aurora, _)| opt_aurora);
+    let sonification = crate::game::audio::compute_body_sonification_snapshot(
+        body,
+        opt_rel,
+        opt_glitch,
+        opt_stress,
+        opt_aurora,
+        visual_time,
+        audio_enabled,
+    );
+    append_sonification_telemetry(&mut next_telemetry, &sonification);
 
     set_text_if_changed(text, next_telemetry);
 }
@@ -565,8 +808,8 @@ fn format_primary_telemetry(
 
     format!(
         ">> {} [{}]\n▸ Mass: {}\n▸ Radius: {} ({:.4} AU)\n▸ Density: {} | Temp: {:.0} K{}{}\n▸ Distance: {:.2} AU{} | Speed: {:.1} km/s\n▸ Composition: {}{}",
-        body.name.to_uppercase(),
-        format_body_inspector_type(body.body_type, mass).to_uppercase(),
+        DisplayUppercase(&body.name),
+        DisplayUppercase(format_body_inspector_type(body.body_type, mass)),
         mass_str,
         rad_disp,
         rad,
@@ -588,7 +831,17 @@ fn format_primary_telemetry(
     reason = "HUD update requires access to a wide range of celestial body components and simulation state"
 )]
 pub fn update_hud(
-    (time, sim_time, time_warp, config, energy_monitor, phase_mgr, lhb_state): (
+    (
+        time,
+        sim_time,
+        time_warp,
+        config,
+        energy_monitor,
+        phase_mgr,
+        lhb_state,
+        opt_scenario,
+        opt_audio,
+    ): (
         Res<Time>,
         Res<SimTime>,
         Res<TimeWarp>,
@@ -596,6 +849,8 @@ pub fn update_hud(
         Res<EnergyMonitor>,
         Res<PhaseManager>,
         Res<crate::game::phases::LateHeavyBombardmentState>,
+        Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+        Option<Res<crate::game::audio::CosmicAudioState>>,
     ),
     player_state: Res<PlayerInteractionState>,
     mut toast: ResMut<NotificationToast>,
@@ -632,7 +887,14 @@ pub fn update_hud(
         );
     }
     if let Ok(mut text) = text_queries.header.single_mut() {
-        update_header_stats(&mut text, &sim_time, &phase_mgr, &config, &lhb_state);
+        update_header_stats(
+            &mut text,
+            &sim_time,
+            &phase_mgr,
+            &config,
+            &lhb_state,
+            opt_scenario.as_deref(),
+        );
     }
     if let Ok(mut text) = text_queries.time.single_mut() {
         update_time_warp_diagnostics(
@@ -662,6 +924,8 @@ pub fn update_hud(
                 &neutron_oort_hud_query,
                 &phase_mgr,
                 &config,
+                sim_time.visual_time_secs,
+                opt_audio.as_deref().is_none_or(|a| a.enabled),
             );
         } else {
             set_text_str_if_changed(

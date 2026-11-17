@@ -257,6 +257,47 @@ fn compute_gmc_black_hole_accretion(
     }
 }
 
+fn find_closest_star_sorted(
+    sorted_stars: &[(Entity, bevy::math::DVec3, f64, bool)],
+    pos: bevy::math::DVec3,
+    self_entity: Entity,
+) -> Option<(Entity, bevy::math::DVec3, f64, bool)> {
+    if sorted_stars.is_empty() {
+        return None;
+    }
+    let split = sorted_stars.partition_point(|s| s.1.x < pos.x);
+    let mut best: Option<(Entity, bevy::math::DVec3, f64, bool)> = None;
+    let mut best_d2 = f64::INFINITY;
+
+    for star in sorted_stars.get(split..).into_iter().flatten() {
+        let dx = star.1.x - pos.x;
+        if dx * dx >= best_d2 {
+            break;
+        }
+        if star.0 != self_entity {
+            let d2 = (star.1 - pos).length_squared();
+            if d2 < best_d2 {
+                best_d2 = d2;
+                best = Some(*star);
+            }
+        }
+    }
+    for star in sorted_stars.get(..split).into_iter().flatten().rev() {
+        let dx = pos.x - star.1.x;
+        if dx * dx >= best_d2 {
+            break;
+        }
+        if star.0 != self_entity {
+            let d2 = (star.1 - pos).length_squared();
+            if d2 < best_d2 {
+                best_d2 = d2;
+                best = Some(*star);
+            }
+        }
+    }
+    best
+}
+
 /// Gas accretion in 3D Giant Molecular Clouds (GMC):
 /// 1. Protostars accrete gas from the surrounding molecular cloud core via Bondi-Hoyle-Littleton accretion,
 ///    growing mass until radiation pressure blowout (Eddington luminosity balance).
@@ -286,6 +327,7 @@ pub fn gmc_cluster_gas_accretion(
         ),
         Without<crate::simulation::probes::SpaceProbe>,
     >,
+    mut stars: Local<Vec<(Entity, bevy::math::DVec3, f64, bool)>>,
 ) {
     if (!config.enable_accretion || time_warp.is_paused) && !time_warp.step_once {
         return;
@@ -308,15 +350,20 @@ pub fn gmc_cluster_gas_accretion(
         |st| st.current_dt_yr.clamp(1e-6, 5.0),
     );
 
-    // 1. Collect all star positions, masses, and active disk status for planetary envelope accretion
-    let stars: Vec<(Entity, bevy::math::DVec3, f64, bool)> = bodies_query
-        .iter()
-        .filter(|(_, _, _, _, _, _, body, _, _, _, _, _, _)| body.body_type.is_star_or_remnant())
-        .map(|(e, m, pos, _, _, _, _, _, _, _, _, _, opt_disk)| {
-            let is_active = opt_disk.is_none_or(|d| d.is_active_full_disk);
-            (e, pos.0, m.0, is_active)
-        })
-        .collect();
+    // 1. Collect and X-sort all star positions, masses, and active disk status for O(log N) lookup
+    stars.clear();
+    stars.extend(
+        bodies_query
+            .iter()
+            .filter(|(_, _, _, _, _, _, body, _, _, _, _, _, _)| {
+                body.body_type.is_star_or_remnant()
+            })
+            .map(|(e, m, pos, _, _, _, _, _, _, _, _, _, opt_disk)| {
+                let is_active = opt_disk.is_none_or(|d| d.is_active_full_disk);
+                (e, pos.0, m.0, is_active)
+            }),
+    );
+    stars.sort_unstable_by(|a, b| a.1.x.total_cmp(&b.1.x));
 
     for (
         entity,
@@ -368,18 +415,11 @@ pub fn gmc_cluster_gas_accretion(
                 gas_scale,
             );
         } else if body.body_type == BodyType::Protoplanet || body.body_type.is_planet() {
-            let closest_star = stars
-                .iter()
-                .filter(|(s_ent, _, _, _)| *s_ent != entity)
-                .min_by(|(_, p1, _, _), (_, p2, _, _)| {
-                    let d1 = (*p1 - pos.0).length_squared();
-                    let d2 = (*p2 - pos.0).length_squared();
-                    d1.partial_cmp(&d2).unwrap_or(std::cmp::Ordering::Equal)
-                });
+            let closest_star = find_closest_star_sorted(&stars, pos.0, entity);
 
             // Only run full envelope accretion if host star's disk is active
             if let Some((_, star_pos, star_m, is_active)) = closest_star {
-                if *is_active {
+                if is_active {
                     compute_protoplanet_envelope_accretion(
                         entity,
                         pos,
@@ -389,8 +429,8 @@ pub fn gmc_cluster_gas_accretion(
                         &mut body,
                         &mut opt_vol,
                         dt_yr,
-                        *star_pos,
-                        *star_m,
+                        star_pos,
+                        star_m,
                     );
                 }
             }

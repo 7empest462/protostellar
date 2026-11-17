@@ -35,10 +35,7 @@ fn test_modal_mutual_exclusion_closes_conflicting_drawers() {
         is_open: false,
         ..default()
     };
-    let mut hazards = HazardsPanelState {
-        is_open: false,
-        ..default()
-    };
+    let mut hazards = HazardsPanelState { is_open: false };
     let mut scrubber = TimelineScrubber {
         is_open: false,
         ..default()
@@ -49,6 +46,10 @@ fn test_modal_mutual_exclusion_closes_conflicting_drawers() {
     };
     let mut visibility = HudVisibilityState {
         scenarios_is_open: false,
+        ..default()
+    };
+    let mut saves = protostellar::game::ui::SavesPanelState {
+        is_open: false,
         ..default()
     };
 
@@ -67,6 +68,7 @@ fn test_modal_mutual_exclusion_closes_conflicting_drawers() {
         scrubber: Some(&mut scrubber),
         hr_diagram: Some(&mut hr_diagram),
         visibility: Some(&mut visibility),
+        saves: Some(&mut saves),
     };
     let closed = close_conflicting_modals(ActiveModalKind::Telemetry, &mut states);
     assert!(closed);
@@ -88,6 +90,7 @@ fn test_modal_mutual_exclusion_closes_conflicting_drawers() {
         scrubber: Some(&mut scrubber),
         hr_diagram: Some(&mut hr_diagram),
         visibility: Some(&mut visibility),
+        saves: Some(&mut saves),
     };
     let closed = states.close_conflicting_modals(ActiveModalKind::Hazards);
     assert!(closed);
@@ -109,6 +112,7 @@ fn test_modal_mutual_exclusion_closes_conflicting_drawers() {
         scrubber: Some(&mut scrubber),
         hr_diagram: Some(&mut hr_diagram),
         visibility: Some(&mut visibility),
+        saves: Some(&mut saves),
     };
     let closed = states.close_conflicting_modals(ActiveModalKind::ScenarioPresets);
     assert!(closed);
@@ -130,6 +134,7 @@ fn test_modal_mutual_exclusion_closes_conflicting_drawers() {
             scrubber: Some(&mut scrubber),
             hr_diagram: Some(&mut hr_diagram),
             visibility: Some(&mut visibility),
+            saves: Some(&mut saves),
         };
         let closed = states.close_conflicting_modals(ActiveModalKind::None);
         assert!(closed);
@@ -167,6 +172,7 @@ fn test_escape_key_priority_stack_surface_modal_deselect() {
             &mut cam_query,
             None,
             false,
+            None,
             None,
             None,
         );
@@ -419,4 +425,292 @@ fn test_inspector_tabs_filter_sections_and_switch() {
         app.world().get::<Node>(sec_exotic).unwrap().display,
         Display::Flex
     );
+}
+
+fn escape_saves_runner(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut config: ResMut<SimulationConfig>,
+    mut player_state: ResMut<PlayerInteractionState>,
+    mut builder_state: ResMut<PlanetBuilderState>,
+    mut telemetry_state: ResMut<TelemetryPanelState>,
+    mut saves_state: ResMut<protostellar::game::ui::saves_panel::SavesPanelState>,
+    mut toast: ResMut<NotificationToast>,
+    mut cam_query: Query<(&Transform, &mut PanOrbitCamera)>,
+) {
+    handle_viewport_and_tool_hotkeys(
+        &keyboard,
+        &mut config,
+        &mut player_state,
+        &mut builder_state,
+        &mut telemetry_state,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut toast,
+        &mut cam_query,
+        None,
+        false,
+        None,
+        None,
+        Some(&mut saves_state),
+    );
+}
+
+#[test]
+fn test_saves_panel_modal_exclusion_and_escape() {
+    use protostellar::game::ui::saves_panel::SavesPanelState;
+
+    let mut builder = PlanetBuilderState {
+        is_open: true,
+        ..default()
+    };
+    let mut telemetry = TelemetryPanelState::default();
+    let mut saves = SavesPanelState {
+        is_open: true,
+        ..default()
+    };
+    {
+        let mut states = ModalPanelStates {
+            builder: Some(&mut builder),
+            telemetry: Some(&mut telemetry),
+            trophies: None,
+            tech_tree: None,
+            campaign: None,
+            hazards: None,
+            scrubber: None,
+            hr_diagram: None,
+            visibility: None,
+            saves: Some(&mut saves),
+        };
+        assert!(states.close_conflicting_modals(ActiveModalKind::SavesManager));
+    }
+    assert!(
+        !builder.is_open,
+        "Builder must close when SavesManager opens"
+    );
+    assert!(saves.is_open, "SavesManager must stay open");
+    {
+        let mut states = ModalPanelStates {
+            builder: Some(&mut builder),
+            telemetry: Some(&mut telemetry),
+            trophies: None,
+            tech_tree: None,
+            campaign: None,
+            hazards: None,
+            scrubber: None,
+            hr_diagram: None,
+            visibility: None,
+            saves: Some(&mut saves),
+        };
+        assert!(states.close_conflicting_modals(ActiveModalKind::None));
+    }
+    assert!(
+        !saves.is_open,
+        "ActiveModalKind::None must close SavesManager"
+    );
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<PlanetBuilderState>()
+        .init_resource::<TelemetryPanelState>()
+        .init_resource::<NotificationToast>()
+        .insert_resource(SavesPanelState {
+            is_open: true,
+            ..default()
+        })
+        .init_resource::<ButtonInput<KeyCode>>();
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Escape);
+    app.world_mut()
+        .run_system_once(escape_saves_runner)
+        .expect("run escape handler");
+    assert!(
+        !app.world().resource::<SavesPanelState>().is_open,
+        "Escape key must close open SavesPanelState"
+    );
+}
+
+#[derive(Resource)]
+struct MultiSlotActionStep(Vec<UiButtonAction>);
+
+fn make_multi_slot_test_save(
+    preset: Option<protostellar::simulation::scenarios::ScenarioPreset>,
+    epoch_yr: f64,
+) -> protostellar::simulation::serialization::SystemSaveData {
+    use protostellar::simulation::serialization::{
+        ConfigSave, EventFlagsSave, SystemSaveData, TimeWarpSave,
+    };
+    SystemSaveData {
+        version: 1,
+        timestamp_epoch_yr: epoch_yr,
+        step_count: 42,
+        time_warp: TimeWarpSave::default(),
+        disk_parameters: DiskParameters::default(),
+        config_save: ConfigSave::default(),
+        bodies: Vec::new(),
+        event_flags: EventFlagsSave::default(),
+        scenario_preset: preset,
+    }
+}
+
+fn sample_multi_slot_entry(
+    slot_file: &str,
+) -> protostellar::simulation::serialization::SaveSlotEntry {
+    use protostellar::simulation::scenarios::ScenarioPreset;
+    use protostellar::simulation::serialization::SaveSlotEntry;
+    SaveSlotEntry {
+        slot_name: "trappist_test_01".to_string(),
+        file_path: slot_file.to_string(),
+        scenario_preset: Some(ScenarioPreset::Trappist1System),
+        body_count: 8,
+        timestamp_epoch_yr: 120.0,
+        step_count: 42,
+        format_tag: "JSON",
+        modified_secs: 1,
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Test harness system dispatches SavesPanel UiButtonAction sequences"
+)]
+fn run_multi_slot_actions_system(
+    actions: Res<MultiSlotActionStep>,
+    mut save_events: MessageWriter<protostellar::simulation::serialization::SaveSystemEvent>,
+    mut load_events: MessageWriter<protostellar::simulation::serialization::LoadSystemEvent>,
+    mut slot_state: ResMut<protostellar::game::ui::widgets::SaveSlotUiState>,
+    mut saves_panel: ResMut<protostellar::game::ui::saves_panel::SavesPanelState>,
+    scenario_state: Res<ActiveScenarioState>,
+    mut toast: ResMut<NotificationToast>,
+) {
+    use protostellar::game::ui::interactions::system_tools::handle_save_load_action;
+    for action in &actions.0 {
+        let handled = handle_save_load_action(
+            action,
+            Some(&mut save_events),
+            Some(&mut load_events),
+            None,
+            None,
+            Some(&mut slot_state),
+            Some(&mut saves_panel),
+            Some(&scenario_state),
+            &mut toast,
+        );
+        assert!(handled);
+    }
+}
+
+fn setup_multi_slot_saves_test_app(slot_file: &str) -> App {
+    use protostellar::game::ui::saves_panel::SavesPanelState;
+    use protostellar::game::ui::widgets::SaveSlotUiState;
+    use protostellar::simulation::scenarios::ScenarioPreset;
+    use protostellar::simulation::serialization::{LoadSystemEvent, SaveSystemEvent};
+
+    let mut app = App::new();
+    app.add_message::<SaveSystemEvent>()
+        .add_message::<LoadSystemEvent>()
+        .init_resource::<NotificationToast>()
+        .insert_resource(SaveSlotUiState {
+            slot_name: "my custom run.json".to_string(),
+        })
+        .insert_resource(ActiveScenarioState {
+            current_preset: ScenarioPreset::Trappist1System,
+            ..default()
+        })
+        .insert_resource(SavesPanelState {
+            is_open: true,
+            entries: vec![sample_multi_slot_entry(slot_file)],
+            total_saved_count: 1,
+            ..default()
+        })
+        .insert_resource(MultiSlotActionStep(vec![
+            UiButtonAction::SaveNamedSlot,
+            UiButtonAction::SelectSaveSlot(0),
+            UiButtonAction::OverwriteSaveSlot(0),
+            UiButtonAction::DeleteSaveSlot(0),
+            UiButtonAction::DeleteSaveSlot(0),
+        ]))
+        .add_systems(Update, run_multi_slot_actions_system);
+    app
+}
+
+#[test]
+fn test_saves_panel_multi_slot_actions() {
+    use protostellar::game::ui::saves_panel::SavesPanelState;
+    use protostellar::game::ui::widgets::SaveSlotUiState;
+    use protostellar::simulation::scenarios::ScenarioPreset;
+    use protostellar::simulation::serialization::{
+        save_system_to_file, LoadSystemEvent, SaveSystemEvent,
+    };
+
+    let test_dir = "target/test_multi_saves_ui";
+    let _ = std::fs::remove_dir_all(test_dir);
+    let slot_file = format!("{test_dir}/trappist_test_01.json");
+    save_system_to_file(
+        &make_multi_slot_test_save(Some(ScenarioPreset::Trappist1System), 120.0),
+        &slot_file,
+    )
+    .expect("write test save");
+
+    let mut app = setup_multi_slot_saves_test_app(&slot_file);
+    app.update();
+
+    let save_msgs = app.world().resource::<Messages<SaveSystemEvent>>();
+    let mut cursor = save_msgs.get_cursor();
+    let emitted: Vec<String> = cursor.read(save_msgs).map(|e| e.filename.clone()).collect();
+    assert_eq!(
+        emitted.first().map(String::as_str),
+        Some("saves/my_custom_run.json")
+    );
+    assert_eq!(emitted.get(1).map(String::as_str), Some(slot_file.as_str()));
+    assert!(!std::path::Path::new(&slot_file).exists());
+
+    // LoadSaveSlot closes modal and sets active slot; SaveNewScenarioSlot names with scenario slug
+    save_system_to_file(&make_multi_slot_test_save(None, 0.0), &slot_file)
+        .expect("recreate test save");
+    {
+        let mut panel = app.world_mut().resource_mut::<SavesPanelState>();
+        panel.is_open = true;
+        panel.entries = vec![sample_multi_slot_entry(&slot_file)];
+    }
+    app.world_mut().resource_mut::<MultiSlotActionStep>().0 = vec![UiButtonAction::LoadSaveSlot(0)];
+    app.update();
+    assert!(!app.world().resource::<SavesPanelState>().is_open);
+    assert_eq!(
+        app.world().resource::<SaveSlotUiState>().slot_name,
+        "trappist_test_01"
+    );
+    let load_msgs = app.world().resource::<Messages<LoadSystemEvent>>();
+    let mut l_cursor = load_msgs.get_cursor();
+    assert_eq!(
+        l_cursor.read(load_msgs).last().map(|e| e.filename.as_str()),
+        Some(slot_file.as_str())
+    );
+
+    app.world_mut().resource_mut::<MultiSlotActionStep>().0 = vec![
+        UiButtonAction::ToggleSavesPanel,
+        UiButtonAction::ToggleSavesScenarioFilter,
+        UiButtonAction::SaveNewScenarioSlot,
+    ];
+    app.update();
+
+    assert!(app.world().resource::<SavesPanelState>().is_open);
+    assert!(
+        app.world()
+            .resource::<SavesPanelState>()
+            .filter_active_scenario
+    );
+    let generated_slot = app.world().resource::<SaveSlotUiState>().slot_name.clone();
+    assert!(
+        generated_slot.starts_with("trappist1_"),
+        "SaveNewScenarioSlot should name slot with scenario slug, got {generated_slot}"
+    );
+    let _ = std::fs::remove_dir_all(test_dir);
 }

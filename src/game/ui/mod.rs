@@ -15,6 +15,7 @@ pub mod interactions;
 pub mod modal_manager;
 pub mod navigation_panel;
 pub mod presets_panel;
+pub mod saves_panel;
 pub mod sci_fi_theme;
 pub mod scroll;
 pub mod selector;
@@ -55,6 +56,7 @@ pub use interactions::handle_ui_button_interactions;
 pub use modal_manager::{close_conflicting_modals, ActiveModalKind, ModalPanelStates};
 pub use navigation_panel::spawn_bottom_right_controls_panel;
 pub use presets_panel::{spawn_scenario_presets_panel, spawn_scenario_presets_pill};
+pub use saves_panel::{spawn_saves_panel, update_saves_panel, SavesPanelElement, SavesPanelState};
 pub use sci_fi_theme::{SciFiPanelMaterial, SciFiUiThemePlugin};
 pub use scroll::{handle_inspector_scroll, reset_inspector_scroll_on_target_change};
 pub use selector::{
@@ -69,16 +71,16 @@ pub use telemetry_panel::{
 pub use types::{
     collect_sorted_system_worlds, create_button, create_compact_button,
     create_compact_selectable_button, is_canonical_major_planet, is_embryo_body, is_major_body,
-    BeltZone, BuilderPreset, EpochQuickButton, EpochScrubberBodyTitleText,
-    EpochScrubberMetricsText, EpochScrubberPanel, EpochScrubberStatusText, HudActionTooltipText,
-    HudBodiesQuery, HudBottomTimerText, HudButton, HudDynamicText, HudHeaderStatsText,
-    HudInspectorText, HudPanelElement, HudTextQueries, HudTimeWarpText, HudToastContainer,
-    HudToastText, HudVisibilityState, InspectorExoticHeader, InspectorSection, NotificationToast,
-    PlanetBuilderInfoText, PlanetBuilderPanel, PlanetBuilderState, QuickBarButtonBaseColor,
-    QuickBarState, QuickBodySelectorBar, ScrollableInspector, SystemWorld,
-    TelemetryExportStatusText, TelemetryGraphBodyTitleText, TelemetryGraphPanel,
-    TelemetryGraphReadoutText, TelemetryGraphSparklineText, TelemetryMetricButton,
-    TelemetryPanelState, UiButtonAction,
+    BeltZone, BuilderPreset, CosmicEventEntry, CosmicEventLog, EpochQuickButton,
+    EpochScrubberBodyTitleText, EpochScrubberMetricsText, EpochScrubberPanel,
+    EpochScrubberStatusText, HudActionTooltipText, HudBodiesQuery, HudBottomTimerText, HudButton,
+    HudDynamicText, HudHeaderStatsText, HudInspectorText, HudPanelElement, HudTextQueries,
+    HudTimeWarpText, HudToastContainer, HudToastText, HudVisibilityState, InspectorExoticHeader,
+    InspectorSection, NotificationToast, PlanetBuilderInfoText, PlanetBuilderPanel,
+    PlanetBuilderState, QuickBarButtonBaseColor, QuickBarState, QuickBodySelectorBar,
+    ScrollableInspector, SystemWorld, TelemetryExportStatusText, TelemetryGraphBodyTitleText,
+    TelemetryGraphPanel, TelemetryGraphReadoutText, TelemetryGraphSparklineText,
+    TelemetryMetricButton, TelemetryPanelState, UiButtonAction,
 };
-pub use update::{handle_roche_disruption_toasts, update_hud};
+pub use update::{handle_cosmic_event_toasts, handle_roche_disruption_toasts, update_hud};
 pub use visibility::{update_hud_visibility, update_scenario_contextual_ui};

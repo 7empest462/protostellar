@@ -254,8 +254,7 @@ fn test_dynamic_impact_basin_thermal_conduction_and_cooling() {
 #[test]
 fn test_tidally_locked_eyeball_temperature_contrast() {
     let base_temp = 320.0_f32; // Mean temperature in K
-    let sun_cos_subsolar = 1.0_f32; // Subsolar zenith
-    let _sun_cos_nightside = -1.0_f32; // Antistellar nightside
+    let sun_cos_subsolar = 1.0_f32; // Subsolar zenith (nightside is cos = -1.0)
     let pressure_bar = 0.02_f32; // Thin atmosphere (airless or Mars-like)
 
     let atm_insulation = (pressure_bar / 1.0).clamp(0.05, 0.92);

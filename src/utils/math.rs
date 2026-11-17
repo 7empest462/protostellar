@@ -394,3 +394,47 @@ impl FastRngExt for fastrand::Rng {
         mean + std_dev * z0
     }
 }
+
+/// Zero-allocation ASCII case-insensitive equality check against candidate strings.
+#[inline]
+pub fn eq_any_ignore_ascii_case(s: &str, candidates: &[&str]) -> bool {
+    candidates.iter().any(|c| s.eq_ignore_ascii_case(c))
+}
+
+/// Zero-allocation ASCII case-insensitive prefix check.
+#[inline]
+pub fn starts_with_ignore_ascii_case(s: &str, prefix: &str) -> bool {
+    s.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+/// Zero-allocation ASCII case-insensitive prefix stripping, preserving original suffix slice.
+#[inline]
+pub fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    if starts_with_ignore_ascii_case(s, prefix) {
+        s.get(prefix.len()..)
+    } else {
+        None
+    }
+}
+
+/// Zero-allocation ASCII case-insensitive substring check.
+#[inline]
+pub fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle_bytes = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .windows(needle_bytes.len())
+        .any(|w| w.eq_ignore_ascii_case(needle_bytes))
+}
+
+/// Returns `true` if `haystack` contains any candidate substring (ASCII case-insensitive).
+#[inline]
+pub fn contains_any_ignore_ascii_case(haystack: &str, needles: &[&str]) -> bool {
+    needles
+        .iter()
+        .any(|needle| contains_ignore_ascii_case(haystack, needle))
+}

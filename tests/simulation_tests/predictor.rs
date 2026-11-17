@@ -63,14 +63,12 @@ fn test_kepler_propagation_accuracy_circular_orbit() {
 fn test_kepler_equation_solver_eccentric_convergence() {
     let e = 0.6;
     for step in 0..10 {
-        let m = (step as f64) * 0.1 * TAU;
+        let m = f64::from(step) * 0.1 * TAU;
         let big_e = solve_kepler_eccentric(m, e);
         let residual = (big_e - e * big_e.sin() - m).abs();
         assert!(
             residual < 1e-10,
-            "Kepler equation did not converge: residual {} for M = {}",
-            residual,
-            m
+            "Kepler equation did not converge: residual {residual} for M = {m}"
         );
     }
 }
@@ -288,13 +286,11 @@ fn test_hyperbolic_kepler_near_asymptote_stability() {
         let (pos, vel) = result.expect("propagation result");
         assert!(
             pos.is_finite(),
-            "Position near asymptote must be finite, got {:?}",
-            pos
+            "Position near asymptote must be finite, got {pos:?}"
         );
         assert!(
             vel.is_finite(),
-            "Velocity near asymptote must be finite, got {:?}",
-            vel
+            "Velocity near asymptote must be finite, got {vel:?}"
         );
     }
 }
@@ -351,7 +347,7 @@ fn test_predictor_star_offset_and_inbound_hyperbolic_asinh() {
 
     let predictor = app.world().resource::<TrajectoryPredictorState>();
     assert!(predictor.is_enabled);
-    assert!(!predictor.trajectory_points.is_empty());
+    assert_ne!(predictor.trajectory_points, Vec::new());
 
     // First point must be offset by star_pos (i.e. world position near 51.0, 10.0, -20.0)
     let p0 = predictor.trajectory_points[0];
@@ -385,4 +381,34 @@ fn test_predictor_star_offset_and_inbound_hyperbolic_asinh() {
     );
     let (h_pos, h_vel) = hyp_res.unwrap();
     assert!(h_pos.is_finite() && h_vel.is_finite());
+}
+
+#[test]
+fn test_short_period_trajectory_points_stay_smooth_within_single_orbit() {
+    let star_mass = 1.56;
+    let r_au = 0.19;
+    let v_circ = (G_ASTRO * star_mass / r_au).sqrt();
+    let el = state_vectors_to_orbital_elements(
+        DVec3::new(r_au, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, v_circ),
+        star_mass,
+        122.5 * EARTH_MASS_SOLAR,
+    )
+    .expect("short-period orbit elements");
+
+    // 30-year horizon (~455 orbits at 0.19 AU): visual spline must trace ~1 smooth orbit, not zigzag chords
+    let (pts, _enc) = find_closest_encounter(&el, 0.0004, star_mass, DVec3::ZERO, &[], 30.0);
+    assert!(
+        pts.len() >= 150,
+        "Expected smooth high-resolution forecast curve, got {} points",
+        pts.len()
+    );
+    let max_chord = pts
+        .windows(2)
+        .map(|w| w[0].distance(w[1]))
+        .fold(0.0_f32, f32::max);
+    assert!(
+        max_chord < 0.025,
+        "Short-period forecast spline must stay smoothly curved without orbit-skipping chords (max chord: {max_chord:.4} AU)"
+    );
 }

@@ -317,6 +317,7 @@ fn test_atmospheric_escape_serialization() {
         relativistic_state: None,
         atmospheric_escape: Some(escape_state),
         kozai_lidov: None,
+        ..Default::default()
     };
 
     let serialized =

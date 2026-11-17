@@ -69,12 +69,19 @@ fn spawn_kepler_16_stars(commands: &mut Commands, m_a: f64, m_b: f64, m_total: f
     star_a
 }
 
-fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
+fn spawn_kepler_16_planets(
+    commands: &mut Commands,
+    m_total: f64,
+    star_a_pos_cm: DVec3,
+    star_a_vel_cm: DVec3,
+) {
     let a_planet = 0.7048;
     let m_planet = 106.0 * EARTH_MASS_SOLAR;
     let v_planet = (G_ASTRO * m_total / a_planet).sqrt();
-    let pos_p = DVec3::new(0.0, 0.0, a_planet);
-    let vel_p = DVec3::new(-v_planet, 0.0, 0.0);
+    // Express circumbinary orbits in CentralStar (`star_a`) rest-frame coordinates so that
+    // inertial barycentric motion matches circular Keplerian orbits around `m_a + m_b`.
+    let pos_p = DVec3::new(0.0, 0.0, a_planet) - star_a_pos_cm;
+    let vel_p = DVec3::new(-v_planet, 0.0, 0.0) - star_a_vel_cm;
 
     let planet_ent = commands
         .spawn((
@@ -168,21 +175,32 @@ fn spawn_kepler_16_planets(commands: &mut Commands, m_total: f64) {
         },
     ));
 
+    spawn_kepler_16c_planet(commands, m_total, star_a_pos_cm, star_a_vel_cm);
+}
+
+fn spawn_kepler_16c_planet(
+    commands: &mut Commands,
+    m_total: f64,
+    star_a_pos_cm: DVec3,
+    star_a_vel_cm: DVec3,
+) {
     let a_c = 1.15;
     let v_c = (G_ASTRO * m_total / a_c).sqrt();
+    let pos_c = DVec3::new(-a_c, 0.0, 0.0) - star_a_pos_cm;
+    let vel_c = DVec3::new(0.0, 0.0, -v_c) - star_a_vel_cm;
     commands.spawn((
         CelestialBody {
             body_type: BodyType::TerrestrialPlanet,
             name: "Kepler-16c (Habitable Ocean World)".to_string(),
         },
         Mass(1.15 * EARTH_MASS_SOLAR),
-        SimPosition(DVec3::new(-a_c, 0.0, 0.0)),
-        SimVelocity(DVec3::new(0.0, 0.0, -v_c)),
+        SimPosition(pos_c),
+        SimVelocity(vel_c),
         SimAcceleration::default(),
         Radius(EARTH_RADIUS_AU * 1.05),
         Temperature(285.0),
         Luminosity(0.0),
-        AngularMomentum(DVec3::new(0.0, a_c * v_c * 1.15 * EARTH_MASS_SOLAR, 0.0)),
+        AngularMomentum(pos_c.cross(vel_c) * (1.15 * EARTH_MASS_SOLAR)),
         Composition {
             ice_frac: 0.08,
             ..Composition::rocky()
@@ -227,8 +245,13 @@ pub fn spawn_kepler_16_system(commands: &mut Commands, disk_params: &mut DiskPar
     disk_params.outer_radius_au = 3.50;
     disk_params.disk_mass = 0.00010;
 
+    let a_bin = 0.2243;
+    let v_bin = (G_ASTRO * m_total / a_bin).sqrt();
+    let star_a_pos_cm = DVec3::new(-(m_b / m_total) * a_bin, 0.0, 0.0);
+    let star_a_vel_cm = DVec3::new(0.0, 0.0, -(m_b / m_total) * v_bin);
+
     let star_a = spawn_kepler_16_stars(commands, m_a, m_b, m_total);
-    spawn_kepler_16_planets(commands, m_total);
+    spawn_kepler_16_planets(commands, m_total, star_a_pos_cm, star_a_vel_cm);
 
     star_a
 }
