@@ -253,7 +253,9 @@ fn update_planet_material(
         mat.base.perceptual_roughness = 0.18;
     } else if comp.gas_frac > 0.5 {
         mat.base.metallic = 0.0;
-        mat.base.perceptual_roughness = 0.85;
+        let is_saturn_cloud =
+            crate::game::ui::world_list::contains_ignore_ascii_case(name, "saturn");
+        mat.base.perceptual_roughness = if is_saturn_cloud { 0.92 } else { 0.85 };
     } else {
         mat.base.metallic = 0.15;
         mat.base.perceptual_roughness = 0.75;
@@ -310,13 +312,13 @@ fn apply_impact_basins(
     mat.extension.uniforms.impact_basins_data = basins_data;
 }
 
-pub(super) struct BodyMaterialParameters {
-    pub(super) climate_and_bio: Vec4,
-    pub(super) atmosphere_params: Vec4,
-    pub(super) dynamics_and_mag: Vec4,
-    pub(super) pressure_bar: f32,
-    pub(super) cloud_density: f32,
-    pub(super) mag_gauss: f32,
+pub struct BodyMaterialParameters {
+    pub climate_and_bio: Vec4,
+    pub atmosphere_params: Vec4,
+    pub dynamics_and_mag: Vec4,
+    pub pressure_bar: f32,
+    pub cloud_density: f32,
+    pub mag_gauss: f32,
 }
 
 struct AtmosphereCloudParams {
@@ -409,7 +411,7 @@ fn compute_atmosphere_and_cloud_params(
 }
 
 #[allow(clippy::too_many_arguments, reason = "Material parameter builder")]
-fn compute_body_material_parameters(
+pub fn compute_body_material_parameters(
     body_type: BodyType,
     comp: &Composition,
     temp_k: f64,
@@ -544,9 +546,7 @@ fn compute_body_material_parameters(
 fn compute_spin_axis(opt_spin: Option<&SpinState>, opt_geo: Option<&GeologicalState>) -> Vec4 {
     let drift_phase = opt_geo.map_or(0.0, |g| g.continental_drift_phase);
     if let Some(spin) = opt_spin {
-        if spin.spin_vector.length_squared() > 1e-12
-            && (spin.spin_vector.x.abs() > 1e-6 || spin.spin_vector.z.abs() > 1e-6)
-        {
+        if spin.spin_vector.length_squared() > 1e-12 {
             let n = spin.spin_vector.normalize();
             Vec4::new(n.x as f32, n.y as f32, n.z as f32, drift_phase)
         } else {
@@ -709,17 +709,24 @@ fn write_shared_shader_uniforms(
         params.pressure_bar,
         params.cloud_density,
     );
+    let mut rayleigh_beta = profile.rayleigh_beta;
+    let mut mie_g = profile.mie_asymmetry_g;
+    if eff_type == BodyType::GasGiant
+        && !force_terrestrial_core
+        && crate::game::ui::world_list::contains_ignore_ascii_case(&body.name, "saturn")
+    {
+        // Delicate warm Cassini golden-champagne limb haze (low optical depth so central disk
+        // retains rich butterscotch saturation while the sunlit grazing limb glows warmly)
+        rayleigh_beta = Vec3::new(0.84, 0.68, 0.32) * 0.16;
+        mie_g = 0.80;
+    }
     mat.extension.uniforms.star_dir_and_lum = Vec4::new(star_dir.x, star_dir.y, star_dir.z, 1.0);
-    mat.extension.uniforms.scattering_params = Vec4::new(
-        profile.rayleigh_beta.x,
-        profile.rayleigh_beta.y,
-        profile.rayleigh_beta.z,
-        profile.mie_asymmetry_g,
-    );
+    mat.extension.uniforms.scattering_params =
+        Vec4::new(rayleigh_beta.x, rayleigh_beta.y, rayleigh_beta.z, mie_g);
     mat.extension.uniforms.spin_axis = compute_spin_axis(opt_spin, opt_geo);
     mat.extension.uniforms.geological_params = opt_geo.map_or(Vec4::ZERO, |g| {
         Vec4::new(
-            g.geological_age_gyr,
+            g.geological_age_gyr as f32,
             g.supercontinent_aggregation,
             g.ocean_oxidation_progress,
             g.terrestrial_vegetation_fraction,
@@ -754,7 +761,7 @@ fn write_shared_shader_uniforms(
 }
 
 #[allow(clippy::too_many_arguments, reason = "Material sync system helper")]
-pub(crate) fn update_body_material_properties(
+pub fn update_body_material_properties(
     mat: &mut PlanetMaterial,
     body: &CelestialBody,
     mass: &Mass,
@@ -786,7 +793,12 @@ pub(crate) fn update_body_material_properties(
 
     let base_color = compute_body_color(body, mass, temp, comp, opt_tidal);
     let rotations_per_year = if let Some(spin) = opt_spin {
-        8766.0 / spin.rotation_period_hours.max(0.01)
+        let sign = if spin.rotation_period_hours < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        sign * (8766.0 / spin.rotation_period_hours.abs().max(0.01))
     } else {
         100.0
     };
@@ -865,90 +877,4 @@ pub(crate) fn update_body_material_properties(
         opt_flare,
         force_terrestrial_core,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::constants::EARTH_MASS_SOLAR;
-
-    #[test]
-    fn test_airless_moon_without_volatiles_renders_no_fake_ocean_or_air() {
-        let comp = Composition {
-            silicate_frac: 0.69,
-            ice_frac: 0.05,
-            metal_frac: 0.27,
-            organics_frac: 0.0,
-            gas_frac: 0.0,
-        };
-        let params = compute_body_material_parameters(
-            BodyType::Moon,
-            &comp,
-            281.0,
-            0.0081 * EARTH_MASS_SOLAR,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            0.0,
-        );
-        assert_eq!(params.pressure_bar, 0.0);
-        assert_eq!(params.climate_and_bio.x, 0.0, "No fake liquid ocean");
-        assert_eq!(params.climate_and_bio.y, 0.0, "No warm vacuum polar ice");
-        assert_eq!(params.cloud_density, 0.0, "No fake clouds in vacuum");
-        assert_eq!(params.atmosphere_params.z, 0.0, "No fake haze in vacuum");
-    }
-
-    #[test]
-    fn test_cold_airless_icy_moon_preserves_ice_without_liquid_ocean() {
-        let comp = Composition {
-            silicate_frac: 0.45,
-            ice_frac: 0.50,
-            metal_frac: 0.05,
-            organics_frac: 0.0,
-            gas_frac: 0.0,
-        };
-        let cold_params = compute_body_material_parameters(
-            BodyType::Moon,
-            &comp,
-            100.0,
-            0.0081 * EARTH_MASS_SOLAR,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            0.0,
-        );
-        assert_eq!(cold_params.pressure_bar, 0.0);
-        assert_eq!(cold_params.climate_and_bio.x, 0.0);
-        assert!(cold_params.climate_and_bio.y > 0.4);
-
-        let below_triple = VolatileInventory {
-            delivered_water_m_earth: 0.0001,
-            ocean_coverage_frac: 0.5,
-            atmospheric_pressure_bar: 0.004,
-            cometary_impact_count: 0,
-        };
-        let low_p_params = compute_body_material_parameters(
-            BodyType::Moon,
-            &comp,
-            281.0,
-            0.0081 * EARTH_MASS_SOLAR,
-            None,
-            None,
-            Some(&below_triple),
-            None,
-            None,
-            None,
-            0.0,
-        );
-        assert_eq!(
-            low_p_params.climate_and_bio.x, 0.0,
-            "Below 0.0061 bar triple point, liquid ocean must be zero"
-        );
-    }
 }

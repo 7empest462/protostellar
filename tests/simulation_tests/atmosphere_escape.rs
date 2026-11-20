@@ -489,3 +489,157 @@ fn test_warm_low_gravity_moon_loses_transient_steam_to_space() {
         vol.delivered_water_m_earth
     );
 }
+
+fn spawn_multi_star_moon_escape_app() -> (App, Entity, Entity, f64, f64) {
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .insert_resource(SimTime {
+            elapsed_years: 100.0,
+            current_dt_yr: 10_000.0,
+            ..Default::default()
+        })
+        .init_resource::<AtmosphericEscapeConfig>()
+        .add_message::<AtmosphericStrippedEvent>();
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Hot Primary".to_string(),
+            body_type: BodyType::BlueMainSequence,
+        },
+        SimPosition(DVec3::ZERO),
+        Mass(2.0),
+        Radius(SOLAR_RADIUS_AU * 1.5),
+        Luminosity(20.0),
+        IgnitionState::default(),
+    ));
+    // Secondary star confirms star_query.single() was eliminated
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Far Companion".to_string(),
+            body_type: BodyType::RedDwarf,
+        },
+        SimPosition(DVec3::new(150.0, 0.0, 0.0)),
+        Mass(0.3),
+        Radius(SOLAR_RADIUS_AU * 0.4),
+        Luminosity(0.02),
+        IgnitionState::default(),
+    ));
+
+    let jup_mass = JUPITER_MASS_SOLAR;
+    let jup_init_comp = Composition::solar_gas();
+    let jup_init_silicate = jup_mass * jup_init_comp.silicate_frac;
+    let jup_init_metal = jup_mass * jup_init_comp.metal_frac;
+    let jup = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Close Giant".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            SimPosition(DVec3::new(0.05, 0.0, 0.0)),
+            Mass(jup_mass),
+            Radius(EARTH_RADIUS_AU * 11.0),
+            Temperature(1400.0),
+            jup_init_comp,
+            VolatileInventory {
+                atmospheric_pressure_bar: 500.0,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    let mut moon_comp = Composition::rocky();
+    moon_comp.gas_frac = 0.08;
+    let moon_comp = moon_comp.normalized();
+    let moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Puffy Exomoon".to_string(),
+                body_type: BodyType::Moon,
+            },
+            SatelliteOf {
+                parent: jup,
+                semi_major_axis_au: 0.002,
+                orbital_period_years: 0.05,
+                true_anomaly: 0.0,
+            },
+            SimPosition(DVec3::new(0.052, 0.0, 0.0)),
+            Mass(0.015 * EARTH_MASS_SOLAR),
+            Radius(EARTH_RADIUS_AU * 0.35),
+            Temperature(1100.0),
+            moon_comp,
+            VolatileInventory {
+                atmospheric_pressure_bar: 2.0,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.add_systems(Update, update_atmospheric_escape_evolution);
+    (app, jup, moon, jup_init_silicate, jup_init_metal)
+}
+
+#[test]
+fn test_jeans_continuity_moon_hill_sphere_and_mass_conserving_escape() {
+    // 1. Jeans escape continuity across lambda_esc = 2.0 (mass above 1e-7 M_sun clamp)
+    let m_s = 0.10 * EARTH_MASS_SOLAR;
+    let r_au = 0.25 * EARTH_RADIUS_AU;
+    let t_at_lambda2 = (G_SI * (m_s * SOLAR_MASS_KG) * (4.0 * ATOMIC_MASS_UNIT_KG))
+        / (2.0 * BOLTZMANN_SI * (r_au * AU_TO_METERS));
+    let (lam_hi, rate_just_below) =
+        calculate_jeans_escape(m_s, r_au, t_at_lambda2 * 1.01, 4.0, 1.0);
+    let (lam_lo, rate_just_above) =
+        calculate_jeans_escape(m_s, r_au, t_at_lambda2 * 0.99, 4.0, 1.0);
+    assert!(lam_hi < 2.0 && lam_lo > 2.0);
+    assert!(
+        (rate_just_below - rate_just_above).abs() < 0.002,
+        "Jeans escape must transition smoothly across lambda_esc=2.0 (below={rate_just_below}, above={rate_just_above})"
+    );
+
+    // 2. InternalDifferentiation::recalculate preserves hotter shock/radiogenic core_temp_k
+    let mut diff = InternalDifferentiation {
+        core_temp_k: 9500.0,
+        ..Default::default()
+    };
+    diff.recalculate(EARTH_MASS_SOLAR, EARTH_RADIUS_AU, &Composition::rocky());
+    assert!(
+        diff.core_temp_k >= 9500.0,
+        "recalculate must not erase existing hotter shock-heated core temperature (got {})",
+        diff.core_temp_k
+    );
+
+    // 3. ECS escape: multi-star, moon Hill sphere vs parent, conserved non-volatile masses, preserved Moon identity
+    let (mut app, jup, moon, jup_init_silicate, jup_init_metal) =
+        spawn_multi_star_moon_escape_app();
+    app.update();
+
+    let jup_mass_after = app.world().get::<Mass>(jup).unwrap().0;
+    let jup_comp_after = app.world().get::<Composition>(jup).unwrap();
+    let jup_silicate_after = jup_mass_after * jup_comp_after.silicate_frac;
+    let jup_metal_after = jup_mass_after * jup_comp_after.metal_frac;
+    assert!(
+        (jup_silicate_after - jup_init_silicate).abs() / jup_init_silicate < 1e-6,
+        "H/He escape must strictly conserve silicate core mass"
+    );
+    assert!(
+        (jup_metal_after - jup_init_metal).abs() / jup_init_metal < 1e-6,
+        "H/He escape must strictly conserve metallic core mass"
+    );
+
+    let moon_ref = app.world().entity(moon);
+    assert_eq!(
+        moon_ref.get::<CelestialBody>().unwrap().body_type,
+        BodyType::Moon,
+        "Volatile stripping of a Moon must preserve BodyType::Moon identity"
+    );
+    let moon_esc = moon_ref.get::<AtmosphericEscapeState>().unwrap();
+    assert!(
+        moon_esc.roche_lobe_fill_fraction > 0.05,
+        "Moon Hill sphere must be computed relative to parent planet, giving larger Roche fill (got {})",
+        moon_esc.roche_lobe_fill_fraction
+    );
+}

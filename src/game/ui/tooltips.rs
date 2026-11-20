@@ -143,7 +143,7 @@ impl UiButtonAction {
                 }
             }
             UiButtonAction::BuilderCycleEccentricity => {
-                "Cycle orbital eccentricity between Circular (0.00), Moderate (0.15), and High (0.60)."
+                "Cycle orbital eccentricity between Circular (0.00), Moderate (0.15), High (0.60), and Hyperbolic (1.25)."
             }
             UiButtonAction::BuilderCycleComposition => {
                 "Cycle composition fractions (Rocky, Oceanic Ice, Metal Core, Gas Giant)."
@@ -270,9 +270,9 @@ impl UiButtonAction {
             UiButtonAction::ToggleMinimizeHrDiagram => {
                 "Minimize or restore the Hertzsprung–Russell Stellar Evolution panel."
             }
-            UiButtonAction::IncreaseMass => "[U]: Accrete +25% mass into selected planet.",
+            UiButtonAction::IncreaseMass => "[U / Shift+=]: Accrete +25% mass into selected body.",
             UiButtonAction::DecreaseMass => {
-                "[J]: Strip -20% outer envelope mass from selected planet."
+                "[J / Shift+-]: Strip -20% outer envelope mass from selected body."
             }
             UiButtonAction::ExpandOrbit => {
                 "[O]: Boost orbital energy to expand orbital radius +10%."
@@ -283,10 +283,10 @@ impl UiButtonAction {
             UiButtonAction::CycleComposition => {
                 "[C]: Cycle composition between Rocky, Metallic, Icy, and Volatile."
             }
-            UiButtonAction::BoostDeltaV => "[=]: Prograde orbital velocity acceleration boost.",
-            UiButtonAction::BrakeDeltaV => "[-]: Retrograde orbital velocity braking burn.",
+            UiButtonAction::BoostDeltaV => "[B]: Prograde orbital velocity acceleration boost.",
+            UiButtonAction::BrakeDeltaV => "[Shift-B]: Retrograde orbital velocity braking burn.",
             UiButtonAction::InjectEmbryo => {
-                "[M]: Trigger Theia-Earth Moon-forming giant impact / intercept trajectory."
+                "[Alt-M]: Trigger Theia-Earth Moon-forming giant impact / intercept trajectory."
             }
             UiButtonAction::VaporizeBody => {
                 "[Del]: Shatter selected celestial body into dust & fragments."

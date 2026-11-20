@@ -265,8 +265,8 @@ fn test_black_hole_accretion_disk_spawning_and_sync() {
         "ISCO inner radius must be ~0.16"
     );
     assert_eq!(
-        material.uniforms.spin_axis.w, 4_000_000.0,
-        "Spin axis w-component must encode BH mass"
+        material.uniforms.spin_axis.w, 0.0,
+        "Non-Kerr Schwarzschild BH spin_axis.w must encode 0.0 dimensionless spin a_*"
     );
     assert!(
         (material.uniforms.schwa_radius - 0.055).abs() < 1e-4,

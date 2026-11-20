@@ -372,6 +372,7 @@ pub fn update_telemetry_graph_ui(
         &mut BackgroundColor,
         &mut BorderColor,
     )>,
+    hud_visibility: Option<Res<super::types::HudVisibilityState>>,
     mut last_sig: Local<Option<(TelemetryMetric, usize, u64)>>,
 ) {
     use super::update::{set_display_if_changed, set_text_if_changed, set_text_str_if_changed};
@@ -379,7 +380,8 @@ pub fn update_telemetry_graph_ui(
         return;
     };
 
-    if !panel_state.is_open {
+    let is_minimized = hud_visibility.is_some_and(|v| v.telemetry_minimized);
+    if !panel_state.is_open || is_minimized {
         set_display_if_changed(&mut panel_node, Display::None);
         return;
     }

@@ -335,3 +335,149 @@ fn test_neutron_star_and_oort_telemetry_formatting() {
     assert!(out_comet.contains("OORT CLOUD ICY PLANETESIMAL"));
     assert!(out_comet.contains("SUN-GRAZING INFALL"));
 }
+
+#[test]
+fn test_alfven_wave_subluminal_expansion_and_magnetar_baseline_restoration() {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(NeutronStarPlugin);
+    app.init_resource::<TimeWarp>();
+    app.insert_resource(SimTime {
+        current_dt_yr: 1.0e-7, // ~3.15 s -> light travels 0.00632 AU (< old 0.05 AU FTL floor)
+        ..Default::default()
+    });
+
+    let magnetar = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Magnetar,
+                name: "SGR 1806-20".to_string(),
+            },
+            SimPosition(DVec3::ZERO),
+            Luminosity(10_000.0),
+            MagnetarCrustStress {
+                accumulated_magnetic_strain: 0.0,
+                burst_active: true,
+                burst_cooldown_years: 1.0e-8,
+                peak_flare_luminosity_solar: 1.0e8,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    let wave = app
+        .world_mut()
+        .spawn((
+            AlfvenBlastWave {
+                source_entity: magnetar,
+                origin_au: DVec3::ZERO,
+                radius_au: 0.05,
+                expansion_speed_au_yr: C_LIGHT_AU_YR * 0.999,
+                energy_erg: 1.0e45,
+                luminosity_solar: 1.0e8,
+                synchrotron_brightness: 1.0,
+                age_seconds: 0.0,
+                max_radius_au: 60.0,
+            },
+            SimPosition(DVec3::ZERO),
+        ))
+        .id();
+
+    app.update();
+
+    let updated_wave = app.world().get::<AlfvenBlastWave>(wave).unwrap();
+    assert!(
+        updated_wave.radius_au < 0.06,
+        "Alfvén wave must respect c over short timesteps instead of 0.05 AU FTL jump (r={})",
+        updated_wave.radius_au
+    );
+    assert!(
+        updated_wave.luminosity_solar < 1.0e8,
+        "Alfvén wave must attenuate smoothly even inside 1.0 AU (L={})",
+        updated_wave.luminosity_solar
+    );
+    let lum = app.world().get::<Luminosity>(magnetar).unwrap().0;
+    assert!(
+        (lum - 10_000.0).abs() < 1e-3,
+        "Magnetar must restore 10,000 L_sun post-flare baseline instead of 10 L_sun (got {lum})"
+    );
+}
+
+#[test]
+fn test_pulsar_analytic_glitch_recovery_and_millisecond_spin_preserved() {
+    // 1. Exact analytic glitch recovery must be timestep-invariant (no braking: spin_down = 0)
+    let mut single_step = PulsarGlitchState {
+        spin_frequency_hz: 100.0,
+        spin_down_rate_hz_s: 0.0,
+        post_glitch_relaxation_time_days: 45.0,
+        relaxation_healing_q: 0.5,
+        ..Default::default()
+    };
+    trigger_instantaneous_glitch(&mut single_step, 0.0);
+    let mut multi_step = single_step.clone();
+
+    step_single_pulsar_glitch(&mut single_step, None, None, 45.0 * 86400.0);
+    for _ in 0..90 {
+        step_single_pulsar_glitch(&mut multi_step, None, None, 0.5 * 86400.0);
+    }
+    assert!(
+        (single_step.spin_frequency_hz - multi_step.spin_frequency_hz).abs() < 1e-9,
+        "Glitch recovery must be timestep-invariant (1x45d={} vs 90x0.5d={})",
+        single_step.spin_frequency_hz,
+        multi_step.spin_frequency_hz
+    );
+
+    // 2. Millisecond pulsar preserves sub-ms rotation period in SpinState & computes dipole braking
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(NeutronStarPlugin);
+    app.init_resource::<TimeWarp>();
+    app.insert_resource(SimTime {
+        current_dt_yr: 0.001,
+        ..Default::default()
+    });
+
+    let msp = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                body_type: BodyType::Pulsar,
+                name: "PSR B1257+12".to_string(),
+            },
+            Mass(1.4),
+            Radius(8.0e-8),
+            SpinState::default(),
+            ElectromagneticFieldState {
+                magnetic_field_gauss: 1.0e9,
+                rotation_period_sec: 0.00622,
+                ..Default::default()
+            },
+            PulsarGlitchState {
+                spin_frequency_hz: 160.77,
+                spin_down_rate_hz_s: -1.0, // overwritten by evaluate_dipole_spin_down_rate
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.update();
+
+    let w = app.world();
+    let spin = w.get::<SpinState>(msp).unwrap();
+    let glitch = w.get::<PulsarGlitchState>(msp).unwrap();
+    assert!(
+        spin.rotation_period_hours < 0.001,
+        "Millisecond pulsar SpinState period must NOT clamp to 0.5 hr (got {})",
+        spin.rotation_period_hours
+    );
+    assert!(
+        spin.spin_vector.length() > 0.0,
+        "Millisecond pulsar spin_vector must stay synchronized"
+    );
+    assert!(
+        glitch.spin_down_rate_hz_s > -1e-10 && glitch.spin_down_rate_hz_s < 0.0,
+        "Dipole spin-down rate must be recomputed from B, R, nu (got {:.3e})",
+        glitch.spin_down_rate_hz_s
+    );
+}

@@ -1,7 +1,7 @@
 //! End-to-End (E2E) Integration Test Suite for Protostellar Phase 4:
 //! "Giant Molecular Clouds & Star Formation"
 //!
-//! Covers User Requirements:
+//! Covers:
 //! - R1: High-Performance Fluid Simulation
 //! - R2: Jeans Collapse and Protostar Ignition
 //! - R3: Volumetric Nebula Rendering

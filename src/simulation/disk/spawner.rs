@@ -126,7 +126,7 @@ fn get_major_seeds() -> [SeedTuple; 12] {
             "Pluto (Dwarf Planet)",
             Composition::icy(),
             BodyType::TerrestrialPlanet,
-            0.02,
+            0.2488,
         ),
     ]
 }
@@ -377,21 +377,26 @@ fn spawn_seed_body(
 ) {
     let (a, mass, radius, name, comp, body_type, ecc) = seed;
     let a_f64: f64 = a;
-    let ecc_f64: f64 = ecc;
+    let ecc_f64: f64 = ecc.clamp(0.0, 0.985);
     let phi: f64 = rng.f64_range(0.0, 2.0 * PI);
     let inc_rad: f64 = rng.f64_range(-0.04, 0.04);
 
-    let r_p = a_f64 * (1.0f64 - ecc_f64).max(0.1f64);
+    // Sample at radial distance r = a with exact semi-major axis a and eccentricity e
     let pos = DVec3::new(
-        r_p * phi.cos() * inc_rad.cos(),
-        r_p * inc_rad.sin(),
-        r_p * phi.sin() * inc_rad.cos(),
+        a_f64 * phi.cos() * inc_rad.cos(),
+        a_f64 * inc_rad.sin(),
+        a_f64 * phi.sin() * inc_rad.cos(),
     );
-
-    let v_peri = ((G_ASTRO * protostar_mass / a_f64)
-        * ((1.0f64 + ecc_f64) / (1.0f64 - ecc_f64).max(0.01f64)))
-    .sqrt();
-    let vel = DVec3::new(-v_peri * phi.sin(), 0.0, v_peri * phi.cos());
+    let r_hat = pos.normalize_or_zero();
+    let orbit_normal = DVec3::new(
+        -inc_rad.sin() * phi.cos(),
+        inc_rad.cos(),
+        -inc_rad.sin() * phi.sin(),
+    )
+    .normalize_or_zero();
+    let theta_hat = r_hat.cross(orbit_normal).normalize_or_zero();
+    let v_circ = (G_ASTRO * protostar_mass / a_f64).sqrt();
+    let vel = r_hat * (v_circ * ecc_f64) + theta_hat * (v_circ * (1.0 - ecc_f64 * ecc_f64).sqrt());
 
     let temp = ref_temp_1au * (a_f64 / 1.0).powf(-0.5);
 
@@ -404,12 +409,14 @@ fn spawn_seed_body(
         BodyType::IceGiant => rng.f64_range(14.0, 18.0),
         _ => rng.f64_range(6.0, 36.0),
     };
-    let omega = 2.0 * PI / (spin_period_hrs * 3600.0 / YEAR_SECONDS);
-    let initial_spin = 0.33 * mass * radius * radius * DVec3::new(0.0, omega, 0.0);
-    spin.update_from_spin(initial_spin, mass, radius);
-    if name.contains("Saturn") {
-        spin.axial_tilt_degrees = 26.7;
-    }
+    let tilt_deg = if name.contains("Saturn") {
+        26.7
+    } else if name.contains("Pluto") {
+        122.5
+    } else {
+        5.0
+    };
+    spin.set_period_and_tilt(spin_period_hrs, tilt_deg, mass, radius);
 
     let vol = VolatileInventory {
         delivered_water_m_earth: 0.0,

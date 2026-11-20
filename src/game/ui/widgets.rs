@@ -43,7 +43,7 @@ pub fn hud_text_font(font_size_px: f32) -> TextFont {
 /// Upgrades all HUD text nodes created with Bevy's default font handle to `hud_font_source()`,
 /// guaranteeing scientific subscript (`H₂O`), superscript (`W/m²`), astronomical (`M☉`, `M⊕`),
 /// Greek (`θ`, `Γ`), and Unicode symbol (`±`, `📊`, `🔍`) rendering.
-pub fn upgrade_hud_default_fonts(mut query: Query<&mut TextFont>) {
+pub fn upgrade_hud_default_fonts(mut query: Query<&mut TextFont, Added<TextFont>>) {
     for mut font in query.iter_mut() {
         if matches!(font.font, FontSource::Handle(ref h) if *h == Handle::default()) {
             font.font = hud_font_source();
@@ -188,7 +188,14 @@ impl HudSliderKind {
                     format!("{m_sun:.3} M☉ (10^{val:.2})")
                 }
             }
-            Self::BuilderOrbitAu | Self::InspectorOrbitAu => format!("{val:.2} AU"),
+            Self::BuilderOrbitAu => format!("{val:.2} AU"),
+            Self::InspectorOrbitAu => {
+                if val < 0.05 {
+                    format!("{val:.4} AU")
+                } else {
+                    format!("{val:.2} AU")
+                }
+            }
             Self::BuilderEccentricity => format!("{val:.3}"),
             Self::InspectorAxialTiltDeg => format!("{val:.1}°"),
             Self::EpochAgeGyr => format!("{val:.2} Ga"),
@@ -452,21 +459,5 @@ impl Plugin for ModernHudWidgetsPlugin {
                     crate::game::ui::widget_sync::animate_hud_ui_transforms,
                 ),
             );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hud_font_source_resolution() {
-        let source = hud_font_source();
-        let fonts = Assets::<Font>::default();
-        let resolved = source.resolve_font_family(&fonts);
-        assert!(
-            resolved.is_ok(),
-            "hud_font_source must resolve without NoSuchFont error: {resolved:?}"
-        );
     }
 }

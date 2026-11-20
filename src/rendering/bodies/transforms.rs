@@ -198,8 +198,10 @@ fn collect_system_moons(
     cam_pos: Option<Vec3>,
     show_atmospheres: bool,
     all_moons: &mut Vec<(Entity, Vec3, f32, Option<Entity>)>,
+    all_parents: &mut Vec<(Entity, Vec3, f64)>,
 ) {
     all_moons.clear();
+    all_parents.clear();
     for (
         m_ent,
         pos,
@@ -216,6 +218,8 @@ fn collect_system_moons(
         (_, _, opt_diff, ..),
     ) in query.iter()
     {
+        let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        all_parents.push((m_ent, m_pos, mass.0));
         let is_moon = opt_sat.is_some() || body.body_type == BodyType::Moon;
         let is_host_planet = !is_moon
             && matches!(
@@ -227,7 +231,6 @@ fn collect_system_moons(
                     | BodyType::Protoplanet
             );
         if is_moon || is_host_planet {
-            let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let r_orb = (m_pos - star_pos).length();
             let m_cam_dist = cam_pos.map_or(25.0, |cp| cp.distance(m_pos));
             let m_vis_rad = compute_view_visual_radius(
@@ -312,9 +315,7 @@ fn update_body_geometry_and_pose(
     transform.scale = Vec3::splat(visual_radius);
 
     if let Some(spin) = opt_spin {
-        let spin_dir = if spin.spin_vector.length_squared() > 1e-12
-            && (spin.spin_vector.x.abs() > 1e-6 || spin.spin_vector.z.abs() > 1e-6)
-        {
+        let spin_dir = if spin.spin_vector.length_squared() > 1e-12 {
             spin.spin_vector.normalize().as_vec3()
         } else {
             let tilt_rad = (spin.axial_tilt_degrees as f32).to_radians();
@@ -348,6 +349,7 @@ fn sync_body_uniforms(
     star_mass: f64,
     star_dir: Vec3,
     all_moons: &[(Entity, Vec3, f32, Option<Entity>)],
+    all_parents: &[(Entity, Vec3, f64)],
     opt_climate: Option<&PlanetaryClimate>,
     opt_bio: Option<&BiosphereState>,
     opt_vol: Option<&VolatileInventory>,
@@ -397,13 +399,21 @@ fn sync_body_uniforms(
     );
 
     let is_satellite = opt_sat.is_some() || body.body_type == BodyType::Moon;
+    let (tidal_primary_pos, tidal_primary_mass) = opt_sat
+        .and_then(|sat| {
+            all_parents
+                .iter()
+                .find(|&&(e, ..)| e == sat.parent)
+                .map(|&(_, p_pos, p_mass)| (p_pos, p_mass))
+        })
+        .unwrap_or((star_pos, star_mass));
     mat.extension.uniforms.tidal_deformation = if body.body_type == BodyType::BlackHole {
         Vec4::ZERO
     } else {
         compute_tidal_deformation_uniform(
             transform.translation,
-            star_pos,
-            star_mass,
+            tidal_primary_pos,
+            tidal_primary_mass,
             mass.0,
             physical_radius_au,
             opt_tidal,
@@ -413,13 +423,28 @@ fn sync_body_uniforms(
     };
 
     // Update real-time ring shadow parameters relative to rendered planet sphere scale.
-    let eff_ring_radius_au = if !show_atmospheres && full_visual_radius > 1e-6 {
-        physical_radius_au * f64::from(visual_radius / full_visual_radius)
+    // Recover canonical ring ratios relative to full physical radius first, then scale up if
+    // the gas envelope is stripped so legacy shrunken rings stay aligned with VisualRingChild.
+    let base_ring_shadow = super::shadows::compute_ring_shadow_params_for_body(
+        opt_rings,
+        physical_radius_au,
+        &body.name,
+    );
+    mat.extension.uniforms.ring_shadow_params = if base_ring_shadow.w > 0.5
+        && !show_atmospheres
+        && visual_radius > 1e-6
+        && full_visual_radius > visual_radius * 1.001
+    {
+        let core_ratio_inv = full_visual_radius / visual_radius;
+        Vec4::new(
+            base_ring_shadow.x * core_ratio_inv,
+            base_ring_shadow.y * core_ratio_inv,
+            base_ring_shadow.z,
+            base_ring_shadow.w,
+        )
     } else {
-        physical_radius_au
+        base_ring_shadow
     };
-    mat.extension.uniforms.ring_shadow_params =
-        compute_ring_shadow_params(opt_rings, eff_ring_radius_au);
 
     // Update real-time moon solar eclipse parameters
     let (moons_pos, moons_data) = compute_eclipse_moons_data(
@@ -495,23 +520,29 @@ fn resolve_cutaway_uniform_params(
                 visual_radius,
                 opt_diff,
             );
-        let core_ratio = if visual_radius > 1e-6 {
-            (strata.core_r / visual_radius).clamp(0.05, 0.75)
+        let is_undifferentiated = strata.core_r <= 1e-6;
+        let core_ratio = if is_undifferentiated || visual_radius <= 1e-6 {
+            0.0
         } else {
-            0.55
+            (strata.core_r / visual_radius).clamp(0.05, 0.75)
         };
-        let mantle_min = (core_ratio + 0.05).min(0.98);
+        let mantle_min = if is_undifferentiated {
+            0.05
+        } else {
+            (core_ratio + 0.05).min(0.98)
+        };
         let mantle_ratio = if visual_radius > 1e-6 {
             (strata.mantle_r / visual_radius).clamp(mantle_min, 0.99)
         } else {
             0.95
         };
-        let inner_core_ratio = if visual_radius > 1e-6 {
-            (strata.inner_core_r / visual_radius).clamp(0.02, (core_ratio - 0.02).max(0.03))
+        let inner_core_ratio = if is_undifferentiated || visual_radius <= 1e-6 {
+            0.0
         } else {
-            core_ratio * 0.38
+            (strata.inner_core_r / visual_radius).clamp(0.02, (core_ratio - 0.02).max(0.03))
         };
-        Vec4::new(1.0, inner_core_ratio, core_ratio, mantle_ratio)
+        let active_flag = if strata.has_theia_llsvp { 2.0 } else { 1.0 };
+        Vec4::new(active_flag, inner_core_ratio, core_ratio, mantle_ratio)
     } else {
         Vec4::ZERO
     }
@@ -576,6 +607,7 @@ fn sync_single_body_material(
     star_mass: f64,
     star_dir: Vec3,
     moons_scratch: &[(Entity, Vec3, f32, Option<Entity>)],
+    parents_scratch: &[(Entity, Vec3, f64)],
     opt_climate: Option<&PlanetaryClimate>,
     opt_bio: Option<&BiosphereState>,
     opt_vol: Option<&VolatileInventory>,
@@ -629,6 +661,7 @@ fn sync_single_body_material(
         star_mass,
         star_dir,
         moons_scratch,
+        parents_scratch,
         opt_climate,
         opt_bio,
         opt_vol,
@@ -667,6 +700,7 @@ pub fn sync_celestial_transforms(
     mut query: CelestialBodyQuery,
     mut stars_scratch: Local<Vec<(Entity, Vec3, f32)>>,
     mut moons_scratch: Local<Vec<(Entity, Vec3, f32, Option<Entity>)>>,
+    mut parents_scratch: Local<Vec<(Entity, Vec3, f64)>>,
     mut scratch_mat: Local<Option<PlanetMaterial>>,
 ) {
     let cam_pos = camera_query.iter().next().map(|t| t.translation);
@@ -687,6 +721,7 @@ pub fn sync_celestial_transforms(
         cam_pos,
         show_atmospheres,
         &mut moons_scratch,
+        &mut parents_scratch,
     );
     let (visual_time, elapsed_years, current_dt_yr) =
         resolve_sync_timing(sim_time.as_deref(), time_warp.as_deref());
@@ -768,6 +803,7 @@ pub fn sync_celestial_transforms(
             star_mass,
             star_dir,
             &moons_scratch,
+            &parents_scratch,
             opt_climate,
             opt_bio,
             opt_vol,

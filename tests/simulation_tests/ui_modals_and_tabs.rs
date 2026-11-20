@@ -557,6 +557,7 @@ fn make_multi_slot_test_save(
         bodies: Vec::new(),
         event_flags: EventFlagsSave::default(),
         scenario_preset: preset,
+        ..Default::default()
     }
 }
 

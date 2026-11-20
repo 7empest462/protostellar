@@ -31,7 +31,8 @@ pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.015, 0.025, 0.055, 0.96)),
-        Pickable::IGNORE,
+        bevy::ui::FocusPolicy::Block,
+        bevy::picking::hover::Hovered::default(),
         BorderColor::all(Color::srgba(0.35, 0.75, 1.0, 0.90)),
         TechTreePanelElement::Container,
     ))

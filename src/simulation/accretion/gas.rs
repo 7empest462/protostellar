@@ -163,11 +163,27 @@ fn calculate_gas_growth_step(
         .min(remaining_gas_capacity)
 }
 
+pub(crate) fn ice_giant_bulk_density_astro(comp: &Composition) -> f64 {
+    // Under ~100 GPa interior pressures, Ice Giant H2/He envelopes compress to ~1,400 kg/m^3
+    const DENSITY_ICE_GIANT_GAS_ASTRO: f64 =
+        (1400.0 * AU_TO_METERS * AU_TO_METERS * AU_TO_METERS) / SOLAR_MASS_KG;
+    let inv_density = (comp.metal_frac / DENSITY_IRON_ASTRO)
+        + (comp.silicate_frac / DENSITY_ROCK_ASTRO)
+        + (comp.ice_frac / DENSITY_ICE_ASTRO)
+        + (comp.organics_frac / DENSITY_ORGANICS_ASTRO)
+        + (comp.gas_frac / DENSITY_ICE_GIANT_GAS_ASTRO);
+    if inv_density > 0.0 {
+        1.0 / inv_density
+    } else {
+        DENSITY_ICE_ASTRO
+    }
+}
+
 fn apply_gas_accretion_to_body(
     d_mass_gas: f64,
     r_au: f64,
-    is_massive_disk: bool,
-    max_gas_frac: f64,
+    _is_massive_disk: bool,
+    _max_gas_frac: f64,
     mass: &mut Mass,
     rad: &mut Radius,
     comp: &mut Composition,
@@ -176,23 +192,17 @@ fn apply_gas_accretion_to_body(
     opt_spin: Option<&mut SpinState>,
     opt_vol: Option<&mut VolatileInventory>,
     opt_temp: Option<&mut Temperature>,
+    opt_rings: Option<&mut PlanetaryRingSystem>,
 ) {
     let old_mass = mass.0;
+    let old_radius = rad.0;
+    let prev_type = body.body_type;
     let new_mass = old_mass + d_mass_gas;
     mass.0 = new_mass;
 
-    *comp = comp.mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas);
-    if !is_massive_disk && comp.gas_frac > max_gas_frac {
-        let non_gas =
-            (comp.silicate_frac + comp.metal_frac + comp.ice_frac + comp.organics_frac).max(1e-8);
-        let scale = (1.0 - max_gas_frac).max(0.0) / non_gas;
-        comp.silicate_frac *= scale;
-        comp.metal_frac *= scale;
-        comp.ice_frac *= scale;
-        comp.organics_frac *= scale;
-        comp.gas_frac = max_gas_frac;
-        *comp = comp.normalized();
-    }
+    *comp = comp
+        .mass_weighted_merge(old_mass, &Composition::solar_gas(), d_mass_gas)
+        .normalized();
 
     let updated_type = if body.body_type == BodyType::BlackHole {
         BodyType::BlackHole
@@ -209,6 +219,12 @@ fn apply_gas_accretion_to_body(
         (0.00465 * (new_mass / 1.0).powf(0.8)).clamp(0.003, 10.0)
     } else if updated_type == BodyType::GasGiant || updated_type == BodyType::BrownDwarf {
         (0.000_477 * (new_mass / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085)
+    } else if updated_type == BodyType::IceGiant {
+        let density = ice_giant_bulk_density_astro(comp);
+        let volume = new_mass / density;
+        ((3.0 * volume) / (4.0 * PI))
+            .cbrt()
+            .max(EARTH_RADIUS_AU * 1.5)
     } else {
         let density = comp.average_density();
         let volume = new_mass / density;
@@ -217,8 +233,11 @@ fn apply_gas_accretion_to_body(
             .max(EARTH_RADIUS_AU * 0.2)
     };
     rad.0 = new_radius;
+    if let Some(rings) = opt_rings {
+        rings.scale_with_host_radius(old_radius, new_radius);
+    }
 
-    update_gas_accretion_body_name(body, updated_type, new_mass, r_au);
+    update_gas_accretion_body_name(body, prev_type, updated_type, new_mass, r_au);
 
     if updated_type != BodyType::BlackHole
         && let Some(temp) = opt_temp
@@ -263,36 +282,65 @@ fn update_stellar_surface_temp(temp: &mut f64, new_mass: f64) {
 
 fn update_gas_accretion_body_name(
     body: &mut CelestialBody,
+    prev_type: BodyType,
     updated_type: BodyType,
     new_mass: f64,
     r_au: f64,
 ) {
-    let is_canonical_solar = body.name == "Earth"
-        || body.name == "The Moon"
-        || body.name.contains("Moon")
-        || body.body_type == BodyType::Moon
-        || body.name == "Venus"
-        || body.name == "Mars"
-        || body.name == "Mercury"
-        || body.name.starts_with("Proto-")
-        || body.name.starts_with("Theia")
-        || body.name == "Jupiter"
-        || body.name == "Saturn"
-        || body.name == "Uranus"
-        || body.name == "Neptune"
-        || body.name.starts_with("S4")
-        || body.name.starts_with("S2")
-        || body.name.starts_with("S6")
-        || body.name.starts_with("S5")
-        || body.name.starts_with("S3")
-        || body.name.starts_with("S1")
-        || body.name == "S8"
-        || body.name == "S9"
-        || body.name.starts_with("Pistol")
-        || body.name.starts_with("G1")
-        || body.name.starts_with("G2");
+    let is_exoplanet_or_named = crate::utils::math::contains_any_ignore_ascii_case(
+        &body.name,
+        &[
+            "proto-",
+            "theia",
+            "s4",
+            "s2",
+            "s6",
+            "s5",
+            "s3",
+            "s1",
+            "pistol",
+            "g1",
+            "g2",
+            "gliese",
+            "gj ",
+            "hd ",
+            "55 cancri",
+            "wasp-",
+            "hat-p-",
+            "toi-",
+            "k2-",
+            "proxima",
+            "tau ceti",
+            "epsilon",
+            "ross ",
+            "lhs ",
+            "hr ",
+            "planet nine",
+            "planet 9",
+            "hot jupiter",
+            "halley",
+            "encke",
+            "hale-bopp",
+            "swift-tuttle",
+            "ceres",
+            "vesta",
+            "psyche",
+        ],
+    );
+    let is_protected =
+        crate::simulation::accretion::collisions::is_canonical_named_body(&body.name)
+            || body.body_type == BodyType::Moon
+            || is_exoplanet_or_named;
 
-    if !is_canonical_solar {
+    let is_generic_placeholder = body.name.starts_with("Planet-")
+        || body.name.starts_with("Super-Jupiter")
+        || body.name.starts_with("Brown Dwarf")
+        || body.name.starts_with("Planetesimal")
+        || body.name.starts_with("Embryo")
+        || body.name.starts_with("Asteroid")
+        || body.name.starts_with("Pop-III");
+
+    if !is_protected && (updated_type != prev_type || is_generic_placeholder) {
         body.name = match updated_type {
             BodyType::BlackHole => {
                 if new_mass >= 100.0 {
@@ -336,6 +384,7 @@ type NebularGasBodyItem<'a> = (
     Option<&'a mut VolatileInventory>,
     Option<&'a mut Temperature>,
     Option<&'a IgnitionState>,
+    Option<&'a mut PlanetaryRingSystem>,
 );
 
 fn maybe_ignite_gas_accreted_star(
@@ -345,8 +394,12 @@ fn maybe_ignite_gas_accreted_star(
     body: &CelestialBody,
     opt_ign: Option<&IgnitionState>,
 ) {
-    if body.body_type.is_star_or_remnant() && !body.body_type.is_remnant() && opt_ign.is_none() {
-        commands.entity(entity).insert((
+    if body.body_type.is_star_or_remnant()
+        && !body.body_type.is_remnant()
+        && opt_ign.is_none()
+        && let Ok(mut cmd) = commands.get_entity(entity)
+    {
+        cmd.try_insert((
             IgnitionState {
                 core_temperature: 1.2e7,
                 fusion_fraction: 1.0,
@@ -354,7 +407,7 @@ fn maybe_ignite_gas_accreted_star(
                 shockwave_radius: 0.0,
             },
             StellarEvolutionState::default(),
-            Luminosity((mass_solar * 2.5).max(0.5)),
+            Luminosity(mass_solar.powf(3.5).max(0.01)),
         ));
         bevy::log::info!(
             "🔥 {} has accreted enough gas to ignite into a star!",
@@ -426,6 +479,7 @@ pub fn direct_nebular_gas_accretion(
         mut opt_vol,
         mut opt_temp,
         opt_ign,
+        mut opt_rings,
     ) in bodies_query.iter_mut()
     {
         if body.body_type == BodyType::Moon {
@@ -475,8 +529,71 @@ pub fn direct_nebular_gas_accretion(
                 opt_spin.as_deref_mut(),
                 opt_vol.as_deref_mut(),
                 opt_temp.as_deref_mut(),
+                opt_rings.as_deref_mut(),
             );
             maybe_ignite_gas_accreted_star(&mut commands, entity, mass.0, &body, opt_ign);
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Applies LRD blowout mass shedding, quasar transition, and relativistic jet state"
+)]
+fn apply_lrd_blowout_and_jets(
+    commands: &mut Commands,
+    qs_ent: Entity,
+    state: &mut BlackHoleStarState,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    body: &mut CelestialBody,
+    opt_jet: Option<Mut<'_, RelativisticJetState>>,
+    dt: f64,
+) {
+    let prev_p = f64::from(state.blowout_progress);
+    state.blowout_progress = (state.blowout_progress + 0.45 * dt as f32).min(1.0);
+    state.jet_travel_distance_au += crate::utils::constants::SPEED_OF_LIGHT_AU_YR * dt;
+    let p = f64::from(state.blowout_progress);
+
+    body.body_type = BodyType::BlackHole;
+    body.name = format!(
+        "Supermassive Quasar ({:.0} M☉)",
+        state.black_hole_mass_solar
+    );
+    state.super_eddington_active = true;
+
+    let r_schwa = (1.974e-8 * state.black_hole_mass_solar).max(1e-4);
+    radius.0 = r_schwa;
+    temp.0 = 95_000.0;
+    lum.0 = 1.5e10;
+
+    state.cocoon_radius_au = 60.0 * (1.0 + p * 4.0);
+    if p >= 1.0 {
+        state.cocoon_mass_solar = 0.0;
+    } else if prev_p < 1.0 {
+        let frac_remaining = ((1.0 - p) / (1.0 - prev_p)).clamp(0.0, 1.0);
+        state.cocoon_mass_solar = (state.cocoon_mass_solar * frac_remaining).max(0.0);
+    }
+
+    if let Some(mut jet) = opt_jet {
+        if jet.opening_angle_rad > 0.02 {
+            *jet = RelativisticJetState::black_hole(state.black_hole_mass_solar);
+            jet.opening_angle_rad = 0.016;
+            jet.lorentz_factor = 20.0;
+            jet.jet_length_au = 40.0;
+        }
+        jet.is_accreting = true;
+        jet.accretion_timer_years = 1000.0;
+    } else {
+        let mut jet = RelativisticJetState::black_hole(state.black_hole_mass_solar);
+        jet.opening_angle_rad = 0.016;
+        jet.lorentz_factor = 20.0;
+        jet.jet_length_au = 40.0;
+        jet.is_accreting = true;
+        jet.accretion_timer_years = 1000.0;
+        if let Ok(mut cmd) = commands.get_entity(qs_ent) {
+            cmd.try_insert(jet);
         }
     }
 }
@@ -519,18 +636,19 @@ pub fn update_black_hole_star_dynamics(
         return;
     }
 
-    for (
-        qs_ent,
-        mut state,
-        mut mass,
-        mut radius,
-        mut temp,
-        mut lum,
-        mut body,
-        qs_pos,
-        mut opt_jet,
-    ) in quasi_star_query.iter_mut()
+    for (qs_ent, mut state, mut mass, mut radius, mut temp, mut lum, mut body, qs_pos, opt_jet) in
+        quasi_star_query.iter_mut()
     {
+        // Reconcile any external collision/merger mass added to `mass.0` before stepping internal cocoon transfer
+        let external_delta = mass.0 - state.total_mass_solar();
+        if external_delta > 1e-9 {
+            if state.is_blown_out {
+                state.black_hole_mass_solar += external_delta;
+            } else {
+                state.cocoon_mass_solar += external_delta;
+            }
+        }
+
         if state.super_eddington_active && state.cocoon_mass_solar > 10.0 {
             let m_bh = state.black_hole_mass_solar;
             let m_dot_edd = 2.2e-8 * m_bh;
@@ -540,54 +658,24 @@ pub fn update_black_hole_star_dynamics(
             state.black_hole_mass_solar += dm;
             state.cocoon_mass_solar -= dm;
             state.accreted_envelope_mass += dm;
-            mass.0 = state.total_mass_solar();
         }
 
         if state.is_blown_out {
-            state.blowout_progress = (state.blowout_progress + 0.45 * dt as f32).min(1.0);
-            state.jet_travel_distance_au += crate::utils::constants::SPEED_OF_LIGHT_AU_YR * dt;
-            let p = f64::from(state.blowout_progress);
-
-            // Once blowout is triggered, the hydrogen shell is blown off, immediately
-            // transforming the central body into the revealed supermassive black hole seed / quasar!
-            body.body_type = BodyType::BlackHole;
-            body.name = format!(
-                "Supermassive Quasar ({:.0} M☉)",
-                state.black_hole_mass_solar
+            apply_lrd_blowout_and_jets(
+                &mut commands,
+                qs_ent,
+                &mut state,
+                &mut radius,
+                &mut temp,
+                &mut lum,
+                &mut body,
+                opt_jet,
+                dt,
             );
-            state.super_eddington_active = true;
-
-            // Physical Schwarzschild radius of the revealed central supermassive black hole seed
-            let r_schwa = (1.974e-8 * state.black_hole_mass_solar).max(1e-4);
-            radius.0 = r_schwa;
-            temp.0 = 95_000.0;
-            lum.0 = 1.5e10;
-
-            // The expanding blown-out cocoon is tracked in state
-            state.cocoon_radius_au = 60.0 * (1.0 + p * 4.0);
-            state.cocoon_mass_solar = (50_000.0 * (1.0 - p)).max(0.0);
-
-            if let Some(ref mut jet) = opt_jet {
-                if jet.opening_angle_rad > 0.02 {
-                    **jet = RelativisticJetState::black_hole(state.black_hole_mass_solar);
-                    jet.opening_angle_rad = 0.016; // ~0.9 degrees blazar/quasar collimation
-                    jet.lorentz_factor = 20.0;
-                    jet.jet_length_au = 40.0;
-                }
-                jet.is_accreting = true;
-                jet.accretion_timer_years = 1000.0;
-            } else {
-                let mut jet = RelativisticJetState::black_hole(state.black_hole_mass_solar);
-                jet.opening_angle_rad = 0.016;
-                jet.lorentz_factor = 20.0;
-                jet.jet_length_au = 40.0;
-                jet.is_accreting = true;
-                jet.accretion_timer_years = 1000.0;
-                if let Ok(mut cmd) = commands.get_entity(qs_ent) {
-                    cmd.try_insert(jet);
-                }
-            }
         }
+
+        // Continuously keep entity gravitational Mass synchronized through cocoon accretion & p == 1.0 blowout
+        mass.0 = state.total_mass_solar();
 
         let bh_m = state.black_hole_mass_solar;
         let cocoon_r = state.cocoon_radius_au;
@@ -598,23 +686,27 @@ pub fn update_black_hole_star_dynamics(
             let dist = rel_pos.length();
 
             if dist < cocoon_r && !state.is_blown_out {
-                let v_dir = sat_vel.0.normalize_or_zero();
-                let drag = 0.08 * (1.0 - dist / cocoon_r).powf(1.5) * dt;
-                sat_vel.0 -= v_dir * drag;
+                // Exponential aerodynamic drag strictly damps speed without reversing velocity at large dt
+                let drag_rate = 0.08 * (1.0 - dist / cocoon_r).powf(1.5);
+                sat_vel.0 *= (-drag_rate * dt).exp();
             }
 
             let m_ratio = (bh_m / sat_m.0.max(0.01)).cbrt();
             let r_tidal = (sat_rad.0 * m_ratio).clamp(0.05, 5.0);
 
             if dist < r_tidal || dist < 0.50 {
-                state.cocoon_mass_solar += sat_m.0 * 0.5;
-                state.black_hole_mass_solar += sat_m.0 * 0.5;
+                if state.is_blown_out {
+                    state.black_hole_mass_solar += sat_m.0;
+                } else {
+                    state.cocoon_mass_solar += sat_m.0 * 0.5;
+                    state.black_hole_mass_solar += sat_m.0 * 0.5;
+                }
                 mass.0 = state.total_mass_solar();
                 lum.0 += 5.0e7;
 
                 info!(
-                    "💥 TIDAL DISRUPTION EVENT: '{}' shredded by the 100,000 M☉ Supermassive Black Hole Seed!",
-                    sat_body.name
+                    "💥 TIDAL DISRUPTION EVENT: '{}' shredded by the {:.0} M☉ Supermassive Black Hole Seed!",
+                    sat_body.name, bh_m
                 );
 
                 if let Ok(mut e_cmd) = commands.get_entity(sat_ent) {

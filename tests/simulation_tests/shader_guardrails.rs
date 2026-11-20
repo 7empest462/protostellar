@@ -259,8 +259,8 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
         "Expected 15 non-UI .wesl material shaders (plus sci_fi_panel.wesl = 16 total)"
     );
     assert_eq!(
-        checked_raw_wgsl_shaders, 5,
-        "Expected 5 standalone raw wgpu .wgsl shaders"
+        checked_raw_wgsl_shaders, 6,
+        "Expected 6 standalone raw wgpu .wgsl shaders"
     );
 }
 
@@ -427,6 +427,16 @@ fn test_nbody_galaxy_wgsl_naga_validation() {
 #[test]
 fn test_particle_orbit_wgsl_naga_validation() {
     validate_wgsl_compute_shader_with_naga("assets/shaders/particle_orbit.wgsl");
+}
+
+#[test]
+fn test_gmc_volume_pack_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/gmc_volume_pack.wgsl");
+}
+
+#[test]
+fn test_particle_render_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/particle_render.wgsl");
 }
 
 #[test]

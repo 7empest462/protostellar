@@ -5,7 +5,7 @@ use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 
 use super::types::{
-    CampaignPanelElement, EpochScrubberPanel, HudPanelElement, HudToastContainer,
+    CampaignPanelElement, EpochScrubberPanel, HrDiagramPanel, HudPanelElement, HudToastContainer,
     PlanetBuilderPanel, TechTreePanelElement, TelemetryGraphPanel, TrophiesPanelElement,
 };
 use crate::game::ui::hazards_panel::HazardsPanelElement;
@@ -67,6 +67,7 @@ pub fn inject_sci_fi_panel_frames(
                 With<HudToastContainer>,
                 With<PlanetBuilderPanel>,
                 With<TelemetryGraphPanel>,
+                With<HrDiagramPanel>,
                 With<EpochScrubberPanel>,
                 With<TrophiesPanelElement>,
                 With<TechTreePanelElement>,
@@ -120,6 +121,7 @@ pub fn inject_sci_fi_panel_frames(
                         | HudPanelElement::BottomCenterPill
                         | HudPanelElement::PlanetBuilderPill
                         | HudPanelElement::TelemetryPanelPill
+                        | HudPanelElement::HrDiagramPanelPill
                 )
             );
 

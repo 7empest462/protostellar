@@ -192,18 +192,28 @@ fn sync_cutaway_pill_card(
     camera: &Camera,
     cam_gt: &GlobalTransform,
     window: &Window,
-    node: &mut Node,
-    border_col: &mut BorderColor,
+    node: &mut Mut<'_, Node>,
+    border_col: &mut Mut<'_, BorderColor>,
     text_query: &mut Query<(&ChildOf, &CutawayField, &mut Text, &mut TextColor)>,
 ) {
     let Some(&(anchor_pos, is_left, stratum_col)) = anchors.get(idx) else {
-        node.display = Display::None;
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
         return;
     };
     let Some((title, sub)) = labels.get(idx) else {
-        node.display = Display::None;
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
         return;
     };
+    if title.is_empty() {
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
+        return;
+    }
 
     if let Some(screen_pos) =
         project_world_to_viewport(camera, cam_gt, anchor_pos, window.width(), window.height())
@@ -222,26 +232,41 @@ fn sync_cutaway_pill_card(
         let clamped_x = target_x.clamp(10.0, (window.width() - card_w - 10.0).max(10.0));
         let clamped_y = target_y.clamp(10.0, (window.height() - card_h - 10.0).max(10.0));
 
-        node.display = Display::Flex;
-        node.left = Val::Px(clamped_x);
-        node.top = Val::Px(clamped_y);
-        *border_col = BorderColor::all(stratum_col);
+        if node.display != Display::Flex {
+            node.display = Display::Flex;
+        }
+        let target_left = Val::Px(clamped_x);
+        if node.left != target_left {
+            node.left = target_left;
+        }
+        let target_top = Val::Px(clamped_y);
+        if node.top != target_top {
+            node.top = target_top;
+        }
+        let target_border = BorderColor::all(stratum_col);
+        border_col.set_if_neq(target_border);
 
         // Sync texts
         for (child_of, field, mut text, mut text_col) in text_query.iter_mut() {
             if child_of.parent() == pill_ent {
                 match field {
                     CutawayField::Title => {
-                        text.0.clone_from(title);
-                        text_col.0 = stratum_col;
+                        if text.0 != *title {
+                            text.0.clone_from(title);
+                        }
+                        if text_col.0 != stratum_col {
+                            text_col.0 = stratum_col;
+                        }
                     }
                     CutawayField::Subtitle => {
-                        text.0.clone_from(sub);
+                        if text.0 != *sub {
+                            text.0.clone_from(sub);
+                        }
                     }
                 }
             }
         }
-    } else {
+    } else if node.display != Display::None {
         node.display = Display::None;
     }
 }
@@ -271,6 +296,9 @@ pub fn update_cutaway_hud_ui(
         Option<&Composition>,
         Option<&Transform>,
         Option<&Mass>,
+        Option<&Temperature>,
+        Option<&IgnitionState>,
+        Option<&StellarEvolutionState>,
     )>,
 ) {
     let Some(window) = windows.iter().next() else {
@@ -281,12 +309,28 @@ pub fn update_cutaway_hud_ui(
     };
 
     let target_entity = resolve_active_cutaway_target(&player_state, opt_pan);
-    let target_data = target_entity.and_then(|ent| bodies_query.get(ent).ok());
+    let target_data = target_entity
+        .and_then(|ent| bodies_query.get(ent).ok())
+        .filter(|t| t.2.body_type != BodyType::BlackHole);
 
-    let Some((sim_pos, radius, body, opt_diff, opt_comp, opt_tf, opt_mass)) = target_data else {
+    let Some((
+        sim_pos,
+        radius,
+        body,
+        opt_diff,
+        opt_comp,
+        opt_tf,
+        opt_mass,
+        opt_temp,
+        opt_ignition,
+        opt_evo,
+    )) = target_data
+    else {
         // Hide all 4 callout cards
         for (_, _, mut node, _) in &mut pill_query {
-            node.display = Display::None;
+            if node.display != Display::None {
+                node.display = Display::None;
+            }
         }
         return;
     };
@@ -329,7 +373,14 @@ pub fn update_cutaway_hud_ui(
         &eff_body, eff_rad, visual_r, opt_diff,
     );
     let anchors = compute_cutaway_anchors(body_vec, cam_tf.rotation, &strata);
-    let labels = resolve_cutaway_labels(&eff_body, eff_rad, opt_diff);
+    let labels = resolve_cutaway_labels_with_telemetry(
+        &eff_body,
+        eff_rad,
+        opt_diff,
+        opt_temp,
+        opt_ignition,
+        opt_evo,
+    );
 
     for (pill_ent, pill, mut node, mut border_col) in &mut pill_query {
         sync_cutaway_pill_card(
@@ -347,59 +398,181 @@ pub fn update_cutaway_hud_ui(
     }
 }
 
+fn resolve_stellar_cutaway_labels(
+    body_type: BodyType,
+    surf_k: f64,
+    core_k: f64,
+    opt_ignition: Option<&IgnitionState>,
+    opt_evo: Option<&StellarEvolutionState>,
+) -> [(String, String); 4] {
+    match body_type {
+        BodyType::QuasiStar => [
+            (
+                "QUASI-STAR ENVELOPE".to_string(),
+                format!("Reddened Cocoon ({surf_k:.0} K)"),
+            ),
+            (
+                "CONVECTIVE H-SHELL".to_string(),
+                "Super-Eddington Outflow Envelope".to_string(),
+            ),
+            (
+                "ACCRETION CAVITY".to_string(),
+                "Radiation-Supported Torus Boundary".to_string(),
+            ),
+            (
+                "CENTRAL BLACK HOLE".to_string(),
+                "Relativistic Event Horizon & Core".to_string(),
+            ),
+        ],
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar | BodyType::QuarkStar => [
+            (
+                "MAGNETOSPHERE & CRUST".to_string(),
+                format!("Crystalline Iron Lattice ({surf_k:.0} K)"),
+            ),
+            (
+                "OUTER NEUTRON SHELL".to_string(),
+                "Superfluid Neutron-Proton Pasta".to_string(),
+            ),
+            (
+                "INNER FLUID MANTLE".to_string(),
+                "Superconducting Relativistic Matter".to_string(),
+            ),
+            (
+                if body_type == BodyType::QuarkStar {
+                    "STRANGE QUARK CORE".to_string()
+                } else {
+                    "ULTRA-DENSE CORE".to_string()
+                },
+                "Hyperon / Deconfined QCD Plasma".to_string(),
+            ),
+        ],
+        BodyType::WhiteDwarf => [
+            (
+                "RADIATIVE ENVELOPE".to_string(),
+                format!("H / He Photosphere ({surf_k:.0} K)"),
+            ),
+            (
+                "DEGENERATE SHELL".to_string(),
+                "Electron Degeneracy Pressure Fluid".to_string(),
+            ),
+            (
+                "C-O FLUID MANTLE".to_string(),
+                "Isothermal Heat-Conducting Layer".to_string(),
+            ),
+            (
+                "CRYSTALLINE CORE".to_string(),
+                format!("Carbon-Oxygen Lattice ({core_k:.0} K)"),
+            ),
+        ],
+        BodyType::BrownDwarf => [
+            (
+                "SUB-STELLAR CLOUDS".to_string(),
+                format!("Methane / Silicate Haze ({surf_k:.0} K)"),
+            ),
+            (
+                "MOLECULAR H2 ENVELOPE".to_string(),
+                "Convective Cool Gas Shell".to_string(),
+            ),
+            (
+                "METALLIC H+ LAYER".to_string(),
+                "Degenerate Conductive Hydrogen".to_string(),
+            ),
+            (
+                "ROCK-ICE / DEUTERIUM CORE".to_string(),
+                format!("Partially Degenerate ({core_k:.0} K)"),
+            ),
+        ],
+        _ => {
+            let fusion_desc = if let Some(evo) = opt_evo {
+                match evo.phase {
+                    StellarEvolutionPhase::RedGiantBranch
+                    | StellarEvolutionPhase::HeliumFlashAgb
+                    | StellarEvolutionPhase::RedSupergiantBranch => {
+                        format!("He / Shell Fusion ({core_k:.0} K)")
+                    }
+                    StellarEvolutionPhase::MainSequence => {
+                        if core_k > 1.8e7 {
+                            format!("CNO-Cycle Fusion ({core_k:.0} K)")
+                        } else {
+                            format!("p-p Chain Fusion ({core_k:.0} K)")
+                        }
+                    }
+                    _ => format!("Gravitational / Core ({core_k:.0} K)"),
+                }
+            } else if opt_ignition.is_some_and(|i| !i.is_ignited) {
+                format!("Kelvin-Helmholtz Contraction ({core_k:.0} K)")
+            } else {
+                format!("Thermonuclear Fusion ({core_k:.0} K)")
+            };
+            [
+                (
+                    "PHOTOSPHERE & CORONA".to_string(),
+                    format!("Radiating Surface ({surf_k:.0} K)"),
+                ),
+                (
+                    "CONVECTIVE ZONE".to_string(),
+                    "Plasma Granulation & Dynamo".to_string(),
+                ),
+                (
+                    "RADIATIVE ZONE".to_string(),
+                    "Photon Diffusion & Thermal Transfer".to_string(),
+                ),
+                ("THERMONUCLEAR CORE".to_string(), fusion_desc),
+            ]
+        }
+    }
+}
+
 /// Resolves human-readable scientific layer titles and physical descriptions.
-fn resolve_cutaway_labels(
+pub fn resolve_cutaway_labels_with_telemetry(
     body: &CelestialBody,
     rad_au: f64,
     opt_diff: Option<&InternalDifferentiation>,
+    opt_temp: Option<&Temperature>,
+    opt_ignition: Option<&IgnitionState>,
+    opt_evo: Option<&StellarEvolutionState>,
 ) -> [(String, String); 4] {
     if body.body_type.is_star_or_remnant() {
-        [
-            (
-                "PHOTOSPHERE & CORONA".to_string(),
-                "Radiating Surface (5,778 K)".to_string(),
-            ),
-            (
-                "CONVECTIVE ZONE".to_string(),
-                "Plasma Granulation & Dynamo".to_string(),
-            ),
-            (
-                "RADIATIVE ZONE".to_string(),
-                "Photon Diffusion (~100k yr)".to_string(),
-            ),
-            (
-                "THERMONUCLEAR CORE".to_string(),
-                "p-p Fusion (15,000,000 K)".to_string(),
-            ),
-        ]
-    } else if body.body_type == BodyType::GasGiant {
-        [
+        let surf_k = opt_temp.map_or(5_778.0, |t| t.0).max(0.0);
+        let core_k = opt_ignition.map_or(15_000_000.0, |i| i.core_temperature);
+        return resolve_stellar_cutaway_labels(
+            body.body_type,
+            surf_k,
+            core_k,
+            opt_ignition,
+            opt_evo,
+        );
+    }
+
+    if body.body_type == BodyType::GasGiant {
+        return [
             (
                 "ATMOSPHERE & CHROMO".to_string(),
-                "H₂-He Cloud Decks & Jets".to_string(),
+                "H2-He Cloud Decks & Jets".to_string(),
             ),
             (
                 "MOLECULAR HYDROGEN".to_string(),
                 "Supercritical Fluid Envelope".to_string(),
             ),
             (
-                "METALLIC H⁺ DYNAMO".to_string(),
+                "METALLIC H+ DYNAMO".to_string(),
                 "Liquid Metallic Hydrogen (B-Field)".to_string(),
             ),
             (
                 "HEAVY ELEMENT CORE".to_string(),
                 "Dense Silicate & Iron Seed".to_string(),
             ),
-        ]
-    } else if body.body_type == BodyType::IceGiant {
-        [
+        ];
+    }
+    if body.body_type == BodyType::IceGiant {
+        return [
             (
                 "ATMOSPHERE & HAZE".to_string(),
-                "H₂-He-CH₄ Methane Clouds".to_string(),
+                "H2-He-CH4 Methane Clouds".to_string(),
             ),
             (
                 "SUPERCRITICAL ICE MANTLE".to_string(),
-                "Ionic Fluid H₂O-NH₃-CH₄ Slush".to_string(),
+                "Ionic Fluid H2O-NH3-CH4 Slush".to_string(),
             ),
             (
                 "TRANSITION BOUNDARY".to_string(),
@@ -409,50 +582,94 @@ fn resolve_cutaway_labels(
                 "SILICATE / METAL CORE".to_string(),
                 "Dense Earth-Mass Rocky Core".to_string(),
             ),
-        ]
-    } else {
-        // Terrestrial Planet / Moon
-        let (_core_km, mantle_km, crust_km, inner_core_km, outer_core_km, has_theia) = opt_diff
-            .map_or_else(
-                || {
-                    let total_km = rad_au * AU_TO_KM;
-                    let c = total_km * 0.55;
-                    let m = total_km * 0.40;
-                    let cr = (total_km * 0.05).max(10.0);
-                    let ic = c * 0.38;
-                    let oc = c - ic;
-                    (c, m, cr, ic, oc, false)
-                },
-                |d| {
-                    let c = d.core_radius_au * AU_TO_KM;
-                    let m = (d.mantle_radius_au - d.core_radius_au).max(0.0) * AU_TO_KM;
-                    let cr = (rad_au - d.mantle_radius_au).max(0.0) * AU_TO_KM;
-                    let ic = c * 0.38;
-                    let oc = c - ic;
-                    (c, m, cr.max(5.0), ic, oc, d.has_theia_llsvp)
-                },
-            );
-
-        let mantle_sub = if has_theia {
-            "Bridgmanite & Theia LLSVPs".to_string()
-        } else {
-            "Ductile Bridgmanite / Peridotite".to_string()
-        };
-
-        [
-            (
-                format!("CRUST [{crust_km:.0} km]"),
-                "Rigid Lithosphere & Plates".to_string(),
-            ),
-            (format!("SILICATE MANTLE [{mantle_km:.0} km]"), mantle_sub),
-            (
-                format!("OUTER CORE [{outer_core_km:.0} km]"),
-                "Molten Fe-Ni Dynamo (4,500 K)".to_string(),
-            ),
-            (
-                format!("INNER CORE [{inner_core_km:.0} km]"),
-                "Solid Fe-Ni Crystal (5,500 K)".to_string(),
-            ),
-        ]
+        ];
     }
+
+    let is_undifferentiated = if let Some(d) = opt_diff {
+        !d.is_differentiated || d.core_radius_au <= 1e-10
+    } else {
+        matches!(
+            body.body_type,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal
+        )
+    };
+    if is_undifferentiated {
+        let total_km = (rad_au * AU_TO_KM).max(0.1);
+        return [
+            (
+                format!("REGOLITH SHELL [{:.1} km]", (total_km * 0.1).max(0.05)),
+                "Impact-Gardened Primitive Surface".to_string(),
+            ),
+            (
+                format!("UNDIFFERENTIATED INTERIOR [{total_km:.1} km]"),
+                "Homogeneous Chondritic Rock & Ice".to_string(),
+            ),
+            (String::new(), String::new()),
+            (String::new(), String::new()),
+        ];
+    }
+
+    // Differentiated Terrestrial Planet / Moon
+    let (_core_km, mantle_km, crust_km, inner_core_km, outer_core_km, core_k, has_theia) = opt_diff
+        .map_or_else(
+            || {
+                let total_km = rad_au * AU_TO_KM;
+                let c = total_km * 0.55;
+                let m = total_km * 0.40;
+                let cr = (total_km * 0.05).max(10.0);
+                let ic = c * 0.38;
+                let oc = c - ic;
+                (c, m, cr, ic, oc, 5_500.0, false)
+            },
+            |d| {
+                let c = d.core_radius_au * AU_TO_KM;
+                let m = (d.mantle_radius_au - d.core_radius_au).max(0.0) * AU_TO_KM;
+                let cr = (rad_au - d.mantle_radius_au).max(0.0) * AU_TO_KM;
+                let ic = c * 0.38;
+                let oc = c - ic;
+                (
+                    c,
+                    m,
+                    cr.max(5.0),
+                    ic,
+                    oc,
+                    d.core_temp_k.max(200.0),
+                    d.has_theia_llsvp,
+                )
+            },
+        );
+
+    let mantle_sub = if has_theia {
+        "Bridgmanite & Theia LLSVPs".to_string()
+    } else {
+        "Ductile Bridgmanite / Peridotite".to_string()
+    };
+
+    [
+        (
+            format!("CRUST [{crust_km:.0} km]"),
+            "Rigid Lithosphere & Plates".to_string(),
+        ),
+        (format!("SILICATE MANTLE [{mantle_km:.0} km]"), mantle_sub),
+        (
+            format!("OUTER CORE [{outer_core_km:.0} km]"),
+            format!("Molten Fe-Ni Dynamo ({:.0} K)", core_k * 0.82),
+        ),
+        (
+            format!("INNER CORE [{inner_core_km:.0} km]"),
+            format!("Solid Fe-Ni Crystal ({core_k:.0} K)"),
+        ),
+    ]
+}
+
+#[allow(
+    dead_code,
+    reason = "Convenience wrapper kept for existing unit callers"
+)]
+fn resolve_cutaway_labels(
+    body: &CelestialBody,
+    rad_au: f64,
+    opt_diff: Option<&InternalDifferentiation>,
+) -> [(String, String); 4] {
+    resolve_cutaway_labels_with_telemetry(body, rad_au, opt_diff, None, None, None)
 }

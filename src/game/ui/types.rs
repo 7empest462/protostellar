@@ -71,6 +71,7 @@ pub type HudBodiesQuery<'w, 's> = Query<
             Option<&'static RelativisticState>,
             Option<&'static crate::simulation::atmosphere_escape::AtmosphericEscapeState>,
             Option<&'static crate::simulation::kozai_lidov::KozaiLidovState>,
+            Option<&'static SatelliteOf>,
         ),
     ),
 >;

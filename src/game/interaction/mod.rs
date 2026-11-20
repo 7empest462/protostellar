@@ -12,6 +12,7 @@ pub use hotkeys::*;
 pub use selection::*;
 
 use crate::rendering::camera::PanOrbitCamera;
+use crate::simulation::components::{CentralStar, Mass, SimPosition, SimVelocity};
 use crate::simulation::resources::*;
 
 /// Event writers and focus detection for player tools.
@@ -78,17 +79,17 @@ pub fn handle_player_tools(
     let star_mass = disk_params.central_star_mass;
     let (star_pos, star_vel) = selected_query
         .iter()
-        .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star)| {
+        .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star, _)| {
             opt_star.is_some() || body.body_type.is_star_or_remnant()
         })
         .map_or(
             (DVec3::ZERO, DVec3::ZERO),
-            |(_, _, _, _, p, v, _, _, _, _, _, _, _)| (p.0, v.0),
+            |(_, _, _, _, p, v, _, _, _, _, _, _, _, _)| (p.0, v.0),
         );
     let is_star_selected = player_state.selected_entity.is_some_and(|e| {
         selected_query
             .get(e)
-            .is_ok_and(|(_, _, _, _, _, _, _, b, _, _, _, _, s)| {
+            .is_ok_and(|(_, _, _, _, _, _, _, b, _, _, _, _, s, _)| {
                 s.is_some() || b.body_type.is_star_or_remnant()
             })
     });
@@ -169,44 +170,55 @@ pub fn handle_planet_builder_click_spawn(
     mut pan_orbit_query: Query<&mut PanOrbitCamera>,
     mut builder_state: ResMut<crate::game::ui::PlanetBuilderState>,
     disk_params: Res<DiskParameters>,
+    star_query: Query<(&SimPosition, &SimVelocity, &Mass), With<CentralStar>>,
     mut player_state: ResMut<PlayerInteractionState>,
     mut toast: ResMut<crate::game::ui::NotificationToast>,
-    ui_interaction_query: Query<
-        (&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>),
-        With<crate::game::ui::HudButton>,
-    >,
+    ui_interaction_query: crate::rendering::camera_picking::UiInteractionStateQuery,
+    ui_nodes_query: crate::rendering::camera_picking::UiPickingNodesQuery,
 ) {
     if !builder_state.is_open || !builder_state.click_to_spawn_mode {
         return;
     }
 
-    // Don't spawn if cursor is clicking/hovering any UI button
-    let clicking_ui = ui_interaction_query.iter().any(|(h, p)| h.get() || p);
-    if clicking_ui {
+    let Ok(window) = window_query.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    if crate::rendering::camera_picking::is_cursor_over_active_ui(
+        window,
+        cursor_pos,
+        &ui_interaction_query,
+        &ui_nodes_query,
+        None,
+    ) {
         return;
     }
 
     if mouse_buttons.just_pressed(MouseButton::Left) {
-        let Ok(window) = window_query.single() else {
-            return;
-        };
         let Ok((camera, camera_transform)) = camera_query.single() else {
             return;
         };
 
-        if let Some(cursor_pos) = window.cursor_position()
-            && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos)
-        {
+        if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) {
             // Intersect ray with the orbital disk plane Y = 0
             if ray.direction.y.abs() > 1e-5 {
                 let t = -ray.origin.y / ray.direction.y;
                 if t > 0.0 {
                     let hit = ray.origin + *ray.direction * t;
-                    let spawn_coords = DVec3::new(f64::from(hit.x), 0.0, f64::from(hit.z));
-                    crate::game::ui::spawn_custom_builder_world(
+                    let (star_pos, star_vel, eff_star_mass) = star_query.iter().next().map_or(
+                        (DVec3::ZERO, DVec3::ZERO, disk_params.central_star_mass),
+                        |(p, v, m)| (p.0, v.0, m.0),
+                    );
+                    let spawn_coords = DVec3::new(f64::from(hit.x), star_pos.y, f64::from(hit.z));
+                    crate::game::ui::spawn_custom_builder_world_relative(
                         &mut commands,
                         &builder_state,
-                        disk_params.central_star_mass,
+                        eff_star_mass,
+                        star_pos,
+                        star_vel,
                         Some(spawn_coords),
                         &mut player_state,
                         &mut pan_orbit_query,

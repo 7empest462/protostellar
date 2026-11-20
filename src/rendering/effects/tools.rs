@@ -27,10 +27,15 @@ pub fn draw_planet_builder_preview(
         return;
     }
 
-    let a = builder.semi_major_axis_au;
-    let e = builder.eccentricity;
+    let a = builder.semi_major_axis_au.max(0.05);
+    let e = builder.eccentricity.clamp(0.0, 1.30);
     let pulse = 0.65 + 0.35 * (elapsed * 3.5).sin().abs();
 
+    let periapsis = if e < 1.0 {
+        a * (1.0 - e)
+    } else {
+        (a * (e - 1.0).max(0.05)).max(0.15)
+    };
     let preview_elements = OrbitalElements {
         semi_major_axis: a,
         eccentricity: e,
@@ -38,28 +43,43 @@ pub fn draw_planet_builder_preview(
         longitude_ascending_node: 0.0,
         argument_of_periapsis: 0.0,
         true_anomaly: f64::from(elapsed * 0.8) % (2.0 * std::f64::consts::PI),
-        periapsis: if a > 0.0 { a * (1.0 - e) } else { 1.0 },
-        apoapsis: if a > 0.0 && e < 1.0 {
+        periapsis,
+        apoapsis: if e < 1.0 {
             a * (1.0 + e)
         } else {
             f64::INFINITY
         },
-        period_years: if a > 0.0 {
+        period_years: if e < 1.0 {
             (a.powi(3) / star_mass_val.max(0.1)).sqrt()
         } else {
             1.0
         },
-        specific_energy: -G_ASTRO * star_mass_val / (2.0 * a.max(0.01)),
+        specific_energy: if e < 1.0 {
+            -G_ASTRO * star_mass_val / (2.0 * a.max(0.01))
+        } else {
+            G_ASTRO * star_mass_val / (2.0 * a.max(0.01))
+        },
         periapsis_dir: DVec3::new(1.0, 0.0, 0.0),
         semilatus_dir: DVec3::new(0.0, 0.0, 1.0),
     };
 
-    let preview_points = generate_orbit_points(&preview_elements, 192);
-    if preview_points.len() > 1 {
-        let prev_col = Color::srgba(0.20, 0.95, 1.0, 0.80 * pulse);
-        for window in preview_points.windows(2) {
-            if let [p0, p1] = window {
-                gizmos.line(*p0 + star_vec, *p1 + star_vec, prev_col);
+    if e >= 1.0 {
+        crate::rendering::effects::orbits::draw_hyperbolic_trajectory(
+            gizmos,
+            &preview_elements,
+            star_vec,
+            Color::srgba(0.20, 0.95, 1.0, 0.80 * pulse).to_srgba(),
+            None,
+            None,
+        );
+    } else {
+        let preview_points = generate_orbit_points(&preview_elements, 192);
+        if preview_points.len() > 1 {
+            let prev_col = Color::srgba(0.20, 0.95, 1.0, 0.80 * pulse);
+            for window in preview_points.windows(2) {
+                if let [p0, p1] = window {
+                    gizmos.line(*p0 + star_vec, *p1 + star_vec, prev_col);
+                }
             }
         }
     }
@@ -342,7 +362,9 @@ pub fn draw_slingshot_preview(
     gizmos: &mut Gizmos,
     slingshot: &crate::simulation::resources::SlingshotState,
     star_vec: Vec3,
+    star_vel_dvec: DVec3,
     star_mass_val: f64,
+    target_state: Option<(DVec3, f64)>,
     elapsed: f32,
 ) {
     if !slingshot.is_active {
@@ -390,9 +412,18 @@ pub fn draw_slingshot_preview(
             pulse,
         );
 
-        let launch_vel = delta * slingshot.velocity_scale;
+        let delta_vel = delta * slingshot.velocity_scale;
+        let rel_vel = if let Some((existing_vel, _)) = target_state {
+            (existing_vel + delta_vel) - star_vel_dvec
+        } else {
+            delta_vel
+        };
+        let proj_mass = target_state.map_or_else(
+            || crate::game::slingshot::archetype_preset_mass_solar(slingshot.archetype),
+            |(_, m)| m,
+        );
         if let Some(el) =
-            state_vectors_to_orbital_elements(rel_pos, launch_vel, star_mass_val, 1e-6)
+            state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass_val, proj_mass)
         {
             draw_slingshot_orbit_forecast(gizmos, &el, star_vec, pulse);
         }

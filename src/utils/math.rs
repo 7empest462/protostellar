@@ -95,6 +95,8 @@ pub fn state_vectors_to_orbital_elements(
     // Eccentricity vector e_vec = (v x h)/mu - r / |r|
     let e_vec = (rel_vel.cross(h_vec) / mu) - (rel_pos / r);
     let e = e_vec.length();
+    // Exact conic semi-latus rectum p = h^2 / mu (finite for all conics including parabolic e == 1)
+    let semilatus_p = (h * h) / mu;
 
     // Perifocal frame unit vectors:
     // P points towards periapsis. If near circular (e <= 1e-5), define P along current position
@@ -153,21 +155,16 @@ pub fn state_vectors_to_orbital_elements(
         true_anomaly += 2.0 * PI;
     }
 
+    let is_elliptic = e < 0.999_999 && specific_energy < -1e-12 && a.is_finite() && a > 0.0;
     // Orbital Period P = 2 * PI * sqrt(a^3 / mu)
-    let period_years = if a > 0.0 {
+    let period_years = if is_elliptic {
         2.0 * PI * (a.powi(3) / mu).sqrt()
     } else {
         0.0
     };
 
-    let periapsis = if a > 0.0 {
-        a * (1.0 - e)
-    } else if a < 0.0 {
-        a.abs() * (e - 1.0)
-    } else {
-        r
-    };
-    let apoapsis = if a > 0.0 && e < 1.0 {
+    let periapsis = semilatus_p / (1.0 + e);
+    let apoapsis = if is_elliptic {
         a * (1.0 + e)
     } else {
         f64::INFINITY
@@ -208,8 +205,11 @@ pub fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
 #[inline]
 pub fn conic_semilatus_rectum(elements: &OrbitalElements) -> Option<f64> {
     let e = elements.eccentricity;
-    if (e - 1.0).abs() < 1e-6 {
-        Some(2.0 * elements.periapsis)
+    if !e.is_finite() || !elements.periapsis.is_finite() || elements.periapsis <= 0.0 {
+        return None;
+    }
+    if (e - 1.0).abs() < 1e-6 || !elements.semi_major_axis.is_finite() {
+        Some(elements.periapsis * (1.0 + e))
     } else if e > 1.0 {
         Some(elements.semi_major_axis.abs() * (e * e - 1.0))
     } else if elements.semi_major_axis > 0.0 {
@@ -264,7 +264,19 @@ pub fn generate_orbit_points(elements: &OrbitalElements, num_samples: usize) -> 
     points
 }
 
-/// Generates an open hyperbolic flyby trajectory in AU for unbound bodies ($e \ge 1.0$).
+#[inline]
+fn open_orbit_nu_bound(elements: &OrbitalElements) -> f64 {
+    let e = elements.eccentricity;
+    if (e - 1.0).abs() < 1e-4 {
+        let p = conic_semilatus_rectum(elements).unwrap_or(2.0);
+        let min_cos = ((p / 2000.0) - 1.0).clamp(-0.98, 0.95);
+        (min_cos.acos() - 0.04).clamp(0.2, PI - 0.15)
+    } else {
+        ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2)
+    }
+}
+
+/// Generates an open parabolic or hyperbolic flyby trajectory in AU for unbound bodies ($e \ge 1.0$).
 pub fn generate_hyperbolic_orbit_points(
     elements: &OrbitalElements,
     num_samples: usize,
@@ -273,10 +285,7 @@ pub fn generate_hyperbolic_orbit_points(
         return Vec::new();
     }
 
-    let e = elements.eccentricity;
-    // Asymptote angle: theta_inf = acos(-1/e). Bound sampling safely within asymptotes.
-    let nu_max = ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2);
-
+    let nu_max = open_orbit_nu_bound(elements);
     let mut points = Vec::with_capacity(num_samples + 1);
 
     for i in 0..=num_samples {
@@ -316,8 +325,8 @@ pub fn generate_trailing_ribbon_points(
             }
         }
     } else {
-        // Hyperbolic orbit: trace backwards from current position within valid bounds
-        let nu_max = ((-1.0 / e.max(1.0001)).clamp(-0.9999, 0.0).acos() - 0.08).max(0.2);
+        // Parabolic / hyperbolic orbit: trace backwards from current position within valid bounds
+        let nu_max = open_orbit_nu_bound(elements);
         let min_nu = -nu_max;
         let start_nu = nu_0.clamp(-nu_max, nu_max);
         let end_nu = (start_nu - arc_radians).max(min_nu);

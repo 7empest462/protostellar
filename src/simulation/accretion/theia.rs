@@ -274,10 +274,10 @@ fn resolve_giant_impact_moon(
     let p_mass = earth.3.0;
     let s_mass = theia.3.0;
 
-    // 1. Earth state update
+    // 1. Earth state update (scale radius physically with post-impact merged mass)
     let total_primary_mass = p_mass + s_mass * 0.897; // ~90% mantle accretes
     earth.3.0 = total_primary_mass;
-    earth.4.0 = EARTH_RADIUS_AU * 1.0;
+    earth.4.0 = EARTH_RADIUS_AU * (total_primary_mass / EARTH_MASS_SOLAR).max(0.1).cbrt();
     earth.5.name = "Earth".to_string();
     earth.5.body_type = BodyType::TerrestrialPlanet;
 

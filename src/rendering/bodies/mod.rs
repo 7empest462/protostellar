@@ -8,6 +8,7 @@ pub mod magnetospheres;
 pub mod materials_sync;
 pub mod meshes;
 pub mod palettes;
+pub mod remnant_beams;
 pub mod scaling;
 pub mod shadows;
 pub mod spawner;
@@ -36,15 +37,19 @@ pub use palettes::{
     calc_ring_color, compute_gas_giant_palette, compute_ice_giant_palette, compute_stellar_palette,
     star_subtype_from_body_type,
 };
+pub use remnant_beams::{
+    MagnetarStructurePart, MagnetarStructureRoot, PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart,
+    QuasarBeamRoot, StructureHostTarget, sync_magnetar_structures, sync_pulsar_beams,
+    sync_quasar_beams,
+};
 pub use shadows::{
     compute_eclipse_moons_data, compute_moon_eclipse_shadow, compute_planetary_ring_shadow,
     compute_ring_shadow_on_planet,
 };
 pub use spawner::spawn_missing_visuals;
 pub use structures::{
-    MagnetarStructurePart, MagnetarStructureRoot, PulsarBeamPart, PulsarBeamRoot, QuasarBeamPart,
-    QuasarBeamRoot, VisualBlackHoleDiskChild, VisualRingChild, sync_black_hole_accretion_disks,
-    sync_magnetar_structures, sync_planetary_rings, sync_pulsar_beams, sync_quasar_beams,
+    VisualBlackHoleDiskChild, VisualRingChild, sync_black_hole_accretion_disks,
+    sync_planetary_rings,
 };
 pub use transforms::{
     compute_magma_incandescence, compute_magma_ocean_crust_fraction, resolve_star_direction,

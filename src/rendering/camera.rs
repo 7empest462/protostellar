@@ -495,6 +495,7 @@ fn handle_camera_mouse_controls(
     camera: &mut PanOrbitCamera,
     transform: &Transform,
     cursor_over_ui: bool,
+    text_focused: bool,
     dt: f32,
 ) {
     let mut delta_yaw = 0.0;
@@ -538,17 +539,29 @@ fn handle_camera_mouse_controls(
         }
     }
 
-    // Keyboard zoom shortcuts (+ / -), normalized when real wall dt is available
-    let key_step = if dt >= 0.002 {
-        (dt.clamp(0.002, 0.25) * 60.0) * 0.6
-    } else {
-        0.6
-    };
-    if keyboard_input.pressed(KeyCode::Equal) || keyboard_input.pressed(KeyCode::NumpadAdd) {
-        scroll += key_step;
-    }
-    if keyboard_input.pressed(KeyCode::Minus) || keyboard_input.pressed(KeyCode::NumpadSubtract) {
-        scroll -= key_step;
+    // Keyboard zoom shortcuts: Alt+= / Alt+-, PageUp / PageDown, or unmodified NumpadAdd / NumpadSubtract
+    if !text_focused {
+        let is_shift_key = keyboard_input.pressed(KeyCode::ShiftLeft)
+            || keyboard_input.pressed(KeyCode::ShiftRight);
+        let is_alt_key =
+            keyboard_input.pressed(KeyCode::AltLeft) || keyboard_input.pressed(KeyCode::AltRight);
+        let key_step = if dt >= 0.002 {
+            (dt.clamp(0.002, 0.25) * 60.0) * 0.6
+        } else {
+            0.6
+        };
+        if (is_alt_key && keyboard_input.pressed(KeyCode::Equal))
+            || keyboard_input.pressed(KeyCode::PageUp)
+            || (!is_shift_key && keyboard_input.pressed(KeyCode::NumpadAdd))
+        {
+            scroll += key_step;
+        }
+        if (is_alt_key && keyboard_input.pressed(KeyCode::Minus))
+            || keyboard_input.pressed(KeyCode::PageDown)
+            || (!is_shift_key && keyboard_input.pressed(KeyCode::NumpadSubtract))
+        {
+            scroll -= key_step;
+        }
     }
 
     if scroll.abs() > 0.0 {
@@ -577,43 +590,6 @@ fn handle_camera_mouse_controls(
         let up = transform.rotation * Vec3::Y;
         camera.target_focus += right * delta_pan.x + up * delta_pan.y;
     }
-}
-
-/// Smoothly adapts HDR Bloom intensity and prefilter knee based on proximity to luminous stars
-/// so close-up photosphere inspection preserves convective granulation contrast without white-out.
-fn adapt_camera_bloom_to_star_proximity(
-    opt_bloom: Option<Mut<Bloom>>,
-    cam_pos: Vec3,
-    targets_query: &CameraTargetsQuery,
-) {
-    let Some(mut bloom) = opt_bloom else {
-        return;
-    };
-
-    let mut min_star_ratio = f32::MAX;
-    for (_, pos, rad, body, _, opt_trans, _, _) in targets_query.iter() {
-        if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
-            if body.body_type == BodyType::BlackHole {
-                continue;
-            }
-            let star_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-            let vis_r = opt_trans.map_or(rad.0 as f32, |t| t.scale.x).max(0.0005);
-            let ratio = cam_pos.distance(star_pos) / vis_r;
-            if ratio < min_star_ratio {
-                min_star_ratio = ratio;
-            }
-        }
-    }
-
-    // t = 0 when right at stellar photosphere (ratio <= 3.0), t = 1 at orbital distances (ratio >= 18.0)
-    let t = ((min_star_ratio - 3.0) / 15.0).clamp(0.0, 1.0);
-    let target_intensity = 0.095 + 0.070 * t;
-    let target_threshold = 2.30 - 0.58 * t;
-    let target_lf_boost = 0.06 + 0.06 * t;
-
-    bloom.intensity += (target_intensity - bloom.intensity) * 0.15;
-    bloom.prefilter.threshold += (target_threshold - bloom.prefilter.threshold) * 0.15;
-    bloom.low_frequency_boost += (target_lf_boost - bloom.low_frequency_boost) * 0.15;
 }
 
 /// Singularity-free unit-sphere great-circle slerp from `d0` to `d1`.
@@ -789,7 +765,6 @@ pub fn update_pan_orbit_camera(
             &mut PanOrbitCamera,
             &mut Transform,
             &GlobalTransform,
-            Option<&mut Bloom>,
         ),
         With<PanOrbitCamera>,
     >,
@@ -806,8 +781,7 @@ pub fn update_pan_orbit_camera(
         Local<bevy::ecs::message::MessageCursor<PinchGesture>>,
     ),
 ) {
-    let Ok((camera_comp, mut camera, mut transform, global_transform, opt_bloom)) =
-        camera_query.single_mut()
+    let Ok((camera_comp, mut camera, mut transform, global_transform)) = camera_query.single_mut()
     else {
         return;
     };
@@ -844,7 +818,6 @@ pub fn update_pan_orbit_camera(
             camera.last_orbital_eye = None;
             return;
         }
-        adapt_camera_bloom_to_star_proximity(opt_bloom, transform.translation, &targets_query);
         return;
     }
 
@@ -853,6 +826,15 @@ pub fn update_pan_orbit_camera(
     let cursor_over_ui = ui_interaction_query
         .iter()
         .any(|(h, p, n, s, c)| is_ui_interaction_blocking(h, p, n, s, c))
+        || window.cursor_position().is_some_and(|cp| {
+            crate::rendering::camera_picking::is_cursor_over_active_ui(
+                window,
+                cp,
+                &ui_interaction_query,
+                &ui_nodes_query,
+                opt_visibility.as_deref(),
+            )
+        })
         || is_cursor_over_scroll_container(window.cursor_position(), &ui_nodes_query);
 
     handle_camera_target_picking(
@@ -894,11 +876,11 @@ pub fn update_pan_orbit_camera(
         &mut camera,
         &transform,
         cursor_over_ui,
+        text_focused,
         dt,
     );
 
     let (translation, rot) = integrate_orbital_camera_pose(&mut camera, dt);
     transform.translation = translation;
     transform.rotation = rot;
-    adapt_camera_bloom_to_star_proximity(opt_bloom, translation, &targets_query);
 }

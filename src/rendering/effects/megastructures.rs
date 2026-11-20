@@ -3,7 +3,9 @@ use crate::simulation::components::planetary::BiosphereState;
 use crate::simulation::resources::SimTime;
 use bevy::prelude::*;
 
-#[derive(Component)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct DysonSwarm {
     pub completion_fraction: f32, // 0.0 to 1.0
     pub mirror_count: usize,

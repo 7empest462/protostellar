@@ -139,6 +139,10 @@ fn deserialize_nullable_f64_zero<'de, D>(deserializer: D) -> Result<f64, D::Erro
 where
     D: serde::Deserializer<'de>,
 {
-    let opt = Option::<f64>::deserialize(deserializer)?;
-    Ok(opt.unwrap_or(0.0))
+    if deserializer.is_human_readable() {
+        let opt = Option::<f64>::deserialize(deserializer)?;
+        Ok(opt.unwrap_or(0.0))
+    } else {
+        f64::deserialize(deserializer)
+    }
 }

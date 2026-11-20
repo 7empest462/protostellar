@@ -58,18 +58,26 @@ pub fn calculate_vegetation_expansion(age_gyr: f32) -> f32 {
     }
 }
 
-/// Calculates atmospheric oxygen level relative to Present Atmospheric Level (PAL).
+/// Calculates continuous atmospheric oxygen level relative to Present Atmospheric Level (PAL).
 pub fn calculate_oxygen_level_pal(age_gyr: f32) -> f32 {
-    if age_gyr < 2.10 {
+    if !age_gyr.is_finite() || age_gyr < 2.10 {
         0.001
     } else if age_gyr < 2.60 {
-        let t = (age_gyr - 2.10) / 0.50;
-        0.001 + t * 0.10
-    } else if age_gyr < 4.00 {
-        0.10 + ((age_gyr - 2.60) / 1.40) * 0.15
-    } else if age_gyr < 4.30 {
-        // Carboniferous oxygen spike
-        0.85 + ((age_gyr - 4.00) / 0.30) * 0.45
+        let t = ((age_gyr - 2.10) / 0.50).clamp(0.0, 1.0);
+        let smooth = t * t * (3.0 - 2.0 * t);
+        0.001 + smooth * 0.099
+    } else if age_gyr < 3.90 {
+        0.10 + ((age_gyr - 2.60) / 1.30) * 0.15
+    } else if age_gyr < 4.18 {
+        // Silurian-Carboniferous oxygen rise
+        let t = ((age_gyr - 3.90) / 0.28).clamp(0.0, 1.0);
+        let smooth = t * t * (3.0 - 2.0 * t);
+        0.25 + smooth * 1.05
+    } else if age_gyr < 4.35 {
+        // Permian relaxation back toward Modern 1.0 PAL
+        let t = ((age_gyr - 4.18) / 0.17).clamp(0.0, 1.0);
+        let smooth = t * t * (3.0 - 2.0 * t);
+        1.30 - smooth * 0.30
     } else {
         1.0
     }
@@ -123,7 +131,7 @@ pub fn sync_geological_evolution_system(
             scrubber.target_planet = archetype;
             if let Some(target_geo) = opt_sel_geo {
                 scrubber.active_epoch = target_geo.epoch;
-                scrubber.scrubbed_age_gyr = target_geo.geological_age_gyr;
+                scrubber.scrubbed_age_gyr = target_geo.geological_age_gyr as f32;
             } else {
                 let def_epoch = GeologicalEpoch::epochs_for_planet(archetype)
                     .first()
@@ -159,7 +167,7 @@ pub fn sync_geological_evolution_system(
                 && let Some(geo) = opt_geo
             {
                 scrubber.active_epoch = geo.epoch;
-                scrubber.scrubbed_age_gyr = geo.geological_age_gyr;
+                scrubber.scrubbed_age_gyr = geo.geological_age_gyr as f32;
             }
         } else {
             scrubber.target_entity = None;
@@ -234,27 +242,28 @@ fn advance_organic_epoch_step(
     opt_climate: Option<&mut PlanetaryClimate>,
     opt_temp: Option<&mut Temperature>,
 ) {
-    let dt_gyr = (dt_yr / 1e9) as f32;
+    let dt_gyr = dt_yr / 1e9;
     let current_age = (geo.geological_age_gyr + dt_gyr).clamp(0.0, 6.0);
+    let current_age_f32 = current_age as f32;
     let prev_epoch = geo.epoch;
     geo.geological_age_gyr = current_age;
-    geo.epoch = GeologicalEpoch::from_age_and_planet(current_age, archetype);
-    geo.continental_drift_phase = calculate_continental_drift_phase(current_age);
+    geo.epoch = GeologicalEpoch::from_age_and_planet(current_age_f32, archetype);
+    geo.continental_drift_phase = calculate_continental_drift_phase(current_age_f32);
     geo.supercontinent_aggregation = geo.epoch.canonical_aggregation();
-    geo.ocean_oxidation_progress = calculate_ocean_oxidation_progress(current_age);
-    geo.terrestrial_vegetation_fraction = calculate_vegetation_expansion(current_age);
-    geo.oxygen_level_pal = calculate_oxygen_level_pal(current_age);
+    geo.ocean_oxidation_progress = calculate_ocean_oxidation_progress(current_age_f32);
+    geo.terrestrial_vegetation_fraction = calculate_vegetation_expansion(current_age_f32);
+    geo.oxygen_level_pal = calculate_oxygen_level_pal(current_age_f32);
 
     if geo.epoch != prev_epoch {
         apply_epoch_to_world(geo.epoch, geo, opt_vol, opt_climate, opt_temp);
         geo.geological_age_gyr = current_age;
-        geo.continental_drift_phase = calculate_continental_drift_phase(current_age);
+        geo.continental_drift_phase = calculate_continental_drift_phase(current_age_f32);
         geo.supercontinent_aggregation = geo.epoch.canonical_aggregation();
     }
 
     if is_target {
         scrubber.active_epoch = geo.epoch;
-        scrubber.scrubbed_age_gyr = geo.geological_age_gyr;
+        scrubber.scrubbed_age_gyr = current_age_f32;
     }
 }
 
@@ -268,11 +277,12 @@ fn apply_manual_scrub_step(
     opt_temp: Option<&mut Temperature>,
 ) {
     let target_age = scrubber.scrubbed_age_gyr;
+    let target_age_f64 = f64::from(target_age);
     let target_epoch = scrubber.active_epoch;
 
-    if (geo.geological_age_gyr - target_age).abs() > 1e-4 || geo.epoch != target_epoch {
+    if (geo.geological_age_gyr as f32 - target_age).abs() > 1e-4 || geo.epoch != target_epoch {
         let prev_epoch = geo.epoch;
-        geo.geological_age_gyr = target_age;
+        geo.geological_age_gyr = target_age_f64;
         geo.epoch = target_epoch;
         geo.continental_drift_phase = calculate_continental_drift_phase(target_age);
         geo.supercontinent_aggregation = geo.epoch.canonical_aggregation();
@@ -282,21 +292,31 @@ fn apply_manual_scrub_step(
 
         if geo.epoch != prev_epoch || geo.epoch != current_epoch {
             apply_epoch_to_world(geo.epoch, geo, opt_vol, opt_climate, opt_temp);
-            geo.geological_age_gyr = target_age;
+            geo.geological_age_gyr = target_age_f64;
             geo.continental_drift_phase = calculate_continental_drift_phase(target_age);
             geo.supercontinent_aggregation = geo.epoch.canonical_aggregation();
         }
     } else if !has_terraforming {
-        // Sustain chosen epoch temperature, volatiles, and climate on target planet unless actively terraforming
+        // Sustain chosen epoch temperature, volatiles, and climate on target planet only while in manual scrub mode without terraforming
         let canonical_temp = geo.epoch.canonical_temperature_k();
-        if let Some(temp) = opt_temp {
+        if let Some(temp) = opt_temp
+            && (temp.0 - canonical_temp).abs() > 0.05
+        {
             temp.0 = canonical_temp;
         }
         if let Some(vol) = opt_vol {
-            apply_epoch_volatiles(geo.epoch, vol);
+            let mut target_vol = *vol;
+            apply_epoch_volatiles(geo.epoch, &mut target_vol);
+            if *vol != target_vol {
+                *vol = target_vol;
+            }
         }
         if let Some(climate) = opt_climate {
-            apply_epoch_climate(geo.epoch, climate);
+            let mut target_climate = *climate;
+            apply_epoch_climate(geo.epoch, &mut target_climate);
+            if *climate != target_climate {
+                *climate = target_climate;
+            }
         }
     }
 }
@@ -312,16 +332,26 @@ pub fn apply_epoch_to_world(
     *geo = GeologicalState::new_for_epoch(epoch);
 
     let canonical_temp = epoch.canonical_temperature_k();
-    if let Some(ref mut temp) = opt_temp {
+    if let Some(ref mut temp) = opt_temp
+        && (temp.0 - canonical_temp).abs() > 0.05
+    {
         temp.0 = canonical_temp;
     }
 
     if let Some(vol) = opt_vol {
-        apply_epoch_volatiles(epoch, vol);
+        let mut target_vol = *vol;
+        apply_epoch_volatiles(epoch, &mut target_vol);
+        if *vol != target_vol {
+            *vol = target_vol;
+        }
     }
 
     if let Some(climate) = opt_climate {
-        apply_epoch_climate(epoch, climate);
+        let mut target_climate = *climate;
+        apply_epoch_climate(epoch, &mut target_climate);
+        if *climate != target_climate {
+            *climate = target_climate;
+        }
     }
 }
 

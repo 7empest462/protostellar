@@ -319,3 +319,12 @@ fn test_trigger_oort_cloud_swarm_event_and_belt_categorization() {
         "Overwhelming majority of Oort comets must reside in BeltZone::OortCloud (>200 AU)"
     );
 }
+
+#[test]
+fn test_galactic_tide_secular_de_uses_5_4_and_preserves_bound_semimajor_axis() {
+    let de_dt = evaluate_galactic_tide_secular_de(5000.0, 0.5, PI / 4.0, PI / 2.0, 1.0, 0.10);
+    let omega_sq = compute_galactic_omega_sq(0.10);
+    let n = (protostellar::utils::constants::G_ASTRO * 1.0 / 5000.0_f64.powi(3)).sqrt();
+    let expected = (5.0 / 4.0) * (omega_sq / n) * 0.5 * (1.0 - 0.25_f64).sqrt();
+    assert!((de_dt - expected).abs() / expected < 1e-12);
+}

@@ -173,7 +173,7 @@ pub fn process_accretion_and_collisions(
 
 #[inline]
 fn pair_broadphase_reach(s1: &BodySnapshot, s2: &BodySnapshot) -> f64 {
-    if (s1.body_type == BodyType::BlackHole && s1.mass > 1_000_000.0)
+    let base_reach: f64 = if (s1.body_type == BodyType::BlackHole && s1.mass > 1_000_000.0)
         || (s2.body_type == BodyType::BlackHole && s2.mass > 1_000_000.0)
     {
         5000.0
@@ -181,7 +181,8 @@ fn pair_broadphase_reach(s1: &BodySnapshot, s2: &BodySnapshot) -> f64 {
         50.0
     } else {
         6.0
-    }
+    };
+    base_reach.max((s1.radius + s2.radius) * 2.5)
 }
 
 #[inline]
@@ -197,7 +198,7 @@ fn collect_single_body_candidates_into(
     s1: &BodySnapshot,
     snapshots: &[BodySnapshot],
     tree: &kiddo::ImmutableKdTree<f64, 3>,
-    bh_indices: &[usize],
+    large_or_bh_indices: &[usize],
     cand_i: &mut SmallVec<[usize; 8]>,
 ) {
     const STANDARD_REACH: f64 = 6.0;
@@ -207,7 +208,7 @@ fn collect_single_body_candidates_into(
     if !s1.pos.is_finite() {
         return;
     }
-    if s1.body_type == BodyType::BlackHole {
+    if s1.body_type == BodyType::BlackHole || s1.radius > 2.0 {
         for (j, s2) in snapshots.iter().enumerate().skip(i + 1) {
             if within_box_reach(s1.pos, s2.pos, pair_broadphase_reach(s1, s2)) {
                 cand_i.push(j);
@@ -232,14 +233,14 @@ fn collect_single_body_candidates_into(
         }
     }
 
-    for &bh_j in bh_indices {
-        if bh_j > i
-            && !cand_i.contains(&bh_j)
+    for &large_j in large_or_bh_indices {
+        if large_j > i
+            && !cand_i.contains(&large_j)
             && snapshots
-                .get(bh_j)
+                .get(large_j)
                 .is_some_and(|s2| within_box_reach(s1.pos, s2.pos, pair_broadphase_reach(s1, s2)))
         {
-            cand_i.push(bh_j);
+            cand_i.push(large_j);
         }
     }
 
@@ -274,7 +275,7 @@ fn build_kdtree_broadphase_candidates_into(
             [0.0, 0.0, 0.0]
         };
         points.push(pt);
-        if s.body_type == BodyType::BlackHole {
+        if s.body_type == BodyType::BlackHole || s.radius > 2.0 {
             bh_indices.push(idx);
         }
     }
@@ -555,9 +556,34 @@ fn process_body_pair(
             (0.05..=0.45).contains(&gamma) && m_max >= EARTH_MASS_SOLAR * 0.05
         };
 
+    let is_giant_minor_roche_pair = {
+        let b1_giant = matches!(b1.body_type, BodyType::GasGiant | BodyType::IceGiant)
+            || b1.mass >= EARTH_MASS_SOLAR * 2.5;
+        let b2_giant = matches!(b2.body_type, BodyType::GasGiant | BodyType::IceGiant)
+            || b2.mass >= EARTH_MASS_SOLAR * 2.5;
+        let is_minor_or_small = |b: &BodySnapshot, other_m: f64| {
+            !b.body_type.is_star_or_remnant()
+                && (matches!(
+                    b.body_type,
+                    BodyType::Asteroid
+                        | BodyType::Comet
+                        | BodyType::Planetesimal
+                        | BodyType::DustGrain
+                ) || b.mass / other_m.max(1e-30) <= 0.05)
+        };
+        (b1_giant && !b1.body_type.is_star_or_remnant() && is_minor_or_small(b2, b1.mass))
+            || (b2_giant && !b2.body_type.is_star_or_remnant() && is_minor_or_small(b1, b2.mass))
+    };
+
     let is_theia_earth = is_theia_earth_snapshot(b1, b2);
-    let interpenetrating =
-        is_physically_interpenetrating(dist, min_dist, b1.radius, b2.radius, r_contact);
+    let interpenetrating = if is_giant_minor_roche_pair {
+        // Only short-circuit for actual physical core overlap around giants so comets/moons entering
+        // the inflated visual radius still reach `execute_collision_regimes` for Roche disruption.
+        let r_phys = b1.radius + b2.radius;
+        dist < r_phys * 0.90 || min_dist < r_phys * 0.85
+    } else {
+        is_physically_interpenetrating(dist, min_dist, b1.radius, b2.radius, r_contact)
+    };
 
     if !can_candidate_moon && !is_theia_earth && interpenetrating {
         let pair = sort_collision_pair(b1, b2);
@@ -587,6 +613,77 @@ fn process_body_pair(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Builds decoupled physical/visual impact classification parameters and fluid Roche limit"
+)]
+fn compute_pair_roche_and_params(
+    pair: &SortedPair,
+    p_snap_radius: f64,
+    min_dist: f64,
+    b: f64,
+    angular_momentum_rel: f64,
+    v_rel: f64,
+    v_esc: f64,
+    r_contact: f64,
+) -> (ImpactParams, f64, f64) {
+    let p_comp_density = pair.p_comp.average_density();
+    let s_density = pair.s_comp.average_density();
+    let p_rad_from_comp =
+        radius_from_mass_density(pair.p_m, p_comp_density).max(EARTH_RADIUS_AU * 0.3);
+    let p_phys_rad =
+        if matches!(pair.p_type, BodyType::GasGiant | BodyType::IceGiant) && p_snap_radius > 0.0 {
+            p_snap_radius.max(EARTH_RADIUS_AU * 0.3)
+        } else {
+            p_rad_from_comp
+        };
+    let p_phys_density = if matches!(pair.p_type, BodyType::GasGiant | BodyType::IceGiant) {
+        (pair.p_m / ((4.0 / 3.0) * std::f64::consts::PI * p_phys_rad.powi(3))).max(1e-4)
+    } else {
+        p_comp_density
+    };
+    let s_rad_au = radius_from_mass_density(pair.s_m, s_density);
+    let d_roche = 2.44 * p_phys_rad * (p_phys_density / s_density.max(1e-4)).cbrt();
+
+    let is_giant_minor_roche = !pair.p_type.is_star_or_remnant()
+        && !pair.s_type.is_star_or_remnant()
+        && (matches!(pair.p_type, BodyType::GasGiant | BodyType::IceGiant)
+            || pair.p_m >= EARTH_MASS_SOLAR * 2.5)
+        && (matches!(
+            pair.s_type,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+        ) || pair.s_m / pair.p_m.max(1e-30) <= 0.05);
+
+    let b_for_regime = if is_giant_minor_roche && min_dist <= d_roche * 1.1 {
+        let roche_scale = d_roche.max(p_phys_rad + s_rad_au).max(1e-8);
+        (angular_momentum_rel / (v_rel.max(1e-8) * roche_scale)).clamp(0.0, 1.0)
+    } else {
+        b
+    };
+
+    let params = ImpactParams {
+        primary_mass: pair.p_m,
+        secondary_mass: pair.s_m,
+        primary_radius_au: if is_giant_minor_roche {
+            p_phys_rad
+        } else {
+            p_phys_rad.max(r_contact * 0.85)
+        },
+        secondary_radius_au: s_rad_au,
+        primary_type: pair.p_type,
+        secondary_type: pair.s_type,
+        min_dist,
+        b: b_for_regime,
+        v_rel,
+        v_esc,
+    };
+    (params, d_roche, p_phys_rad)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Collision regime dispatch requires kinematics, effective radii, and ECS context"
+)]
 fn execute_collision_regimes(
     ctx: &mut CollisionContext,
     b1: &mut BodySnapshot,
@@ -606,25 +703,22 @@ fn execute_collision_regimes(
         .clamp(0.0, 1.0);
 
     let pair = sort_collision_pair(b1, b2);
+    let p_snap_radius = if pair.primary_entity == b1.entity {
+        b1.radius
+    } else {
+        b2.radius
+    };
 
-    let p_density = pair.p_comp.average_density();
-    let s_density = pair.s_comp.average_density();
-    let p_rad_au = radius_from_mass_density(pair.p_m, p_density).max(EARTH_RADIUS_AU * 0.3);
-    let s_rad_au = radius_from_mass_density(pair.s_m, s_density);
-    let d_roche = 2.44 * p_rad_au * (p_density / s_density.max(1e-4)).cbrt();
-
-    let params = ImpactParams {
-        primary_mass: pair.p_m,
-        secondary_mass: pair.s_m,
-        primary_radius_au: p_rad_au.max(r_contact * 0.85),
-        secondary_radius_au: s_rad_au,
-        primary_type: pair.p_type,
-        secondary_type: pair.s_type,
+    let (params, d_roche, p_rad_au) = compute_pair_roche_and_params(
+        &pair,
+        p_snap_radius,
         min_dist,
         b,
+        angular_momentum_rel,
         v_rel,
         v_esc,
-    };
+        r_contact,
+    );
 
     let is_earth_cand = |n: &str, pos: DVec3, b_type: BodyType| {
         let is_explicit = n == "Earth"

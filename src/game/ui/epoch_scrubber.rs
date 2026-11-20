@@ -758,7 +758,7 @@ pub fn update_epoch_scrubber_ui(
 }
 
 fn compute_epoch_scrubber_data_hash(geo: &GeologicalState) -> u64 {
-    u64::from(geo.geological_age_gyr.to_bits())
+    geo.geological_age_gyr.to_bits()
         ^ (u64::from(geo.ocean_oxidation_progress.to_bits()) << 1)
         ^ (u64::from(geo.oxygen_level_pal.to_bits()) << 2)
         ^ (u64::from(geo.terrestrial_vegetation_fraction.to_bits()) << 3)
@@ -869,7 +869,7 @@ fn resolve_epoch_scrubber_target<'a>(
             }
             if scrubber.auto_advance {
                 scrubber.active_epoch = geo.epoch;
-                scrubber.scrubbed_age_gyr = geo.geological_age_gyr;
+                scrubber.scrubbed_age_gyr = geo.geological_age_gyr as f32;
             }
         }
     } else {

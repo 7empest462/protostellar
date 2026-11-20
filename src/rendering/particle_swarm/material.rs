@@ -9,7 +9,7 @@ use bevy::render::render_resource::{
 use bevy_shader::ShaderRef;
 
 /// GPU uniform parameters for [`ParticleSwarmMaterial`].
-#[derive(Clone, Copy, Debug, ShaderType)]
+#[derive(Clone, Copy, Debug, PartialEq, ShaderType)]
 pub struct ParticleSwarmUniforms {
     /// `x`: particle render scale multiplier, `y..w`: reserved.
     pub params: Vec4,

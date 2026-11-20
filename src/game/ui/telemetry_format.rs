@@ -2,8 +2,11 @@
 
 use std::fmt::Write;
 
+use bevy::math::DVec3;
+
 use crate::simulation::atmosphere_escape::{AtmosphericEscapeRegime, AtmosphericEscapeState};
 use crate::simulation::components::*;
+use crate::simulation::disk::BeltZone;
 use crate::simulation::kozai_lidov::types::KozaiLidovState;
 use crate::simulation::neutron_stars::types::{MagnetarCrustStress, PulsarGlitchState};
 use crate::simulation::oort::types::OortComet;
@@ -11,6 +14,19 @@ use crate::simulation::relativity::types::RelativisticState;
 use crate::simulation::resources::*;
 use crate::simulation::tides::TidalState;
 use crate::utils::constants::*;
+
+pub(crate) struct DisplayUppercase<'a>(pub(crate) &'a str);
+
+impl std::fmt::Display for DisplayUppercase<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for ch in self.0.chars() {
+            for up in ch.to_uppercase() {
+                std::fmt::Write::write_char(f, up)?;
+            }
+        }
+        Ok(())
+    }
+}
 
 pub fn format_body_inspector_type(body_type: BodyType, mass_solar: f64) -> &'static str {
     match body_type {
@@ -30,7 +46,7 @@ pub fn format_body_inspector_type(body_type: BodyType, mass_solar: f64) -> &'sta
         BodyType::RedGiant => "Red Giant Star (RGB Branch)",
         BodyType::RedSupergiant => "Red Supergiant Star (Betelgeuse)",
         BodyType::YellowHypergiant => "Yellow Hypergiant (Pulsating Rho Cas)",
-        BodyType::Hypergiant => "Luminous Hypergiant (0-Luminosity)",
+        BodyType::Hypergiant => "Luminous Hypergiant (Ia-0)",
         BodyType::CarbonStar => "Carbon Star (AGB Dredged Soot)",
         BodyType::LuminousBlueVariable => "Luminous Blue Variable (LBV Eta Car)",
         BodyType::WolfRayet => "Wolf-Rayet Star (Stripped Core)",
@@ -585,13 +601,22 @@ pub fn format_mass_string(mass_val: f64) -> String {
     }
 }
 
-pub fn format_orbital_period_string(dist_au: f64, body_type: BodyType, star_mass: f64) -> String {
-    if dist_au > 0.05 && !body_type.is_star_or_remnant() {
-        let p_yr = dist_au.powf(1.5) / star_mass.max(0.1).sqrt();
+pub fn format_orbital_period_string(
+    dist_au: f64,
+    body_type: BodyType,
+    primary_mass: f64,
+) -> String {
+    if dist_au > 1e-5 && !body_type.is_star_or_remnant() {
+        let p_yr = dist_au.powf(1.5) / primary_mass.max(1e-8).sqrt();
         if p_yr >= 1.0 {
             format!(" | Period: {p_yr:.2} yr")
         } else {
-            format!(" | Period: {:.1} days", p_yr * 365.25)
+            let days = p_yr * 365.25;
+            if days >= 1.0 {
+                format!(" | Period: {days:.1} days")
+            } else {
+                format!(" | Period: {:.1} hrs", days * 24.0)
+            }
         }
     } else {
         String::new()
@@ -803,4 +828,86 @@ pub fn append_probe_telemetry(
             probe.samples_collected, probe.latest_assay
         );
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Formatting requires numerous component properties and configuration states"
+)]
+pub fn format_primary_telemetry(
+    pos: DVec3,
+    vel: DVec3,
+    mass: f64,
+    rad: f64,
+    temp: f64,
+    comp: &Composition,
+    body: &CelestialBody,
+    opt_spin: Option<&SpinState>,
+    primary_mass: f64,
+    env_str: &str,
+    comp_str: &str,
+) -> String {
+    let dist_au = if pos.is_finite() { pos.length() } else { 0.0 };
+    let dist_str = if dist_au > 0.0 && dist_au < 0.05 {
+        format!("{dist_au:.4} AU")
+    } else {
+        format!("{dist_au:.2} AU")
+    };
+    let speed_au_yr = if vel.is_finite() { vel.length() } else { 0.0 };
+    let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
+
+    let mass_str = format_mass_string(mass);
+    let rad_disp = format_body_radius_display(rad);
+    let volume_au3 = (4.0 / 3.0) * std::f64::consts::PI * rad.powi(3);
+    let density_g_cm3 = if volume_au3 > 1e-35 && mass > 0.0 {
+        let conversion_factor = SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0);
+        (mass / volume_au3) * conversion_factor
+    } else {
+        (comp.average_density() * SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0)).clamp(0.01, 20.0)
+    };
+    let density_str = if !density_g_cm3.is_finite() || density_g_cm3 <= 0.0 {
+        "0.00 g/cm3".to_string()
+    } else if density_g_cm3 < 0.01 || density_g_cm3 >= 10_000.0 {
+        format!("{density_g_cm3:.2e} g/cm3")
+    } else {
+        format!("{density_g_cm3:.2} g/cm3")
+    };
+    let period_str = format_orbital_period_string(dist_au, body.body_type, primary_mass);
+
+    let spin_str = if let Some(spin) = opt_spin {
+        format!(
+            " | Day: {:.1}h | Tilt: {:.1} deg",
+            spin.rotation_period_hours, spin.axial_tilt_degrees
+        )
+    } else {
+        String::new()
+    };
+
+    let zone = BeltZone::from_distance_au(dist_au);
+    let belt_suffix = if matches!(
+        body.body_type,
+        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
+    ) {
+        format!(" | Belt: {} {}", zone.icon(), zone.short_name())
+    } else {
+        String::new()
+    };
+
+    format!(
+        ">> {} [{}]\n▸ Mass: {}\n▸ Radius: {} ({:.4} AU)\n▸ Density: {} | Temp: {:.0} K{}{}\n▸ Distance: {}{} | Speed: {:.1} km/s\n▸ Composition: {}{}",
+        DisplayUppercase(&body.name),
+        DisplayUppercase(format_body_inspector_type(body.body_type, mass)),
+        mass_str,
+        rad_disp,
+        rad,
+        density_str,
+        temp,
+        spin_str,
+        period_str,
+        dist_str,
+        belt_suffix,
+        speed_km_s,
+        comp_str,
+        env_str,
+    )
 }

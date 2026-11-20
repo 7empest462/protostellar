@@ -116,18 +116,70 @@ pub fn compute_moon_eclipse_shadow(
     }
 }
 
+/// Resolves effective `(inner_ratio, outer_ratio)` in units of host planet radius.
+/// Recovers canonical circumplanetary ring proportions (~1.24..2.35 R_p) when a legacy save
+/// or rapidly grown gas giant still carries shrunken proto-core ring radii inside the planet.
+pub fn resolve_effective_ring_ratios(ring_sys: &PlanetaryRingSystem, radius_au: f64) -> (f32, f32) {
+    if ring_sys.outer_radius_au <= 0.0 || radius_au <= 0.0 {
+        return (1.24, 2.35);
+    }
+    let r = radius_au as f32;
+    let raw_outer = ring_sys.outer_radius_au / r;
+    let raw_inner = ring_sys.inner_radius_au / r;
+    if raw_outer < 1.25 {
+        let aspect = if raw_inner > 0.0 && raw_outer > raw_inner {
+            (raw_outer / raw_inner).clamp(1.75, 2.80)
+        } else {
+            2.35 / 1.24
+        };
+        let inner = 1.24;
+        let outer = (inner * aspect).clamp(2.25, 2.55);
+        (inner, outer)
+    } else {
+        let outer = raw_outer.clamp(1.35, 12.0);
+        let inner = if raw_inner > 0.0 {
+            raw_inner.clamp(1.05, (outer - 0.05).max(1.05))
+        } else {
+            (outer * (1.24 / 2.35)).clamp(1.05, (outer - 0.05).max(1.05))
+        };
+        (inner, outer)
+    }
+}
+
+/// Resolves effective `(inner_ratio, outer_ratio)` in units of host planet radius, additionally
+/// normalizing canonical Saturn ring systems back to authentic Cassini proportions (`1.24..2.35 R_p`)
+/// if a saved state carries shrunken proto-core or ratcheted over-inflated ring radii.
+pub fn resolve_effective_ring_ratios_for_body(
+    ring_sys: &PlanetaryRingSystem,
+    radius_au: f64,
+    body_name: &str,
+) -> (f32, f32) {
+    let (inner, outer) = resolve_effective_ring_ratios(ring_sys, radius_au);
+    if crate::game::ui::world_list::contains_ignore_ascii_case(body_name, "saturn")
+        && (outer > 2.75 || inner > 1.55)
+    {
+        return (1.24, 2.35);
+    }
+    (inner, outer)
+}
+
+pub fn compute_ring_shadow_params_for_body(
+    opt_rings: Option<&PlanetaryRingSystem>,
+    radius_au: f64,
+    body_name: &str,
+) -> Vec4 {
+    if let Some(ring_sys) = opt_rings {
+        let (inner_ratio, ring_ratio) =
+            resolve_effective_ring_ratios_for_body(ring_sys, radius_au, body_name);
+        Vec4::new(inner_ratio, ring_ratio, ring_sys.optical_depth, 1.0)
+    } else {
+        Vec4::ZERO
+    }
+}
+
 pub fn compute_ring_shadow_params(opt_rings: Option<&PlanetaryRingSystem>, radius_au: f64) -> Vec4 {
     if let Some(ring_sys) = opt_rings {
-        let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius_au > 0.0 {
-            (ring_sys.outer_radius_au / radius_au as f32).clamp(2.0, 40.0)
-        } else {
-            2.85
-        };
-        let inner_ratio = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
-            (ring_sys.inner_radius_au / radius_au as f32).clamp(1.1, ring_ratio - 0.1)
-        } else {
-            1.25
-        };
+        let (inner_ratio, ring_ratio) = resolve_effective_ring_ratios(ring_sys, radius_au);
         Vec4::new(inner_ratio, ring_ratio, ring_sys.optical_depth, 1.0)
     } else {
         Vec4::ZERO

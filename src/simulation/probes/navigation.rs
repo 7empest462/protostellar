@@ -235,13 +235,6 @@ fn steer_probe_transit(
 }
 
 pub fn compute_planet_spin_frame(opt_spin: Option<&SpinState>, elapsed_years: f64) -> (DVec3, f64) {
-    let spin_angle = if let Some(spin) = opt_spin {
-        let rotations_per_year = 8766.0 / spin.rotation_period_hours.max(0.01);
-        (elapsed_years * rotations_per_year * std::f64::consts::TAU) % std::f64::consts::TAU
-    } else {
-        (elapsed_years * 100.0 * std::f64::consts::TAU) % std::f64::consts::TAU
-    };
-
     let spin_dir = if let Some(spin) = opt_spin {
         if spin.spin_vector.length_squared() > 1e-12
             && (spin.spin_vector.x.abs() > 1e-6
@@ -255,6 +248,19 @@ pub fn compute_planet_spin_frame(opt_spin: Option<&SpinState>, elapsed_years: f6
         }
     } else {
         DVec3::new(0.08_f64.sin(), 0.08_f64.cos(), 0.0)
+    };
+
+    let spin_angle = if let Some(spin) = opt_spin {
+        // Avoid double-negating retrograde rotation if the 3D spin axis is already inverted (y < 0)
+        let sign = if spin.rotation_period_hours < 0.0 && spin_dir.y >= 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let rotations_per_year = sign * 8766.0 / spin.rotation_period_hours.abs().max(0.01);
+        (elapsed_years * rotations_per_year * std::f64::consts::TAU) % std::f64::consts::TAU
+    } else {
+        (elapsed_years * 100.0 * std::f64::consts::TAU) % std::f64::consts::TAU
     };
 
     (spin_dir, spin_angle)

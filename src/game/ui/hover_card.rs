@@ -58,6 +58,7 @@ pub fn spawn_hover_card(root: &mut ChildSpawnerCommands) {
         // Holographic rotating reticle bracket at corner
         card.spawn((
             HoverReticleBracket,
+            IgnoreUiPicking,
             UiTransform::default(),
             Node {
                 position_type: PositionType::Absolute,
@@ -206,6 +207,11 @@ pub fn resolve_body_type_label(body_type: BodyType) -> &'static str {
 /// Formats core metric lines for the hover card (Distance, Speed, Mass, Radius, Temperature).
 pub fn format_hover_metrics(pos: DVec3, vel: DVec3, mass: f64, rad: f64, temp: f64) -> String {
     let dist_au = if pos.is_finite() { pos.length() } else { 0.0 };
+    let dist_str = if dist_au > 0.0 && dist_au < 0.05 {
+        format!("{dist_au:.4} AU")
+    } else {
+        format!("{dist_au:.2} AU")
+    };
     let speed_km_s = if vel.is_finite() {
         vel.length() * AU_PER_YR_TO_KM_PER_S
     } else {
@@ -215,7 +221,7 @@ pub fn format_hover_metrics(pos: DVec3, vel: DVec3, mass: f64, rad: f64, temp: f
     let rad_disp = format_body_radius_display(rad);
 
     format!(
-        "Distance: {dist_au:.2} AU  •  Speed: {speed_km_s:.1} km/s\nMass: {mass_str}\nRadius: {rad_disp}  •  Temp: {temp:.0} K"
+        "Distance: {dist_str}  •  Speed: {speed_km_s:.1} km/s\nMass: {mass_str}\nRadius: {rad_disp}  •  Temp: {temp:.0} K"
     )
 }
 
@@ -319,6 +325,49 @@ pub fn compute_clamped_card_position(screen_pos: Vec2, card_size: Vec2, window_s
     Vec2::new(clamped_x, clamped_y)
 }
 
+fn hide_hover_card(card_node: &mut Mut<'_, Node>) {
+    if card_node.as_ref().display != Display::None {
+        card_node.display = Display::None;
+    }
+}
+
+fn resolve_hover_screen_pos(
+    camera_comp: &Camera,
+    cam_gt: &GlobalTransform,
+    world_center: Vec3,
+    window: &Window,
+) -> Option<Vec2> {
+    if let Ok(sp) = camera_comp.world_to_viewport(cam_gt, world_center) {
+        return Some(sp);
+    }
+    let cam_forward = cam_gt.forward();
+    let to_target = world_center - cam_gt.translation();
+    if to_target.dot(*cam_forward) <= 0.0 && *cam_forward != Vec3::ZERO {
+        return None;
+    }
+    Some(Vec2::new(window.width() * 0.5, window.height() * 0.5))
+}
+
+fn sync_hover_card_text(
+    text_query: &mut Query<(&HoverCardField, &mut Text)>,
+    title_str: &str,
+    subhead_str: &str,
+    metrics_str: &str,
+    badges_str: &str,
+) {
+    for (field, mut text) in text_query {
+        let target_str = match field {
+            HoverCardField::Title => title_str,
+            HoverCardField::Subhead => subhead_str,
+            HoverCardField::Metrics => metrics_str,
+            HoverCardField::Badges => badges_str,
+        };
+        if text.0 != target_str {
+            target_str.clone_into(&mut text.0);
+        }
+    }
+}
+
 #[allow(
     clippy::type_complexity,
     reason = "Hover card UI update requires window, camera, target components, and node queries"
@@ -352,7 +401,7 @@ pub fn update_hover_card_ui(
     };
 
     let Some(hovered_entity) = player_state.hovered_entity else {
-        card_node.display = Display::None;
+        hide_hover_card(&mut card_node);
         return;
     };
 
@@ -374,48 +423,57 @@ pub fn update_hover_card_ui(
         opt_probe,
     )) = bodies_query.get(hovered_entity)
     else {
-        card_node.display = Display::None;
+        hide_hover_card(&mut card_node);
         return;
     };
 
     let Ok(window) = windows.single() else {
-        card_node.display = Display::None;
+        hide_hover_card(&mut card_node);
         return;
     };
 
     let Ok((camera_comp, cam_gt)) = camera_query.single() else {
-        card_node.display = Display::None;
+        hide_hover_card(&mut card_node);
         return;
     };
 
     let world_center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let screen_pos = if let Ok(sp) = camera_comp.world_to_viewport(cam_gt, world_center) {
-        sp
-    } else {
-        let cam_forward = cam_gt.forward();
-        let to_target = world_center - cam_gt.translation();
-        if to_target.dot(*cam_forward) <= 0.0 && *cam_forward != Vec3::ZERO {
-            card_node.display = Display::None;
-            return;
-        }
-        Vec2::new(window.width() * 0.5, window.height() * 0.5)
+    let Some(screen_pos) = resolve_hover_screen_pos(camera_comp, cam_gt, world_center, window)
+    else {
+        hide_hover_card(&mut card_node);
+        return;
     };
 
-    // Card dimensions for positioning
-    let card_w = opt_computed.map_or(260.0, |c| c.size().x).max(220.0);
-    let card_h = opt_computed.map_or(130.0, |c| c.size().y).max(100.0);
+    let card_w = opt_computed
+        .map_or(260.0, |c| c.size().x * c.inverse_scale_factor())
+        .max(220.0);
+    let card_h = opt_computed
+        .map_or(130.0, |c| c.size().y * c.inverse_scale_factor())
+        .max(100.0);
     let window_size = Vec2::new(window.width(), window.height());
     let clamped_pos =
         compute_clamped_card_position(screen_pos, Vec2::new(card_w, card_h), window_size);
 
-    card_node.display = Display::Flex;
-    card_node.left = Val::Px(clamped_pos.x);
-    card_node.top = Val::Px(clamped_pos.y);
+    if card_node.display != Display::Flex {
+        card_node.display = Display::Flex;
+    }
+    let target_left = Val::Px(clamped_pos.x);
+    if card_node.left != target_left {
+        card_node.left = target_left;
+    }
+    let target_top = Val::Px(clamped_pos.y);
+    if card_node.top != target_top {
+        card_node.top = target_top;
+    }
 
-    // Format fields
     let title_str = body.name.clone();
     let subhead_str = format!("[ {} ]", resolve_body_type_label(body.body_type));
-    let metrics_str = format_hover_metrics(pos.0, vel.0, mass.0, rad.0, temp.0);
+    let (rel_pos, rel_vel) = opt_satellite
+        .and_then(|sat| bodies_query.get(sat.parent).ok())
+        .map_or((pos.0, vel.0), |(p_pos, p_vel, ..)| {
+            (pos.0 - p_pos.0, vel.0 - p_vel.0)
+        });
+    let metrics_str = format_hover_metrics(rel_pos, rel_vel, mass.0, rad.0, temp.0);
     let mut badges_str = collect_hover_badges(
         opt_climate,
         opt_bio,
@@ -434,12 +492,11 @@ pub fn update_hover_card_ui(
         }
     }
 
-    for (field, mut text) in &mut text_query {
-        match field {
-            HoverCardField::Title => text.0.clone_from(&title_str),
-            HoverCardField::Subhead => text.0.clone_from(&subhead_str),
-            HoverCardField::Metrics => text.0.clone_from(&metrics_str),
-            HoverCardField::Badges => text.0.clone_from(&badges_str),
-        }
-    }
+    sync_hover_card_text(
+        &mut text_query,
+        &title_str,
+        &subhead_str,
+        &metrics_str,
+        &badges_str,
+    );
 }

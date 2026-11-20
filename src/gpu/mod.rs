@@ -5,11 +5,12 @@ pub mod compute_node;
 pub mod gmc_collapse;
 pub mod gmc_far_field;
 pub mod gmc_fluid;
+pub mod gmc_volume;
 pub mod nbody_galaxy;
 pub mod particle_pipeline;
 
 use bevy::prelude::*;
-use bevy::render::{ExtractSchedule, Render, RenderApp};
+use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
 
 use crate::gpu::compute_node::*;
 use crate::gpu::particle_pipeline::*;
@@ -59,7 +60,8 @@ impl Plugin for GpuSimPlugin {
                 (
                     step_gpu_simulation_render_world,
                     crate::gpu::nbody_galaxy::step_galaxy_simulation_render_world,
-                ),
+                )
+                    .in_set(RenderSystems::PrepareResources),
             );
     }
 }

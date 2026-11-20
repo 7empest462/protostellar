@@ -17,7 +17,8 @@ pub fn spawn_trophies_panel(root: &mut ChildSpawnerCommands) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.015, 0.02, 0.05, 0.95)),
-        Pickable::IGNORE,
+        bevy::ui::FocusPolicy::Block,
+        bevy::picking::hover::Hovered::default(),
         BorderColor::all(Color::srgba(0.95, 0.75, 0.25, 0.90)),
         TrophiesPanelElement::Container,
     ))

@@ -250,7 +250,7 @@ impl Material for AtmosphereMaterial {
     }
 }
 
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct RingUniforms {
     pub inner_radius: f32,
     pub outer_radius: f32,
@@ -259,8 +259,10 @@ pub struct RingUniforms {
     pub ring_color: Vec4,
     /// xyz: unit vector towards central star in ring local space, w: planet_radius_ratio (1.0 / ring_ratio)
     pub star_dir_local: Vec4,
-    /// x: ambient nightside floor (e.g. 0.03), y: penumbra softness width (e.g. 0.025), z: shadow depth, w: reserved
+    /// x: ambient nightside floor (e.g. 0.03), y: penumbra softness width (e.g. 0.025), z: shadow depth, w: elapsed_secs
     pub shadow_params: Vec4,
+    /// xyz: unit vector towards nearest star in world space, w: host rotational oblateness (0.0..0.15)
+    pub star_dir_world_and_oblateness: Vec4,
 }
 
 impl Default for RingUniforms {
@@ -273,6 +275,7 @@ impl Default for RingUniforms {
             ring_color: Vec4::ONE,
             star_dir_local: Vec4::new(0.0, 1.0, 0.0, 0.35),
             shadow_params: Vec4::new(0.03, 0.025, 0.97, 0.0),
+            star_dir_world_and_oblateness: Vec4::new(0.0, 1.0, 0.0, 0.0),
         }
     }
 }
@@ -304,18 +307,34 @@ impl Material for RingMaterial {
 }
 
 /// GPU uniforms for the relativistic black hole accretion disk and gravitational lensing arc shader.
-#[derive(Clone, Default, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct BlackHoleDiskUniforms {
     pub inner_radius: f32,
     pub outer_radius: f32,
     pub schwa_radius: f32,
     pub time: f32,
     pub disk_color: Vec4,
+    /// xyz: unit spin axis in local space, w: dimensionless Kerr spin a_* in (-1.0, 1.0)
     pub spin_axis: Vec4,
     /// xyz: unit camera direction in local BH space, w: cos(inclination)
     pub cam_dir_local: Vec4,
-    /// xyz: screen-up direction (z_screen_col) in local BH space, w: unused
+    /// xyz: screen-up direction (z_screen_col) in local BH space, w: accretion_rate multiplier
     pub cam_up_local: Vec4,
+}
+
+impl Default for BlackHoleDiskUniforms {
+    fn default() -> Self {
+        Self {
+            inner_radius: 0.16,
+            outer_radius: 1.0,
+            schwa_radius: 0.055,
+            time: 0.0,
+            disk_color: Vec4::new(1.0, 0.90, 0.70, 1.0),
+            spin_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
+            cam_dir_local: Vec4::new(0.0, 0.0, 1.0, 0.0),
+            cam_up_local: Vec4::new(0.0, 1.0, 0.0, 1.0),
+        }
+    }
 }
 
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
@@ -344,7 +363,7 @@ impl Material for BlackHoleDiskMaterial {
     }
 }
 
-#[derive(Clone, Default, ShaderType, Debug)]
+#[derive(Clone, Default, ShaderType, Debug, PartialEq)]
 pub struct SkyboxUniforms {
     /// x: time (seconds), y: scenario_blend (0.0 = Milky Way, 1.0 = Early Universe), z: exposure, w: star_twinkle
     pub params: Vec4,
@@ -400,7 +419,7 @@ impl Material for SkyboxMaterial {
 }
 
 /// GPU uniform parameters for relativistic polar jets, synchrotron light cones, and Doppler beaming.
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct RelativisticJetUniforms {
     /// x: elapsed time (s), y: lorentz factor gamma (>= 1.0), z: opening angle (rad), w: jet length (AU)
     pub jet_params: Vec4,
@@ -457,7 +476,7 @@ impl Material for RelativisticJetMaterial {
 }
 
 /// GPU uniform parameters for cometary coma fluorescence, solar wind ion streamers, and curved dust fan.
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct CometTailUniforms {
     /// x: elapsed time (s), y: tail length (AU), z: coma radius (AU), w: insolation flux factor
     pub params: Vec4,
@@ -514,7 +533,7 @@ impl Material for CometTailMaterial {
 }
 
 /// GPU uniform parameters for volumetric supernova blast waves, expanding Rayleigh-Taylor shock shells, and prompt core flashes.
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct SupernovaUniforms {
     /// x: elapsed time (s), y: max lifespan (s), z: current radius (AU), w: blast speed (AU/s)
     pub params: Vec4,
@@ -573,7 +592,7 @@ impl Material for SupernovaMaterial {
     }
 }
 
-#[derive(Clone, ShaderType, Debug)]
+#[derive(Clone, ShaderType, Debug, PartialEq)]
 pub struct VolumetricNebulaUniforms {
     pub box_min: Vec3,
     pub step_count: u32,
@@ -604,11 +623,15 @@ impl Default for VolumetricNebulaUniforms {
     }
 }
 
-/// Custom Bevy material for 3D raymarched Giant Molecular Clouds with dynamic ionization cavities.
+/// Custom Bevy material for 3D raymarched Giant Molecular Clouds with dynamic ionization cavities
+/// and live `96^3` GPU fluid density volume sampling.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct VolumetricNebulaMaterial {
     #[uniform(0)]
     pub uniforms: VolumetricNebulaUniforms,
+    #[texture(1, dimension = "3d")]
+    #[sampler(2)]
+    pub density_volume: Option<Handle<Image>>,
 }
 
 impl Material for VolumetricNebulaMaterial {

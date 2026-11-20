@@ -121,24 +121,23 @@ fn fragment(
     let base_wisps = fbm2(uv1 + 1.9 * r_warp);
     let wisps = mix(base_wisps, base_wisps * (0.55 + 0.85 * grav_spiral), select(0.35, 0.70, is_massive));
 
-    // 3. Dynamic Annular Planetary Gap Clearing
+    // 3. Dynamic Annular Planetary Gap Clearing (scaled to disk outer radius)
     var gap_clearance: f32 = 1.0;
     if (is_massive) {
-        // Circum-nuclear disk resonant gaps carved by S-Cluster stars, black hole, and primordial worlds:
-        // Micro-Quasar alpha (88 AU), Star alpha (120 AU), Prime-b (155 AU), Star beta (190 AU), Prime-c (225 AU), Star gamma (260 AU)
-        let g1 = smoothstep(0.0, 4.5, abs(r_cyl - 88.0));
-        let g2 = smoothstep(0.0, 5.0, abs(r_cyl - 120.0));
-        let g3 = smoothstep(0.0, 4.0, abs(r_cyl - 155.0));
-        let g4 = smoothstep(0.0, 4.5, abs(r_cyl - 190.0));
-        let g5 = smoothstep(0.0, 3.5, abs(r_cyl - 225.0));
-        let g6 = smoothstep(0.0, 4.0, abs(r_cyl - 260.0));
+        let m_scale = max(outer_r / 280.0, 0.1);
+        let g1 = smoothstep(0.0, 4.5 * m_scale, abs(r_cyl - 88.0 * m_scale));
+        let g2 = smoothstep(0.0, 5.0 * m_scale, abs(r_cyl - 120.0 * m_scale));
+        let g3 = smoothstep(0.0, 4.0 * m_scale, abs(r_cyl - 155.0 * m_scale));
+        let g4 = smoothstep(0.0, 4.5 * m_scale, abs(r_cyl - 190.0 * m_scale));
+        let g5 = smoothstep(0.0, 3.5 * m_scale, abs(r_cyl - 225.0 * m_scale));
+        let g6 = smoothstep(0.0, 4.0 * m_scale, abs(r_cyl - 260.0 * m_scale));
         gap_clearance = clamp(g1 * g2 * g3 * g4 * g5 * g6, 0.20, 1.0);
     } else {
-        // Solar system planetary gaps
-        let jupiter_gap = smoothstep(0.0, 1.6, abs(r_cyl - 8.5));
-        let saturn_gap = smoothstep(0.0, 2.0, abs(r_cyl - 15.5));
-        let uranus_gap = smoothstep(0.0, 2.4, abs(r_cyl - 28.0));
-        let neptune_gap = smoothstep(0.0, 2.8, abs(r_cyl - 40.0));
+        let d_scale = max(outer_r / 45.0, 0.004);
+        let jupiter_gap = smoothstep(0.0, 1.6 * d_scale, abs(r_cyl - 8.5 * d_scale));
+        let saturn_gap = smoothstep(0.0, 2.0 * d_scale, abs(r_cyl - 15.5 * d_scale));
+        let uranus_gap = smoothstep(0.0, 2.4 * d_scale, abs(r_cyl - 28.0 * d_scale));
+        let neptune_gap = smoothstep(0.0, 2.8 * d_scale, abs(r_cyl - 40.0 * d_scale));
         gap_clearance = clamp(jupiter_gap * saturn_gap * uranus_gap * neptune_gap, 0.15, 1.0);
     }
 
@@ -185,10 +184,14 @@ fn fragment(
             color = mix(vec3<f32>(0.32, 0.52, 0.98), vec3<f32>(0.55, 0.35, 0.92), t);
         }
     } else {
-        let temp = 280.0 * pow(max(r_cyl, 0.4), -0.5);
-        if (r_cyl < 25.0) {
+        let star_lum = max(gas.star_params.z, 0.001);
+        let lum_quart = pow(star_lum, 0.25);
+        let temp = 280.0 * lum_quart * pow(max(r_cyl, 0.05), -0.5);
+        let frost_scale = sqrt(star_lum);
+        let r_scaled = r_cyl / max(frost_scale, 0.03);
+        if (r_scaled < 25.0 || temp > 260.0) {
             color = vec3<f32>(1.0, 0.72, 0.38);
-        } else if (temp > 180.0 || r_cyl < 55.0) {
+        } else if (temp > 150.0 || r_scaled < 55.0) {
             color = vec3<f32>(0.32, 0.88, 0.82);
         } else {
             color = vec3<f32>(0.42, 0.32, 0.82);
@@ -197,7 +200,7 @@ fn fragment(
 
     // 6. 3D Volumetric Flared Scale-Height Vertical Attenuation
     let h_scale = select(
-        max(0.08 * pow(r_cyl, 1.15), 0.18),
+        max(0.08 * pow(max(r_cyl, 1e-4), 1.15), 0.18),
         max(0.038 * r_cyl, 1.5),
         is_massive
     );

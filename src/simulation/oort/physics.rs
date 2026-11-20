@@ -45,8 +45,9 @@ pub fn evaluate_galactic_tide_acceleration(
     -omega_sq * scale * z_gal * pole_hat
 }
 
-/// Evaluates the secular change in eccentricity per orbit induced by Galactic tides:
-/// $$\frac{de}{dt} \approx \frac{15}{8} \frac{\Omega_{\text{tide}}^2}{\omega_{\text{orb}}} e \sqrt{1 - e^2} \sin(2\omega) \sin^2(i_{\text{gal}})$$
+/// Evaluates the secular change in eccentricity induced by planar Galactic disk tides
+/// (Heisler & Tremaine 1986):
+/// $$\frac{de}{dt} \approx \frac{5}{4} \frac{\Omega_{\text{tide}}^2}{n} e \sqrt{1 - e^2} \sin(2\omega_{\text{gal}}) \sin^2(i_{\text{gal}})$$
 pub fn evaluate_galactic_tide_secular_de(
     semi_major_axis_au: f64,
     eccentricity: f64,
@@ -67,7 +68,43 @@ pub fn evaluate_galactic_tide_secular_de(
     let sin_2omega = (2.0 * argument_of_periapsis_rad).sin();
     let sin2_i = galactic_inclination_rad.sin().powi(2);
 
-    (15.0 / 8.0) * (omega_sq / mean_motion) * eccentricity * (1.0 - e2).sqrt() * sin_2omega * sin2_i
+    (5.0 / 4.0) * (omega_sq / mean_motion) * eccentricity * (1.0 - e2).sqrt() * sin_2omega * sin2_i
+}
+
+/// Projects orbital angular momentum and eccentricity vectors into the Galactic pole frame
+/// returning `(i_gal_rad, omega_gal_rad)`.
+fn compute_galactic_elements(
+    rel_pos: DVec3,
+    rel_vel: DVec3,
+    mu: f64,
+    galactic_pole_dir: DVec3,
+    fallback_i: f64,
+    fallback_w: f64,
+) -> (f64, f64) {
+    let n_gal = galactic_pole_dir.normalize_or_zero();
+    let h_vec = rel_pos.cross(rel_vel);
+    let h = h_vec.length();
+    let r = rel_pos.length();
+    if n_gal == DVec3::ZERO || h <= 1e-12 || r <= 1e-9 || mu <= 1e-12 {
+        return (fallback_i, fallback_w);
+    }
+    let h_hat = h_vec / h;
+    let i_gal = (h_hat.dot(n_gal)).clamp(-1.0, 1.0).acos();
+    let e_vec = rel_vel.cross(h_vec) / mu - rel_pos / r;
+    let e_len = e_vec.length();
+    if e_len <= 1e-6 {
+        return (i_gal, fallback_w);
+    }
+    let node_gal = n_gal.cross(h_hat);
+    let node_len = node_gal.length();
+    if node_len <= 1e-8 {
+        return (i_gal, fallback_w);
+    }
+    let node_hat = node_gal / node_len;
+    let e_hat = e_vec / e_len;
+    let cos_w = node_hat.dot(e_hat).clamp(-1.0, 1.0);
+    let sin_w = node_hat.cross(e_hat).dot(h_hat);
+    (i_gal, sin_w.atan2(cos_w).rem_euclid(2.0 * PI))
 }
 
 struct CometStepResult {
@@ -76,6 +113,10 @@ struct CometStepResult {
     is_sublimating: bool,
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Oort comet evolution integrates Galactic tides, Kozai-Heisler torque, and sublimation"
+)]
 fn update_single_oort_comet(
     entity: Entity,
     pos: DVec3,
@@ -86,7 +127,6 @@ fn update_single_oort_comet(
     star_mass: f64,
     dt_years: f64,
     config: &OortCloudConfig,
-    eff_scale: f64,
     comet: &mut OortComet,
     opt_comp: Option<&mut Composition>,
     tide_state: &mut GalacticTideState,
@@ -95,27 +135,71 @@ fn update_single_oort_comet(
     let r_vec = pos - star_pos;
     let dist_au = r_vec.length();
 
-    // 1. Apply Galactic tidal acceleration
+    // 1. Apply physical Cartesian Galactic tidal acceleration (scale = tide_strength_scale, NOT secular_accel_factor)
     let a_tide = evaluate_galactic_tide_acceleration(
         pos,
         star_pos,
         config.galactic_pole_dir,
         config.galactic_rho_0,
-        eff_scale,
+        config.tide_strength_scale,
     );
     *vel += a_tide * dt_years;
 
-    // 2. Track current Keplerian orbital elements relative to the host star
+    // 2. Apply accelerated Heisler-Tremaine secular orbital-element torque (conserving energy/a!)
+    let mut rel_vel = *vel - star_vel;
+    let mu = G_ASTRO * (star_mass + mass_solar).max(1e-9);
+    if config.secular_accel_factor > 1.0
+        && let Some(orb_pre) =
+            state_vectors_to_orbital_elements(r_vec, rel_vel, star_mass, mass_solar)
+        && orb_pre.eccentricity < 0.9999
+        && orb_pre.semi_major_axis.is_finite()
+        && orb_pre.semi_major_axis > 1e-4
+        && dist_au > 1e-6
+    {
+        let (i_gal, omega_gal) = compute_galactic_elements(
+            r_vec,
+            rel_vel,
+            mu,
+            config.galactic_pole_dir,
+            orb_pre.inclination,
+            orb_pre.argument_of_periapsis,
+        );
+        let de_dt = evaluate_galactic_tide_secular_de(
+            orb_pre.semi_major_axis,
+            orb_pre.eccentricity,
+            omega_gal,
+            i_gal,
+            star_mass,
+            config.galactic_rho_0,
+        );
+        let sec_dt = dt_years * (config.secular_accel_factor - 1.0) * config.tide_strength_scale;
+        let new_e = (orb_pre.eccentricity + de_dt * sec_dt).clamp(0.01, 0.9995);
+        let target_h2 = mu * orb_pre.semi_major_axis * (1.0 - new_e * new_e).max(1e-4);
+        let v_sq = rel_vel.length_squared();
+        let target_vt_sq = (target_h2 / (dist_au * dist_au)).min(v_sq);
+        let r_hat = r_vec / dist_au;
+        let vr = rel_vel.dot(r_hat);
+        let vt_vec = rel_vel - r_hat * vr;
+        let vt_mag = vt_vec.length();
+        if vt_mag > 1e-9 && v_sq > 1e-12 {
+            let new_vt = target_vt_sq.sqrt();
+            let new_vr_mag = (v_sq - target_vt_sq).max(0.0).sqrt();
+            let new_vr_sign = if vr.abs() > 1e-10 { vr.signum() } else { 1.0 };
+            let updated_rel_v = (vt_vec / vt_mag) * new_vt + r_hat * (new_vr_sign * new_vr_mag);
+            if updated_rel_v.is_finite() {
+                rel_vel = updated_rel_v;
+                *vel = star_vel + rel_vel;
+            }
+        }
+    }
+
+    // 3. Track current Keplerian orbital elements relative to the host star
     let (a, e, q) = if let Some(orb) =
-        state_vectors_to_orbital_elements(r_vec, *vel - star_vel, star_mass, mass_solar)
+        state_vectors_to_orbital_elements(r_vec, rel_vel, star_mass, mass_solar)
     {
         let a_val = orb.semi_major_axis;
         let e_val = orb.eccentricity.clamp(0.0, 0.99999);
-        let q_val = if a_val.is_finite() && a_val > 0.0 {
-            a_val * (1.0 - e_val)
-        } else {
-            dist_au
-        };
+        let q_val = orb.periapsis;
         comet.inclination_rad = orb.inclination;
         comet.argument_of_periapsis_rad = orb.argument_of_periapsis;
         (a_val, e_val, q_val)
@@ -127,7 +211,7 @@ fn update_single_oort_comet(
     comet.eccentricity = e;
     comet.current_perihelion_au = q;
 
-    // 3. Detect comets deflected into the planetary system
+    // 4. Detect comets deflected into the planetary system
     let is_infall = q <= config.sublimation_distance_au;
     let is_grazer = q <= config.sungrazer_threshold_au;
 
@@ -144,7 +228,7 @@ fn update_single_oort_comet(
     }
     comet.is_sungrazer = is_grazer;
 
-    // 4. Volatile ice sublimation when approaching inner solar system
+    // 5. Volatile ice sublimation when approaching inner solar system
     let is_sublimating = dist_au <= config.sublimation_distance_au;
     step_cometary_sublimation(comet, opt_comp, dist_au, dt_years, is_sublimating);
 
@@ -172,8 +256,8 @@ fn step_cometary_sublimation(
         let loss_kg = f64::from(rate) * dt_sec;
         comet.cumulative_volatile_loss_kg += loss_kg;
 
-        if loss_kg > 1.0e9 {
-            let delta_ice = ((loss_kg / 1.0e17) as f32).clamp(1e-6, 5e-4);
+        let delta_ice = ((loss_kg / 1.0e17) as f32).clamp(0.0, 5e-4);
+        if delta_ice > 0.0 {
             comet.volatile_ice_fraction = (comet.volatile_ice_fraction - delta_ice).max(0.01);
             if let Some(comp) = opt_comp {
                 comp.ice_frac = (comp.ice_frac - f64::from(delta_ice)).max(0.01);
@@ -239,8 +323,6 @@ pub fn step_oort_galactic_tides_system(
         return;
     }
 
-    let eff_scale = config.tide_strength_scale * config.secular_accel_factor;
-
     let mut total_count = 0usize;
     let mut infalling_count = 0usize;
     let mut sublimating_count = 0usize;
@@ -258,7 +340,6 @@ pub fn step_oort_galactic_tides_system(
             star_mass,
             dt_years,
             &config,
-            eff_scale,
             &mut comet,
             opt_comp.map(Mut::into_inner),
             &mut tide_state,
@@ -282,7 +363,8 @@ pub fn step_oort_galactic_tides_system(
     tide_state.sungrazing_count = sungrazing_count;
 }
 
-/// Applies an impulsive velocity deflection from a passing field star to all Oort comets.
+/// Applies a differential tidal impulse perturbation from a passing field star to Oort comets
+/// ($\Delta\vec{v} = \Delta\vec{v}_{\text{comet}} - \Delta\vec{v}_{\text{star}}$).
 pub fn apply_stellar_flyby_perturbation(
     comets: &mut [(&mut SimPosition, &mut SimVelocity)],
     star_pos: DVec3,
@@ -295,18 +377,20 @@ pub fn apply_stellar_flyby_perturbation(
     let v_rel = flyby_velocity_au_yr.max(1.0);
     let mu = G_ASTRO * flyby_mass_solar;
     let dir = flyby_direction.normalize_or_zero();
-
-    // Impulsive velocity perturbation delta_v = 2 * G * M_star / (b * v_rel)
-    let delta_v_mag = (2.0 * mu) / (b * v_rel);
+    if dir == DVec3::ZERO {
+        return;
+    }
+    let ortho = dir.any_orthonormal_vector();
+    let b_star_vec = ortho * b;
+    let b_star_sq = b_star_vec.length_squared().max(2500.0);
+    let dv_star = -(2.0 * mu / v_rel) * (b_star_vec / b_star_sq);
 
     for (pos, vel) in comets.iter_mut() {
         let r_vec = pos.0 - star_pos;
-        let r_norm = r_vec.normalize_or_zero();
-        // Scatter along direction perpendicular to flyby track
-        let mut scatter_vec = (r_norm.cross(dir)).cross(dir).normalize_or_zero();
-        if scatter_vec == DVec3::ZERO {
-            scatter_vec = dir.any_orthonormal_vector();
-        }
-        vel.0 += scatter_vec * delta_v_mag;
+        let r_perp = r_vec - dir * r_vec.dot(dir);
+        let b_comet_vec = b_star_vec - r_perp;
+        let b_comet_sq = b_comet_vec.length_squared().max(2500.0);
+        let dv_comet = -(2.0 * mu / v_rel) * (b_comet_vec / b_comet_sq);
+        vel.0 += dv_comet - dv_star;
     }
 }

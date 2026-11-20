@@ -6,13 +6,17 @@ use bevy::prelude::*;
 use crate::simulation::components::*;
 
 /// Marker component for an interstellar rogue body passing through the system.
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct RogueInterloper {
     pub initial_velocity: DVec3,
 }
 
 /// Marker component for cometary hazard impactors.
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct HazardComet;
 
 /// Spawns an interstellar brown dwarf on a hyperbolic flyby trajectory.
@@ -29,7 +33,7 @@ pub fn spawn_rogue_star(commands: &mut Commands, intensity: f32) -> Entity {
                 name: "Rogue Interloper (Nemesis-B)".to_string(),
             },
             Mass(mass_sol),
-            Radius(0.082), // ~0.08 R☉ (~0.9 R_Jup)
+            Radius(0.082 * crate::utils::constants::SOLAR_RADIUS_AU), // ~0.082 R☉ (~0.8 R_Jup)
             SimPosition(start_pos),
             SimVelocity(entry_vel),
             SimAcceleration::default(),

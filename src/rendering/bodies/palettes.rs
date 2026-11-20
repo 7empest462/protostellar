@@ -151,11 +151,11 @@ pub fn compute_gas_giant_palette(mass_solar: f64, temp_k: f64, name: &str) -> Co
 /// Calculates ring albedo and RGB color based on volatile composition.
 pub fn calc_ring_color(ice_fraction: f32) -> Vec4 {
     if ice_fraction >= 0.70 {
-        Vec4::new(0.96, 0.97, 1.0, 0.95)
+        Vec4::new(0.98, 0.94, 0.86, 0.95)
     } else if ice_fraction >= 0.35 {
-        Vec4::new(0.85, 0.78, 0.68, 0.85)
+        Vec4::new(0.86, 0.78, 0.66, 0.85)
     } else {
-        Vec4::new(0.38, 0.35, 0.32, 0.65)
+        Vec4::new(0.42, 0.38, 0.33, 0.65)
     }
 }
 

@@ -20,6 +20,42 @@ pub fn compute_mutual_inclination(h_inner: DVec3, h_outer: DVec3) -> f64 {
     cos_i.acos()
 }
 
+/// Computes the mutual argument of periapsis $\omega_{\text{mut}}$ of the inner orbit measured
+/// from the mutual ascending node $\hat{n}_{\text{mut}} = \hat{h}_{\text{outer}} \times \hat{h}_{\text{inner}}$.
+pub fn compute_mutual_argument_of_periapsis(
+    rel_pos: DVec3,
+    rel_vel: DVec3,
+    h_outer: DVec3,
+    mu: f64,
+    fallback_omega: f64,
+) -> f64 {
+    let r = rel_pos.length();
+    if r <= 1e-9 || mu <= 1e-12 {
+        return fallback_omega;
+    }
+    let h_inner = rel_pos.cross(rel_vel);
+    let h_in_len = h_inner.length();
+    if h_in_len <= 1e-12 || h_outer.length_squared() <= 1e-24 {
+        return fallback_omega;
+    }
+    let e_vec = rel_vel.cross(h_inner) / mu - rel_pos / r;
+    let e_len = e_vec.length();
+    if e_len <= 1e-6 {
+        return fallback_omega;
+    }
+    let n_mut = h_outer.cross(h_inner);
+    let n_len = n_mut.length();
+    if n_len <= 1e-8 {
+        return fallback_omega;
+    }
+    let n_hat = n_mut / n_len;
+    let h_hat = h_inner / h_in_len;
+    let e_hat = e_vec / e_len;
+    let cos_w = n_hat.dot(e_hat).clamp(-1.0, 1.0);
+    let sin_w = n_hat.cross(e_hat).dot(h_hat);
+    sin_w.atan2(cos_w).rem_euclid(2.0 * PI)
+}
+
 /// Returns whether a given mutual inclination angle (in radians) activates the Kozai-Lidov resonance.
 ///
 /// Resonance is active when: $i_{\text{crit}} < i_{\text{mut}} < \pi - i_{\text{crit}}$,
@@ -51,7 +87,7 @@ pub fn compute_min_periastron(semi_major_axis_au: f64, e_max: f64) -> f64 {
 
 /// Computes the secular Kozai-Lidov cycle timescale $\tau_{\text{KL}}$ in years:
 ///
-/// $$\tau_{\text{KL}} \approx \frac{2 P_2^2}{3 \pi P_1} \frac{M_0 + m_1 + m_2}{m_2} (1 - e_2^2)^{3/2}$$
+/// $$\tau_{\text{KL}} = \frac{1}{2\pi} \frac{P_2^2}{P_1} \frac{M_0 + m_1 + m_2}{m_2} (1 - e_2^2)^{3/2}$$
 pub fn compute_kozai_timescale(
     a_inner_au: f64,
     a_outer_au: f64,
@@ -73,7 +109,7 @@ pub fn compute_kozai_timescale(
     let e_term = (1.0 - e_outer.clamp(0.0, 0.99).powi(2)).powf(1.5);
     let mass_ratio = m_total / m_perturber_solar;
 
-    let tau_kl = (2.0 / (3.0 * PI)) * (p_outer * p_outer / p_inner) * mass_ratio * e_term;
+    let tau_kl = (1.0 / (2.0 * PI)) * (p_outer * p_outer / p_inner) * mass_ratio * e_term;
     tau_kl.max(1e-3)
 }
 
@@ -99,8 +135,9 @@ pub fn compute_gr_precession_timescale(
     (2.0 * PI) / rate_rad_yr
 }
 
-/// Evaluates General Relativistic 1PN resonance suppression / detuning:
-/// Returns `(ratio, is_suppressed, effective_e_max)`.
+/// Evaluates General Relativistic 1PN resonance suppression / detuning by comparing
+/// angular rates ($\dot{\varpi}_{\text{GR}} = 2\pi / \tau_{\text{GR}}$ vs $\dot{\omega}_{\text{KL}} = 1 / \tau_{\text{KL}}$).
+/// Returns `(rate_ratio, is_suppressed, effective_e_max)`.
 pub fn compute_gr_resonance_suppression(
     tau_kl_yr: f64,
     tau_gr_yr: f64,
@@ -110,7 +147,8 @@ pub fn compute_gr_resonance_suppression(
         return (0.0, false, unsuppressed_e_max);
     }
 
-    let ratio = tau_kl_yr / tau_gr_yr;
+    // Rate ratio: (2 * PI / tau_gr) / (1 / tau_kl) = (2 * PI * tau_kl) / tau_gr
+    let ratio = (2.0 * PI * tau_kl_yr) / tau_gr_yr;
     let is_suppressed = ratio > 1.0;
 
     let effective_e_max = if is_suppressed {

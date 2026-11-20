@@ -16,6 +16,104 @@ use crate::utils::constants::*;
 
 #[allow(
     clippy::too_many_arguments,
+    reason = "Hayashi pre-main-sequence contraction computes temperature, radius, and ZAMS ignition"
+)]
+fn advance_pre_main_sequence_contraction(
+    entity: Entity,
+    mass: &mut Mass,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    lum: &mut Luminosity,
+    ignition: &mut IgnitionState,
+    body: &mut CelestialBody,
+    opt_evo: &mut Option<Mut<'_, StellarEvolutionState>>,
+    dt_yr: f64,
+    elapsed_years: f64,
+    commands: &mut Commands,
+    ignition_events: &mut MessageWriter<StarIgnitionEvent>,
+    is_genesis: bool,
+    is_gmc: bool,
+) {
+    let heating_rate_per_yr = if is_genesis {
+        2.0e5 * mass.0 * 0.0024
+    } else {
+        2.0e5 * mass.0
+    };
+    ignition.core_temperature += heating_rate_per_yr * dt_yr;
+
+    let ignition_threshold = 1.0e7;
+    ignition.fusion_fraction =
+        (ignition.core_temperature / ignition_threshold).clamp(0.0, 1.0) as f32;
+
+    let ff = f64::from(ignition.fusion_fraction);
+
+    if mass.0 < 0.08 && elapsed_years >= 30.0 && !is_genesis {
+        body.body_type = BodyType::BrownDwarf;
+    } else if mass.0 >= 0.08 && ff > 0.40 && ff < 0.98 && body.body_type == BodyType::Protostar {
+        if mass.0 < 2.0 {
+            body.body_type = BodyType::TTauriStar;
+        } else if mass.0 < 8.0 {
+            body.body_type = BodyType::HerbigAeBeStar;
+        }
+    }
+
+    let target_surface_temp = if mass.0 < 0.08 {
+        1800.0 + 1000.0 * ff
+    } else if mass.0 < 0.45 {
+        2600.0 + 1200.0 * ff
+    } else if mass.0 < 8.0 {
+        if is_genesis {
+            let contraction_progress = ((ff - 0.68) / (1.0 - 0.68)).clamp(0.0, 1.0);
+            let final_temp = 5778.0 * mass.0.powf(0.505);
+            4800.0 + (final_temp - 4800.0) * contraction_progress
+        } else {
+            3200.0 + 2578.0 * ff
+        }
+    } else {
+        8000.0 + 20000.0 * ff
+    };
+    temp.0 = target_surface_temp;
+    radius.0 = if mass.0 < 0.08 {
+        (SOLAR_RADIUS_AU * (0.10 + 0.15 * (1.0 - ff))).max(0.082 * SOLAR_RADIUS_AU)
+    } else if is_genesis {
+        let r_ms = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.20);
+        let r_initial = SOLAR_RADIUS_AU * 2.75;
+        let contraction_progress = ((ff - 0.68) / (1.0 - 0.68)).clamp(0.0, 1.0);
+        r_initial + (r_ms - r_initial) * contraction_progress
+    } else {
+        SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ff))
+    };
+    lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4);
+
+    // Sub-stellar objects (< 0.08 M_sun) cannot ignite sustained core hydrogen fusion
+    let should_ignite = mass.0 >= 0.08
+        && if is_genesis {
+            ignition.core_temperature >= ignition_threshold || elapsed_years >= 6_000.0
+        } else {
+            ignition.core_temperature >= ignition_threshold || elapsed_years >= 30.0
+        };
+
+    if should_ignite {
+        ignite_protostar_to_zams(
+            entity,
+            mass,
+            radius,
+            temp,
+            lum,
+            ignition,
+            body,
+            opt_evo,
+            commands,
+            ignition_events,
+            is_genesis,
+            is_gmc,
+            ignition_threshold,
+        );
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
     reason = "Protostar ignition system manages all physical and electromagnetic stellar state components"
 )]
 pub fn step_protostar_ignition_and_limits(
@@ -51,78 +149,22 @@ pub fn step_protostar_ignition_and_limits(
             config.gas_density_scale = config.gas_density_scale.min(time_decay);
         }
     } else {
-        // Extend Genesis Hayashi contraction (~5,000 yr at 1.33 M_sun from 6.8e6 K to 1.0e7 K)
-        // so particles have an extended accretion window before protostellar ignition sweeps the inner disk.
-        let heating_rate_per_yr = if is_genesis {
-            2.0e5 * mass.0 * 0.0024
-        } else {
-            2.0e5 * mass.0
-        };
-        ignition.core_temperature += heating_rate_per_yr * dt_yr;
-
-        let ignition_threshold = 1.0e7;
-        ignition.fusion_fraction =
-            (ignition.core_temperature / ignition_threshold).clamp(0.0, 1.0) as f32;
-
-        let ff = f64::from(ignition.fusion_fraction);
-
-        // Pre-Main-Sequence (PMS) intermediate classification during contraction
-        if ff > 0.40 && ff < 0.98 && body.body_type == BodyType::Protostar {
-            if mass.0 < 2.0 {
-                body.body_type = BodyType::TTauriStar;
-            } else if mass.0 < 8.0 {
-                body.body_type = BodyType::HerbigAeBeStar;
-            }
-        }
-
-        let target_surface_temp = if mass.0 < 0.08 {
-            1800.0 + 1000.0 * ff
-        } else if mass.0 < 0.45 {
-            2600.0 + 1200.0 * ff
-        } else if mass.0 < 8.0 {
-            if is_genesis {
-                let contraction_progress = ((ff - 0.68) / (1.0 - 0.68)).clamp(0.0, 1.0);
-                let final_temp = 5778.0 * mass.0.powf(0.505);
-                4800.0 + (final_temp - 4800.0) * contraction_progress
-            } else {
-                3200.0 + 2578.0 * ff
-            }
-        } else {
-            8000.0 + 20000.0 * ff
-        };
-        temp.0 = target_surface_temp;
-        radius.0 = if is_genesis {
-            let r_ms = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.20);
-            let r_initial = SOLAR_RADIUS_AU * 2.75;
-            let contraction_progress = ((ff - 0.68) / (1.0 - 0.68)).clamp(0.0, 1.0);
-            r_initial + (r_ms - r_initial) * contraction_progress
-        } else {
-            SOLAR_RADIUS_AU * (1.0 + 2.0 * (1.0 - ff))
-        };
-
-        let should_ignite = if is_genesis {
-            ignition.core_temperature >= ignition_threshold || elapsed_years >= 6_000.0
-        } else {
-            ignition.core_temperature >= ignition_threshold || elapsed_years >= 30.0
-        };
-
-        if should_ignite {
-            ignite_protostar_to_zams(
-                entity,
-                mass,
-                radius,
-                temp,
-                lum,
-                ignition,
-                body,
-                opt_evo,
-                commands,
-                ignition_events,
-                is_genesis,
-                is_gmc,
-                ignition_threshold,
-            );
-        }
+        advance_pre_main_sequence_contraction(
+            entity,
+            mass,
+            radius,
+            temp,
+            lum,
+            ignition,
+            body,
+            opt_evo,
+            dt_yr,
+            elapsed_years,
+            commands,
+            ignition_events,
+            is_genesis,
+            is_gmc,
+        );
     }
 
     apply_stellar_collapse_limits(
@@ -146,6 +188,8 @@ pub fn step_protostar_ignition_and_limits(
             classify_stellar_type_and_label(mass.0, &Composition::solar_gas());
         body.body_type = target_type;
         update_promoted_stellar_name(&mut body.name, target_type, mass.0, label);
+        ignition.is_ignited = true;
+        ignition.fusion_fraction = 1.0;
         lum.0 = mass.0.powf(3.5);
         temp.0 = (5778.0 * mass.0.powf(0.505)).clamp(2800.0, 50_000.0);
         radius.0 = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.12);
@@ -253,6 +297,24 @@ fn ignite_protostar_to_zams(
     });
 }
 
+/// Removes planetary surface/atmosphere/ring components and attaches a Kerr metric black hole.
+pub fn attach_black_hole_remnant_components(
+    commands: &mut Commands,
+    entity: Entity,
+    mass_solar: f64,
+) {
+    if let Ok(mut cmd) = commands.get_entity(entity) {
+        cmd.remove::<PlanetaryRingSystem>();
+        cmd.remove::<PlanetaryClimate>();
+        cmd.remove::<BiosphereState>();
+        cmd.try_insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
+            mass_solar,
+            0.70,
+            -bevy::math::DVec3::Y,
+        ));
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Stellar collapse limits check Chandrasekhar and TOV degenerate core mass boundaries"
@@ -293,16 +355,7 @@ fn apply_stellar_collapse_limits(
             em.jet_length_au = 6.0;
             em.synchrotron_intensity = 3.0;
         }
-        if let Ok(mut cmd) = commands.get_entity(entity) {
-            cmd.remove::<PlanetaryRingSystem>();
-            cmd.remove::<PlanetaryClimate>();
-            cmd.remove::<BiosphereState>();
-            cmd.try_insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
-                mass.0,
-                0.70,
-                bevy::math::DVec3::Y,
-            ));
-        }
+        attach_black_hole_remnant_components(commands, entity, mass.0);
         return;
     }
 
@@ -377,6 +430,7 @@ fn apply_stellar_collapse_limits(
             em.jet_length_au = 6.0;
             em.synchrotron_intensity = 3.0;
         }
+        attach_black_hole_remnant_components(commands, entity, mass.0);
     }
 }
 
@@ -426,7 +480,7 @@ pub fn update_promoted_stellar_name(
     }
 }
 
-fn classify_ignited_protostar_to_zams(
+pub(super) fn classify_ignited_protostar_to_zams(
     mass_solar: f64,
     radius: &mut Radius,
     temp: &mut Temperature,
@@ -455,7 +509,7 @@ fn classify_ignited_protostar_to_zams(
     }
 }
 
-fn clean_star_base_name(name: &str) -> &str {
+pub(super) fn clean_star_base_name(name: &str) -> &str {
     if let Some(idx) = name.find('(') {
         name.get(..idx).unwrap_or(name).trim()
     } else {
@@ -463,473 +517,4 @@ fn clean_star_base_name(name: &str) -> &str {
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Stellar evolution phases require coordinating mass, radius, luminosity, ignition, and evolution states"
-)]
-pub fn step_stellar_evolution_cycle(
-    entity: Entity,
-    mass: &mut Mass,
-    radius: &mut Radius,
-    temp: &mut Temperature,
-    lum: &mut Luminosity,
-    body: &mut CelestialBody,
-    ignition: &mut IgnitionState,
-    evo: &mut StellarEvolutionState,
-    dt_yr: f64,
-    supernova_events: &mut MessageWriter<SupernovaEvent>,
-    is_gmc: bool,
-) {
-    evo.phase_timer_years += dt_yr;
-
-    // Degenerate black holes never re-enter stellar nucleosynthesis branches
-    if body.body_type == BodyType::BlackHole || evo.phase == StellarEvolutionPhase::BlackHoleRemnant
-    {
-        step_stellar_remnant_evolution(mass, radius, temp, lum, body, evo, dt_yr);
-        return;
-    }
-
-    match evo.phase {
-        StellarEvolutionPhase::ProtostarContraction => {
-            if ignition.is_ignited && !body.body_type.is_remnant() {
-                if body.body_type == BodyType::Protostar {
-                    classify_ignited_protostar_to_zams(mass.0, radius, temp, lum, body);
-                }
-                evo.phase = StellarEvolutionPhase::MainSequence;
-                evo.hydrogen_core_fraction = 1.0;
-            }
-        }
-        StellarEvolutionPhase::MainSequence => {
-            step_main_sequence_evolution(mass, radius, temp, lum, body, evo, dt_yr, is_gmc);
-        }
-        StellarEvolutionPhase::RedGiantBranch => {
-            step_red_giant_evolution(mass, radius, temp, lum, body, evo, dt_yr, is_gmc);
-        }
-        StellarEvolutionPhase::HeliumFlashAgb => {
-            step_agb_evolution(radius, temp, lum, body, evo, dt_yr, is_gmc);
-        }
-        StellarEvolutionPhase::RedSupergiantBranch => {
-            step_red_supergiant_evolution(
-                entity,
-                mass,
-                radius,
-                temp,
-                lum,
-                body,
-                ignition,
-                evo,
-                dt_yr,
-                is_gmc,
-                supernova_events,
-            );
-        }
-        _ => step_stellar_remnant_evolution(mass, radius, temp, lum, body, evo, dt_yr),
-    }
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Main sequence evolution updates core physical observables"
-)]
-fn step_main_sequence_evolution(
-    mass: &mut Mass,
-    radius: &mut Radius,
-    temp: &mut Temperature,
-    lum: &mut Luminosity,
-    body: &mut CelestialBody,
-    evo: &mut StellarEvolutionState,
-    dt_yr: f64,
-    is_gmc: bool,
-) {
-    let target_lum = mass.0.powf(3.5);
-    let target_temp = (5778.0 * mass.0.powf(0.505)).clamp(1800.0, 50_000.0);
-    let target_rad = (SOLAR_RADIUS_AU * mass.0.powf(0.8)).clamp(0.001, 0.12);
-    let k = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
-    lum.0 += (target_lum - lum.0) * k;
-    temp.0 += (target_temp - temp.0) * k;
-    radius.0 += (target_rad - radius.0) * k;
-
-    // Re-classify accreting main-sequence or sub-stellar stars across spectral tiers
-    if !body.name.starts_with("The Sun")
-        && !body.name.contains("Genesis")
-        && !matches!(
-            body.body_type,
-            BodyType::DarkStar
-                | BodyType::PopulationIIIStar
-                | BodyType::BlueStraggler
-                | BodyType::WolfRayet
-                | BodyType::LuminousBlueVariable
-                | BodyType::QuasiStar
-        )
-    {
-        let (target_type, label) =
-            classify_stellar_type_and_label(mass.0, &Composition::solar_gas());
-        if target_type != body.body_type && target_type != BodyType::BlackHole {
-            body.body_type = target_type;
-            update_promoted_stellar_name(&mut body.name, target_type, mass.0, label);
-        }
-    }
-
-    // Massive stars (M > 25 M_sun) undergo extreme radiation-driven wind mass loss
-    // and can strip their outer hydrogen envelopes into Wolf-Rayet or LBV states near core exhaustion
-    if mass.0 >= 60.0
-        && evo.hydrogen_core_fraction < 0.22
-        && !matches!(
-            body.body_type,
-            BodyType::LuminousBlueVariable
-                | BodyType::PopulationIIIStar
-                | BodyType::DarkStar
-                | BodyType::QuasiStar
-        )
-    {
-        body.body_type = BodyType::LuminousBlueVariable;
-        let base = clean_star_base_name(&body.name);
-        body.name = format!("{base} (LBV)");
-    } else if mass.0 >= 25.0
-        && mass.0 < 60.0
-        && evo.hydrogen_core_fraction < 0.25
-        && body.body_type != BodyType::WolfRayet
-    {
-        body.body_type = BodyType::WolfRayet;
-        let base = clean_star_base_name(&body.name);
-        body.name = format!("{base} (Wolf-Rayet)");
-        temp.0 = 85_000.0;
-        lum.0 = 250_000.0;
-    }
-
-    // In cluster environments, massive stars live accelerated lifecycles (2,000 - 7,500 yr)
-    let main_seq_lifetime_yr = if is_gmc && mass.0 >= 8.0 {
-        (3500.0 * (15.0 / mass.0).powf(1.1)).clamp(1500.0, 7500.0)
-    } else {
-        (1.0e10 * (mass.0).powf(-2.5)).clamp(1.0e6, 1.0e13)
-    };
-    let fuel_burn_rate = (1.0 / main_seq_lifetime_yr) as f32;
-    evo.hydrogen_core_fraction =
-        (evo.hydrogen_core_fraction - fuel_burn_rate * dt_yr as f32).max(0.0);
-
-    if evo.hydrogen_core_fraction <= 0.0 {
-        evo.phase_timer_years = 0.0;
-        let base = clean_star_base_name(&body.name);
-        if mass.0 < 0.45 {
-            evo.phase = StellarEvolutionPhase::WhiteDwarf;
-            body.body_type = BodyType::WhiteDwarf;
-            body.name = if is_gmc {
-                format!("{base} (White Dwarf)")
-            } else {
-                "The Star (Helium White Dwarf)".to_string()
-            };
-            radius.0 = 0.009 * SOLAR_RADIUS_AU;
-            temp.0 = 25_000.0;
-        } else if mass.0 < 8.0 {
-            evo.phase = StellarEvolutionPhase::RedGiantBranch;
-            body.body_type = BodyType::RedGiant;
-            body.name = if is_gmc {
-                format!("{base} (Red Giant)")
-            } else {
-                "The Star (Red Giant Branch)".to_string()
-            };
-        } else {
-            evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
-            body.body_type = BodyType::RedSupergiant;
-            body.name = if is_gmc {
-                format!("{base} (Red Supergiant)")
-            } else {
-                "The Star (Red Supergiant)".to_string()
-            };
-        }
-    }
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Red giant branch evolution updates radius, temperature, luminosity, and core helium"
-)]
-fn step_red_giant_evolution(
-    mass: &mut Mass,
-    radius: &mut Radius,
-    temp: &mut Temperature,
-    lum: &mut Luminosity,
-    body: &mut CelestialBody,
-    evo: &mut StellarEvolutionState,
-    dt_yr: f64,
-    is_gmc: bool,
-) {
-    let target_r = if is_gmc {
-        (0.045 * mass.0.powf(0.3)).clamp(0.035, 0.08)
-    } else {
-        (1.25 * mass.0.powf(0.3)).clamp(0.8, 2.5)
-    };
-    let k = (1.0 - (-0.008 * dt_yr).exp()).clamp(0.0, 1.0);
-    radius.0 += (target_r - radius.0) * k;
-    temp.0 += (3100.0 - temp.0) * k;
-    lum.0 += (2500.0 * mass.0 - lum.0) * k;
-
-    evo.helium_core_fraction = (evo.helium_core_fraction + 0.0003 * dt_yr as f32).min(1.0);
-    if evo.helium_core_fraction >= 1.0 || evo.phase_timer_years > 3000.0 {
-        evo.phase = StellarEvolutionPhase::HeliumFlashAgb;
-        // Thermal pulses and carbon-dredging produce a Carbon Star
-        if mass.0 >= 1.5 && mass.0 <= 4.0 {
-            body.body_type = BodyType::CarbonStar;
-            body.name = if is_gmc {
-                format!("{} (Carbon Star)", body.name)
-            } else {
-                "The Star (Carbon Star AGB)".to_string()
-            };
-            temp.0 = 2400.0;
-        } else if !is_gmc {
-            body.name = "The Star (AGB Supergiant)".to_string();
-        }
-        evo.phase_timer_years = 0.0;
-    }
-}
-
-fn step_agb_evolution(
-    radius: &mut Radius,
-    temp: &mut Temperature,
-    lum: &mut Luminosity,
-    body: &mut CelestialBody,
-    evo: &mut StellarEvolutionState,
-    dt_yr: f64,
-    is_gmc: bool,
-) {
-    let target_r = if is_gmc { 0.065 } else { 1.50 };
-    let k = (1.0 - (-0.010 * dt_yr).exp()).clamp(0.0, 1.0);
-    radius.0 += (target_r - radius.0) * k;
-    lum.0 += (3500.0 - lum.0) * k;
-    temp.0 += (2900.0 - temp.0) * k;
-
-    if evo.phase_timer_years > 2500.0 {
-        evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
-        if !is_gmc {
-            body.name = "The Star (Planetary Nebula Ejection)".to_string();
-        }
-        evo.nebula_expansion_radius_au = if is_gmc { 0.5 } else { 1.6 };
-        evo.nebula_opacity = 1.0;
-        evo.phase_timer_years = 0.0;
-    }
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Stellar evolution phase logic requires access to all core thermodynamic components"
-)]
-fn step_red_supergiant_evolution(
-    entity: Entity,
-    mass: &mut Mass,
-    radius: &mut Radius,
-    temp: &mut Temperature,
-    lum: &mut Luminosity,
-    body: &mut CelestialBody,
-    ignition: &mut IgnitionState,
-    evo: &mut StellarEvolutionState,
-    dt_yr: f64,
-    is_gmc: bool,
-    supernova_events: &mut MessageWriter<SupernovaEvent>,
-) {
-    let target_r = if is_gmc {
-        (0.085 * (mass.0 / 15.0).powf(0.4)).clamp(0.06, 0.14)
-    } else {
-        (3.2 * (mass.0 / 15.0).powf(0.4)).clamp(1.8, 4.5)
-    };
-    let k = (1.0 - (-0.012 * dt_yr).exp()).clamp(0.0, 1.0);
-    radius.0 += (target_r - radius.0) * k;
-    lum.0 += (80_000.0 * (mass.0 / 15.0).powf(2.0) - lum.0) * k;
-    temp.0 += (3300.0 - temp.0) * k;
-
-    let rsg_limit = if is_gmc { 600.0 } else { 2000.0 };
-    if evo.phase_timer_years > rsg_limit {
-        let is_black_hole = mass.0 >= 25.0;
-        let is_fast_rotator = body.name.contains("Fast")
-            || body.name.contains("Magnetar")
-            || evo.phase_timer_years < 1000.0
-            || (mass.0 >= 18.0 && mass.0 < 25.0);
-
-        evo.phase = StellarEvolutionPhase::SupernovaExplosion;
-        evo.phase_timer_years = 0.0;
-        evo.nebula_expansion_radius_au = (radius.0 * 1.2) as f32;
-        evo.nebula_opacity = 1.0;
-        ignition.is_ignited = false;
-
-        let remnant_type = if is_black_hole {
-            BodyType::BlackHole
-        } else if is_fast_rotator {
-            // Rapid rotation drives convective dynamo amplification into a Magnetar
-            BodyType::Magnetar
-        } else {
-            BodyType::Pulsar
-        };
-
-        let remnant_mass = if is_black_hole {
-            if mass.0 >= 250.0 {
-                // Direct collapse IMBH seed without explosive envelope ejection
-                mass.0 * 0.92
-            } else if mass.0 >= 100.0 {
-                // Massive fallback IMBH seed
-                mass.0 * 0.75
-            } else if mass.0 >= 40.0 {
-                // Heavy fallback black hole
-                mass.0 * 0.55
-            } else {
-                // Standard core-collapse black hole
-                (mass.0 * 0.35).clamp(3.5, 25.0)
-            }
-        } else if remnant_type == BodyType::Magnetar {
-            1.65
-        } else {
-            1.44
-        };
-        let ejected_mass = (mass.0 - remnant_mass).max(0.1);
-        let ejected_metals = ejected_mass * 0.25;
-
-        supernova_events.write(SupernovaEvent {
-            star_entity: entity,
-            star_name: body.name.clone(),
-            initial_mass_solar: mass.0,
-            remnant_mass_solar: remnant_mass,
-            remnant_type,
-            shockwave_velocity_km_s: 15_000.0,
-            ejected_metals_solar: ejected_metals,
-            ejected_composition: Composition::supernova_ejecta(),
-        });
-
-        mass.0 = remnant_mass;
-        body.body_type = remnant_type;
-        if is_black_hole {
-            radius.0 = (1.974e-8 * remnant_mass).max(1e-7);
-            temp.0 = 10.0;
-            lum.0 = 0.0;
-            let bh_class = if remnant_mass >= 100.0 {
-                "Intermediate-Mass Black Hole"
-            } else {
-                "Stellar-Mass Black Hole"
-            };
-            body.name = format!("{bh_class} ({remnant_mass:.1} M☉)");
-        } else {
-            radius.0 = 0.0001;
-            temp.0 = if remnant_type == BodyType::Magnetar {
-                2_000_000.0
-            } else {
-                1_000_000.0
-            };
-            lum.0 = 120.0;
-            body.name = if remnant_type == BodyType::Magnetar {
-                format!("Magnetar Remnant ({remnant_mass:.2} M☉)")
-            } else {
-                format!("Pulsar Remnant ({remnant_mass:.2} M☉)")
-            };
-        }
-    }
-}
-
-fn step_stellar_remnant_evolution(
-    mass: &mut Mass,
-    radius: &mut Radius,
-    temp: &mut Temperature,
-    lum: &mut Luminosity,
-    body: &mut CelestialBody,
-    evo: &mut StellarEvolutionState,
-    dt_yr: f64,
-) {
-    match evo.phase {
-        StellarEvolutionPhase::SupernovaExplosion => {
-            let expand_rate = 120.0;
-            evo.nebula_expansion_radius_au += expand_rate * dt_yr as f32;
-            evo.nebula_opacity = (1.0 - (evo.nebula_expansion_radius_au / 200.0)).clamp(0.0, 1.0);
-
-            let is_bh = body.body_type == BodyType::BlackHole || mass.0 >= 25.0;
-            let target_core_r = if is_bh {
-                (1.974e-8 * mass.0).max(1e-7)
-            } else {
-                0.0001
-            };
-            let k_collapse = (1.0 - (-0.05 * dt_yr).exp()).clamp(0.0, 1.0);
-            radius.0 += (target_core_r - radius.0) * k_collapse;
-
-            if evo.nebula_expansion_radius_au >= 120.0 || evo.phase_timer_years >= 1500.0 {
-                if is_bh {
-                    evo.phase = StellarEvolutionPhase::BlackHoleRemnant;
-                    body.body_type = BodyType::BlackHole;
-                    let bh_class = if mass.0 >= 100.0 {
-                        "Intermediate-Mass Black Hole"
-                    } else {
-                        "Stellar-Mass Black Hole"
-                    };
-                    body.name = format!("{bh_class} ({:.1} M☉)", mass.0);
-                    radius.0 = (1.974e-8 * mass.0).max(1e-7);
-                    temp.0 = 10.0;
-                    lum.0 = 0.0;
-                } else if body.body_type == BodyType::Magnetar {
-                    evo.phase = StellarEvolutionPhase::MagnetarRemnant;
-                    mass.0 = mass.0.max(1.65);
-                    body.name = format!("Magnetar Remnant ({:.2} M☉)", mass.0);
-                    radius.0 = 0.0001;
-                    temp.0 = 2_000_000.0;
-                    lum.0 = 150.0;
-                } else {
-                    evo.phase = StellarEvolutionPhase::NeutronStarPulsar;
-                    body.body_type = BodyType::Pulsar;
-                    mass.0 = mass.0.max(1.44);
-                    body.name = format!("Pulsar Remnant ({:.2} M☉)", mass.0);
-                    radius.0 = 0.0001;
-                    temp.0 = 1_000_000.0;
-                    lum.0 = 100.0;
-                }
-            }
-        }
-        StellarEvolutionPhase::PlanetaryNebulaEjection => {
-            let expand_rate_au_per_yr = 5.2;
-            evo.nebula_expansion_radius_au += expand_rate_au_per_yr * dt_yr as f32;
-            evo.nebula_opacity = (1.0 - (evo.nebula_expansion_radius_au / 80.0)).clamp(0.0, 1.0);
-
-            let target_wd_mass = (0.47 + 0.08 * mass.0).clamp(0.50, 1.20);
-            if mass.0 > target_wd_mass {
-                let remaining_yr = (3000.0 - (evo.phase_timer_years - dt_yr).max(0.0)).max(dt_yr);
-                let step_frac = (dt_yr / remaining_yr).clamp(0.0, 1.0);
-                mass.0 = (mass.0 - (mass.0 - target_wd_mass) * step_frac).max(target_wd_mass);
-            }
-
-            if evo.nebula_expansion_radius_au >= 80.0 || evo.phase_timer_years >= 6000.0 {
-                evo.phase = StellarEvolutionPhase::WhiteDwarf;
-                body.body_type = BodyType::WhiteDwarf;
-                body.name = "The Star (White Dwarf Remnant)".to_string();
-                radius.0 = 0.009 * SOLAR_RADIUS_AU;
-                temp.0 = 30_000.0;
-                lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4);
-            }
-        }
-        StellarEvolutionPhase::WhiteDwarf => {
-            let cool_rate = 0.0001;
-            temp.0 = (temp.0 - cool_rate * dt_yr).max(10.0);
-            lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4);
-
-            // Over cosmic time (T < 100 K), White Dwarfs cool into degenerate Black Dwarfs
-            if temp.0 < 100.0 && body.body_type != BodyType::BlackDwarf {
-                body.body_type = BodyType::BlackDwarf;
-                body.name = "The Star (Black Dwarf Remnant)".to_string();
-                lum.0 = 0.0;
-            }
-        }
-        StellarEvolutionPhase::NeutronStarPulsar => {
-            let cool_rate = 0.001;
-            temp.0 = (temp.0 - cool_rate * dt_yr).max(10_000.0);
-
-            // Accretion past 1.8 M_sun decongests nucleons into strange quark matter (Quark Star)
-            if mass.0 >= 1.80 && mass.0 < 2.17 && body.body_type != BodyType::QuarkStar {
-                body.body_type = BodyType::QuarkStar;
-                if !body.name.contains("Quark Star") {
-                    let base = body.name.split(" (").next().unwrap_or(&body.name);
-                    body.name = format!("{base} (Strange Quark Star)");
-                }
-                temp.0 = 10_000_000.0;
-            }
-        }
-        StellarEvolutionPhase::MagnetarRemnant => {
-            let cool_rate = 0.001;
-            temp.0 = (temp.0 - cool_rate * dt_yr).max(10_000.0);
-            // Magnetars preserve their ultra-strong magnetic field (B ~ 10^15 G) and Magnetar identity.
-            // If massive (>= 1.80 M_sun), strange quark matter core deconfinement forms a Quark Magnetar.
-            // Accretion exceeding the Tolman-Oppenheimer-Volkoff limit (> 2.17 M_sun) collapses to a Black Hole.
-        }
-        _ => {}
-    }
-}
+pub use super::stellar_evolution::step_stellar_evolution_cycle;

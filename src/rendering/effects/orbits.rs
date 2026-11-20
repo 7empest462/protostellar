@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::simulation::components::BodyType;
 use crate::utils::math::*;
 
 const ORBIT_SAMPLES: usize = 256;
@@ -553,5 +554,32 @@ pub fn draw_hyperbolic_trajectory(
                 q_col,
             )
             .resolution(48);
+    }
+}
+
+pub fn determine_orbit_color(
+    body_type: BodyType,
+    is_selected: bool,
+    is_satellite: bool,
+    eccentricity: f64,
+) -> Color {
+    if is_selected {
+        Color::srgba(0.15, 0.95, 1.0, 1.0)
+    } else if is_satellite {
+        Color::srgba(0.80, 0.85, 1.0, 0.85)
+    } else if eccentricity >= 1.0 {
+        Color::srgba(1.0, 0.25, 0.45, 0.95)
+    } else {
+        match body_type {
+            t if t.is_star_or_remnant() => Color::srgba(1.0, 0.92, 0.70, 0.95),
+            BodyType::TerrestrialPlanet => Color::srgba(0.25, 1.0, 0.55, 0.90),
+            BodyType::SuperEarth => Color::srgba(0.15, 0.90, 0.85, 0.90),
+            BodyType::GasGiant => Color::srgba(1.0, 0.75, 0.20, 0.90),
+            BodyType::IceGiant => Color::srgba(0.30, 0.80, 1.0, 0.90),
+            BodyType::Protoplanet => Color::srgba(1.0, 0.55, 0.20, 0.85),
+            BodyType::Planetesimal | BodyType::Asteroid => Color::srgba(0.70, 0.75, 0.85, 0.55),
+            BodyType::Comet => Color::srgba(0.45, 1.0, 0.95, 0.90),
+            _ => Color::srgba(0.75, 0.75, 0.85, 0.65),
+        }
     }
 }

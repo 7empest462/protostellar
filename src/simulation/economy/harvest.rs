@@ -27,8 +27,16 @@ pub fn harvest_telemetry_system(
     swarm_query: Query<&DysonSwarm>,
     time: Res<Time>,
     time_warp: Option<Res<crate::simulation::resources::TimeWarp>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_gen: Local<u64>,
     mut local_state: Local<ProbeTelemetryState>,
 ) {
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        local_state.last_samples.clear();
+        local_state.last_driven_km.clear();
+    }
     let is_paused = time_warp
         .as_deref()
         .is_some_and(|tw| tw.is_paused && !tw.step_once);
@@ -106,8 +114,15 @@ pub fn sync_milestone_discoveries_system(
     phase_manager: Option<Res<PhaseManager>>,
     sim_time: Option<Res<SimTime>>,
     mut toast: Option<ResMut<NotificationToast>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_gen: Local<u64>,
     mut recorded_milestone_ids: Local<FxHashSet<crate::game::phases::MilestoneId>>,
 ) {
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        recorded_milestone_ids.clear();
+    }
     let Some(phase) = phase_manager else {
         return;
     };

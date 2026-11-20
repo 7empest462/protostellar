@@ -1,6 +1,5 @@
 //! Systems for updating telemetry, timer banners, inspector readouts, and HUD visibility.
 
-use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::game::phases::PhaseManager;
@@ -193,57 +192,40 @@ pub fn handle_cosmic_event_toasts(
     }
 }
 
-struct DisplayUppercase<'a>(&'a str);
-
-impl std::fmt::Display for DisplayUppercase<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for ch in self.0.chars() {
-            for up in ch.to_uppercase() {
-                std::fmt::Write::write_char(f, up)?;
-            }
-        }
-        Ok(())
-    }
-}
-
 #[inline]
-pub(crate) fn set_text_if_changed(text: &mut Text, next: String) {
-    if text.0 != next {
+pub fn set_text_if_changed(text: &mut Mut<'_, Text>, next: String) {
+    if text.as_ref().0 != next {
         text.0 = next;
     }
 }
 
 #[inline]
-pub(crate) fn set_text_str_if_changed(text: &mut Text, next: &str) {
-    if text.0 != next {
+pub fn set_text_str_if_changed(text: &mut Mut<'_, Text>, next: &str) {
+    if text.as_ref().0 != next {
         next.clone_into(&mut text.0);
     }
 }
 
 #[inline]
-pub(crate) fn set_display_if_changed(node: &mut Node, next: Display) {
-    if node.display != next {
+pub fn set_display_if_changed(node: &mut Mut<'_, Node>, next: Display) {
+    if node.as_ref().display != next {
         node.display = next;
     }
 }
 
 #[inline]
-pub(crate) fn set_border_color_if_changed(border: &mut BorderColor, next: BorderColor) {
-    if *border != next {
-        *border = next;
-    }
+pub fn set_border_color_if_changed(border: &mut Mut<'_, BorderColor>, next: BorderColor) {
+    border.set_if_neq(next);
 }
 
 #[inline]
-pub(crate) fn set_bg_color_if_changed(bg: &mut BackgroundColor, next: BackgroundColor) {
-    if *bg != next {
-        *bg = next;
-    }
+pub fn set_bg_color_if_changed(bg: &mut Mut<'_, BackgroundColor>, next: BackgroundColor) {
+    bg.set_if_neq(next);
 }
 
 #[allow(clippy::type_complexity, reason = "bevy ECS query is complex")]
 fn update_toast_text(
-    toast_text: &mut Text,
+    toast_text: &mut Mut<'_, Text>,
     phase_mgr: &PhaseManager,
     toast: &NotificationToast,
     player_state: &PlayerInteractionState,
@@ -265,7 +247,7 @@ fn update_toast_text(
     }
 
     if let Some(selected_entity) = player_state.selected_entity {
-        if let Ok(((pos, vel, mass, rad, temp, _comp, body), ..)) =
+        if let Ok(((pos, vel, mass, rad, temp, _comp, body), (.., opt_sat))) =
             bodies_query.get(selected_entity)
         {
             let type_name = format_body_inspector_type(body.body_type, mass.0);
@@ -283,13 +265,23 @@ fn update_toast_text(
             } else {
                 format!("{m_earth:.2e} M_earth")
             };
-            let dist_au = if pos.0.is_finite() {
-                pos.0.length()
+            let (rel_pos, rel_vel) = opt_sat
+                .and_then(|sat| bodies_query.get(sat.parent).ok())
+                .map_or((pos.0, vel.0), |((p_pos, p_vel, ..), _)| {
+                    (pos.0 - p_pos.0, vel.0 - p_vel.0)
+                });
+            let dist_au = if rel_pos.is_finite() {
+                rel_pos.length()
             } else {
                 0.0
             };
-            let speed_km_s = if vel.0.is_finite() {
-                vel.0.length() * AU_PER_YR_TO_KM_PER_S
+            let dist_str = if dist_au > 0.0 && dist_au < 0.05 {
+                format!("{dist_au:.4} AU")
+            } else {
+                format!("{dist_au:.2} AU")
+            };
+            let speed_km_s = if rel_vel.is_finite() {
+                rel_vel.length() * AU_PER_YR_TO_KM_PER_S
             } else {
                 0.0
             };
@@ -298,12 +290,12 @@ fn update_toast_text(
             set_text_if_changed(
                 toast_text,
                 format!(
-                    ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {:.2} AU  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
+                    ">> SELECTED: {} [{}]  |  Mass: {}  |  Radius: {}  |  Dist: {}  |  Speed: {:.1} km/s  |  Temp: {:.0} K",
                     DisplayUppercase(&body.name),
                     DisplayUppercase(type_name),
                     mass_str,
                     rad_str,
-                    dist_au,
+                    dist_str,
                     speed_km_s,
                     temp.0,
                 ),
@@ -323,7 +315,7 @@ fn update_toast_text(
 }
 
 fn update_header_stats(
-    text: &mut Text,
+    text: &mut Mut<'_, Text>,
     sim_time: &SimTime,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
@@ -438,7 +430,7 @@ fn update_header_stats(
 }
 
 fn update_time_warp_diagnostics(
-    text: &mut Text,
+    text: &mut Mut<'_, Text>,
     time_warp: &TimeWarp,
     player_state: &PlayerInteractionState,
     energy_monitor: &EnergyMonitor,
@@ -465,7 +457,7 @@ fn update_time_warp_diagnostics(
     set_text_if_changed(
         text,
         format!(
-            "CLOCK: {}\nSPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
+            "CLOCK: {}\nSPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/Shift+.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
             clock_str,
             speed_str,
             tool_str,
@@ -484,7 +476,7 @@ fn update_time_warp_diagnostics(
 }
 
 fn update_bottom_timer(
-    text: &mut Text,
+    text: &mut Mut<'_, Text>,
     is_compact_pill: bool,
     sim_time: &SimTime,
     time_warp: &TimeWarp,
@@ -545,7 +537,7 @@ fn update_bottom_timer(
     reason = "Telemetry inspector requires full access to celestial body components and configuration state"
 )]
 fn update_inspector_body_telemetry(
-    text: &mut Text,
+    text: &mut Mut<'_, Text>,
     selected_entity: Entity,
     bodies_query: &HudBodiesQuery,
     quasi_hud_query: &Query<&BlackHoleStarState>,
@@ -586,12 +578,20 @@ fn update_inspector_body_telemetry(
             opt_rel,
             opt_escape,
             opt_kozai,
+            opt_sat,
         ),
     )) = bodies_query.get(selected_entity)
     else {
         set_text_str_if_changed(text, "Selected body was absorbed in an accretion merger.");
         return;
     };
+
+    let (rel_pos, rel_vel, primary_mass) = opt_sat
+        .and_then(|sat| bodies_query.get(sat.parent).ok())
+        .map_or(
+            (pos.0, vel.0, phase_mgr.star_mass),
+            |((p_pos, p_vel, p_mass, ..), _)| (pos.0 - p_pos.0, vel.0 - p_vel.0, p_mass.0),
+        );
 
     let env_str = format_body_environment_telemetry(
         opt_diff,
@@ -622,7 +622,17 @@ fn update_inspector_body_telemetry(
     );
 
     let mut next_telemetry = format_primary_telemetry(
-        pos.0, vel.0, mass.0, rad.0, temp.0, comp, body, opt_spin, phase_mgr, &env_str, &comp_str,
+        rel_pos,
+        rel_vel,
+        mass.0,
+        rad.0,
+        temp.0,
+        comp,
+        body,
+        opt_spin,
+        primary_mass,
+        &env_str,
+        &comp_str,
     );
     append_stripped_core_view_note(
         &mut next_telemetry,
@@ -739,83 +749,6 @@ fn append_inspector_domain_telemetry(
         audio_enabled,
     );
     append_sonification_telemetry(next_telemetry, &sonification);
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Formatting requires numerous component properties and configuration states"
-)]
-fn format_primary_telemetry(
-    pos: DVec3,
-    vel: DVec3,
-    mass: f64,
-    rad: f64,
-    temp: f64,
-    comp: &Composition,
-    body: &CelestialBody,
-    opt_spin: Option<&SpinState>,
-    phase_mgr: &PhaseManager,
-    env_str: &str,
-    comp_str: &str,
-) -> String {
-    let dist_au = if pos.is_finite() { pos.length() } else { 0.0 };
-    let speed_au_yr = if vel.is_finite() { vel.length() } else { 0.0 };
-    let speed_km_s = speed_au_yr * AU_PER_YR_TO_KM_PER_S;
-
-    let mass_str = format_mass_string(mass);
-    let rad_disp = format_body_radius_display(rad);
-    let volume_au3 = (4.0 / 3.0) * std::f64::consts::PI * rad.powi(3);
-    let density_g_cm3 = if volume_au3 > 1e-35 && mass > 0.0 {
-        let conversion_factor = SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0);
-        (mass / volume_au3) * conversion_factor
-    } else {
-        (comp.average_density() * SOLAR_MASS_KG / (AU_TO_METERS.powi(3) * 1000.0)).clamp(0.01, 20.0)
-    };
-    let density_str = if !density_g_cm3.is_finite() || density_g_cm3 <= 0.0 {
-        "0.00 g/cm3".to_string()
-    } else if density_g_cm3 < 0.01 || density_g_cm3 >= 10_000.0 {
-        format!("{density_g_cm3:.2e} g/cm3")
-    } else {
-        format!("{density_g_cm3:.2} g/cm3")
-    };
-    let period_str = format_orbital_period_string(dist_au, body.body_type, phase_mgr.star_mass);
-
-    let spin_str = if let Some(spin) = opt_spin {
-        format!(
-            " | Day: {:.1}h | Tilt: {:.1} deg",
-            spin.rotation_period_hours, spin.axial_tilt_degrees
-        )
-    } else {
-        String::new()
-    };
-
-    let zone = BeltZone::from_distance_au(dist_au);
-    let belt_suffix = if matches!(
-        body.body_type,
-        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
-    ) {
-        format!(" | Belt: {} {}", zone.icon(), zone.short_name())
-    } else {
-        String::new()
-    };
-
-    format!(
-        ">> {} [{}]\n▸ Mass: {}\n▸ Radius: {} ({:.4} AU)\n▸ Density: {} | Temp: {:.0} K{}{}\n▸ Distance: {:.2} AU{} | Speed: {:.1} km/s\n▸ Composition: {}{}",
-        DisplayUppercase(&body.name),
-        DisplayUppercase(format_body_inspector_type(body.body_type, mass)),
-        mass_str,
-        rad_disp,
-        rad,
-        density_str,
-        temp,
-        spin_str,
-        period_str,
-        dist_au,
-        belt_suffix,
-        speed_km_s,
-        comp_str,
-        env_str,
-    )
 }
 
 /// Updates the dynamic content of the HUD and notification toast banner every frame.
@@ -939,7 +872,7 @@ pub fn update_hud(
 }
 
 fn update_encounter_forecast_text(
-    text: &mut Text,
+    text: &mut Mut<'_, Text>,
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
     has_selection: bool,
 ) {

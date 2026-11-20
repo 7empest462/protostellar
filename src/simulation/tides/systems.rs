@@ -29,20 +29,33 @@ fn resolve_host_context(
     mass: f64,
     opt_sat: Option<&SatelliteOf>,
     star_opt: Option<(Entity, DVec3, DVec3, f64)>,
+    parent_opt: Option<(Entity, DVec3, DVec3, f64)>,
 ) -> Option<HostOrbitalContext> {
     if let Some(sat) = opt_sat {
-        let a = sat.semi_major_axis_au.max(1e-5);
+        let a_vis = sat.semi_major_axis_au.max(1e-5);
         let p_yr = sat.orbital_period_years.max(1e-5);
-        let m_parent = (a.powi(3) / (p_yr * p_yr)).clamp(1e-9, 10.0);
         let n = (2.0 * PI) / p_yr;
+        let (p_ent, p_pos, p_vel, m_parent) = parent_opt.unwrap_or((
+            sat.parent,
+            pos - DVec3::new(a_vis, 0.0, 0.0),
+            DVec3::ZERO,
+            1e-5,
+        ));
+        let m_parent = m_parent.max(1e-10);
+        // Recover true physical semi-major axis from Kepler's 3rd Law when visual separation is exaggerated (e.g. The Moon)
+        let a_phys = (G_ASTRO * (m_parent + mass) * (p_yr / (2.0 * PI)).powi(2))
+            .cbrt()
+            .clamp(1e-5, a_vis);
+        let rel_pos = pos - p_pos;
+        let rel_vel = vel - p_vel;
         return Some(HostOrbitalContext {
-            host_entity: sat.parent,
-            semi_major_axis: a,
+            host_entity: p_ent,
+            semi_major_axis: a_phys,
             eccentricity: 0.01,
             mean_motion: n,
             host_mass: m_parent,
-            rel_pos: DVec3::new(a, 0.0, 0.0),
-            rel_vel: DVec3::new(0.0, 0.0, n * a),
+            rel_pos,
+            rel_vel,
         });
     }
 
@@ -73,44 +86,36 @@ fn resolve_host_context(
     None
 }
 
-/// Applies gentle radial velocity damping and relaxes tangential speed toward circular orbit ($e \to 0$).
+/// Applies gentle radial velocity damping ($v_{\text{rad}} \to 0$) which strictly conserves
+/// specific angular momentum $\vec{h} = \vec{r} \times \vec{v}$ while monotonically draining
+/// orbital energy so any eccentric orbit ($0 < e < 1$) circularizes safely toward
+/// $a_{\text{eq}} = a(1 - e^2)$ without ever injecting angular momentum or ejecting high-$e$ worlds.
 fn apply_orbital_circularization(
     rel_pos: DVec3,
     rel_vel: DVec3,
     vel: &mut SimVelocity,
     tau_circ_yr: f64,
     effective_dt_yr: f64,
+    semi_major_axis: f64,
     eccentricity: f64,
-    host_mass: f64,
 ) {
-    if eccentricity <= 1e-4 || tau_circ_yr <= 1e-3 {
+    if eccentricity <= 1e-4 || tau_circ_yr <= 1e-3 || semi_major_axis <= 1e-5 {
         return;
     }
 
     let r = rel_pos.length();
-    if r < 1e-5 || host_mass <= 0.0 {
+    if r < 1e-5 {
         return;
     }
 
     let r_hat = rel_pos / r;
     let v_rad = rel_vel.dot(r_hat);
-    let v_tan_vec = rel_vel - v_rad * r_hat;
-    let v_tan = v_tan_vec.length();
 
-    // Exponential relaxation of radial motion and tangential motion towards circular orbit
+    // Pure radial damping preserves tangential velocity and specific angular momentum h = r x v
+    // identically, driving the orbit smoothly toward a_eq = a(1 - e^2) for all eccentricities.
     let damping_factor = (-effective_dt_yr / tau_circ_yr).exp();
-    let new_v_rad = v_rad * damping_factor;
-    let delta_v_rad = (new_v_rad - v_rad) * r_hat;
-
-    let delta_v_tan = if v_tan > 1e-6 {
-        let v_circ = (crate::utils::constants::G_ASTRO * host_mass / r).sqrt();
-        let new_v_tan = v_circ + (v_tan - v_circ) * damping_factor;
-        (new_v_tan - v_tan) * (v_tan_vec / v_tan)
-    } else {
-        DVec3::ZERO
-    };
-
-    vel.0 += delta_v_rad + delta_v_tan;
+    let delta_v_rad = v_rad * (damping_factor - 1.0) * r_hat;
+    vel.0 += delta_v_rad;
 }
 
 /// Couples viscoelastic tidal dissipation into internal core temperature and surface climate.
@@ -176,6 +181,7 @@ pub fn update_tidal_evolution(
     sim_time: Res<SimTime>,
     config: Res<SimulationConfig>,
     tidal_config: Res<TidalConfig>,
+    kozai_config: Option<Res<crate::simulation::kozai_lidov::KozaiLidovConfig>>,
     star_query: Query<(Entity, &SimPosition, &SimVelocity, &Mass), With<CentralStar>>,
     mut bodies_query: Query<
         (
@@ -193,10 +199,11 @@ pub fn update_tidal_evolution(
             Option<&mut Temperature>,
             Option<&mut TidalState>,
             Option<&mut VolcanicState>,
+            Option<&crate::simulation::kozai_lidov::KozaiLidovState>,
         ),
         Without<CentralStar>,
     >,
-    mut living_entities: Local<rustc_hash::FxHashSet<Entity>>,
+    mut living_entities: Local<rustc_hash::FxHashMap<Entity, (DVec3, DVec3, f64)>>,
 ) {
     if (time_warp.is_paused && !time_warp.step_once) || !tidal_config.is_enabled {
         return;
@@ -207,8 +214,12 @@ pub fn update_tidal_evolution(
     } else {
         config.base_dt_yr
     };
-    let accel = if sim_time.current_dt_yr > 0.0 && time_warp.multiplier < 1.0 {
+    let accel = if sim_time.current_dt_yr > 0.0 && time_warp.multiplier <= 1.0 {
         1.0
+    } else if sim_time.current_dt_yr > 0.0 && time_warp.multiplier < 5.0 {
+        let t = ((time_warp.multiplier - 1.0) / 4.0).clamp(0.0, 1.0);
+        let smooth = t * t * (3.0 - 2.0 * t);
+        1.0 + (tidal_config.time_scale.max(1.0) - 1.0) * smooth
     } else {
         tidal_config.time_scale.max(1.0)
     };
@@ -219,8 +230,12 @@ pub fn update_tidal_evolution(
         .map(|(e, p, v, m)| (e, p.0, v.0, m.0));
 
     living_entities.clear();
-    living_entities.extend(bodies_query.iter().map(|(e, ..)| e));
-    living_entities.extend(star_query.iter().map(|(e, ..)| e));
+    for (e, pos, vel, mass, ..) in bodies_query.iter() {
+        living_entities.insert(e, (pos.0, vel.0, mass.0));
+    }
+    for (e, pos, vel, mass) in star_query.iter() {
+        living_entities.insert(e, (pos.0, vel.0, mass.0));
+    }
 
     for (
         entity,
@@ -237,17 +252,21 @@ pub fn update_tidal_evolution(
         mut opt_temp,
         mut opt_tide,
         mut opt_volc,
+        opt_kozai,
     ) in bodies_query.iter_mut()
     {
-        let valid_sat = match opt_sat {
-            Some(sat) if living_entities.contains(&sat.parent) => Some(sat),
-            Some(_) => {
-                if let Ok(mut cmd) = commands.get_entity(entity) {
-                    cmd.remove::<SatelliteOf>();
+        let (valid_sat, parent_opt) = match opt_sat {
+            Some(sat) => {
+                if let Some(&(p_pos, p_vel, p_mass)) = living_entities.get(&sat.parent) {
+                    (Some(sat), Some((sat.parent, p_pos, p_vel, p_mass)))
+                } else {
+                    if let Ok(mut cmd) = commands.get_entity(entity) {
+                        cmd.remove::<SatelliteOf>();
+                    }
+                    (None, None)
                 }
-                None
             }
-            None => None,
+            None => (None, None),
         };
 
         step_body_tidal_evolution(
@@ -261,17 +280,70 @@ pub fn update_tidal_evolution(
             comp,
             &mut spin,
             valid_sat,
+            parent_opt,
             &mut opt_diff,
             &mut opt_climate,
             &mut opt_temp,
             &mut opt_tide,
             &mut opt_volc,
+            opt_kozai,
             star_opt,
             &tidal_config,
+            kozai_config.as_deref(),
             dt_yr,
             effective_dt_yr,
         );
     }
+}
+
+fn compute_kozai_tidal_boost(
+    kozai_config: Option<&crate::simulation::kozai_lidov::KozaiLidovConfig>,
+    opt_kozai: Option<&crate::simulation::kozai_lidov::KozaiLidovState>,
+    eccentricity: f64,
+) -> f64 {
+    if kozai_config.is_some_and(|kc| kc.enable_kozai_lidov && kc.enable_tidal_circularization)
+        && opt_kozai.is_some_and(|ks| ks.is_in_resonance && !ks.is_gr_suppressed)
+        && eccentricity > 0.4
+    {
+        let one_minus_e2 = (1.0 - eccentricity * eccentricity).max(0.01);
+        ((1.0 + 3.75 * eccentricity * eccentricity) / one_minus_e2.powf(7.5)).clamp(1.0, 1e5)
+    } else {
+        1.0
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Spin synchronization updates SpinState period/tilt and TidalState lock progress"
+)]
+fn apply_body_spin_sync(
+    spin: &mut SpinState,
+    tide: &mut TidalState,
+    current_omega: f64,
+    omega_eq: f64,
+    resonance_ratio: f32,
+    tau_sync: f64,
+    effective_dt_yr: f64,
+    mass_solar: f64,
+    rad_au: f64,
+) {
+    let (new_omega, new_tilt, progress) = apply_spin_synchronization_step(
+        current_omega,
+        omega_eq,
+        spin.axial_tilt_degrees,
+        tau_sync,
+        effective_dt_yr,
+    );
+    let synced_omega = if (new_omega - omega_eq).abs() <= omega_eq * 1e-4 {
+        omega_eq
+    } else {
+        new_omega
+    };
+    let new_period_hours = ((2.0 * PI) / synced_omega.max(1e-6)) * (YEAR_SECONDS / 3600.0);
+    spin.set_period_and_tilt(new_period_hours, new_tilt, mass_solar, rad_au);
+    tide.locking_progress = progress;
+    tide.is_tidally_locked = progress >= 0.99;
+    tide.resonance_ratio = resonance_ratio;
 }
 
 #[allow(
@@ -289,13 +361,16 @@ fn step_body_tidal_evolution(
     comp: &Composition,
     spin: &mut SpinState,
     opt_sat: Option<&SatelliteOf>,
+    parent_opt: Option<(Entity, DVec3, DVec3, f64)>,
     opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
     opt_climate: &mut Option<Mut<'_, PlanetaryClimate>>,
     opt_temp: &mut Option<Mut<'_, Temperature>>,
     opt_tide: &mut Option<Mut<'_, TidalState>>,
     opt_volc: &mut Option<Mut<'_, VolcanicState>>,
+    opt_kozai: Option<&crate::simulation::kozai_lidov::KozaiLidovState>,
     star_opt: Option<(Entity, DVec3, DVec3, f64)>,
     tidal_config: &TidalConfig,
+    kozai_config: Option<&crate::simulation::kozai_lidov::KozaiLidovConfig>,
     dt_yr: f64,
     effective_dt_yr: f64,
 ) {
@@ -317,7 +392,8 @@ fn step_body_tidal_evolution(
         return;
     }
 
-    let Some(ctx) = resolve_host_context(pos, vel.0, mass_solar, opt_sat, star_opt) else {
+    let Some(ctx) = resolve_host_context(pos, vel.0, mass_solar, opt_sat, star_opt, parent_opt)
+    else {
         return;
     };
 
@@ -333,54 +409,54 @@ fn step_body_tidal_evolution(
     let k2_q = tide.dissipation_factor();
 
     // 1. Orbital Circularization de/dt and Timescale
-    let de_dt = calculate_circularization_rate(k2_q, ctx.host_mass, mass_solar, rad_au, a, e, n);
-    let tau_circ =
+    let mut de_dt =
+        calculate_circularization_rate(k2_q, ctx.host_mass, mass_solar, rad_au, a, e, n);
+    let mut tau_circ =
         calculate_circularization_timescale(k2_q, ctx.host_mass, mass_solar, rad_au, a, n);
     let tau_sync = calculate_sync_timescale(k2_q, ctx.host_mass, mass_solar, rad_au, a, n);
 
     // 2. Spin-Orbit Synchronization
-    let period_yr = (spin.rotation_period_hours * (3600.0 / YEAR_SECONDS)).max(1e-8);
+    let period_yr = (spin.rotation_period_hours.abs() * (3600.0 / YEAR_SECONDS)).max(1e-8);
     let current_omega = (2.0 * PI) / period_yr;
     let (omega_eq, resonance_ratio) = calculate_equilibrium_spin_frequency(n, e, e >= 0.15);
 
-    // 3. Internal Viscoelastic Tidal Heating
-    let power_watts =
+    // 3. Internal Viscoelastic Tidal Heating (with Kozai-Lidov high-eccentricity tidal boost)
+    let kozai_boost = compute_kozai_tidal_boost(kozai_config, opt_kozai, e);
+    let mut power_watts =
         calculate_tidal_heating_power(k2_q, ctx.host_mass, rad_au, a, e, current_omega, n);
+    if kozai_boost > 1.0 {
+        power_watts = (power_watts * kozai_boost).min(1e24);
+        let circ_boost = kozai_boost.min(1e4);
+        de_dt *= circ_boost;
+        tau_circ = (tau_circ / circ_boost).max(1.0);
+    }
     let flux_w_m2 = calculate_tidal_heat_flux(power_watts, rad_au);
 
     // Apply Spin Dynamics (only for satellites or close-in planets where stellar tides are significant)
     if tidal_config.enable_spin_synchronization && (opt_sat.is_some() || tau_sync <= 5e7) {
-        let (new_omega, new_tilt, progress) = apply_spin_synchronization_step(
+        apply_body_spin_sync(
+            spin,
+            &mut tide,
             current_omega,
             omega_eq,
-            spin.axial_tilt_degrees,
+            resonance_ratio,
             tau_sync,
             effective_dt_yr,
+            mass_solar,
+            rad_au,
         );
-
-        let synced_omega = if (new_omega - omega_eq).abs() <= omega_eq * 1e-4 {
-            omega_eq
-        } else {
-            new_omega
-        };
-        let new_period_hours = ((2.0 * PI) / synced_omega.max(1e-6)) * (YEAR_SECONDS / 3600.0);
-        spin.set_period_and_tilt(new_period_hours, new_tilt, mass_solar, rad_au);
-
-        tide.locking_progress = progress;
-        tide.is_tidally_locked = progress >= 0.99;
-        tide.resonance_ratio = resonance_ratio;
     }
 
-    // Apply Orbital Circularization Damping
-    if tidal_config.enable_circularization {
+    // Apply Orbital Circularization Damping (for non-satellite heliocentric bodies)
+    if tidal_config.enable_circularization && opt_sat.is_none() {
         apply_orbital_circularization(
             ctx.rel_pos,
             ctx.rel_vel,
             vel,
             tau_circ,
             effective_dt_yr,
+            a,
             e,
-            ctx.host_mass,
         );
     }
 
@@ -526,12 +602,18 @@ pub fn cryovolcanic_ring_feeding_system(
         let mass_earth = mass_ejected_kg / 5.972e24;
 
         if let Ok(mut rings) = ring_query.get_mut(sat.parent) {
-            rings.ring_mass_earth += mass_earth;
+            let prev_mass = rings.ring_mass_earth.max(1e-18);
+            let new_mass = prev_mass + mass_earth;
+            rings.ring_mass_earth = new_mass;
             // Ejected micron-sized ice grains replenish optical depth
             rings.optical_depth =
                 (rings.optical_depth + (mass_earth * 5.0e5) as f32).clamp(0.01, 2.5);
-            // Cryovolcanism delivers fresh water ice (>99%)
-            rings.ice_fraction = (rings.ice_fraction * 0.9995 + 0.0005 * 0.995).clamp(0.0, 1.0);
+            // Cryovolcanism delivers fresh water ice (>99%), mass-weighted continuously by dt_yr
+            let weight = (mass_earth / new_mass).clamp(0.0, 1.0) as f32;
+            let blend = weight.max((0.0005 * dt_yr.clamp(0.0, 20.0)) as f32);
+            rings.ice_fraction =
+                (rings.ice_fraction * (1.0 - blend) + 0.995 * blend).clamp(0.0, 1.0);
+            rings.silicate_fraction = (1.0 - rings.ice_fraction).clamp(0.0, 1.0);
         }
     }
 }

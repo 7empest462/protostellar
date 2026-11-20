@@ -149,6 +149,7 @@ impl Plugin for RenderingPlugin {
                         .after(crate::simulation::accretion::process_accretion_and_collisions),
                     update_supernova_explosions
                         .after(crate::simulation::thermodynamics::update_thermodynamics),
+                    sync_quasar_blowout_visuals.after(update_supernova_explosions),
                     update_persistent_remnants.after(update_supernova_explosions),
                     update_kilonova_effects
                         .after(crate::simulation::physics::step_physics_simulation),

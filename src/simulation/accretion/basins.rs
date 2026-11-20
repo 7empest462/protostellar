@@ -199,12 +199,15 @@ pub fn update_impact_basin_relaxation(
                 compute_basin_timescales(basin.angular_radius, body_type, comp, has_weathering);
 
             if basin.melt_glow_fraction > 0.0 {
-                let decay = (dt_yr / cooling_tau_yr) as f32;
-                basin.melt_glow_fraction = (basin.melt_glow_fraction - decay).max(0.0);
+                let decay = (-dt_yr / cooling_tau_yr).exp() as f32;
+                basin.melt_glow_fraction *= decay;
+                if basin.melt_glow_fraction < 1e-4 {
+                    basin.melt_glow_fraction = 0.0;
+                }
             }
 
-            let heal_decay = (dt_yr / healing_tau_yr) as f32;
-            basin.scar_intensity = (basin.scar_intensity - heal_decay).max(0.0);
+            let heal_decay = (-dt_yr / healing_tau_yr).exp() as f32;
+            basin.scar_intensity *= heal_decay;
         }
 
         // Cleanly remove fully healed scars so they no longer occupy shader/data slots

@@ -3,8 +3,12 @@
 //! Spawns and manages the 2200 AU bounding cuboid volume and feeds real-time
 //! protostellar radiation pressure cavity radiuses and stellar emission data to the shader.
 
+use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 
+use crate::gpu::gmc_fluid::GMC_GRID_DIM;
 use crate::rendering::materials::VolumetricNebulaMaterial;
 use crate::simulation::components::*;
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
@@ -12,6 +16,41 @@ use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 /// Marker component for the 3D volumetric nebula bounding box entity.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct VolumetricNebulaVolume;
+
+/// Persistent handle to the `96x96x96` `Rgba16Float` 3D volume texture populated directly
+/// by the GPU GMC fluid compute pass with zero CPU readback.
+#[derive(Resource, Debug, Clone)]
+pub struct GmcLiveVolumeHandle(pub Handle<Image>);
+
+/// Constructs the persistent `96x96x96` `Rgba16Float` 3D volume [`Image`] with hardware
+/// trilinear filtering and `STORAGE_BINDING` usage for direct GPU-to-GPU compute packing.
+#[must_use]
+pub fn create_gmc_live_volume_image() -> Image {
+    let mut img = Image::new_fill(
+        Extent3d {
+            width: GMC_GRID_DIM,
+            height: GMC_GRID_DIM,
+            depth_or_array_layers: GMC_GRID_DIM,
+        },
+        TextureDimension::D3,
+        &[0u8; 8],
+        TextureFormat::Rgba16Float,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST;
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        label: Some("GMC Live Volume Linear Sampler".into()),
+        address_mode_u: ImageAddressMode::ClampToEdge,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        address_mode_w: ImageAddressMode::ClampToEdge,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Nearest,
+        ..default()
+    });
+    img
+}
 
 /// Upper bound on the rendered ionization bubble radius (AU) so the cloud core survives star formation.
 pub const MAX_RENDERED_CAVITY_AU: f32 = 70.0;
@@ -33,12 +72,15 @@ pub fn calculate_ionization_cavity_radius_au(
 }
 
 /// Spawns, updates, and tears down the 3D raymarching nebula bounding volume.
+#[allow(clippy::too_many_arguments, reason = "Volumetric nebula sync queries")]
 pub fn sync_volumetric_nebula(
     mut commands: Commands,
     scenario_state: Option<Res<ActiveScenarioState>>,
     sim_time: Option<Res<crate::simulation::resources::SimTime>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VolumetricNebulaMaterial>>,
+    mut images: Option<ResMut<Assets<Image>>>,
+    live_volume: Option<Res<GmcLiveVolumeHandle>>,
     nebula_query: Query<
         (Entity, &MeshMaterial3d<VolumetricNebulaMaterial>),
         With<VolumetricNebulaVolume>,
@@ -66,11 +108,25 @@ pub fn sync_volumetric_nebula(
         return;
     }
 
+    // Ensure persistent 96^3 3D volume texture exists for GPU-to-GPU density binding
+    let volume_handle = if let Some(existing) = live_volume {
+        Some(existing.0.clone())
+    } else if let Some(ref mut img_assets) = images {
+        let handle = img_assets.add(create_gmc_live_volume_image());
+        commands.insert_resource(GmcLiveVolumeHandle(handle.clone()));
+        Some(handle)
+    } else {
+        None
+    };
+
     // Ensure volume exists
     let material_handle = if let Some((_, mat_handle)) = nebula_query.iter().next() {
         mat_handle.0.clone()
     } else {
-        let mat = materials.add(VolumetricNebulaMaterial::default());
+        let mat = materials.add(VolumetricNebulaMaterial {
+            density_volume: volume_handle.clone(),
+            ..default()
+        });
         let mesh = meshes.add(Cuboid::new(2200.0, 2200.0, 2200.0));
 
         commands.spawn((
@@ -86,42 +142,50 @@ pub fn sync_volumetric_nebula(
     };
 
     // Update material uniforms with current protostar cavity positions and luminous emissions
-    if let Some(mut mat) = materials.get_mut(&material_handle) {
-        let mut star_positions = [Vec4::ZERO; 16];
-        let mut star_colors = [Vec4::ZERO; 16];
-        let mut count = 0u32;
+    let mut star_positions = [Vec4::ZERO; 16];
+    let mut star_colors = [Vec4::ZERO; 16];
+    let mut count = 0u32;
 
-        for (pos, lum, temp, opt_ign, body) in star_query.iter() {
-            if count >= 16 {
-                break;
-            }
-            if body.body_type.is_star_or_remnant() && body.body_type != BodyType::BlackHole {
-                let is_ignited = opt_ign.is_some_and(|ign| ign.is_ignited);
-                let lum_val = (lum.0 as f32).clamp(0.1, 5000.0);
-                // Cap the rendered bubble so a single massive star (L ∝ M^3.5) cannot hollow out
-                // the entire ~240 AU core; matches the fluid sink radius scale.
-                let cavity_r = calculate_ionization_cavity_radius_au(lum_val, 5.0e-11, is_ignited)
-                    .min(MAX_RENDERED_CAVITY_AU);
+    for (pos, lum, temp, opt_ign, body) in star_query.iter() {
+        if count >= 16 {
+            break;
+        }
+        if body.body_type.is_star_or_remnant() && body.body_type != BodyType::BlackHole {
+            let is_ignited = opt_ign.is_some_and(|ign| ign.is_ignited);
+            let lum_val = (lum.0 as f32).clamp(0.1, 5000.0);
+            // Cap the rendered bubble so a single massive star (L ∝ M^3.5) cannot hollow out
+            // the entire ~240 AU core; matches the fluid sink radius scale.
+            let cavity_r = calculate_ionization_cavity_radius_au(lum_val, 5.0e-11, is_ignited)
+                .min(MAX_RENDERED_CAVITY_AU);
 
-                let t_k = temp.0 as f32;
-                let r = (t_k / 4000.0).clamp(0.4, 1.0);
-                let g = (t_k / 5500.0).clamp(0.3, 1.0);
-                let b = (t_k / 7500.0).clamp(0.2, 1.2);
+            let t_k = temp.0 as f32;
+            let r = (t_k / 4000.0).clamp(0.4, 1.0);
+            let g = (t_k / 5500.0).clamp(0.3, 1.0);
+            let b = (t_k / 7500.0).clamp(0.2, 1.2);
 
-                if let (Some(pos_slot), Some(color_slot)) = (
-                    star_positions.get_mut(count as usize),
-                    star_colors.get_mut(count as usize),
-                ) {
-                    *pos_slot = Vec4::new(pos.x as f32, pos.y as f32, pos.z as f32, cavity_r);
-                    *color_slot = Vec4::new(r, g, b, lum_val);
-                    count += 1;
-                }
+            if let (Some(pos_slot), Some(color_slot)) = (
+                star_positions.get_mut(count as usize),
+                star_colors.get_mut(count as usize),
+            ) {
+                *pos_slot = Vec4::new(pos.x as f32, pos.y as f32, pos.z as f32, cavity_r);
+                *color_slot = Vec4::new(r, g, b, lum_val);
+                count += 1;
             }
         }
+    }
 
-        mat.uniforms.num_stars = count;
-        mat.uniforms.elapsed_years = sim_time.as_deref().map_or(0.0, |t| t.elapsed_years as f32);
-        mat.uniforms.star_positions_and_cavities = star_positions;
-        mat.uniforms.star_colors_and_lum = star_colors;
+    let elapsed = sim_time.as_deref().map_or(0.0, |t| t.elapsed_years as f32);
+
+    if let Some(mat) = materials.get(&material_handle)
+        && (mat.uniforms.num_stars != count
+            || (mat.uniforms.elapsed_years - elapsed).abs() > 1e-4
+            || mat.uniforms.star_positions_and_cavities != star_positions
+            || mat.uniforms.star_colors_and_lum != star_colors)
+        && let Some(mut mat_mut) = materials.get_mut(&material_handle)
+    {
+        mat_mut.uniforms.num_stars = count;
+        mat_mut.uniforms.elapsed_years = elapsed;
+        mat_mut.uniforms.star_positions_and_cavities = star_positions;
+        mat_mut.uniforms.star_colors_and_lum = star_colors;
     }
 }

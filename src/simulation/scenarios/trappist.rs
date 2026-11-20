@@ -147,10 +147,10 @@ fn spawn_trappist_planet(commands: &mut Commands, m_star: f64, i: usize, planet:
             has_theia_llsvp: false,
             llsvp_density_contrast: 0.0,
         },
-        SpinState {
-            rotation_period_hours: p_hours,
-            axial_tilt_degrees: 0.1,
-            spin_vector: DVec3::new(0.0, 1.0, 0.0),
+        {
+            let mut spin = SpinState::default();
+            spin.set_period_and_tilt(p_hours, 0.1, mass_s, rad_au);
+            spin
         },
         VolatileInventory {
             delivered_water_m_earth: ocean_frac * 0.003,

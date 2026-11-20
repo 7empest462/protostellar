@@ -10,6 +10,28 @@ use crate::utils::constants::G_ASTRO;
 
 use super::integrator::PhysicsBodyEntry;
 
+/// Mutual NFW dark-matter halo potential energy for an interacting SMBH pair ($M_\odot \cdot \text{AU}^2 / \text{yr}^2$).
+fn smbh_halo_pair_potential(rel_pos: DVec3, mass_a: f64, mass_b: f64) -> f64 {
+    let halo_r = (rel_pos.length_squared() + 250_000.0).sqrt();
+    let rs = 50_000.0;
+    let halo_a = if mass_a > 50_000_000.0 {
+        1.4e12
+    } else {
+        1.0e12
+    };
+    let halo_b = if mass_b > 50_000_000.0 {
+        1.4e12
+    } else {
+        1.0e12
+    };
+    let eff_mass_prod = f64::midpoint(mass_a * halo_b, mass_b * halo_a);
+    -(G_ASTRO * eff_mass_prod * (1.0 + halo_r / rs).ln()) / halo_r
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Energy monitor evaluates N-body + background dark matter halo potentials"
+)]
 pub(super) fn update_physics_energy_monitor(
     energy_monitor: &mut EnergyMonitor,
     body_data: &[PhysicsBodyEntry],
@@ -18,6 +40,8 @@ pub(super) fn update_physics_energy_monitor(
     star_pos: DVec3,
     star_mass: f64,
     softening_au: f64,
+    is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
 ) {
     let softening_sq = softening_au * softening_au;
     let mut kinetic_e = 0.0;
@@ -29,9 +53,28 @@ pub(super) fn update_physics_energy_monitor(
         if let Some(s_idx) = star_index
             && i != s_idx
         {
-            let dist_sq = (b.pos - star_pos).length_squared() + softening_sq;
+            let rel_pos = b.pos - star_pos;
+            let dist_sq = rel_pos.length_squared() + softening_sq;
             let dist = dist_sq.sqrt();
             potential_e -= (G_ASTRO * star_mass * b.mass) / dist;
+            if is_galaxy_collision && star_mass > 1_000_000.0 && b.mass > 1_000_000.0 {
+                potential_e += smbh_halo_pair_potential(rel_pos, star_mass, b.mass);
+            }
+        }
+
+        if is_gmc_cluster {
+            let r = b.pos.length();
+            let r_core = 65.0;
+            potential_e -= (G_ASTRO * 50.0 * b.mass) / (r * r + r_core * r_core).sqrt();
+
+            let r_s = crate::simulation::scenarios::molecular_cloud::GMC_NFW_SCALE_RADIUS_AU;
+            let dm = crate::simulation::scenarios::molecular_cloud::GMC_DARK_MATTER_MASS_SOLAR;
+            let phi_per_gm = if r / r_s > 1e-4 {
+                (1.0 + r / r_s).ln() / r
+            } else {
+                1.0 / r_s
+            };
+            potential_e -= G_ASTRO * dm * b.mass * phi_per_gm;
         }
     }
 
@@ -54,6 +97,10 @@ pub(super) fn update_physics_energy_monitor(
                 let dist_sq = (b_i.pos - b_j.pos).length_squared() + softening_sq;
                 let dist = dist_sq.sqrt();
                 potential_e -= (G_ASTRO * b_i.mass * b_j.mass) / dist;
+
+                if is_galaxy_collision && b_i.mass > 1_000_000.0 && b_j.mass > 1_000_000.0 {
+                    potential_e += smbh_halo_pair_potential(b_i.pos - b_j.pos, b_i.mass, b_j.mass);
+                }
             }
         }
     }

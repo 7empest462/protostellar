@@ -157,7 +157,8 @@ impl Plugin for SimulationPlugin {
                     handle_clipboard_seed_export_events,
                     handle_clipboard_seed_import_events,
                     update_active_scenarios,
-                ),
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
@@ -179,7 +180,9 @@ impl Plugin for SimulationPlugin {
                         .after(process_accretion_and_collisions)
                         .after(direct_nebular_gas_accretion),
                     update_impact_basin_relaxation.after(step_physics_simulation),
-                    update_atmospheric_escape_evolution.after(update_thermodynamics),
+                    update_atmospheric_escape_evolution
+                        .after(update_thermodynamics)
+                        .after(update_terraforming_atmospheres),
                     auto_spawn_planetesimals.after(step_physics_simulation),
                     auto_spawn_delayed_proto_earth.after(step_physics_simulation),
                     update_theia_rendezvous.after(process_accretion_and_collisions),
@@ -187,7 +190,9 @@ impl Plugin for SimulationPlugin {
                         .after(step_physics_simulation)
                         .before(process_accretion_and_collisions),
                     update_black_hole_star_dynamics.after(step_physics_simulation),
-                    dissipate_gas_disk.after(step_physics_simulation),
+                    dissipate_gas_disk
+                        .after(step_physics_simulation)
+                        .after(update_thermodynamics),
                     record_planetary_telemetry.after(process_accretion_and_collisions),
                 ),
             )
@@ -198,19 +203,19 @@ impl Plugin for SimulationPlugin {
                     crate::simulation::accretion::black_holes::update_black_hole_accretion_jets
                         .after(process_accretion_and_collisions),
                     update_guided_bombardment_projectiles.after(step_physics_simulation),
+                    update_kozai_lidov_evolution
+                        .after(detect_hierarchical_triples)
+                        .before(update_tidal_evolution),
                     update_tidal_evolution
                         .after(process_accretion_and_collisions)
                         .after(update_thermodynamics),
                     update_terraforming_atmospheres
                         .after(update_thermodynamics)
                         .after(update_tidal_evolution),
-                    update_trajectory_predictor,
+                    update_trajectory_predictor.after(step_physics_simulation),
                     cryovolcanic_ring_feeding_system.after(update_tidal_evolution),
                     update_relativity_evolution.after(process_accretion_and_collisions),
                     detect_hierarchical_triples.after(step_physics_simulation),
-                    update_kozai_lidov_evolution
-                        .after(detect_hierarchical_triples)
-                        .after(update_tidal_evolution),
                     sync_geological_evolution_system
                         .after(update_thermodynamics)
                         .after(update_terraforming_atmospheres),
@@ -219,8 +224,11 @@ impl Plugin for SimulationPlugin {
                     crate::simulation::naming::update_auto_generated_names
                         .after(step_physics_simulation),
                     crate::simulation::biology::civilization::habitability_tracking_system
-                        .after(step_physics_simulation),
+                        .after(step_physics_simulation)
+                        .after(update_thermodynamics)
+                        .after(update_terraforming_atmospheres),
                     process_roche_lobe_overflow.after(process_accretion_and_collisions),
+                    cleanup_roche_lobe_overflow.after(process_roche_lobe_overflow),
                     process_classical_novae.after(process_roche_lobe_overflow),
                 ),
             )
@@ -232,7 +240,8 @@ impl Plugin for SimulationPlugin {
                     update_gmc_cluster_com_camera.after(step_physics_simulation),
                 ),
             )
-            .init_resource::<TimelineScrubber>();
+            .init_resource::<TimelineScrubber>()
+            .init_resource::<crate::simulation::scenarios::ScenarioReloadGeneration>();
     }
 }
 

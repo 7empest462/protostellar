@@ -738,6 +738,7 @@ fn test_postcard_binary_snapshot_bit_exact_roundtrip() {
         }],
         event_flags: EventFlagsSave::default(),
         scenario_preset: None,
+        ..Default::default()
     };
 
     let bytes = serialize_system_postcard(&save).expect("postcard serialization should succeed");

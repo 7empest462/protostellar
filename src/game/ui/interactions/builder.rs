@@ -9,7 +9,7 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
-use super::super::selector::spawn_custom_builder_world;
+use super::super::selector::spawn_custom_builder_world_relative;
 use super::super::types::*;
 
 fn cycle_builder_composition(builder_state: &mut PlanetBuilderState) {
@@ -85,6 +85,8 @@ fn spawn_sub_roche_moon(
         };
         let moon_rad = ((3.0 * moon_mass / moon_comp.average_density()) / (4.0 * PI)).cbrt();
 
+        let mut moon_diff = InternalDifferentiation::default();
+        moon_diff.recalculate(moon_mass, moon_rad, &moon_comp);
         commands.spawn((
             SimPosition(moon_pos),
             SimVelocity(moon_vel),
@@ -95,8 +97,15 @@ fn spawn_sub_roche_moon(
             moon_comp,
             CelestialBody {
                 name: format!("Sub-Roche Moon ({p_name})"),
-                body_type: BodyType::Planetesimal,
+                body_type: BodyType::Moon,
             },
+            SatelliteOf {
+                parent: target_ent,
+                semi_major_axis_au: r_moon,
+                orbital_period_years: (r_moon.powi(3) / p_m.max(1e-8)).sqrt(),
+                true_anomaly: 0.25_f64.atan2(1.0),
+            },
+            moon_diff,
         ));
 
         toast.message = format!(
@@ -208,10 +217,25 @@ pub fn handle_builder_action(
             true
         }
         UiButtonAction::BuilderExecuteSpawn => {
-            spawn_custom_builder_world(
+            let mut star_pos = DVec3::ZERO;
+            let mut star_vel = DVec3::ZERO;
+            let mut eff_star_mass = star_mass;
+            for (_, m, _, pos, vel, _, body, opt_central, ..) in selected_query.iter() {
+                if opt_central.is_some() || body.body_type.is_star_or_remnant() {
+                    star_pos = pos.0;
+                    star_vel = vel.0;
+                    if opt_central.is_some() {
+                        eff_star_mass = m.0;
+                        break;
+                    }
+                }
+            }
+            spawn_custom_builder_world_relative(
                 commands,
                 builder_state,
-                star_mass,
+                eff_star_mass,
+                star_pos,
+                star_vel,
                 None,
                 player_state,
                 camera_query,

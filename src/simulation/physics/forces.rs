@@ -44,11 +44,12 @@ fn compute_gmc_cluster_acc(
     elapsed_years: f64,
 ) -> DVec3 {
     let mut pert_acc = DVec3::ZERO;
-    let (cluster_com, cluster_stellar_mass) = cluster_com_mass;
+    let (cluster_com, _cluster_stellar_mass) = cluster_com_mass;
     let r_vec = pos - cluster_com;
     let r_len = r_vec.length();
     let r_core = 65.0;
-    let total_core_mass = 50.0 + cluster_stellar_mass * 0.6;
+    // Uncollapsed gaseous cloud core only (50 M_sun); individual stars are summed pairwise.
+    let total_core_mass = 50.0;
     let cloud_pull =
         -(G_ASTRO * total_core_mass / (r_len * r_len + r_core * r_core).powf(1.5)) * r_vec;
     pert_acc += cloud_pull;
@@ -120,8 +121,8 @@ fn compute_gas_drag_acc(
 fn compute_smbh_halo_and_friction_pull(
     r_vec: DVec3,
     dist: f64,
-    dist_sq: f64,
-    eff_softening_sq: f64,
+    _dist_sq: f64,
+    _eff_softening_sq: f64,
     vel: DVec3,
     m_vel: DVec3,
     m_mass: f64,
@@ -132,10 +133,13 @@ fn compute_smbh_halo_and_friction_pull(
         1.0e12
     };
     let rs = 50_000.0;
-    let x = dist / rs;
+    // Unified 500 AU NFW halo core softening (r_sq + 250_000) matching GPU `nbody_galaxy.wgsl`
+    let halo_r_sq = r_vec.length_squared() + 250_000.0;
+    let halo_r = halo_r_sq.sqrt();
+    let x = halo_r / rs;
     let ln_term = (1.0 + x).ln();
     let mass_enc = m_halo * (ln_term - x / (1.0 + x));
-    let mut pull = -(r_vec / dist) * (G_ASTRO * mass_enc / (dist_sq + eff_softening_sq));
+    let mut pull = -(r_vec / halo_r) * (G_ASTRO * mass_enc / halo_r_sq);
 
     // Chandrasekhar dynamical friction as the dark matter halos interpenetrate
     let r_halo_overlap = 180_000.0;
@@ -174,7 +178,7 @@ fn accumulate_massive_chunk_simd(
     let dx = f64x4::splat(pos.x) - mx;
     let dy = f64x4::splat(pos.y) - my;
     let dz = f64x4::splat(pos.z) - mz;
-    let dist_sq = dx * dx + dy * dy + dz * dz + soft;
+    let dist_sq = (dx * dx + dy * dy + dz * dz + soft).max(f64x4::splat(1e-24));
     let dist = dist_sq.sqrt();
     let dir_scale = -gm / (dist_sq * dist);
 
@@ -186,7 +190,7 @@ fn accumulate_massive_chunk_simd(
         let mrx = mx - f64x4::splat(star_pos.x);
         let mry = my - f64x4::splat(star_pos.y);
         let mrz = mz - f64x4::splat(star_pos.z);
-        let m_r_sq = mrx * mrx + mry * mry + mrz * mrz + soft;
+        let m_r_sq = (mrx * mrx + mry * mry + mrz * mrz + soft).max(f64x4::splat(1e-24));
         let m_dist = m_r_sq.sqrt();
         let ind_scale = -gm / (m_r_sq * m_dist);
         ax += (ind_scale * mrx).reduce_add();
@@ -219,7 +223,7 @@ fn accumulate_massive_body_pulls(
                 return;
             }
             let r_vec = pos - m_pos;
-            let dist_sq = r_vec.length_squared() + eff_softening_sq;
+            let dist_sq = (r_vec.length_squared() + eff_softening_sq).max(1e-24);
             let dist = dist_sq.sqrt();
             let mut pull = -(G_ASTRO * m_mass / (dist_sq * dist)) * r_vec;
 
@@ -237,8 +241,8 @@ fn accumulate_massive_body_pulls(
 
             if let Some(s_idx) = star_index {
                 if m_idx == s_idx {
-                    let reduced_factor = if m_mass > 1e-12 && b_mass < m_mass * 0.5 {
-                        (m_mass + b_mass) / m_mass
+                    let reduced_factor = if m_mass > 1e-12 {
+                        (m_mass + b_mass.max(0.0)) / m_mass
                     } else {
                         1.0
                     };
@@ -247,7 +251,7 @@ fn accumulate_massive_body_pulls(
                     pert_acc += pull;
                     if i != s_idx {
                         let m_rel = m_pos - star_pos;
-                        let m_r_sq = m_rel.length_squared() + eff_softening_sq;
+                        let m_r_sq = (m_rel.length_squared() + eff_softening_sq).max(1e-24);
                         let m_dist = m_r_sq.sqrt();
                         pert_acc -= (G_ASTRO * m_mass / (m_r_sq * m_dist)) * m_rel;
                     }
@@ -382,7 +386,7 @@ pub fn compute_single_body_acc_with_companion(
             compute_gmc_cluster_acc(pos, vel, b_mass, b_type, cluster_com_mass, elapsed_years);
     }
 
-    if !b_type.is_star_or_remnant() {
+    if !is_gmc_cluster && !b_type.is_star_or_remnant() && b_mass <= 1_000_000.0 {
         pert_acc += compute_gas_drag_acc(pos, vel, b_mass, b_type, config, star_mass);
     }
 
@@ -421,15 +425,16 @@ pub fn compute_single_body_acc_with_companion(
         pert_acc -= (G_ASTRO * t_mass / (dist_sq * dist)) * r_vec;
     }
 
-    let use_kepler = should_use_kepler_splitting(
-        pos,
-        vel,
-        body.mass,
-        b_type,
-        star_pos,
-        star_mass,
-        inner_companion_radius,
-    );
+    let use_kepler = !is_gmc_cluster
+        && should_use_kepler_splitting(
+            pos,
+            vel,
+            body.mass,
+            b_type,
+            star_pos,
+            star_mass,
+            inner_companion_radius,
+        );
     let mut acc = if use_kepler {
         pert_acc
     } else {
@@ -437,12 +442,13 @@ pub fn compute_single_body_acc_with_companion(
     };
 
     let acc_mag = acc.length();
-    let max_acc = if is_gmc_cluster {
-        40.0 // Bounded to realistic acceleration in an open cluster (prevents slingshot explosions)
-    } else if star_mass > 100_000.0 {
+    let max_acc = if star_mass > 100_000.0 {
         1.0e12
     } else if is_little_red_dot {
         25_000_000.0
+    } else if is_gmc_cluster {
+        // Bound cluster accelerations safely above real OB/IMBH gravity without truncating Plummer-softened pulls
+        5_000.0
     } else {
         500_000.0
     };
@@ -453,6 +459,10 @@ pub fn compute_single_body_acc_with_companion(
     if acc.is_finite() { acc } else { DVec3::ZERO }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Planetary LHB migration system gates on scenario flags"
+)]
 pub fn apply_planetary_migration_and_lhb(
     body_data: &mut [PhysicsBodyEntry],
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
@@ -462,8 +472,10 @@ pub fn apply_planetary_migration_and_lhb(
     sub_dt: f64,
     step_idx: usize,
     is_compact_system: bool,
+    is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
 ) {
-    if is_compact_system || !lhb_state.is_active {
+    if is_compact_system || is_gmc_cluster || is_galaxy_collision || !lhb_state.is_active {
         return;
     }
     lhb_state.time_active_years += sub_dt;

@@ -1,4 +1,6 @@
 // WGSL Compute Shader for 100,000+ Particle Keplerian Orbital Mechanics, Planetary Resonances & Gas Drag
+// Emits compact per-body accretion counts + active particle count into `accretion_summary` (132 bytes)
+// to eliminate 24 MB/frame full-particle GPU -> CPU readbacks when using GPU Vertex Pulling.
 
 struct Particle {
     pos_mass: vec4<f32>,   // xyz = position in AU, w = mass in M_sun
@@ -27,199 +29,217 @@ struct SimUniforms {
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> uniforms: SimUniforms;
+// 0..32: per-massive-body accreted particle counts this frame, 32: total surviving active particles
+@group(0) @binding(2) var<storage, read_write> accretion_summary: array<atomic<u32>, 33>;
 
 const PI: f32 = 3.141592653589793;
 
 // High-speed on-chip workgroup-shared cache for coalescing massive body gravitational evaluation
+// and workgroup-reducing surviving particle counts (64x fewer global atomic ops).
 var<workgroup> shared_massive_bodies: array<vec4<f32>, 32>;
+var<workgroup> wg_alive_count: atomic<u32>;
 
 @compute @workgroup_size(64)
 fn main(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
-    // Cooperative workgroup caching: the first 32 threads preload the massive body array
-    // into ultra-fast on-chip Local Data Share (LDS), eliminating redundant VRAM memory fetches.
+    // Cooperative workgroup caching: first 32 threads preload massive bodies into LDS
     if (lid < 32u) {
         shared_massive_bodies[lid] = uniforms.massive_bodies[lid];
+    }
+    if (lid == 0u) {
+        atomicStore(&wg_alive_count, 0u);
     }
     workgroupBarrier();
 
     let idx = gid.x;
-    if (idx >= uniforms.num_particles || idx >= arrayLength(&particles)) {
-        return;
-    }
+    if (idx < uniforms.num_particles && idx < arrayLength(&particles)) {
+        var p = particles[idx];
+        let mass = p.pos_mass.w;
+        if (mass > 0.0) {
+            var killed = false;
+            let star = uniforms.star_pos;
+            var pos = p.pos_mass.xyz;
+            let dx = pos.x - star.x;
+            let dz = pos.z - star.z;
+            let min_r = max(uniforms.inner_radius * 0.5, 0.001);
+            var r = max(sqrt(dx * dx + dz * dz), min_r);
+            var phi = atan2(dz, dx);
+            let prev_phi = phi;
 
-    var p = particles[idx];
-    let mass = p.pos_mass.w;
-    if (mass <= 0.0) {
-        return; // Absorbed or dead particle slot
-    }
+            // Effective stellar mass (radiation pressure reduces effective gravity by ~0.05%)
+            let m_eff = uniforms.star_mass * (1.0 - 0.0005);
+            let omega = sqrt(uniforms.g_const * m_eff / (r * r * r));
+            let v_k = omega * r;
+            let v_circ_prev = vec3<f32>(-v_k * sin(prev_phi), 0.0, v_k * cos(prev_phi));
+            let has_prev_vel = dot(p.vel_temp.xyz, p.vel_temp.xyz) > 1.0e-10;
+            let v_pert = select(
+                vec3<f32>(0.0, 0.0, 0.0),
+                (p.vel_temp.xyz - v_circ_prev) * exp(-2.5 * uniforms.dt),
+                has_prev_vel,
+            );
 
-    let star = uniforms.star_pos;
-    var pos = p.pos_mass.xyz;
-    let dx = pos.x - star.x;
-    let dz = pos.z - star.z;
-    let min_r = max(uniforms.inner_radius * 0.5, 0.001);
-    var r = max(sqrt(dx * dx + dz * dz), min_r);
-    var phi = atan2(dz, dx);
-    let prev_phi = phi;
+            // Smooth orbital phase advance
+            phi = phi + omega * uniforms.dt;
+            phi = phi - floor(phi / (2.0 * PI)) * (2.0 * PI);
 
-    // Effective stellar mass (radiation pressure reduces effective gravity by ~0.05%)
-    let m_eff = uniforms.star_mass * (1.0 - 0.0005);
-    let omega = sqrt(uniforms.g_const * m_eff / (r * r * r));
-    let v_k = omega * r;
-    let v_circ_prev = vec3<f32>(-v_k * sin(prev_phi), 0.0, v_k * cos(prev_phi));
-    let has_prev_vel = dot(p.vel_temp.xyz, p.vel_temp.xyz) > 1.0e-10;
-    let v_pert = select(
-        vec3<f32>(0.0, 0.0, 0.0),
-        (p.vel_temp.xyz - v_circ_prev) * exp(-2.5 * uniforms.dt),
-        has_prev_vel,
-    );
-
-    // Smooth orbital phase advance
-    phi = phi + omega * uniforms.dt;
-    phi = phi - floor(phi / (2.0 * PI)) * (2.0 * PI);
-
-    // Aerodynamic Gas Drag & Secular Inward Drift with 3D Flared Scale Height
-    if (uniforms.enable_gas_drag != 0u && uniforms.gas_scale > 0.001) {
-        let h_scale = max(0.030 * r * pow(r / 1.0, 0.25), 0.0001);
-        let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
-        let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
-        let drag_rate = min(0.000005 * gas_density, 0.0005);
-        // Inner terrestrial silicate sublimation front (~0.35 AU) & snow-line cold-finger trap (~2.7 AU)
-        let inner_trap_boundary = max(uniforms.inner_radius * 2.0, 0.35);
-        let inner_retention = clamp((r - inner_trap_boundary) / 0.85, -0.25, 1.0);
-        let dr_snow = r - 2.7;
-        let snow_trap = 1.0 - 1.80 * exp(-(dr_snow * dr_snow) / (2.0 * 0.25 * 0.25));
-        let max_mig = select(r * 0.005, r * 0.0012, r < 2.0);
-        let migration = clamp(r * drag_rate * uniforms.dt * inner_retention * snow_trap, -r * 0.001, max_mig);
-        r = max(r - migration, uniforms.inner_radius * 0.95);
-    }
-
-    // Stellar Blast Shockwave & Photo-evaporative Dust Clearing
-    if (uniforms.shockwave_radius > 0.0) {
-        if (r < uniforms.shockwave_radius) {
-            if (r < min(uniforms.shockwave_radius * 0.85, 1.6)) {
-                p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, 0.0);
-                particles[idx] = p;
-                return;
-            } else {
-                r = min(uniforms.shockwave_radius + 0.15, uniforms.outer_radius);
+            // Aerodynamic Gas Drag & Secular Inward Drift with 3D Flared Scale Height
+            if (uniforms.enable_gas_drag != 0u && uniforms.gas_scale > 0.001) {
+                let h_scale = max(0.030 * r * pow(r / 1.0, 0.25), 0.0001);
+                let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
+                let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
+                let drag_rate = min(0.000005 * gas_density, 0.0005);
+                // Inner terrestrial silicate sublimation front (~0.35 AU) & snow-line cold-finger trap (~2.7 AU)
+                let inner_trap_boundary = max(uniforms.inner_radius * 2.0, 0.35);
+                let inner_retention = clamp((r - inner_trap_boundary) / 0.85, -0.25, 1.0);
+                let dr_snow = r - 2.7;
+                let snow_trap = 1.0 - 1.80 * exp(-(dr_snow * dr_snow) / (2.0 * 0.25 * 0.25));
+                let max_mig = select(r * 0.005, r * 0.0012, r < 2.0);
+                let migration = clamp(r * drag_rate * uniforms.dt * inner_retention * snow_trap, -r * 0.001, max_mig);
+                r = max(r - migration, uniforms.inner_radius * 0.95);
             }
-        } else if (abs(r - uniforms.shockwave_radius) < 1.0) {
-            let shock_boost = (1.0 - abs(r - uniforms.shockwave_radius)) / 1.0;
-            r = r + shock_boost * 1.5 * uniforms.dt;
+
+            // Stellar Blast Shockwave & Photo-evaporative Dust Clearing
+            if (uniforms.shockwave_radius > 0.0) {
+                if (r < uniforms.shockwave_radius) {
+                    if (r < min(uniforms.shockwave_radius * 0.85, 1.6)) {
+                        p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, 0.0);
+                        particles[idx] = p;
+                        killed = true;
+                    } else {
+                        r = min(uniforms.shockwave_radius + 0.15, uniforms.outer_radius);
+                    }
+                } else if (abs(r - uniforms.shockwave_radius) < 1.0) {
+                    let shock_boost = (1.0 - abs(r - uniforms.shockwave_radius)) / 1.0;
+                    r = r + shock_boost * 1.5 * uniforms.dt;
+                }
+            }
+
+            if (!killed) {
+                // Bound particles within the disk
+                r = clamp(r, uniforms.inner_radius * 0.75, uniforms.outer_radius * 1.05);
+
+                // Baseline coordinates with vertical flared scale-height confinement
+                pos.x = star.x + r * cos(phi);
+                let h_disk = max(0.030 * r * pow(r / 1.0, 0.25), 0.0002);
+                pos.y = clamp(pos.y * exp(-0.02 * uniforms.dt), -h_disk * 2.5, h_disk * 2.5);
+                pos.z = star.z + r * sin(phi);
+
+                // Baseline circular velocity plus carried non-circular perturbation
+                var vel = vec3<f32>(-v_k * sin(phi), 0.0, v_k * cos(phi)) + v_pert;
+
+                // Phase 2: Planetary Perturbations & Hill-Sphere Resonant Clearing (cached via workgroup LDS)
+                var a_pert = vec3<f32>(0.0, 0.0, 0.0);
+                let n_bodies = min(uniforms.num_massive_bodies, 32u);
+                for (var j: u32 = 0u; j < n_bodies; j = j + 1u) {
+                    let mb = shared_massive_bodies[j];
+                    let m_body_mass = mb.w;
+                    if (m_body_mass <= 0.0) {
+                        continue;
+                    }
+
+                    let to_body = mb.xyz - pos;
+                    let dist_sq = dot(to_body, to_body) + uniforms.softening_sq;
+                    let dist = sqrt(dist_sq);
+
+                    // Planetary Accretion Check: If particle enters physical/bound envelope, absorb it!
+                    let p_dist_au = max(length(mb.xyz - star), 0.001);
+                    let hill_r = p_dist_au * pow(m_body_mass / (3.0 * uniforms.star_mass), 0.3333333);
+                    let physical_r = clamp(0.0000426 * pow(m_body_mass / 0.000003003, 0.3333333), 0.00001, 0.010);
+                    let is_massive = uniforms.star_mass > 10.0;
+                    let max_acc = select(0.005, 0.85, is_massive);
+                    let acc_r = clamp(physical_r + 0.60 * hill_r, physical_r, max_acc);
+
+                    if (dist < acc_r) {
+                        // Accreted! Record into compact atomic summary and mark particle slot dead
+                        atomicAdd(&accretion_summary[j], 1u);
+                        p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, -(1.0 + f32(j)));
+                        p.vel_temp = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+                        particles[idx] = p;
+                        killed = true;
+                        break;
+                    }
+
+                    // Planetary Hill-Sphere resonance with numerical close-encounter softening
+                    let min_eff_sq = select(0.000001, 0.04, is_massive);
+                    let eff_dist_sq = max(dist_sq, min_eff_sq);
+                    let inv_dist3 = 1.0 / (eff_dist_sq * sqrt(eff_dist_sq));
+                    let f_grav = uniforms.g_const * m_body_mass * inv_dist3;
+                    a_pert = a_pert + to_body * f_grav;
+                }
+
+                if (!killed) {
+                    // Phase 2: Player Gravitational Tractor
+                    if (uniforms.tractor_pos_mass.w > 0.0) {
+                        let to_trac = uniforms.tractor_pos_mass.xyz - pos;
+                        let dist_sq = dot(to_trac, to_trac) + 0.005 * 0.005;
+                        let dist = sqrt(dist_sq);
+                        let f_trac = uniforms.g_const * uniforms.tractor_pos_mass.w / (dist_sq * dist);
+                        a_pert = a_pert + to_trac * f_trac;
+                    }
+
+                    // Acceleration limiting to protect against numerical kicks
+                    let a_mag = length(a_pert);
+                    let max_a = select(2500.0, 45000.0, uniforms.star_mass > 10.0);
+                    if (a_mag > max_a) {
+                        a_pert = a_pert * (max_a / a_mag);
+                    }
+
+                    // Apply acceleration perturbations and carried non-circular drift smoothly
+                    vel = vel + a_pert * uniforms.dt;
+                    pos = pos + v_pert * uniforms.dt + a_pert * (0.5 * uniforms.dt * uniforms.dt);
+                    pos.y = clamp(pos.y, -h_disk * 2.8, h_disk * 2.8);
+
+                    // Enforce cosmic speed limit (AU/yr)
+                    let speed = length(vel);
+                    let max_speed = select(300.0, 8000.0, uniforms.star_mass > 10.0);
+                    if (speed > max_speed) {
+                        vel = vel * (max_speed / speed);
+                    }
+
+                    // Restrain particles within disk boundaries
+                    let delta_xz = pos.xz - star.xz;
+                    let p_r = length(delta_xz);
+                    let unit_dir = select(vec2<f32>(1.0, 0.0), delta_xz / max(p_r, 1e-5), p_r > 1e-5);
+                    if (p_r > uniforms.outer_radius * 1.15) {
+                        let clamped_r = uniforms.outer_radius * 1.05;
+                        pos.x = star.x + unit_dir.x * clamped_r;
+                        pos.z = star.z + unit_dir.y * clamped_r;
+                        let v_rad = dot(vel.xz, unit_dir);
+                        if (v_rad > 0.0) {
+                            vel.x = vel.x - unit_dir.x * v_rad * 0.85;
+                            vel.z = vel.z - unit_dir.y * v_rad * 0.85;
+                        }
+                    } else if (p_r < uniforms.inner_radius * 0.85) {
+                        let clamped_r = uniforms.inner_radius * 0.95;
+                        pos.x = star.x + unit_dir.x * clamped_r;
+                        pos.z = star.z + unit_dir.y * clamped_r;
+                        let v_rad = dot(vel.xz, unit_dir);
+                        if (v_rad < 0.0) {
+                            vel.x = vel.x - unit_dir.x * v_rad * 0.85;
+                            vel.z = vel.z - unit_dir.y * v_rad * 0.85;
+                        }
+                    }
+
+                    // Blackbody temperature calculation
+                    let temp = uniforms.ref_temp_1au * pow(r / 1.0, -0.5);
+
+                    p.pos_mass = vec4<f32>(pos, mass);
+                    p.vel_temp = vec4<f32>(vel, temp);
+                    particles[idx] = p;
+
+                    atomicAdd(&wg_alive_count, 1u);
+                }
+            }
         }
     }
 
-    // Bound particles within the disk
-    r = clamp(r, uniforms.inner_radius * 0.75, uniforms.outer_radius * 1.05);
-
-    // Baseline coordinates with vertical flared scale-height confinement
-    pos.x = star.x + r * cos(phi);
-    let h_disk = max(0.030 * r * pow(r / 1.0, 0.25), 0.0002);
-    pos.y = clamp(pos.y * exp(-0.02 * uniforms.dt), -h_disk * 2.5, h_disk * 2.5);
-    pos.z = star.z + r * sin(phi);
-
-    // Baseline circular velocity plus carried non-circular perturbation
-    var vel = vec3<f32>(-v_k * sin(phi), 0.0, v_k * cos(phi)) + v_pert;
-
-    // Phase 2: Planetary Perturbations & Hill-Sphere Resonant Clearing (cached via workgroup LDS)
-    var a_pert = vec3<f32>(0.0, 0.0, 0.0);
-    let n_bodies = min(uniforms.num_massive_bodies, 32u);
-    for (var j: u32 = 0u; j < n_bodies; j = j + 1u) {
-        let mb = shared_massive_bodies[j];
-        let m_body_mass = mb.w;
-        if (m_body_mass <= 0.0) {
-            continue;
-        }
-
-        let to_body = mb.xyz - pos;
-        let dist_sq = dot(to_body, to_body) + uniforms.softening_sq;
-        let dist = sqrt(dist_sq);
-
-        // Planetary Accretion Check: If particle enters physical/bound envelope, absorb it!
-        let p_dist_au = max(length(mb.xyz - star), 0.001);
-        let hill_r = p_dist_au * pow(m_body_mass / (3.0 * uniforms.star_mass), 0.3333333);
-        let physical_r = clamp(0.0000426 * pow(m_body_mass / 0.000003003, 0.3333333), 0.00001, 0.010);
-        let is_massive = uniforms.star_mass > 10.0;
-        let max_acc = select(0.005, 0.85, is_massive);
-        let acc_r = clamp(physical_r + 0.60 * hill_r, physical_r, max_acc);
-
-        if (dist < acc_r) {
-            // Accreted! Encode capturing body index in negative mass field: -(1.0 + j)
-            p.pos_mass = vec4<f32>(0.0, -5000.0, 0.0, -(1.0 + f32(j)));
-            p.vel_temp = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-            particles[idx] = p;
-            return;
-        }
-
-        // Planetary Hill-Sphere resonance with numerical close-encounter softening
-        let min_eff_sq = select(0.000001, 0.04, is_massive);
-        let eff_dist_sq = max(dist_sq, min_eff_sq);
-        let inv_dist3 = 1.0 / (eff_dist_sq * sqrt(eff_dist_sq));
-        let f_grav = uniforms.g_const * m_body_mass * inv_dist3;
-        a_pert = a_pert + to_body * f_grav;
-    }
-
-    // Phase 2: Player Gravitational Tractor
-    if (uniforms.tractor_pos_mass.w > 0.0) {
-        let to_trac = uniforms.tractor_pos_mass.xyz - pos;
-        let dist_sq = dot(to_trac, to_trac) + 0.005 * 0.005;
-        let dist = sqrt(dist_sq);
-        let f_trac = uniforms.g_const * uniforms.tractor_pos_mass.w / (dist_sq * dist);
-        a_pert = a_pert + to_trac * f_trac;
-    }
-
-    // Acceleration limiting to protect against numerical kicks
-    let a_mag = length(a_pert);
-    let max_a = select(2500.0, 45000.0, uniforms.star_mass > 10.0);
-    if (a_mag > max_a) {
-        a_pert = a_pert * (max_a / a_mag);
-    }
-
-    // Apply acceleration perturbations and carried non-circular drift smoothly
-    vel = vel + a_pert * uniforms.dt;
-    pos = pos + v_pert * uniforms.dt + a_pert * (0.5 * uniforms.dt * uniforms.dt);
-    pos.y = clamp(pos.y, -h_disk * 2.8, h_disk * 2.8);
-
-    // Enforce cosmic speed limit (AU/yr)
-    let speed = length(vel);
-    let max_speed = select(300.0, 8000.0, uniforms.star_mass > 10.0);
-    if (speed > max_speed) {
-        vel = vel * (max_speed / speed);
-    }
-
-    // Restrain particles within disk boundaries
-    let p_r = length(pos.xz - star.xz);
-    if (p_r > uniforms.outer_radius * 1.15) {
-        let unit_dir = normalize(pos.xz - star.xz);
-        let clamped_r = uniforms.outer_radius * 1.05;
-        pos.x = star.x + unit_dir.x * clamped_r;
-        pos.z = star.z + unit_dir.y * clamped_r;
-        let v_rad = dot(vel.xz, unit_dir);
-        if (v_rad > 0.0) {
-            vel.x = vel.x - unit_dir.x * v_rad * 0.85;
-            vel.z = vel.z - unit_dir.y * v_rad * 0.85;
-        }
-    } else if (p_r < uniforms.inner_radius * 0.85) {
-        let unit_dir = normalize(pos.xz - star.xz);
-        let clamped_r = uniforms.inner_radius * 0.95;
-        pos.x = star.x + unit_dir.x * clamped_r;
-        pos.z = star.z + unit_dir.y * clamped_r;
-        let v_rad = dot(vel.xz, unit_dir);
-        if (v_rad < 0.0) {
-            vel.x = vel.x - unit_dir.x * v_rad * 0.85;
-            vel.z = vel.z - unit_dir.y * v_rad * 0.85;
+    workgroupBarrier();
+    if (lid == 0u) {
+        let local_alive = atomicLoad(&wg_alive_count);
+        if (local_alive > 0u) {
+            atomicAdd(&accretion_summary[32], local_alive);
         }
     }
-
-    // Blackbody temperature calculation
-    let temp = uniforms.ref_temp_1au * pow(r / 1.0, -0.5);
-
-    p.pos_mass = vec4<f32>(pos, mass);
-    p.vel_temp = vec4<f32>(vel, temp);
-
-    particles[idx] = p;
 }

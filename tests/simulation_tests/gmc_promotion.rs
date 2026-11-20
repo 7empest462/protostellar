@@ -742,3 +742,123 @@ fn test_gmc_sorted_nearest_star_3d_z_offset_and_tied_x() {
         "Protoplanet with tied X must pick the closest 3D active star and accrete mass (got {m_active})"
     );
 }
+
+#[test]
+fn test_lrd_cocoon_blowout_conserves_mass_and_syncs_body_mass() {
+    use protostellar::simulation::accretion::gas::update_black_hole_star_dynamics;
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .insert_resource(SimTime {
+            current_dt_yr: 0.5,
+            ..Default::default()
+        })
+        .add_systems(Update, update_black_hole_star_dynamics);
+
+    let lrd = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Little Red Dot".to_string(),
+                body_type: BodyType::QuasiStar,
+            },
+            SimPosition(bevy::math::DVec3::ZERO),
+            Mass(450_000.0),
+            Radius(60.0),
+            Temperature(4500.0),
+            Luminosity(1.0e10),
+            BlackHoleStarState {
+                black_hole_mass_solar: 400_000.0,
+                cocoon_mass_solar: 20_000.0,
+                cocoon_radius_au: 60.0,
+                eddington_ratio: 1.0,
+                blowout_progress: 0.0,
+                super_eddington_active: false,
+                is_blown_out: true,
+                accreted_envelope_mass: 30_000.0,
+                jet_travel_distance_au: 0.0,
+            },
+        ))
+        .id();
+
+    let mut prev_cocoon = 20_000.0;
+    for _ in 0..8 {
+        app.update();
+        let st = app.world().get::<BlackHoleStarState>(lrd).unwrap();
+        let m = app.world().get::<Mass>(lrd).unwrap().0;
+        assert!(st.cocoon_mass_solar <= prev_cocoon);
+        assert!((m - st.total_mass_solar()).abs() < 1e-6);
+        prev_cocoon = st.cocoon_mass_solar;
+    }
+
+    let st_final = app.world().get::<BlackHoleStarState>(lrd).unwrap();
+    let m_final = app.world().get::<Mass>(lrd).unwrap().0;
+    assert_eq!(st_final.blowout_progress, 1.0);
+    assert_eq!(st_final.cocoon_mass_solar, 0.0);
+    assert!((m_final - st_final.black_hole_mass_solar).abs() < 1e-6);
+}
+
+#[test]
+fn test_gmc_collapse_at_500_msun_clears_ignition_and_adds_kerr() {
+    use protostellar::simulation::accretion::gmc::gmc_cluster_gas_accretion;
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .insert_resource(SimTime {
+            current_dt_yr: 5.0,
+            ..Default::default()
+        })
+        .insert_resource(ActiveScenarioState {
+            current_preset: ScenarioPreset::MolecularCloudCluster,
+            ..Default::default()
+        })
+        .add_message::<protostellar::simulation::thermodynamics::StarIgnitionEvent>()
+        .add_message::<PlanetaryEngulfmentEvent>()
+        .add_message::<SupernovaEvent>()
+        .add_systems(
+            Update,
+            (
+                gmc_cluster_gas_accretion,
+                protostellar::simulation::thermodynamics::update_thermodynamics
+                    .after(gmc_cluster_gas_accretion),
+            ),
+        );
+
+    let proto = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Extreme Mass Hypergiant".to_string(),
+                body_type: BodyType::BlueMainSequence,
+            },
+            Mass(499.0),
+            Radius(0.2),
+            Temperature(35_000.0),
+            Luminosity(1_000_000.0),
+            SimPosition(bevy::math::DVec3::new(10.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            Composition::solar_gas(),
+            IgnitionState {
+                core_temperature: 2.0e7,
+                fusion_fraction: 0.9,
+                is_ignited: false,
+                shockwave_radius: 0.25,
+            },
+        ))
+        .id();
+
+    app.update();
+
+    let w = app.world();
+    assert_eq!(
+        w.get::<CelestialBody>(proto).unwrap().body_type,
+        BodyType::BlackHole
+    );
+    assert!(!w.get::<IgnitionState>(proto).unwrap().is_ignited);
+    assert!(
+        w.get::<protostellar::simulation::relativity::kerr::KerrBlackHole>(proto)
+            .is_some()
+    );
+}

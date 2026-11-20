@@ -4,11 +4,13 @@
 //! and drift. Type-I: embedded embryos. Type-II: gap-opening giants (slower).
 
 use bevy::math::DVec3;
+use std::f64::consts::PI;
 
 use crate::simulation::components::BodyType;
+use crate::simulation::resources::DiskParameters;
 use crate::utils::constants::*;
 
-const GAME_SCALE: f64 = 2.5e-3;
+const GAME_SCALE: f64 = 2.5e-2;
 
 /// Bodies that feel disk torques (not stars, dust, or already-bound moons).
 pub fn is_migrator(body_type: BodyType, is_central: bool, is_satellite: bool) -> bool {
@@ -28,14 +30,39 @@ pub fn is_migrator(body_type: BodyType, is_central: bool, is_satellite: bool) ->
     )
 }
 
-/// Local gas surface-density scale (relative units), matching accretion/gas.rs shape.
-pub fn local_gas_sigma_scale(r_au: f64, gas_density_scale: f64) -> f64 {
-    if gas_density_scale <= 1e-4 || r_au < 0.05 {
+/// Physical gas surface density $\Sigma(r)$ in $M_\odot/\text{AU}^2$ normalized against `DiskParameters`.
+pub fn local_gas_sigma_msun_au2(
+    r_au: f64,
+    gas_density_scale: f64,
+    disk_params: &DiskParameters,
+) -> f64 {
+    if gas_density_scale <= 1e-4 || disk_params.disk_mass <= 1e-6 || r_au < 0.05 {
         return 0.0;
     }
-    // Σ ∝ r^{-1.5} × global scale (Hayashi-like)
-    let sigma = (r_au / 1.0).powf(-1.50).max(0.0);
-    sigma * gas_density_scale
+    let r_in = disk_params.inner_radius_au.max(0.05);
+    let r_out = disk_params.outer_radius_au.max(r_in + 1.0);
+    if r_au < r_in || r_au > r_out * 1.25 {
+        return 0.0;
+    }
+    let p = disk_params.density_power_law.clamp(0.5, 2.5);
+    let exponent = 2.0 - p;
+    let integral_factor = if exponent.abs() < 1e-4 {
+        (r_out / r_in).ln()
+    } else {
+        (r_out.powf(exponent) - r_in.powf(exponent)) / exponent
+    };
+    let sigma_0 = disk_params.disk_mass / (2.0 * PI * integral_factor.max(1e-6));
+    let inner_taper = if r_au < r_in * 1.15 {
+        ((r_au - r_in) / (0.15 * r_in)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let outer_taper = if r_au > r_out {
+        (1.0 - (r_au - r_out) / (0.25 * r_out)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    sigma_0 * r_au.powf(-p) * gas_density_scale * inner_taper * outer_taper
 }
 
 /// Disk aspect ratio h = H/r (thicker outer disk).
@@ -48,29 +75,27 @@ fn type_ii_mass_threshold(h: f64, star_mass: f64) -> f64 {
     (h * h * h) * star_mass * 3.0
 }
 
-/// Tangential acceleration from Type-I / II torque (AU/yr²).
-///
-/// Negative along velocity → inward migration (usual Type-I).
-/// Magnitude is game-tuned so drift is visible over 10³–10⁵ yr at warp.
+/// Tangential acceleration from Type-I / II torque (AU/yr²), scaling physically with $\Sigma r^2 / M_*$.
 pub fn migration_tangential_acc(
     mass_solar: f64,
     r_au: f64,
     star_mass: f64,
     gas_density_scale: f32,
     body_type: BodyType,
+    disk_params: &DiskParameters,
 ) -> f64 {
-    let sigma = local_gas_sigma_scale(r_au, f64::from(gas_density_scale));
-    if sigma <= 1e-12 {
+    let sigma = local_gas_sigma_msun_au2(r_au, f64::from(gas_density_scale), disk_params);
+    if sigma <= 1e-18 || star_mass <= 1e-6 {
         return 0.0;
     }
 
     let h = aspect_ratio(r_au);
     let omega = (G_ASTRO * star_mass / (r_au * r_au * r_au).max(1e-12)).sqrt();
 
-    // Dimensionless Type-I factor ~ (M_p/M_*)² (Σ r² / M_*) / h²
-    // Compact form: a_t ∝ - (M_p / M_*) * sigma * omega² * r / h²
-    let m_ratio = (mass_solar / star_mass.max(1e-6)).clamp(1e-10, 0.05);
-    let mut strength = m_ratio * sigma * (omega * omega) * r_au / (h * h);
+    // Dimensionless Type-I torque scaling: (M_p/M_*) * (Sigma r^2 / M_*) / h^2 * Omega^2 * r
+    let m_ratio = (mass_solar / star_mass).clamp(1e-10, 0.05);
+    let local_disk_mass_ratio = ((sigma * r_au * r_au) / star_mass).clamp(0.0, 0.5);
+    let mut strength = m_ratio * local_disk_mass_ratio * (omega * omega) * r_au / (h * h);
 
     // Game scale: visible but not instant at 1–100× warp
     strength *= GAME_SCALE;
@@ -81,20 +106,21 @@ pub fn migration_tangential_acc(
         strength *= 0.15;
     }
 
-    // Very close-in: stronger (hot-Jupiter pathway); outer disk: milder
-    let radial_boost = if r_au < 1.0 {
-        1.5
-    } else if r_au > 20.0 {
-        0.6
-    } else {
-        1.0
-    };
+    // Smooth transition across inner hot-Jupiter boost (~1 AU) and outer disk (~20 AU)
+    let radial_boost = 1.5
+        - 0.5 * ((r_au - 0.5) / 1.0).clamp(0.0, 1.0)
+        - 0.4 * ((r_au - 15.0) / 10.0).clamp(0.0, 1.0);
 
     // Negative = remove angular momentum = inward drift
     -strength * radial_boost
 }
 
-/// Apply disk migration acceleration to one body (mutates `acc`).
+/// Apply disk migration acceleration to one body (mutates `acc`) along local azimuthal direction
+/// opposing its orbital angular momentum $\vec{h}$ (so both prograde and retrograde bodies lose $|h|$).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Disk migration torque requires disk density profile parameters and orbital state"
+)]
 pub fn apply_type_i_torque_acc(
     pos: DVec3,
     vel: DVec3,
@@ -104,25 +130,33 @@ pub fn apply_type_i_torque_acc(
     is_satellite: bool,
     star_mass: f64,
     gas_density_scale: f32,
+    disk_params: &DiskParameters,
     acc: &mut DVec3,
 ) {
     if !is_migrator(body_type, is_central, is_satellite) {
         return;
     }
 
-    let r_3d = pos.length().max(0.05);
-    let a_t = migration_tangential_acc(mass, r_3d, star_mass, gas_density_scale, body_type);
+    let r_cyl = (pos.x * pos.x + pos.z * pos.z).sqrt().max(0.05);
+    let a_t = migration_tangential_acc(
+        mass,
+        r_cyl,
+        star_mass,
+        gas_density_scale,
+        body_type,
+        disk_params,
+    );
     if a_t.abs() < 1e-18 {
         return;
     }
 
-    // Tangential unit vector in the orbital plane (along velocity projected)
-    let mut v_plane = DVec3::new(vel.x, 0.0, vel.z);
-    if v_plane.length_squared() < 1e-16 {
-        // Fallback: prograde azimuthal direction
-        v_plane = DVec3::new(-pos.z, 0.0, pos.x);
-    }
-    let t_hat = v_plane.normalize_or_zero();
-
-    *acc += t_hat * a_t;
+    // Prograde azimuthal unit vector in the XZ disk plane: phi_hat = (-z, 0, x) / r_cyl.
+    // Orient against the body's actual azimuthal velocity so retrograde orbits experience drag too.
+    let phi_hat = DVec3::new(-pos.z / r_cyl, 0.0, pos.x / r_cyl);
+    let oriented_phi = if vel.dot(phi_hat) < 0.0 {
+        -phi_hat
+    } else {
+        phi_hat
+    };
+    *acc += oriented_phi * a_t;
 }

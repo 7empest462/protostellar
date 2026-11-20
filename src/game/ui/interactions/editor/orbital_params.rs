@@ -16,6 +16,22 @@ pub fn handle_mass_change(
     player_state: &PlayerInteractionState,
     toast: &mut NotificationToast,
 ) -> bool {
+    handle_mass_change_with_effects(action, selected_query, None, None, player_state, toast)
+}
+
+pub fn handle_mass_change_with_effects(
+    action: &UiButtonAction,
+    selected_query: &mut SelectedWorldQuery,
+    mut sat_diff_query: Option<
+        &mut Query<
+            (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
+            Without<PanOrbitCamera>,
+        >,
+    >,
+    mut commands: Option<&mut Commands>,
+    player_state: &PlayerInteractionState,
+    toast: &mut NotificationToast,
+) -> bool {
     let multiplier = match action {
         UiButtonAction::IncreaseMass => 1.25,
         UiButtonAction::DecreaseMass => 0.80,
@@ -35,24 +51,12 @@ pub fn handle_mass_change(
     };
 
     mass.0 *= multiplier;
-    if body.body_type == BodyType::BlackHole {
-        radius.0 = (1.974e-8 * mass.0).max(1e-7);
-    } else if is_star.is_none() && !body.body_type.is_star_or_remnant() {
-        let avg_density = comp.average_density();
-        radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-            .cbrt()
-            .max(EARTH_RADIUS_AU * 0.1);
-    }
-
     let old_type = body.body_type;
-    let new_type = classify_body_by_mass_and_comp(
-        mass.0,
-        &comp,
-        is_star.is_some() || body.body_type.is_star_or_remnant(),
-    );
+    let was_star = is_star.is_some() || old_type.is_star_or_remnant();
+    let new_type = classify_body_by_mass_and_comp(mass.0, &comp, was_star);
 
-    if is_star.is_some() || body.body_type.is_star_or_remnant() {
-        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
+    if was_star {
+        if !old_type.is_remnant() && !old_type.is_hypothetical() {
             body.body_type = new_type;
             body.name = match new_type {
                 BodyType::BrownDwarf => "The Star (Brown Dwarf)".to_string(),
@@ -77,6 +81,57 @@ pub fn handle_mass_change(
         }
     }
 
+    if body.body_type == BodyType::BlackHole {
+        radius.0 = (1.974e-8 * mass.0).max(1e-7);
+    } else if body.body_type == BodyType::BrownDwarf {
+        radius.0 = 0.11 * SOLAR_RADIUS_AU;
+    } else if body.body_type.is_star_or_remnant() {
+        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
+            radius.0 = SOLAR_RADIUS_AU * mass.0.max(0.08).powf(0.8);
+        }
+    } else {
+        let avg_density = comp.average_density();
+        radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
+            .cbrt()
+            .max(EARTH_RADIUS_AU * 0.1);
+    }
+
+    if !was_star
+        && body.body_type.is_star_or_remnant()
+        && let Some(ref mut cmds) = commands
+        && let Ok(mut cmd) = cmds.get_entity(ent)
+    {
+        let is_bd = body.body_type == BodyType::BrownDwarf;
+        let lum = if is_bd {
+            1e-4 * (mass.0 / 0.05).clamp(0.1, 2.0)
+        } else {
+            mass.0.max(0.01).powf(3.5)
+        };
+        cmd.remove::<(PlanetaryClimate, BiosphereState)>().insert((
+            Luminosity(lum),
+            IgnitionState {
+                core_temperature: if is_bd { 2.5e6 } else { 1.5e7 },
+                fusion_fraction: if is_bd { 0.05 } else { 1.0 },
+                is_ignited: !is_bd,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: if is_bd {
+                    StellarEvolutionPhase::ProtostarContraction
+                } else {
+                    StellarEvolutionPhase::MainSequence
+                },
+                ..default()
+            },
+        ));
+    }
+
+    if let Some(ref mut sdq) = sat_diff_query
+        && let Ok((_, Some(mut diff))) = sdq.get_mut(ent)
+    {
+        diff.recalculate(mass.0, radius.0, &comp);
+    }
+
     let sign = if multiplier > 1.0 { "➕" } else { "➖" };
     let pct = if multiplier > 1.0 { "+25%" } else { "-20%" };
     toast.message = format!(
@@ -96,14 +151,77 @@ pub fn handle_orbital_adjustment(
     star_mass: f64,
     toast: &mut NotificationToast,
 ) -> bool {
+    handle_orbital_adjustment_relative(action, selected_query, None, player_state, star_mass, toast)
+}
+
+pub fn handle_orbital_adjustment_relative(
+    action: &UiButtonAction,
+    selected_query: &mut SelectedWorldQuery,
+    sat_diff_query: Option<
+        &Query<
+            (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
+            Without<PanOrbitCamera>,
+        >,
+    >,
+    player_state: &PlayerInteractionState,
+    star_mass: f64,
+    toast: &mut NotificationToast,
+) -> bool {
     let (mult, label) = match action {
         UiButtonAction::ExpandOrbit => (1.10, "Expanded to"),
         UiButtonAction::ContractOrbit => (0.90, "Contracted to"),
         _ => return false,
     };
 
-    if let Some(ent) = player_state.selected_entity
-        && let Ok((_, _, _, mut pos, mut vel, _, body, is_star, ..)) = selected_query.get_mut(ent)
+    let Some(ent) = player_state.selected_entity else {
+        return true;
+    };
+    let parent_ent =
+        sat_diff_query.and_then(|q| q.get(ent).ok().and_then(|(s, _)| s.map(|sat| sat.parent)));
+    let (primary_pos, primary_vel, primary_mass, is_sat) = parent_ent
+        .and_then(|p| {
+            selected_query
+                .get(p)
+                .ok()
+                .map(|t| (t.3.0, t.4.0, t.1.0, true))
+        })
+        .unwrap_or((DVec3::ZERO, DVec3::ZERO, star_mass, false));
+
+    let star_irrad = selected_query
+        .iter()
+        .find(|t| t.7.is_some() || t.6.body_type.is_star_or_remnant())
+        .map_or_else(
+            || {
+                crate::simulation::thermodynamics::stellar_irradiance_from_mass_or_opt(
+                    None, None, None, star_mass,
+                )
+            },
+            |t| {
+                crate::simulation::thermodynamics::stellar_irradiance_from_mass_or_opt(
+                    t.11.as_ref().map(|l| l.0),
+                    t.10.as_ref().map(|tp| tp.0),
+                    Some(t.2.0),
+                    t.1.0,
+                )
+            },
+        );
+
+    if let Ok((
+        _,
+        mass,
+        radius,
+        mut pos,
+        mut vel,
+        comp,
+        body,
+        is_star,
+        _,
+        _,
+        mut opt_temp,
+        _,
+        mut opt_vol,
+        mut opt_climate,
+    )) = selected_query.get_mut(ent)
     {
         if is_star.is_some() || body.body_type.is_star_or_remnant() {
             toast.message = format!(
@@ -113,20 +231,44 @@ pub fn handle_orbital_adjustment(
             toast.timer = 3.0;
             return true;
         }
-        pos.0 *= mult;
-        let r = pos.0.length().max(1e-4);
-        if pos.0.length_squared() <= 1e-12 {
-            pos.0 = DVec3::new(r, 0.0, 0.0);
+        let mut rel_pos = (pos.0 - primary_pos) * mult;
+        let r = rel_pos.length().max(1e-4);
+        if rel_pos.length_squared() <= 1e-12 {
+            rel_pos = DVec3::new(r, 0.0, 0.0);
         }
-        let v_mag = (G_ASTRO * star_mass.max(0.0) / r).sqrt();
-        let raw_tangent = DVec3::new(-pos.0.z, 0.0, pos.0.x);
-        let orbit_tangent = if raw_tangent.length_squared() > 1e-6 {
+        pos.0 = primary_pos + rel_pos;
+        let mu_mass = if is_sat {
+            primary_mass + mass.0
+        } else {
+            primary_mass.max(0.0)
+        };
+        let v_mag = (G_ASTRO * mu_mass / r).sqrt();
+        let raw_tangent = DVec3::new(-rel_pos.z, 0.0, rel_pos.x);
+        let orbit_tangent = if raw_tangent.length_squared() > 1e-10 {
             raw_tangent.normalize()
         } else {
             DVec3::Z
         };
-        vel.0 = orbit_tangent * v_mag;
-        toast.message = format!("🚀 {} Orbit {} {:.2} AU", body.name, label, r);
+        vel.0 = primary_vel + orbit_tangent * v_mag;
+        if !is_sat && let Some(ref mut temp) = opt_temp {
+            crate::simulation::thermodynamics::equilibrate_body_temperature_for_orbit(
+                r,
+                mass.0,
+                radius.0,
+                body.body_type,
+                &comp,
+                star_irrad,
+                temp,
+                opt_vol.as_deref_mut(),
+                opt_climate.as_deref_mut(),
+            );
+        }
+        let dist_disp = if r < 0.05 {
+            format!("{r:.4} AU")
+        } else {
+            format!("{r:.2} AU")
+        };
+        toast.message = format!("🚀 {} Orbit {} {}", body.name, label, dist_disp);
         toast.timer = 4.0;
     }
     true
@@ -137,8 +279,22 @@ pub fn handle_composition_cycle(
     player_state: &PlayerInteractionState,
     toast: &mut NotificationToast,
 ) {
+    handle_composition_cycle_with_diff(selected_query, None, player_state, toast);
+}
+
+pub fn handle_composition_cycle_with_diff(
+    selected_query: &mut SelectedWorldQuery,
+    mut sat_diff_query: Option<
+        &mut Query<
+            (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
+            Without<PanOrbitCamera>,
+        >,
+    >,
+    player_state: &PlayerInteractionState,
+    toast: &mut NotificationToast,
+) {
     if let Some(ent) = player_state.selected_entity
-        && let Ok((_, mut mass, mut radius, _, _, mut comp, body, is_star, ..)) =
+        && let Ok((_, mass, mut radius, _, _, mut comp, mut body, is_star, ..)) =
             selected_query.get_mut(ent)
     {
         if is_star.is_some() || body.body_type.is_star_or_remnant() {
@@ -154,7 +310,6 @@ pub fn handle_composition_cycle(
             );
         } else if comp.ice_frac > 0.5 {
             *comp = Composition::solar_gas();
-            mass.0 *= 4.0;
             toast.message = format!(
                 "🎨 {} Material -> Gas Giant Envelope (Density: 0.8 g/cm³)",
                 body.name
@@ -176,6 +331,17 @@ pub fn handle_composition_cycle(
         radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
             .cbrt()
             .max(EARTH_RADIUS_AU * 0.1);
+        if body.body_type != BodyType::Moon
+            && !body.body_type.is_remnant()
+            && !body.body_type.is_hypothetical()
+        {
+            body.body_type = classify_body_by_mass_and_comp(mass.0, &comp, false);
+        }
+        if let Some(ref mut sdq) = sat_diff_query
+            && let Ok((_, Some(mut diff))) = sdq.get_mut(ent)
+        {
+            diff.recalculate(mass.0, radius.0, &comp);
+        }
         toast.timer = 4.0;
     }
 }
@@ -187,16 +353,54 @@ pub fn handle_velocity_burn_and_fix(
     star_mass: f64,
     toast: &mut NotificationToast,
 ) -> bool {
+    handle_velocity_burn_and_fix_relative(
+        action,
+        selected_query,
+        None,
+        player_state,
+        star_mass,
+        toast,
+    )
+}
+
+pub fn handle_velocity_burn_and_fix_relative(
+    action: &UiButtonAction,
+    selected_query: &mut SelectedWorldQuery,
+    sat_diff_query: Option<
+        &mut Query<
+            (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
+            Without<PanOrbitCamera>,
+        >,
+    >,
+    player_state: &PlayerInteractionState,
+    star_mass: f64,
+    toast: &mut NotificationToast,
+) -> bool {
+    let parent_ent = player_state.selected_entity.and_then(|ent| {
+        sat_diff_query
+            .as_ref()
+            .and_then(|q| q.get(ent).ok().and_then(|(s, _)| s.map(|sat| sat.parent)))
+    });
+    let (primary_pos, primary_vel, primary_mass, is_sat) = parent_ent
+        .and_then(|p| {
+            selected_query
+                .get(p)
+                .ok()
+                .map(|t| (t.3.0, t.4.0, t.1.0, true))
+        })
+        .unwrap_or((DVec3::ZERO, DVec3::ZERO, star_mass, false));
+
     match action {
         UiButtonAction::CycleComposition => {
-            handle_composition_cycle(selected_query, player_state, toast);
+            handle_composition_cycle_with_diff(selected_query, sat_diff_query, player_state, toast);
             true
         }
         UiButtonAction::BoostDeltaV => {
             if let Some(ent) = player_state.selected_entity
                 && let Ok((_, _, _, _, mut vel, _, body, ..)) = selected_query.get_mut(ent)
             {
-                vel.0 *= 1.15;
+                let rel_vel = vel.0 - primary_vel;
+                vel.0 = primary_vel + rel_vel * 1.15;
                 toast.message = format!("⚡ {} Prograde Delta-V Boost (+15% Velocity)", body.name);
                 toast.timer = 4.0;
             }
@@ -206,7 +410,8 @@ pub fn handle_velocity_burn_and_fix(
             if let Some(ent) = player_state.selected_entity
                 && let Ok((_, _, _, _, mut vel, _, body, ..)) = selected_query.get_mut(ent)
             {
-                vel.0 *= 0.85;
+                let rel_vel = vel.0 - primary_vel;
+                vel.0 = primary_vel + rel_vel * 0.85;
                 toast.message =
                     format!("⚡ {} Retrograde Delta-V Brake (-15% Velocity)", body.name);
                 toast.timer = 4.0;
@@ -215,14 +420,24 @@ pub fn handle_velocity_burn_and_fix(
         }
         UiButtonAction::FixOrbit => {
             if let Some(ent) = player_state.selected_entity
-                && let Ok((_, _, _, mut pos, mut vel, _, body, ..)) = selected_query.get_mut(ent)
+                && let Ok((_, mass, _, mut pos, mut vel, _, body, ..)) = selected_query.get_mut(ent)
                 && !body.body_type.is_star_or_remnant()
             {
-                let r_cyl = (pos.0.x * pos.0.x + pos.0.z * pos.0.z).sqrt().max(0.1);
-                let v_circ = (G_ASTRO * star_mass / r_cyl).sqrt();
-                let phi = pos.0.z.atan2(pos.0.x);
-                vel.0 = DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
-                pos.0.y = 0.0;
+                let mut rel_pos = pos.0 - primary_pos;
+                rel_pos.y = 0.0;
+                pos.0 = primary_pos + rel_pos;
+                let min_r = if is_sat { 1e-4 } else { 0.1 };
+                let r_cyl = (rel_pos.x * rel_pos.x + rel_pos.z * rel_pos.z)
+                    .sqrt()
+                    .max(min_r);
+                let mu_mass = if is_sat {
+                    primary_mass + mass.0
+                } else {
+                    primary_mass
+                };
+                let v_circ = (G_ASTRO * mu_mass / r_cyl).sqrt();
+                let phi = rel_pos.z.atan2(rel_pos.x);
+                vel.0 = primary_vel + DVec3::new(-v_circ * phi.sin(), 0.0, v_circ * phi.cos());
                 toast.message =
                     format!("🪐 {} Orbit Circularized & Stabilized (e = 0.0)", body.name);
                 toast.timer = 4.0;

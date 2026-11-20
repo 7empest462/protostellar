@@ -62,8 +62,8 @@ pub use sci_fi_theme::{SciFiPanelMaterial, SciFiUiThemePlugin};
 pub use scroll::{handle_inspector_scroll, reset_inspector_scroll_on_target_change};
 pub use selector::{
     body_to_button_colors, body_to_button_label, body_to_button_label_and_colors,
-    spawn_custom_builder_world, update_planet_builder_ui, update_quick_bar_highlights,
-    update_quick_body_selector_bar,
+    spawn_custom_builder_world, spawn_custom_builder_world_relative, update_planet_builder_ui,
+    update_quick_bar_highlights, update_quick_body_selector_bar,
 };
 pub use setup::setup_hud;
 pub use telemetry_panel::{

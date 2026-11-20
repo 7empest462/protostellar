@@ -10,10 +10,88 @@ use crate::utils::constants::EARTH_MASS_SOLAR;
 use super::physics::*;
 use super::types::*;
 
+#[derive(Clone, Copy)]
+struct EscapeStarInfo {
+    entity: Entity,
+    pos: bevy::math::DVec3,
+    mass_solar: f64,
+    lum_solar: f64,
+    l_xuv_watts: f64,
+}
+
+fn resolve_escape_host_and_hill(
+    p_pos: bevy::math::DVec3,
+    p_mass_solar: f64,
+    opt_sat: Option<&SatelliteOf>,
+    stars: &[EscapeStarInfo],
+    body_lookup: &rustc_hash::FxHashMap<Entity, (bevy::math::DVec3, f64)>,
+) -> Option<(EscapeStarInfo, f64, f64)> {
+    let host_star = opt_sat
+        .and_then(|sat| stars.iter().find(|s| s.entity == sat.parent).copied())
+        .or_else(|| {
+            stars
+                .iter()
+                .min_by(|a, b| {
+                    (p_pos - a.pos)
+                        .length_squared()
+                        .partial_cmp(&(p_pos - b.pos).length_squared())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .copied()
+        })?;
+
+    let dist_au = (p_pos - host_star.pos).length().max(0.005);
+    let r_hill_star = dist_au * (p_mass_solar / (3.0 * host_star.mass_solar.max(1e-4))).cbrt();
+    let r_hill_au = opt_sat
+        .and_then(|sat| body_lookup.get(&sat.parent).copied())
+        .filter(|&(_, parent_mass)| parent_mass > 1e-12)
+        .map_or(r_hill_star, |(parent_pos, parent_mass)| {
+            let moon_sep = (p_pos - parent_pos).length().max(1e-5);
+            let r_hill_moon = moon_sep * (p_mass_solar / (3.0 * parent_mass)).cbrt();
+            r_hill_moon.min(r_hill_star)
+        });
+
+    Some((host_star, dist_au, r_hill_au))
+}
+
+type EscapeStarQueryItem<'a> = (
+    Entity,
+    &'a SimPosition,
+    &'a Luminosity,
+    &'a Mass,
+    &'a Radius,
+    &'a IgnitionState,
+    &'a CelestialBody,
+);
+
+type EscapeBodyQueryItem<'a> = (
+    Entity,
+    &'a mut Mass,
+    &'a SimPosition,
+    &'a mut Radius,
+    &'a mut Composition,
+    &'a mut CelestialBody,
+    Option<&'a mut AtmosphericEscapeTail>,
+    Option<&'a mut VolatileInventory>,
+    Option<&'a mut crate::simulation::terraforming::TerraformingAtmosphere>,
+    Option<&'a mut InternalDifferentiation>,
+    Option<&'a PlanetaryClimate>,
+    Option<&'a Temperature>,
+    Option<&'a SatelliteOf>,
+    Option<&'a mut AtmosphericEscapeState>,
+);
+
+type EscapeBodyFilter = (
+    Without<CentralStar>,
+    Without<crate::simulation::probes::SpaceProbe>,
+    Without<crate::simulation::terraforming::BombardmentProjectile>,
+);
+
 /// Primary ECS system that models high-energy stellar XUV photoevaporation, stellar wind stripping,
 /// geodynamo magnetospheric shielding, and cometary sublimation.
 #[allow(
     clippy::type_complexity,
+    clippy::too_many_arguments,
     reason = "bevy ECS query for atmospheric escape telemetry"
 )]
 pub fn update_atmospheric_escape_evolution(
@@ -23,53 +101,40 @@ pub fn update_atmospheric_escape_evolution(
     sim_time: Res<SimTime>,
     escape_config: Res<AtmosphericEscapeConfig>,
     mut stripped_events: MessageWriter<AtmosphericStrippedEvent>,
-    star_query: Query<
-        (
-            &SimPosition,
-            &Luminosity,
-            &Mass,
-            &Radius,
-            &IgnitionState,
-            &CelestialBody,
-        ),
-        With<CentralStar>,
-    >,
-    mut planets_query: Query<
-        (
-            Entity,
-            &mut Mass,
-            &SimPosition,
-            &mut Radius,
-            &mut Composition,
-            &mut CelestialBody,
-            Option<&mut AtmosphericEscapeTail>,
-            Option<&mut VolatileInventory>,
-            Option<&mut InternalDifferentiation>,
-            Option<&PlanetaryClimate>,
-            Option<&Temperature>,
-            Option<&mut AtmosphericEscapeState>,
-        ),
-        (
-            Without<CentralStar>,
-            Without<crate::simulation::probes::SpaceProbe>,
-        ),
-    >,
+    mut body_lookup: Local<rustc_hash::FxHashMap<Entity, (bevy::math::DVec3, f64)>>,
+    star_query: Query<EscapeStarQueryItem, With<CentralStar>>,
+    mut planets_query: Query<EscapeBodyQueryItem, EscapeBodyFilter>,
 ) {
     if (!config.enable_thermodynamics || time_warp.is_paused) && !time_warp.step_once {
         return;
     }
 
-    let Ok((star_pos, star_lum, star_mass, _star_rad, _ignition, _star_body)) = star_query.single()
-    else {
+    let stars: smallvec::SmallVec<[EscapeStarInfo; 4]> = star_query
+        .iter()
+        .map(
+            |(entity, pos, lum, mass, _rad, _ign, _body)| EscapeStarInfo {
+                entity,
+                pos: pos.0,
+                mass_solar: mass.0,
+                lum_solar: lum.0,
+                l_xuv_watts: calculate_stellar_xuv_luminosity(lum.0, sim_time.elapsed_years),
+            },
+        )
+        .collect();
+    if stars.is_empty() {
         return;
-    };
+    }
 
     let dt_yr = if sim_time.current_dt_yr > 0.0 {
         sim_time.current_dt_yr
     } else {
         config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
     };
-    let l_xuv_watts = calculate_stellar_xuv_luminosity(star_lum.0, sim_time.elapsed_years);
+
+    body_lookup.clear();
+    for (ent, p_mass, p_pos, ..) in planets_query.iter() {
+        body_lookup.insert(ent, (p_pos.0, p_mass.0));
+    }
 
     for (
         planet_ent,
@@ -80,32 +145,36 @@ pub fn update_atmospheric_escape_evolution(
         mut b_body,
         mut opt_tail,
         mut opt_vol,
+        mut opt_terra,
         mut opt_diff,
         opt_climate,
         opt_temp,
+        opt_sat,
         mut opt_escape_state,
     ) in planets_query.iter_mut()
     {
         if b_body.body_type.is_star_or_remnant() {
             continue;
         }
+        let Some((host_star, dist_au, r_hill_au)) =
+            resolve_escape_host_and_hill(p_pos.0, p_mass.0, opt_sat, &stars, &body_lookup)
+        else {
+            continue;
+        };
 
-        let dist_au = (p_pos.0 - star_pos.0).length().max(0.005);
-        let r_hill_au = dist_au * (p_mass.0 / (3.0 * star_mass.0.max(1e-4))).cbrt();
         let body_temp_k = opt_climate.map_or_else(
             || opt_temp.map_or(280.0, |t| t.0),
             |c| f64::from(c.surface_temperature_k),
         );
-
         let rates = evaluate_body_escape_rates(&EscapeEvalInput {
             body_type: b_body.body_type,
             mass_solar: p_mass.0,
             rad_au: p_rad.0,
             dist_au,
             r_hill_au,
-            l_xuv_watts,
-            star_mass_solar: star_mass.0,
-            star_lum_solar: star_lum.0,
+            l_xuv_watts: host_star.l_xuv_watts,
+            star_mass_solar: host_star.mass_solar,
+            star_lum_solar: host_star.lum_solar,
             body_temp_k,
             comp: &comp,
             opt_vol: opt_vol.as_deref(),
@@ -114,7 +183,7 @@ pub fn update_atmospheric_escape_evolution(
         });
 
         let was_gas_rich = comp.gas_frac > 0.005;
-        apply_escape_mass_loss(
+        let actual_lost_m_earth = apply_escape_mass_loss(
             &EscapeStepContext {
                 planet_ent,
                 body_temp_k,
@@ -128,10 +197,10 @@ pub fn update_atmospheric_escape_evolution(
             &mut p_mass,
             &mut comp,
             &mut opt_vol,
+            &mut opt_terra,
             &mut opt_diff,
             &mut stripped_events,
         );
-
         update_visual_tail(
             &mut commands,
             planet_ent,
@@ -141,13 +210,12 @@ pub fn update_atmospheric_escape_evolution(
             rates.ion_color,
             rates.total_loss_rate > 0.0001,
         );
-
         write_escape_state(
             &mut commands,
             planet_ent,
             &mut opt_escape_state,
             &rates,
-            dt_yr,
+            actual_lost_m_earth,
         );
     }
 }
@@ -366,6 +434,58 @@ struct EscapeStepContext {
     sim_time_yr: f64,
 }
 
+fn subtract_volatile_component_mass(
+    p_mass: &mut Mass,
+    comp: &mut Composition,
+    strip_ice: bool,
+    delta_m_solar: f64,
+    min_bound_ice: f64,
+) -> f64 {
+    let old_mass = p_mass.0.max(1e-12);
+    let m_metal = old_mass * comp.metal_frac;
+    let m_silicate = old_mass * comp.silicate_frac;
+    let mut m_ice = old_mass * comp.ice_frac;
+    let m_organics = old_mass * comp.organics_frac;
+    let mut m_gas = old_mass * comp.gas_frac;
+
+    let lost_solar = if strip_ice {
+        let excess_ice = old_mass * (comp.ice_frac - min_bound_ice).max(0.0);
+        let sublimated = delta_m_solar
+            .min(excess_ice)
+            .min((old_mass - 1e-12).max(0.0));
+        m_ice = (m_ice - sublimated).max(0.0);
+        sublimated
+    } else {
+        let non_gas = m_metal + m_silicate + m_ice + m_organics;
+        let core_floor = if non_gas > 1e-12 {
+            non_gas
+        } else {
+            old_mass.min(EARTH_MASS_SOLAR * 0.001)
+        };
+        let max_strippable = (old_mass - core_floor).max(0.0).min(m_gas);
+        let stripped = delta_m_solar.min(max_strippable);
+        m_gas = (m_gas - stripped).max(0.0);
+        stripped
+    };
+
+    if lost_solar > 0.0 {
+        let new_total = (m_metal + m_silicate + m_ice + m_organics + m_gas).max(1e-12);
+        p_mass.0 = new_total;
+        comp.metal_frac = m_metal / new_total;
+        comp.silicate_frac = m_silicate / new_total;
+        comp.ice_frac = m_ice / new_total;
+        comp.organics_frac = m_organics / new_total;
+        comp.gas_frac = m_gas / new_total;
+        *comp = comp.normalized();
+    }
+
+    lost_solar / EARTH_MASS_SOLAR
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Applies conserving mass/volatile stripping across gas, ice, volatiles, and terraforming"
+)]
 fn apply_escape_mass_loss(
     step: &EscapeStepContext,
     body: &mut CelestialBody,
@@ -373,31 +493,30 @@ fn apply_escape_mass_loss(
     p_mass: &mut Mass,
     comp: &mut Composition,
     opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
+    opt_terra: &mut Option<Mut<'_, crate::simulation::terraforming::TerraformingAtmosphere>>,
     opt_diff: &mut Option<Mut<'_, InternalDifferentiation>>,
     stripped_events: &mut MessageWriter<AtmosphericStrippedEvent>,
-) {
+) -> f64 {
     if step.total_loss_rate <= 0.0 {
-        return;
+        return 0.0;
     }
 
     let delta_m_earth = step.total_loss_rate * (step.dt_yr / 1.0e6);
     let delta_m_solar = delta_m_earth * EARTH_MASS_SOLAR;
     let prev_gas = comp.gas_frac;
     let prev_ice = comp.ice_frac;
+    let mut actual_lost_m_earth = 0.0f64;
 
     if comp.gas_frac > 0.0 {
-        let cur_gas_m = p_mass.0 * comp.gas_frac;
-        let stripped = delta_m_solar.min(cur_gas_m);
-        p_mass.0 = (p_mass.0 - stripped).max(EARTH_MASS_SOLAR * 0.001);
-
-        let new_gas_m = (cur_gas_m - stripped).max(0.0);
-        comp.gas_frac = (new_gas_m / p_mass.0).clamp(0.0, 1.0);
-        *comp = comp.normalized();
+        actual_lost_m_earth +=
+            subtract_volatile_component_mass(p_mass, comp, false, delta_m_solar, 0.0);
 
         if step.was_gas_rich && comp.gas_frac < 0.001 {
-            body.body_type = crate::simulation::components::classify_body_by_mass_and_comp(
-                p_mass.0, comp, false,
-            );
+            if body.body_type != BodyType::Moon {
+                body.body_type = crate::simulation::components::classify_body_by_mass_and_comp(
+                    p_mass.0, comp, false,
+                );
+            }
             let p_density = comp.average_density();
             p_rad.0 = crate::simulation::accretion::impact_regimes::radius_from_mass_density(
                 p_mass.0, p_density,
@@ -414,23 +533,13 @@ fn apply_escape_mass_loss(
         && p_mass.0 < 0.05 * EARTH_MASS_SOLAR
         && comp.ice_frac > 0.05
     {
-        // Sublimate exposed volatile ice above the ~175 K vacuum stability threshold;
-        // trace (< 5%) structurally bound hydroxyls remain in silicate minerals on rocky worlds.
         let min_bound_ice = if body.body_type == BodyType::Comet {
             0.0
         } else {
             0.05
         };
-        let old_mass = p_mass.0;
-        let cur_ice_m = old_mass * comp.ice_frac;
-        let excess_ice_m = old_mass * (comp.ice_frac - min_bound_ice).max(0.0);
-        let sublimated = delta_m_solar.min(excess_ice_m);
-        if sublimated > 0.0 {
-            p_mass.0 = (old_mass - sublimated).max(1e-12);
-            let new_ice_m = (cur_ice_m - sublimated).max(0.0);
-            comp.ice_frac = (new_ice_m / p_mass.0).clamp(0.0, 1.0);
-            *comp = comp.normalized();
-        }
+        actual_lost_m_earth +=
+            subtract_volatile_component_mass(p_mass, comp, true, delta_m_solar, min_bound_ice);
     }
 
     let comp_shifted =
@@ -452,26 +561,66 @@ fn apply_escape_mass_loss(
 
     if let Some(vol) = opt_vol {
         let is_thin_secondary = !step.was_gas_rich && comp.gas_frac <= 0.001;
-        // 1 bar on an Earth-like atmosphere is ~1e-6 M_earth; thin steam/secondary envelopes
-        // respond to volatile loss far faster than multi-bar H2/He gas giant envelopes.
-        let raw_pressure_loss = if is_thin_secondary {
-            (delta_m_earth / 1.0e-6).max(delta_m_earth * 2.0) as f32
+        let prev_p = vol.atmospheric_pressure_bar;
+        let (pressure_loss, water_loss) = if is_thin_secondary {
+            // Partition delta_m_earth across atmosphere vs surface water without double-counting
+            let atm_mass = crate::simulation::thermodynamics::gas_mass_for_pressure_bar(
+                prev_p, p_mass.0, p_rad.0,
+            );
+            let water_mass = vol.delivered_water_m_earth.max(0.0);
+            let total_vol_mass = atm_mass + water_mass;
+            if total_vol_mass > 1e-15 {
+                let atm_budget = delta_m_earth * (atm_mass / total_vol_mass);
+                let water_budget = delta_m_earth * (water_mass / total_vol_mass);
+                let p_loss = crate::simulation::thermodynamics::hydrostatic_pressure_bar(
+                    atm_budget, p_mass.0, p_rad.0,
+                )
+                .min(prev_p);
+                let w_loss = water_budget.min(water_mass);
+                (p_loss, w_loss)
+            } else {
+                (0.0, 0.0)
+            }
         } else {
-            (delta_m_earth * 2.0) as f32
+            let p_loss = ((delta_m_earth * 2.0) as f32).min(prev_p);
+            let w_loss = (delta_m_earth * 0.02).min(vol.delivered_water_m_earth);
+            (p_loss, w_loss)
         };
-        let pressure_loss = raw_pressure_loss.min(vol.atmospheric_pressure_bar);
-        vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - pressure_loss).max(0.0);
-
-        let water_loss = if is_thin_secondary {
-            delta_m_earth
-        } else {
-            delta_m_earth * 0.02
-        };
+        vol.atmospheric_pressure_bar = (prev_p - pressure_loss).max(0.0);
         vol.delivered_water_m_earth = (vol.delivered_water_m_earth - water_loss).max(0.0);
         if vol.delivered_water_m_earth <= 1e-6 {
             vol.ocean_coverage_frac = 0.0;
         }
+
+        if let Some(terra) = opt_terra.as_deref_mut()
+            && prev_p > 1e-6
+        {
+            let p_keep = (1.0 - (pressure_loss / prev_p)).clamp(0.0, 1.0);
+            terra.co2_pressure_bar *= p_keep;
+            terra.nitrogen_pressure_bar *= p_keep;
+            terra.atmospheric_water_m_earth *= f64::from(p_keep);
+            if water_loss > 0.0 {
+                let total_terra_w =
+                    (terra.surface_liquid_water_m_earth + terra.atmospheric_water_m_earth).max(0.0);
+                if total_terra_w > vol.delivered_water_m_earth {
+                    let excess = total_terra_w - vol.delivered_water_m_earth;
+                    terra.surface_liquid_water_m_earth =
+                        (terra.surface_liquid_water_m_earth - excess).max(0.0);
+                }
+            }
+        }
+
+        if actual_lost_m_earth == 0.0 {
+            let atm_mass_lost = crate::simulation::thermodynamics::gas_mass_for_pressure_bar(
+                pressure_loss,
+                p_mass.0,
+                p_rad.0,
+            );
+            actual_lost_m_earth += atm_mass_lost + water_loss;
+        }
     }
+
+    actual_lost_m_earth
 }
 
 fn update_visual_tail(
@@ -503,9 +652,9 @@ fn write_escape_state(
     planet_ent: Entity,
     opt_escape_state: &mut Option<Mut<'_, AtmosphericEscapeState>>,
     rates: &EscapeRatesBundle,
-    dt_yr: f64,
+    actual_mass_lost_m_earth: f64,
 ) {
-    let mass_lost_step = rates.total_loss_rate * (dt_yr / 1.0e6);
+    let mass_lost_step = actual_mass_lost_m_earth.max(0.0);
 
     if let Some(st) = opt_escape_state {
         st.photoevaporative_loss_rate_m_earth_per_myr = rates.photo_rate;
@@ -519,7 +668,9 @@ fn write_escape_state(
         st.roche_lobe_fill_fraction = rates.roche_fill_fraction;
         st.cumulative_mass_lost_m_earth += mass_lost_step;
         st.escape_regime = rates.regime;
-    } else if let Ok(mut entity_cmd) = commands.get_entity(planet_ent) {
+    } else if (rates.total_loss_rate > 0.0 || mass_lost_step > 0.0)
+        && let Ok(mut entity_cmd) = commands.get_entity(planet_ent)
+    {
         entity_cmd.try_insert(AtmosphericEscapeState {
             photoevaporative_loss_rate_m_earth_per_myr: rates.photo_rate,
             solar_wind_stripping_rate_m_earth_per_myr: rates.wind_rate,

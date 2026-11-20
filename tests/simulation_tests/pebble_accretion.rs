@@ -490,8 +490,8 @@ fn test_classical_nova_ignition_threshold() {
 
     let mass = app.world().get::<Mass>(wd).unwrap().0;
     assert!(
-        (mass - (1.0 - 1.0e-4)).abs() < 1e-9,
-        "WD should lose the accreted hydrogen shell mass"
+        (mass - (1.0 - 1.5e-4)).abs() < 1e-9,
+        "WD should lose the full accreted hydrogen shell mass"
     );
 
     // Check events
@@ -500,7 +500,7 @@ fn test_classical_nova_ignition_threshold() {
         .resource::<bevy::prelude::Messages<SupernovaEvent>>();
     let nova_events: Vec<_> = messages.iter_current_update_messages().collect();
     assert_eq!(nova_events.len(), 1);
-    assert_eq!(nova_events[0].initial_mass_solar, 1e-4);
+    assert_eq!(nova_events[0].initial_mass_solar, 1.5e-4);
 }
 
 #[test]
@@ -794,5 +794,76 @@ fn test_physical_comet_collision_preserves_pebble_accretion_oceans() {
         vol.ocean_coverage_frac >= 0.85,
         "Physical icy comet merger must NOT reduce 85% ocean coverage: got {:.4}",
         vol.ocean_coverage_frac
+    );
+}
+
+#[test]
+fn test_roche_cleanup_and_minor_body_3d_inclined_velocities() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::accretion::{RocheLobeOverflow, cleanup_roche_lobe_overflow};
+    use protostellar::simulation::components::{BodyType, CelestialBody, SimPosition, SimVelocity};
+    use protostellar::simulation::disk::PlanetesimalSpawner;
+    use protostellar::simulation::pebble_accretion::spawn_streaming_instability_minor_bodies;
+    use protostellar::simulation::resources::{DiskParameters, SimTime, TimeWarp};
+
+    let mut app = App::new();
+    app.add_systems(Update, cleanup_roche_lobe_overflow);
+    let comp = app.world_mut().spawn(SimPosition(DVec3::ZERO)).id();
+    let far_star = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::new(10.0, 0.0, 0.0)), // > 8 AU range
+            RocheLobeOverflow {
+                companion: comp,
+                mass_transfer_rate: 1e-4,
+                l1_distance_au: 1.0,
+            },
+        ))
+        .id();
+    app.update();
+    assert!(
+        app.world().get::<RocheLobeOverflow>(far_star).is_none(),
+        "cleanup_roche_lobe_overflow must detach RocheLobeOverflow beyond 8 AU"
+    );
+
+    let mut spawn_app = App::new();
+    spawn_app
+        .init_resource::<DiskParameters>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<protostellar::simulation::resources::SimulationConfig>()
+        .insert_resource(SimTime {
+            elapsed_years: 200.0,
+            ..Default::default()
+        })
+        .insert_resource(PlanetesimalSpawner {
+            max_ecs_bodies: 200,
+            ..Default::default()
+        })
+        .add_systems(Update, spawn_streaming_instability_minor_bodies);
+
+    spawn_app.update();
+
+    let mut q = spawn_app
+        .world_mut()
+        .query::<(&CelestialBody, &SimPosition, &SimVelocity)>();
+    let mut non_zero_vy = 0;
+    let mut total_spawned = 0;
+    for (body, pos, vel) in q.iter(spawn_app.world()) {
+        if matches!(
+            body.body_type,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal
+        ) {
+            total_spawned += 1;
+            if vel.0.y.abs() > 1e-6 {
+                non_zero_vy += 1;
+            }
+            assert!(pos.0.length().is_finite());
+        }
+    }
+    assert!(total_spawned > 0);
+    assert!(
+        non_zero_vy > 0,
+        "Minor bodies spawned in 3D inclined disk must have non-zero vel.y components"
     );
 }

@@ -280,11 +280,13 @@ fn apply_giant_impact_primary_state(
         ..,
     )) = ctx.bodies_query.get_mut(primary_entity)
     {
+        let gamma = ((total_primary_mass - m.0).max(0.0) / m.0.max(1e-30)).clamp(0.02, 1.0);
+        let delta_t = (gamma * 750.0).clamp(15.0, 220.0);
         m.0 = total_primary_mass;
         pos.0 = primary_pos;
         vel.0 = primary_vel;
         rad.0 = p_new_radius;
-        t.0 = (t.0 + 800.0).min(4000.0);
+        t.0 = (t.0 + delta_t).min(1200.0);
         *comp = new_comp;
         body.body_type = classify_body_by_mass_and_comp(total_primary_mass, &comp, false);
         if body.name.starts_with("Proto-Earth") {

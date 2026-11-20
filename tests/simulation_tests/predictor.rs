@@ -412,3 +412,25 @@ fn test_short_period_trajectory_points_stay_smooth_within_single_orbit() {
         "Short-period forecast spline must stay smoothly curved without orbit-skipping chords (max chord: {max_chord:.4} AU)"
     );
 }
+
+#[test]
+fn test_parabolic_barker_propagation_no_nan() {
+    let star_mass = 1.0;
+    let q = 0.5;
+    let v_esc = (2.0 * G_ASTRO * star_mass / q).sqrt();
+    let pos0 = DVec3::new(q, 0.0, 0.0);
+    let vel0 = DVec3::new(0.0, 0.0, v_esc);
+    let el = state_vectors_to_orbital_elements(pos0, vel0, star_mass, 1e-9)
+        .expect("Parabolic orbit elements must exist without NaN");
+    assert!(el.periapsis.is_finite());
+    assert!((el.eccentricity - 1.0).abs() < 1e-6);
+
+    let (p1, v1) = propagate_kepler_position_velocity(&el, 0.25, star_mass)
+        .expect("Barker solver must propagate parabolic trajectory cleanly");
+    assert!(p1.is_finite() && v1.is_finite());
+    let specific_energy = 0.5 * v1.length_squared() - G_ASTRO * star_mass / p1.length();
+    assert!(
+        specific_energy.abs() < 1e-6,
+        "Parabolic energy must stay near 0, got {specific_energy}"
+    );
+}

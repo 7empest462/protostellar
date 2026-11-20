@@ -457,7 +457,7 @@ pub struct GeologicalState {
     /// Active geological epoch.
     pub epoch: GeologicalEpoch,
     /// Planetary age in Gyr since accretion (0.0 to 6.0 Gyr).
-    pub geological_age_gyr: f32,
+    pub geological_age_gyr: f64,
     /// Continental drift Wilson cycle phase in [0.0, 1.0] (~500 Myr period).
     pub continental_drift_phase: f32,
     /// Supercontinent aggregation index (1.0 = single supercontinent like Pangea, 0.15 = dispersed modern continents).
@@ -555,7 +555,7 @@ impl GeologicalState {
 
         Self {
             epoch,
-            geological_age_gyr: age_gyr,
+            geological_age_gyr: f64::from(age_gyr),
             continental_drift_phase: drift_phase,
             supercontinent_aggregation: aggregation,
             oxygen_level_pal: oxygen_pal,

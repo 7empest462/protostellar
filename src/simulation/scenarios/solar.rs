@@ -292,6 +292,11 @@ fn spawn_solar_nebula_protostar(commands: &mut Commands) -> Entity {
             Luminosity(1.0),
             AngularMomentum::default(),
             Composition::solar_gas(),
+            SpinState {
+                spin_vector: DVec3::new(0.0, 1e-12, 0.0),
+                rotation_period_hours: 600.0,
+                axial_tilt_degrees: 7.25,
+            },
             IgnitionState {
                 core_temperature: 4.0e6,
                 fusion_fraction: 0.4,
@@ -303,7 +308,12 @@ fn spawn_solar_nebula_protostar(commands: &mut Commands) -> Entity {
         .id()
 }
 
-fn compute_mmsn_seed_kinematics(name: &str, r_au: f64, phi_off: f64) -> (DVec3, DVec3) {
+fn compute_mmsn_seed_kinematics(
+    name: &str,
+    b_type: BodyType,
+    r_au: f64,
+    phi_off: f64,
+) -> (DVec3, DVec3) {
     if name == "Theia" {
         let ecc = 0.165;
         let peri_angle = 0.35;
@@ -320,6 +330,26 @@ fn compute_mmsn_seed_kinematics(name: &str, r_au: f64, phi_off: f64) -> (DVec3, 
             v_r * phi_off.sin() + v_theta * phi_off.cos(),
         );
         (pos_theia, vel_theia)
+    } else if b_type == BodyType::Comet || name.contains("Pluto") {
+        let (ecc, phi) = if b_type == BodyType::Comet {
+            (
+                phi_off.clamp(0.0, 0.985),
+                (r_au * 0.73 + phi_off * 3.1).rem_euclid(2.0 * PI),
+            )
+        } else {
+            (0.2488, phi_off)
+        };
+        let v_circ = (G_ASTRO * 1.0 / r_au).sqrt();
+        let v_r = v_circ * ecc;
+        let v_theta = v_circ * (1.0 - ecc * ecc).max(0.0).sqrt();
+        let (sin_phi, cos_phi) = phi.sin_cos();
+        let pos = DVec3::new(r_au * cos_phi, 0.0, r_au * sin_phi);
+        let vel = DVec3::new(
+            v_r * cos_phi - v_theta * sin_phi,
+            0.0,
+            v_r * sin_phi + v_theta * cos_phi,
+        );
+        (pos, vel)
     } else {
         let v_circ = (G_ASTRO * 1.0 / r_au).sqrt();
         let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
@@ -419,7 +449,7 @@ pub fn spawn_solar_nebula_mmsn(
     let mut saturn_info = None;
 
     for (r_au, mass_s, rad_au, name, comp, b_type, phi_off) in all_seeds {
-        let (pos, vel) = compute_mmsn_seed_kinematics(name, r_au, phi_off);
+        let (pos, vel) = compute_mmsn_seed_kinematics(name, b_type, r_au, phi_off);
 
         let mut diff = InternalDifferentiation::default();
         diff.recalculate(mass_s, rad_au, &comp);
@@ -542,6 +572,13 @@ fn spawn_satellite_moon(
 
     let mut diff = InternalDifferentiation::default();
     diff.recalculate(params.mass, params.radius, &params.composition);
+    let mut spin = SpinState::default();
+    spin.set_period_and_tilt(
+        period_yr * YEAR_SECONDS / 3600.0,
+        0.0,
+        params.mass,
+        params.radius,
+    );
 
     let mut ent_cmd = commands.spawn((
         CelestialBody {
@@ -558,7 +595,7 @@ fn spawn_satellite_moon(
         AngularMomentum(pos.cross(vel) * params.mass),
         params.composition,
         diff,
-        SpinState::default(),
+        spin,
         VolatileInventory::default(),
     ));
 

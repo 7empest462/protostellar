@@ -40,7 +40,7 @@ pub fn calculate_doppler_factor(lorentz_factor: f32, cos_theta: f32) -> f32 {
     1.0 / denominator.max(1e-4)
 }
 
-/// Calculates the relativistic Doppler flux boosting amplification factor $D = \delta^{3 + \alpha}$.
+/// Calculates the relativistic Doppler flux boosting amplification factor $D = \delta^{2 + \alpha}$.
 ///
 /// For an optically thin continuous synchrotron jet with electron energy index $p$,
 /// the spectral index is $\alpha = (p - 1)/2$.
@@ -48,7 +48,7 @@ pub fn calculate_doppler_factor(lorentz_factor: f32, cos_theta: f32) -> f32 {
 /// Clamped to a stable dynamic range $[0.05, 20.0]$ for realistic visual flaring without HDR blowout.
 pub fn calculate_doppler_boosting(doppler_factor: f32, spectral_index: f32) -> f32 {
     let alpha = (spectral_index - 1.0) * 0.5;
-    let exponent = 3.0 + alpha;
+    let exponent = 2.0 + alpha;
     let boosted = doppler_factor.max(1e-4).powf(exponent);
     boosted.clamp(0.05, 20.0)
 }

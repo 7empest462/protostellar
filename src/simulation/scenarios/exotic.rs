@@ -35,10 +35,10 @@ fn spawn_rogue_intruder(commands: &mut Commands) -> Entity {
                 organics_frac: 0.00,
                 gas_frac: 0.88,
             },
-            SpinState {
-                rotation_period_hours: 8.2,
-                axial_tilt_degrees: 42.0,
-                spin_vector: DVec3::new(0.3, 0.9, 0.2).normalize(),
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(8.2, 42.0, rogue_mass, EARTH_RADIUS_AU * 13.5);
+                spin
             },
             AtmosphericStormState {
                 polar_hexagon_amplitude: 0.0,
@@ -262,12 +262,15 @@ fn spawn_little_red_dot_satellites(commands: &mut Commands, total_mass: f64, tem
     ];
 
     for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off) in &primordial_satellites {
-        let v_circ = (G_ASTRO * total_mass / r_au).sqrt();
+        let v_circ = (G_ASTRO * (total_mass + mass_s) / r_au).sqrt();
         let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
         let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
         let temp = (temp_k * (r_au / 60.0).powf(-0.5)).max(50.0);
 
-        commands.spawn((
+        let mut spin = SpinState::default();
+        spin.set_period_and_tilt(48.0, 5.0, mass_s, rad_au);
+
+        let mut cmd = commands.spawn((
             CelestialBody {
                 name: name.to_string(),
                 body_type: b_type,
@@ -280,12 +283,21 @@ fn spawn_little_red_dot_satellites(commands: &mut Commands, total_mass: f64, tem
             Temperature(temp),
             comp,
             VolatileInventory::default(),
-            SpinState {
-                spin_vector: DVec3::new(0.0, 1e-10, 0.0),
-                rotation_period_hours: 48.0,
-                axial_tilt_degrees: 5.0,
-            },
+            spin,
         ));
+        if b_type.is_star_or_remnant() && b_type != BodyType::BlackHole {
+            cmd.insert((
+                Luminosity((mass_s.powf(3.0)).max(1.0)),
+                IgnitionState {
+                    core_temperature: 4.0e7,
+                    fusion_fraction: 1.0,
+                    is_ignited: true,
+                    shockwave_radius: 0.0,
+                },
+                StellarEvolutionState::default(),
+                crate::simulation::space_weather::StellarActivityClock::default(),
+            ));
+        }
     }
 }
 
@@ -322,10 +334,10 @@ pub fn spawn_little_red_dot_scenario(
             Temperature(temp_k),
             Luminosity(2.5e10),
             Composition::pure_hydrogen(),
-            SpinState {
-                spin_vector: DVec3::new(0.0, 1e-6, 0.0),
-                rotation_period_hours: 120.0,
-                axial_tilt_degrees: 0.0,
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(120.0, 0.0, total_mass, cocoon_radius_au);
+                spin
             },
             VolatileInventory::default(),
             IgnitionState {
@@ -524,7 +536,7 @@ fn spawn_compact_remnant_scenario(
             disk_params.inner_radius_au = 0.10;
             disk_params.outer_radius_au = 2.20;
             disk_params.reference_temp_1au = 280.0;
-            disk_params.gas_disk_lifetime_yr = 10_000_000.0;
+            disk_params.gas_disk_lifetime_yr = 0.0;
             disk_params.disk_mass = 0.0;
 
             let pulsar_ent = spawn_compact_remnant_star(
@@ -567,7 +579,7 @@ fn spawn_compact_remnant_scenario(
             disk_params.inner_radius_au = 0.20;
             disk_params.outer_radius_au = 22.0;
             disk_params.reference_temp_1au = 1200.0;
-            disk_params.gas_disk_lifetime_yr = 5_000_000.0;
+            disk_params.gas_disk_lifetime_yr = 0.0;
             disk_params.disk_mass = 0.0;
 
             let magnetar_ent = spawn_compact_remnant_star(
@@ -660,7 +672,7 @@ fn spawn_magnetar_cluster_bodies(commands: &mut Commands, magnetar_mass: f64) {
     ];
 
     for &(r_au, mass_s, rad_au, name, comp, b_type, phi_off, temp) in &cluster_bodies {
-        let v_circ = (G_ASTRO * magnetar_mass / r_au).sqrt();
+        let v_circ = (G_ASTRO * (magnetar_mass + mass_s) / r_au).sqrt();
         let pos = DVec3::new(r_au * phi_off.cos(), 0.0, r_au * phi_off.sin());
         let vel = DVec3::new(-v_circ * phi_off.sin(), 0.0, v_circ * phi_off.cos());
 
@@ -669,7 +681,7 @@ fn spawn_magnetar_cluster_bodies(commands: &mut Commands, magnetar_mass: f64) {
             * DVec3::new(0.0, 2.0 * std::f64::consts::PI / (36.0 / 8766.0), 0.0);
         spin.update_from_spin(spin_rot, mass_s, rad_au);
 
-        commands.spawn((
+        let mut cmd = commands.spawn((
             CelestialBody {
                 name: name.to_string(),
                 body_type: b_type,
@@ -690,6 +702,18 @@ fn spawn_magnetar_cluster_bodies(commands: &mut Commands, magnetar_mass: f64) {
             VolatileInventory::default(),
             spin,
         ));
+        if b_type.is_star_or_remnant() {
+            cmd.insert((
+                IgnitionState {
+                    core_temperature: 4.5e7,
+                    fusion_fraction: 1.0,
+                    is_ignited: true,
+                    shockwave_radius: 0.0,
+                },
+                StellarEvolutionState::default(),
+                crate::simulation::space_weather::StellarActivityClock::default(),
+            ));
+        }
     }
 }
 
@@ -739,10 +763,10 @@ pub fn spawn_relativistic_binary_scenario(
             Luminosity(0.05),
             AngularMomentum(DVec3::ZERO),
             Composition::metal_rich(),
-            SpinState {
-                rotation_period_hours: 0.059 / 3600.0, // 59 milliseconds
-                axial_tilt_degrees: 15.0,
-                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(0.059 / 3600.0, 15.0, m1, ns_radius);
+                spin
             },
             ElectromagneticFieldState {
                 magnetic_field_gauss: 1e12,
@@ -770,10 +794,10 @@ pub fn spawn_relativistic_binary_scenario(
             Luminosity(0.01),
             AngularMomentum(DVec3::new(0.0, r_periastron * v_p * m2, 0.0)),
             Composition::metal_rich(),
-            SpinState {
-                rotation_period_hours: 1.2,
-                axial_tilt_degrees: 5.0,
-                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(1.2, 5.0, m2, ns_radius);
+                spin
             },
             RelativisticState::compact_binary(m1, m2, a_au, ecc),
         ))
@@ -895,10 +919,10 @@ pub fn spawn_kozai_triple_scenario(
             Luminosity(0.0),
             AngularMomentum(r_inner.cross(v_inner) * m_planet),
             Composition::solar_gas(),
-            SpinState {
-                rotation_period_hours: 14.0,
-                axial_tilt_degrees: 68.0,
-                spin_vector: DVec3::new(0.0, inc_rad.cos(), inc_rad.sin()).normalize(),
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(14.0, 68.0, m_planet, EARTH_RADIUS_AU * 11.2);
+                spin
             },
             crate::simulation::kozai_lidov::KozaiLidovState {
                 perturber_entity: Some(companion_ent),

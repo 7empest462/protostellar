@@ -36,20 +36,30 @@ fn evaluate_polar_hexagon(
     let r_hex = r0 * (1.0 + hex_amplitude * cos(wave_phase) + (hex_amplitude * 0.22) * cos(2.0 * wave_phase));
     let delta_r = colatitude - r_hex;
 
-    let jet = exp(-pow(delta_r / 0.018, 2.0));
-    let inside = smoothstep(0.025, -0.025, delta_r);
-    let eye = smoothstep(0.055, 0.018, colatitude);
-    let eyewall = smoothstep(0.015, 0.038, colatitude) * smoothstep(0.065, 0.042, colatitude);
-    let interior_turb = fbm(p_gas * 14.0 + vec3<f32>(t * 0.03, 0.0, -t * 0.03));
+    let jet = exp(-pow(delta_r / 0.016, 2.0));
+    let outer_halo = exp(-pow((delta_r - 0.022) / 0.028, 2.0));
+    let inside = smoothstep(0.022, -0.020, delta_r);
+    let eye = smoothstep(0.044, 0.014, colatitude);
+    let eyewall = smoothstep(0.014, 0.032, colatitude) * smoothstep(0.056, 0.036, colatitude);
+    let interior_turb = fbm(p_gas * 12.0 + vec3<f32>(t * 0.02, 0.0, -t * 0.02));
+    let concentric_rings = sin(colatitude * 58.0 + interior_turb * 1.4) * 0.5 + 0.5;
 
-    let haze_gold = vec3<f32>(0.88, 0.68, 0.30) * (0.85 + interior_turb * 0.30);
-    let jet_cream = vec3<f32>(0.98, 0.91, 0.70);
-    let eye_dark = vec3<f32>(0.28, 0.14, 0.05);
-    let eyewall_bright = vec3<f32>(0.95, 0.82, 0.52);
+    // Cassini-calibrated linear RGB colors: rich smoky dusty olive-sage interior,
+    // delicate pale-cream hexagonal jet boundary, and crisp muted slate-teal polar cyclone.
+    let haze_olive = mix(
+        vec3<f32>(0.24, 0.31, 0.17),
+        vec3<f32>(0.35, 0.40, 0.23),
+        concentric_rings * 0.55 + interior_turb * 0.30
+    );
+    let jet_cream = vec3<f32>(0.50, 0.49, 0.29);
+    let outer_collar = vec3<f32>(0.30, 0.36, 0.21);
+    let eye_teal = vec3<f32>(0.10, 0.20, 0.19);
+    let eyewall_sage = vec3<f32>(0.38, 0.43, 0.27);
 
-    var storm_col = mix(haze_gold, jet_cream, jet * 0.85);
-    storm_col = mix(storm_col, eyewall_bright, eyewall * 0.90);
-    storm_col = mix(storm_col, eye_dark, eye * 0.95);
+    var storm_col = mix(haze_olive, outer_collar, outer_halo * 0.45);
+    storm_col = mix(storm_col, jet_cream, jet * 0.72);
+    storm_col = mix(storm_col, eyewall_sage, eyewall * 0.68);
+    storm_col = mix(storm_col, eye_teal, eye * 0.90);
 
     res.inside_mask = inside;
     res.jet_mask = jet;
@@ -128,9 +138,9 @@ fn evaluate_anticyclonic_vortices(
     var eye_col = vec3<f32>(0.72, 0.16, 0.08);
 
     if (is_saturn) {
-        spot_core_col = vec3<f32>(0.98, 0.98, 0.95);
-        collar_col    = vec3<f32>(0.92, 0.86, 0.74);
-        eye_col       = vec3<f32>(0.85, 0.76, 0.60);
+        spot_core_col = vec3<f32>(0.88, 0.82, 0.58);
+        collar_col    = vec3<f32>(0.78, 0.70, 0.46);
+        eye_col       = vec3<f32>(0.70, 0.62, 0.40);
     } else if (mass_jup > 6.0) {
         spot_core_col = vec3<f32>(0.85, 0.18, 0.65);
         collar_col    = vec3<f32>(0.70, 0.30, 0.85);

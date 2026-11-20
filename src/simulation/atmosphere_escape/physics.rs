@@ -179,13 +179,15 @@ pub fn calculate_jeans_escape(
 
     let lambda_esc = (G_SI * m_kg * mu_kg) / (BOLTZMANN_SI * t_exo * r_m);
 
-    // Jeans loss rate scaling
+    // Smooth Jeans loss rate scaling across the lambda == 2.0 hydrodynamic blow-off transition
+    let base_rate = 0.05 * surface_pressure_bar.clamp(0.0, 100.0);
     let loss_rate_m_earth_per_myr = if lambda_esc < 2.0 {
         // Hydrodynamic blow-off
-        0.05 * surface_pressure_bar.clamp(0.0, 100.0)
+        base_rate
     } else if lambda_esc < 25.0 {
-        // Active thermal leakage
-        (0.05 * surface_pressure_bar.clamp(0.0, 100.0)) * (-lambda_esc).exp() * (1.0 + lambda_esc)
+        // Active thermal leakage anchored continuously at lambda_esc == 2.0
+        let excess = (lambda_esc - 2.0).max(0.0);
+        base_rate * (-excess).exp() * (1.0 + excess)
     } else {
         0.0 // Tightly gravitationally bound
     };

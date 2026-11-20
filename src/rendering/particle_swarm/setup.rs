@@ -248,6 +248,19 @@ pub fn setup_particle_swarm(
     mesh.insert_indices(bevy::render::mesh::Indices::U32(buffers.indices));
 
     let mesh_handle = meshes.add(mesh);
+    // Degenerate 1-triangle placeholder sharing the exact 4 vertex attributes of the full swarm
+    // mesh so Bevy's mesh allocator never warns about empty meshes and reuses the same pipeline.
+    let mut empty_mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    empty_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32, -5000.0, 0.0]]);
+    empty_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 0.0, 0.0]]);
+    empty_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]]);
+    empty_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32, 0.0, 0.0, 0.0]]);
+    empty_mesh.insert_indices(bevy::render::mesh::Indices::U32(vec![0, 0, 0]));
+    let empty_mesh_handle = meshes.add(empty_mesh);
+    commands.insert_resource(super::ParticleSwarmEmptyMesh(empty_mesh_handle));
 
     let mut entity_cmd = commands.spawn((
         Mesh3d(mesh_handle.clone()),
@@ -331,20 +344,20 @@ fn reseed_colliding_galaxies(data: &mut ParticleSwarmData, n: usize) {
         let is_mw = i < n_mw;
         let (center_pos, center_vel, smbh_mass, halo_mass, max_radius, base_col) = if is_mw {
             (
-                [-100_000.0_f32, -15_000.0_f32, -50_000.0_f32],
-                [40.0_f32, 5.0_f32, 20.0_f32],
+                [-45_000.0_f32, -6_000.0_f32, -22_500.0_f32],
+                [90.0_f32, 12.0_f32, 45.0_f32],
                 4_300_000.0_f32,
                 1.0e12_f32,
-                80_000.0_f32,
+                50_000.0_f32,
                 [1.0_f32, 0.95_f32, 0.85_f32, 1.0_f32],
             )
         } else {
             (
-                [100_000.0_f32, 15_000.0_f32, 50_000.0_f32],
-                [-40.0_f32, -5.0_f32, -20.0_f32],
+                [45_000.0_f32, 6_000.0_f32, 22_500.0_f32],
+                [-90.0_f32, -12.0_f32, -45.0_f32],
                 140_000_000.0_f32,
                 1.4e12_f32,
-                120_000.0_f32,
+                65_000.0_f32,
                 [0.85_f32, 0.92_f32, 1.20_f32, 1.0_f32],
             )
         };
@@ -397,6 +410,7 @@ pub fn reseed_particle_swarm(
     disk_params: &DiskParameters,
     config: &SimulationConfig,
 ) {
+    data.pending_gpu_accretions.clear();
     let min_count = if data.positions.len() >= 50_000 {
         50_000
     } else {

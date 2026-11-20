@@ -78,26 +78,27 @@ pub fn step_single_pulsar_glitch(
     state.vortex_pinning_lag_hz += -delta_nu_braking;
 
     // 3. Post-glitch exponential relaxation of the decoupled superfluid component:
-    //    \Delta \nu(t) = Q \Delta \nu_0 * \exp(-t / \tau)
+    //    Exact analytic integral over [t_prev, t_new] avoids Euler overshoot or under-decay at high time warp:
+    //    \int_{t_prev}^{t_new} (Q \Delta\nu_0 / \tau) e^{-t/\tau} dt = Q \Delta\nu_0 (e^{-t_prev/\tau} - e^{-t_new/\tau})
     if state.is_relaxing {
-        state.time_since_glitch_days += dt_days;
         let tau = state.post_glitch_relaxation_time_days.max(1.0);
-        let t = state.time_since_glitch_days;
+        let t_prev = state.time_since_glitch_days;
+        let t_new = t_prev + dt_days;
+        state.time_since_glitch_days = t_new;
 
-        let decay_rate =
-            (state.relaxation_healing_q * state.last_glitch_jump_hz / tau) * (-t / tau).exp();
-        let relaxation_drop = decay_rate * dt_days;
+        let exp_diff = ((-t_prev / tau).exp() - (-t_new / tau).exp()).max(0.0);
+        let relaxation_drop = state.relaxation_healing_q * state.last_glitch_jump_hz * exp_diff;
         state.spin_frequency_hz = (state.spin_frequency_hz - relaxation_drop).max(0.1);
 
-        if t > 5.0 * tau {
+        if t_new > 5.0 * tau {
             state.is_relaxing = false;
         }
     }
 
-    // 4. Synchronize physical rotation periods across ECS components
+    // 4. Synchronize physical rotation periods and angular momentum vectors across ECS components
     let period_sec = 1.0 / state.spin_frequency_hz;
     if let Some(spin) = opt_spin {
-        spin.rotation_period_hours = period_sec / 3600.0;
+        spin.set_period_and_tilt(period_sec / 3600.0, spin.axial_tilt_degrees, 1.4, 8.0e-8);
     }
     if let Some(em) = opt_em {
         em.rotation_period_sec = period_sec;
@@ -119,6 +120,8 @@ pub fn step_pulsar_glitches_system(
         &mut PulsarGlitchState,
         Option<&mut SpinState>,
         Option<&mut ElectromagneticFieldState>,
+        Option<&Mass>,
+        Option<&Radius>,
     )>,
 ) {
     if let Some(ref tw) = time_warp
@@ -139,7 +142,7 @@ pub fn step_pulsar_glitches_system(
     let dt_sec = dt_years * 31_557_600.0;
 
     // Check for manual trigger requests
-    let mut manual_entities = Vec::new();
+    let mut manual_entities: smallvec::SmallVec<[Entity; 4]> = smallvec::SmallVec::new();
     let mut trigger_all = false;
     for ev in manual_triggers.read() {
         if let Some(ent) = ev.target_entity {
@@ -149,7 +152,19 @@ pub fn step_pulsar_glitches_system(
         }
     }
 
-    for (entity, mut state, mut opt_spin, mut opt_em) in pulsars_query.iter_mut() {
+    for (entity, mut state, mut opt_spin, mut opt_em, opt_mass, opt_rad) in pulsars_query.iter_mut()
+    {
+        if let Some(ref em) = opt_em {
+            let r_km = opt_rad.map_or(10.0, |r| {
+                (r.0 * crate::utils::constants::AU_TO_KM).clamp(8.0, 20.0)
+            });
+            state.spin_down_rate_hz_s = evaluate_dipole_spin_down_rate(
+                em.magnetic_field_gauss,
+                r_km,
+                state.spin_frequency_hz,
+            );
+        }
+
         let is_manual = trigger_all || manual_entities.contains(&entity);
         let exceeds_threshold = state.vortex_pinning_lag_hz >= state.unpinning_threshold_hz;
 
@@ -169,5 +184,10 @@ pub fn step_pulsar_glitches_system(
             opt_em.as_deref_mut(),
             dt_sec,
         );
+
+        if let (Some(spin), Some(mass), Some(rad)) = (opt_spin.as_deref_mut(), opt_mass, opt_rad) {
+            let period_hours = (1.0 / state.spin_frequency_hz) / 3600.0;
+            spin.set_period_and_tilt(period_hours, spin.axial_tilt_degrees, mass.0, rad.0);
+        }
     }
 }

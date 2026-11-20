@@ -58,19 +58,20 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    update_planet_builder_ui,
-                    update_telemetry_graph_ui,
+                    update_planet_builder_ui.after(update_hud_visibility),
+                    update_telemetry_graph_ui.after(update_hud_visibility),
                     ui::trophies_panel::update_trophies_panel,
                     ui::tech_tree_panel::update_tech_tree_panel,
                     update_campaign_ui,
                     update_hazards_ui,
                     update_epoch_scrubber_ui,
                     update_hr_diagram_ui,
-                    update_saves_panel.after(handle_ui_button_interactions),
+                    update_saves_panel,
                     handle_roche_disruption_toasts,
                     handle_cosmic_event_toasts,
                     update_cosmic_audio_system,
-                ),
+                )
+                    .after(handle_ui_button_interactions),
             )
             .add_systems(
                 Update,
@@ -82,7 +83,8 @@ impl Plugin for GamePlugin {
                     update_hud,
                     ui::hover_card::update_hover_card_ui,
                     ui::cutaway_hud::update_cutaway_hud_ui,
-                ),
+                )
+                    .after(handle_ui_button_interactions),
             );
     }
 }

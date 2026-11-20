@@ -128,6 +128,34 @@ fn sample_planetesimal_location(
     }
 }
 
+/// Samples an isotropically oriented 3D inclined circular/near-circular Keplerian orbit
+/// so both position and velocity carry mutually orthogonal inclination components (`y` & `vy`).
+pub(crate) fn sample_inclined_keplerian_state(
+    r: f64,
+    star_mass: f64,
+    max_inc_rad: f64,
+    ecc_range: (f64, f64),
+    rng: &mut fastrand::Rng,
+) -> (DVec3, DVec3) {
+    let node: f64 = rng.f64_range(0.0, 2.0 * PI);
+    let arg_lat: f64 = rng.f64_range(0.0, 2.0 * PI);
+    let inc: f64 = rng.f64_range(-max_inc_rad, max_inc_rad);
+
+    let n_node = DVec3::new(node.cos(), 0.0, node.sin());
+    let n_ortho = DVec3::new(-node.sin(), 0.0, node.cos());
+    let n_tilted = n_ortho * inc.cos() + DVec3::Y * inc.sin();
+
+    let (sin_u, cos_u) = arg_lat.sin_cos();
+    let r_dir = n_node * cos_u + n_tilted * sin_u;
+    let v_dir = -n_node * sin_u + n_tilted * cos_u;
+
+    let pos = r_dir * r;
+    let v_k = (G_ASTRO * star_mass / r).sqrt();
+    let ecc_kick: f64 = rng.f64_range(ecc_range.0, ecc_range.1);
+    let vel = v_dir * (v_k * ecc_kick);
+    (pos, vel)
+}
+
 fn spawn_single_planetesimal(
     commands: &mut Commands,
     disk_params: &DiskParameters,
@@ -138,15 +166,8 @@ fn spawn_single_planetesimal(
     is_massive_disk: bool,
     rng: &mut fastrand::Rng,
 ) {
-    let phi: f64 = rng.f64_range(0.0, 2.0 * PI);
-    let inclination: f64 = rng.f64_range(-0.03, 0.03);
-    let y_offset = r * inclination;
-    let pos = DVec3::new(r * phi.cos(), y_offset, r * phi.sin());
-
-    let v_k = (G_ASTRO * disk_params.central_star_mass / r).sqrt();
-    let ecc_kick: f64 = rng.f64_range(0.98, 1.02);
-    let v_mag = v_k * ecc_kick;
-    let vel = DVec3::new(-v_mag * phi.sin(), 0.0, v_mag * phi.cos());
+    let (pos, vel) =
+        sample_inclined_keplerian_state(r, disk_params.central_star_mass, 0.03, (0.98, 1.02), rng);
 
     let is_protoplanet: bool = (spawner.total_spawned as usize) < 8 && is_feeding_zone;
     let log_mass_earth: f64 = if is_protoplanet {
@@ -229,9 +250,15 @@ pub fn auto_spawn_planetesimals(
         return;
     }
 
-    if scenario_state
-        .as_ref()
-        .is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster)
+    if disk_params.disk_mass <= 0.0
+        || scenario_state.as_ref().is_some_and(|s| {
+            matches!(
+                s.current_preset,
+                ScenarioPreset::MolecularCloudCluster
+                    | ScenarioPreset::GalacticCollision
+                    | ScenarioPreset::TidalDisruptionEvent
+            )
+        })
     {
         return;
     }
@@ -354,13 +381,20 @@ pub fn dissipate_gas_disk(
 /// Delayed spawner for Proto-Earth.
 pub fn auto_spawn_delayed_proto_earth(
     mut spawned: Local<bool>,
+    mut last_gen: Local<u64>,
     mut commands: Commands,
     sim_time: Res<SimTime>,
     time_warp: Res<TimeWarp>,
     disk_params: Res<DiskParameters>,
     scenario_state: Option<Res<ActiveScenarioState>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
     query: Query<&CelestialBody>,
 ) {
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen || sim_time.elapsed_years < 1.0 {
+        *last_gen = current_gen;
+        *spawned = false;
+    }
     if *spawned {
         return;
     }
@@ -430,10 +464,10 @@ pub fn auto_spawn_delayed_proto_earth(
             ocean_coverage_frac: 0.0,
             atmospheric_pressure_bar: 0.20,
         },
-        SpinState {
-            spin_vector: DVec3::new(0.0, 1e-12, 0.0),
-            rotation_period_hours: 24.0,
-            axial_tilt_degrees: 0.0,
+        {
+            let mut spin = SpinState::default();
+            spin.set_period_and_tilt(24.0, 23.44, mass_s, rad_au);
+            spin
         },
     ));
 

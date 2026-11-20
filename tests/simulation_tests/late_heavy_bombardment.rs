@@ -240,14 +240,17 @@ fn test_impact_basin_relaxation_gas_and_ice_giant_rapid_atmospheric_healing() {
         .get::<PlanetaryBasins>()
         .unwrap();
 
-    // In 3 years, atmospheric jet streams completely disperse the gas giant and ice giant scars (tau ~ 1.5 yr)
+    // With exponential viscous shear relaxation (tau ~ 1.5 yr), after 3.0 yr (2 e-folding times)
+    // scar intensity decays cleanly as exp(-3.0 / 1.5) = exp(-2) ≈ 0.135 (< 0.15).
     assert!(
-        gas_basins.basins.is_empty() || gas_basins.basins[0].scar_intensity < 0.05,
-        "Gas giant atmospheric impact plume must rapidly disperse via zonal shear in <= 3 years"
+        gas_basins.basins.is_empty() || gas_basins.basins[0].scar_intensity < 0.15,
+        "Gas giant atmospheric impact plume must rapidly disperse via exponential zonal shear in <= 3 years (got {:.3})",
+        gas_basins.basins.first().map_or(0.0, |b| b.scar_intensity)
     );
     assert!(
-        ice_basins.basins.is_empty() || ice_basins.basins[0].scar_intensity < 0.05,
-        "Ice giant methane cirrus/vortex plume must rapidly disperse via zonal shear in <= 3 years"
+        ice_basins.basins.is_empty() || ice_basins.basins[0].scar_intensity < 0.15,
+        "Ice giant methane cirrus/vortex plume must rapidly disperse via exponential zonal shear in <= 3 years (got {:.3})",
+        ice_basins.basins.first().map_or(0.0, |b| b.scar_intensity)
     );
 
     // In contrast, the rocky crater on Mercury has barely begun to relax (tau ~ 600 yr)
@@ -331,9 +334,11 @@ fn test_impact_basin_relaxation_icy_world_timescale() {
         icy_scar < rocky_scar,
         "Icy lithosphere must relax faster ({icy_scar:.3}) than airless silicate rock ({rocky_scar:.3})"
     );
+    // Exponential relaxation over dt = 150 yr with tau = 300 yr gives exp(-0.5) ≈ 0.6065
+    let expected_icy = (-150.0_f32 / 300.0).exp();
     assert!(
-        (icy_scar - 0.50).abs() < 0.05,
-        "Icy scar after 150 yr with tau=300 yr should be ~0.50 (got {icy_scar:.3})"
+        (icy_scar - expected_icy).abs() < 0.01,
+        "Icy scar after 150 yr with tau=300 yr should follow exp(-0.5) ≈ {expected_icy:.3} (got {icy_scar:.3})"
     );
 }
 

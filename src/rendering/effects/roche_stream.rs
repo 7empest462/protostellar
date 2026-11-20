@@ -11,7 +11,7 @@ use bevy_shader::ShaderRef;
 use rustc_hash::FxHashSet as HashSet;
 use std::f32::consts::TAU;
 
-#[derive(Clone, Copy, Debug, ShaderType)]
+#[derive(Clone, Copy, Debug, PartialEq, ShaderType)]
 pub struct RocheStreamUniforms {
     pub color_and_intensity: Vec4,
     /// x: time, y: turbulence_scale, z: stream_width, w: unused
@@ -230,7 +230,7 @@ fn spawn_roche_stream_visual(
 }
 
 #[allow(
-    clippy::disallowed_types,
+    clippy::too_many_arguments,
     clippy::type_complexity,
     reason = "Needed to update streams"
 )]
@@ -256,7 +256,9 @@ pub fn update_roche_streams(
     mut meshes: ResMut<Assets<Mesh>>,
     mesh_cache: Option<Res<RocheStreamMeshCache>>,
     time: Res<Time>,
+    time_warp: Option<Res<crate::simulation::resources::TimeWarp>>,
     config: Res<crate::simulation::resources::SimulationConfig>,
+    mut active_streams: Local<HashSet<Entity>>,
 ) {
     let stream_mesh = if let Some(cache) = mesh_cache {
         cache.0.clone()
@@ -266,7 +268,8 @@ pub fn update_roche_streams(
         handle
     };
 
-    let mut active_streams = HashSet::default();
+    let is_paused = time_warp.as_deref().is_some_and(|tw| tw.is_paused);
+    active_streams.clear();
 
     for (donor_ent, overflow, donor_pos, donor_vel, donor_radius, donor_temp, donor_body) in
         query_overflows.iter()
@@ -295,19 +298,34 @@ pub fn update_roche_streams(
             let intensity = (overflow.mass_transfer_rate.log10() + 10.5).clamp(1.4, 3.0) as f32;
             let color_and_intensity =
                 Vec4::new(base_col.red, base_col.green, base_col.blue, intensity);
+            let target_scale = Vec3::new(cross_scale, span, cross_scale);
 
             let mut found = false;
             for (_vis_ent, visual, mut transform, mat_handle) in query_visuals.iter_mut() {
                 if visual.donor == donor_ent && visual.accretor == overflow.companion {
                     found = true;
-                    transform.translation = start_pos;
-                    transform.rotation = rotation;
-                    transform.scale = Vec3::new(cross_scale, span, cross_scale);
+                    if transform.translation != start_pos
+                        || transform.rotation != rotation
+                        || transform.scale != target_scale
+                    {
+                        transform.translation = start_pos;
+                        transform.rotation = rotation;
+                        transform.scale = target_scale;
+                    }
 
-                    if let Some(mut mat) = materials.get_mut(mat_handle.id()) {
-                        mat.uniforms.stream_params.x += time.delta_secs() * 1.8;
-                        mat.uniforms.stream_params.z = cross_scale;
-                        mat.uniforms.color_and_intensity = color_and_intensity;
+                    if let Some(mat) = materials.get(mat_handle.id()) {
+                        let mut target_uniforms = mat.uniforms;
+                        if !is_paused {
+                            target_uniforms.stream_params.x += time.delta_secs() * 1.8;
+                        }
+                        target_uniforms.stream_params.z = cross_scale;
+                        target_uniforms.color_and_intensity = color_and_intensity;
+
+                        if mat.uniforms != target_uniforms
+                            && let Some(mut mat_mut) = materials.get_mut(mat_handle.id())
+                        {
+                            mat_mut.uniforms = target_uniforms;
+                        }
                     }
                     break;
                 }

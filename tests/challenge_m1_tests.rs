@@ -36,8 +36,8 @@ fn challenge_1a_multiple_protostars_simultaneous_ignition() {
     app.add_message::<SupernovaEvent>();
     app.add_systems(Update, update_thermodynamics);
 
-    // Spawn 1 central star and 10 non-central protostars of various masses
-    let masses = [0.07, 0.25, 0.45, 0.80, 1.00, 1.20, 2.50, 5.00, 12.00, 30.00];
+    // Spawn 1 central star and 10 non-central protostars of various H-burning masses (>= 0.08 M_sun)
+    let masses = [0.09, 0.25, 0.45, 0.80, 1.00, 1.20, 2.50, 5.00, 12.00, 30.00];
     let mut star_entities = Vec::new();
 
     // Central star

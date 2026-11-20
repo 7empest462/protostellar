@@ -29,7 +29,7 @@ fn write_back_physics_results(
     commands: &mut Commands,
     body_data: &[PhysicsBodyEntry],
     entity_to_idx: &mut FxHashMap<Entity, usize>,
-    is_little_red_dot: bool,
+    allow_wide_debris: bool,
     is_galaxy_collision: bool,
     bodies_query: &mut Query<
         (
@@ -42,6 +42,7 @@ fn write_back_physics_results(
             &CelestialBody,
             Option<&mut SatelliteOf>,
             Option<&CentralStar>,
+            Has<crate::simulation::oort::OortComet>,
         ),
         (
             Without<crate::simulation::probes::SpaceProbe>,
@@ -53,19 +54,24 @@ fn write_back_physics_results(
     entity_to_idx.clear();
     entity_to_idx.extend(body_data.iter().enumerate().map(|(i, b)| (b.entity, i)));
 
-    for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat, opt_central) in
+    for (e, mut m, mut pos, mut vel, mut acc, _, body, opt_sat, opt_central, is_oort_comet) in
         bodies_query.iter_mut()
     {
-        if opt_central.is_some() && !is_galaxy_collision {
+        let body_entry = entity_to_idx.get(&e).and_then(|&idx| body_data.get(idx));
+        let is_central = body_entry.map_or(opt_central.is_some(), |b| b.is_central_star);
+        if is_central && !is_galaxy_collision {
             pos.0 = DVec3::ZERO;
             vel.0 = DVec3::ZERO;
             acc.0 = DVec3::ZERO;
-        } else if let Some(&idx) = entity_to_idx.get(&e) {
-            let Some(b) = body_data.get(idx) else {
-                continue;
-            };
+        } else if let Some(b) = body_entry {
             let r_mag = b.pos.length();
-            let debris_escape_radius = if is_little_red_dot { 15_000.0 } else { 2000.0 };
+            let debris_escape_radius = if is_oort_comet {
+                100_000.0
+            } else if allow_wide_debris {
+                15_000.0
+            } else {
+                2000.0
+            };
             let is_minor_debris = matches!(
                 body.body_type,
                 BodyType::Planetesimal
@@ -108,10 +114,11 @@ fn write_back_physics_results(
 
 fn identify_giant_planets(
     body_data: &[PhysicsBodyEntry],
-) -> (Option<Entity>, Option<Entity>, FxHashSet<Entity>) {
+    ice_giant_entities: &mut FxHashSet<Entity>,
+) -> (Option<Entity>, Option<Entity>) {
     let mut jupiter_entity = None;
     let mut saturn_entity = None;
-    let mut ice_giant_entities = FxHashSet::default();
+    ice_giant_entities.clear();
 
     for b in body_data {
         if !b.body_type.is_planet() || b.body_type == BodyType::Moon {
@@ -136,7 +143,7 @@ fn identify_giant_planets(
             ice_giant_entities.insert(b.entity);
         }
     }
-    (jupiter_entity, saturn_entity, ice_giant_entities)
+    (jupiter_entity, saturn_entity)
 }
 
 fn build_gmc_near_field_grid<'a>(
@@ -180,8 +187,15 @@ fn apply_substep_type_i_migration(
     body_data: &mut [PhysicsBodyEntry],
     star_mass: f64,
     gas_density_scale: f32,
+    disk_params: &DiskParameters,
+    is_gmc_cluster: bool,
+    is_galaxy_collision: bool,
 ) {
-    if gas_density_scale <= 0.001 {
+    if is_gmc_cluster
+        || is_galaxy_collision
+        || gas_density_scale <= 0.001
+        || disk_params.disk_mass <= 1e-6
+    {
         return;
     }
     for body in body_data.iter_mut() {
@@ -197,6 +211,7 @@ fn apply_substep_type_i_migration(
             body.satellite.is_some(),
             star_mass,
             gas_density_scale,
+            disk_params,
             &mut body.acc,
         );
     }
@@ -212,33 +227,82 @@ pub struct PhysicsScratchBuffers {
     pub new_accelerations: Vec<DVec3>,
     pub entity_to_idx: FxHashMap<Entity, usize>,
     pub gmc_grid: FxHashMap<(i32, i32, i32), SmallVec<[usize; 8]>>,
+    pub massive_indices: Vec<usize>,
+    pub ice_giant_entities: FxHashSet<Entity>,
 }
 
 #[allow(
     clippy::too_many_arguments,
-    clippy::fn_params_excessive_bools,
+    reason = "Substep force evaluation dispatches across massive sources and environment fields"
+)]
+fn compute_substep_accelerations(
+    ctx: &PhysicsSystemContext,
+    body_data: &mut [PhysicsBodyEntry],
+    new_accelerations: &mut [DVec3],
+    massive_data: &[(DVec3, DVec3, f64, f64, usize)],
+    config: &SimulationConfig,
+    softening_sq: f64,
+    tractor: Option<(DVec3, f64)>,
+    cluster_com_mass: (DVec3, f64),
+    substep_elapsed_years: f64,
+    near_field_ref: Option<&GmcNearField<'_>>,
+) {
+    let eval_acc = |(i, (acc_out, b)): (usize, (&mut DVec3, &PhysicsBodyEntry))| {
+        *acc_out = compute_single_body_acc_with_companion(
+            i,
+            b,
+            config,
+            ctx.star_mass,
+            ctx.star_index,
+            softening_sq,
+            massive_data,
+            tractor,
+            ctx.is_little_red_dot,
+            ctx.is_gmc_cluster,
+            cluster_com_mass,
+            substep_elapsed_years,
+            near_field_ref,
+            ctx.inner_companion_radius,
+        );
+    };
+
+    if body_data.len() < 32 {
+        new_accelerations
+            .iter_mut()
+            .zip(body_data.iter())
+            .enumerate()
+            .for_each(eval_acc);
+    } else {
+        new_accelerations
+            .par_iter_mut()
+            .zip(body_data.par_iter())
+            .enumerate()
+            .for_each(eval_acc);
+    }
+
+    for (body, &new_acc) in body_data.iter_mut().zip(new_accelerations.iter()) {
+        body.acc = if body.is_central_star && !ctx.is_galaxy_collision {
+            DVec3::ZERO
+        } else {
+            new_acc
+        };
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
     reason = "Physics kernel requires all integration state explicitly for performance"
 )]
 fn run_physics_substeps(
     scratch: &mut PhysicsScratchBuffers,
-    n_substeps: usize,
-    sub_dt: f64,
-    massive_indices: &[usize],
+    ctx: &PhysicsSystemContext,
     config: &SimulationConfig,
-    star_mass: f64,
-    star_pos: DVec3,
-    star_index: Option<usize>,
-    inner_companion_radius: Option<f64>,
+    disk_params: &DiskParameters,
     softening_sq: f64,
     tractor: Option<(DVec3, f64)>,
-    is_little_red_dot: bool,
-    is_compact_system: bool,
-    is_gmc_cluster: bool,
-    is_galaxy_collision: bool,
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     jupiter_entity: Option<Entity>,
     saturn_entity: Option<Entity>,
-    ice_giant_entities: &FxHashSet<Entity>,
     elapsed_years: f64,
     far_field: Option<&FxHashMap<Entity, DVec3>>,
 ) {
@@ -248,6 +312,8 @@ fn run_physics_substeps(
         snapshot_buffer,
         new_accelerations,
         gmc_grid,
+        massive_indices,
+        ice_giant_entities,
         ..
     } = scratch;
     massive_data.clear();
@@ -255,26 +321,46 @@ fn run_physics_substeps(
     new_accelerations.clear();
     new_accelerations.resize(body_data.len(), DVec3::ZERO);
 
-    for step_idx in 0..n_substeps {
-        let substep_elapsed_years = elapsed_years + (step_idx as f64) * sub_dt;
+    for step_idx in 0..ctx.n_substeps {
+        let substep_elapsed_years = elapsed_years + (step_idx as f64) * ctx.sub_dt;
+
+        // Snapshot pre-kick parent velocities so bound satellites stay co-moving with
+        // non-Kepler-split parents across the initial half-kick (zero rel_vel bias).
+        let has_satellites = body_data.iter().any(|b| b.satellite.is_some());
+        if has_satellites {
+            snapshot_buffer.clear();
+            snapshot_buffer.extend(
+                body_data
+                    .iter()
+                    .filter(|b| b.satellite.is_none())
+                    .map(|b| (b.entity, b.pos, b.vel, b.mass, b.radius)),
+            );
+            snapshot_buffer.sort_unstable_by_key(|&(e, ..)| e);
+        }
 
         apply_initial_substep_half_kicks(
             body_data,
-            sub_dt,
-            star_pos,
-            star_mass,
-            is_galaxy_collision,
-            inner_companion_radius,
+            ctx.sub_dt,
+            ctx.star_pos,
+            ctx.star_mass,
+            ctx.is_gmc_cluster,
+            ctx.is_galaxy_collision,
+            ctx.inner_companion_radius,
         );
+
+        if has_satellites {
+            sync_satellite_velocities_to_parents(body_data, snapshot_buffer);
+        }
 
         advance_symplectic_leapfrog_drift_with_companion(
             body_data,
-            sub_dt,
-            star_pos,
-            star_mass,
+            ctx.sub_dt,
+            ctx.star_pos,
+            ctx.star_mass,
             snapshot_buffer,
-            is_galaxy_collision,
-            inner_companion_radius,
+            ctx.is_galaxy_collision,
+            ctx.is_gmc_cluster,
+            ctx.inner_companion_radius,
         );
 
         massive_data.clear();
@@ -283,49 +369,36 @@ fn run_physics_substeps(
             Some((b.pos, b.vel, b.mass, b.radius, idx))
         }));
 
-        let cluster_com_mass = compute_cluster_com_mass(is_gmc_cluster, massive_data);
+        let cluster_com_mass = compute_cluster_com_mass(ctx.is_gmc_cluster, massive_data);
 
         let near_field = build_gmc_near_field_grid(
             gmc_grid,
             far_field,
-            is_gmc_cluster,
+            ctx.is_gmc_cluster,
             massive_data,
-            star_index,
+            ctx.star_index,
         );
-        let near_field_ref = near_field.as_ref();
+        compute_substep_accelerations(
+            ctx,
+            body_data,
+            new_accelerations,
+            massive_data,
+            config,
+            softening_sq,
+            tractor,
+            cluster_com_mass,
+            substep_elapsed_years,
+            near_field.as_ref(),
+        );
 
-        new_accelerations
-            .par_iter_mut()
-            .zip(body_data.par_iter())
-            .enumerate()
-            .for_each(|(i, (acc_out, b))| {
-                *acc_out = compute_single_body_acc_with_companion(
-                    i,
-                    b,
-                    config,
-                    star_mass,
-                    star_index,
-                    softening_sq,
-                    massive_data,
-                    tractor,
-                    is_little_red_dot,
-                    is_gmc_cluster,
-                    cluster_com_mass,
-                    substep_elapsed_years,
-                    near_field_ref,
-                    inner_companion_radius,
-                );
-            });
-
-        for (body, &new_acc) in body_data.iter_mut().zip(new_accelerations.iter()) {
-            if body.is_central_star && !is_galaxy_collision {
-                body.acc = DVec3::ZERO;
-            } else {
-                body.acc = new_acc;
-            }
-        }
-
-        apply_substep_type_i_migration(body_data, star_mass, config.gas_density_scale);
+        apply_substep_type_i_migration(
+            body_data,
+            ctx.star_mass,
+            config.gas_density_scale,
+            disk_params,
+            ctx.is_gmc_cluster,
+            ctx.is_galaxy_collision,
+        );
 
         apply_planetary_migration_and_lhb(
             body_data,
@@ -333,21 +406,24 @@ fn run_physics_substeps(
             jupiter_entity,
             saturn_entity,
             ice_giant_entities,
-            sub_dt,
+            ctx.sub_dt,
             step_idx,
-            is_compact_system,
+            ctx.is_compact_system,
+            ctx.is_gmc_cluster,
+            ctx.is_galaxy_collision,
         );
 
         apply_velocity_kick_and_limits_with_companion(
             body_data,
-            sub_dt,
-            star_mass,
-            star_pos,
-            is_little_red_dot,
-            is_gmc_cluster,
-            is_galaxy_collision,
-            inner_companion_radius,
+            ctx.sub_dt,
+            ctx.star_mass,
+            ctx.star_pos,
+            ctx.is_little_red_dot,
+            ctx.is_gmc_cluster,
+            ctx.is_galaxy_collision,
+            ctx.inner_companion_radius,
         );
+        sync_satellite_velocities_to_parents(body_data, snapshot_buffer);
     }
 }
 
@@ -356,24 +432,26 @@ fn apply_initial_substep_half_kicks(
     sub_dt: f64,
     star_pos: DVec3,
     star_mass: f64,
+    is_gmc_cluster: bool,
     is_galaxy_collision: bool,
     inner_companion_radius: Option<f64>,
 ) {
     for body in body_data.iter_mut() {
-        if body.is_central_star && !is_galaxy_collision {
+        if body.is_central_star && !is_galaxy_collision && !is_gmc_cluster {
             body.pos = DVec3::ZERO;
             body.vel = DVec3::ZERO;
             body.acc = DVec3::ZERO;
         } else {
-            let use_kepler = should_use_kepler_splitting(
-                body.pos,
-                body.vel,
-                body.mass,
-                body.body_type,
-                star_pos,
-                star_mass,
-                inner_companion_radius,
-            );
+            let use_kepler = !is_gmc_cluster
+                && should_use_kepler_splitting(
+                    body.pos,
+                    body.vel,
+                    body.mass,
+                    body.body_type,
+                    star_pos,
+                    star_mass,
+                    inner_companion_radius,
+                );
             apply_pert_kick(body, sub_dt * 0.5, star_pos, star_mass, use_kepler);
         }
     }
@@ -406,7 +484,6 @@ struct PhysicsSystemContext {
     is_galaxy_collision: bool,
     n_substeps: usize,
     sub_dt: f64,
-    massive_indices: Vec<usize>,
 }
 
 fn compute_inner_stellar_companion_radius(
@@ -434,13 +511,20 @@ fn analyze_physics_system(
     dt: f64,
     target_dt: f64,
     softening_sq: f64,
+    massive_indices: &mut Vec<usize>,
 ) -> PhysicsSystemContext {
     let is_gmc_cluster =
         scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
     let is_galaxy_collision = scenario_state
         .is_some_and(|s| s.current_preset == ScenarioPreset::GalacticCollision)
         || disk_params.outer_radius_au >= 10_000.0;
-    let star_index = if is_galaxy_collision {
+    if is_gmc_cluster {
+        // GMC clusters have no pinned central star: every star is a free N-body member.
+        for b in body_data.iter_mut() {
+            b.is_central_star = false;
+        }
+    }
+    let star_index = if is_galaxy_collision || is_gmc_cluster {
         None
     } else {
         body_data.iter().position(|b| b.is_central_star)
@@ -458,14 +542,12 @@ fn analyze_physics_system(
     };
 
     let has_black_hole = body_data.iter().any(|b| b.body_type == BodyType::BlackHole);
-    // A cluster naturally grows massive stars and black holes; those must not flip the whole
-    // simulation into Little-Red-Dot mode (125x smaller timestep + LRD-specific clamps).
+    // Restrict Little-Red-Dot mode exclusively to genuine LRD / Quasi-Star configurations so
+    // non-LRD massive stars and SMBH scenarios keep standard integration & cull scales.
     let is_little_red_dot = !is_gmc_cluster
         && !is_galaxy_collision
         && (scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::LittleRedDot)
-            || is_central_quasi
-            || has_black_hole
-            || star_mass >= 15.0);
+            || is_central_quasi);
 
     let is_compact_system = (star_mass < 0.25 && disk_params.outer_radius_au < 1.0)
         || scenario_state.is_some_and(|s| s.current_preset == ScenarioPreset::Trappist1System);
@@ -478,7 +560,11 @@ fn analyze_physics_system(
         // GMC clusters feature hundreds of stars and gas clumps; clamp substeps to 64 to guarantee
         // smooth frame rates while enabling fast-forwarding up to 5+ years per frame (300+ yr/s at 60 FPS).
         config.max_substeps_per_frame.clamp(1, 64)
-    } else if is_smbh || is_little_red_dot || is_compact_system {
+    } else if is_smbh
+        || is_little_red_dot
+        || is_compact_system
+        || (has_black_hole && !is_gmc_cluster)
+    {
         config.max_substeps_per_frame.max(128)
     } else if body_data.len() > 300 {
         // High-body systems (e.g. Solar System with 1,000+ belt minor bodies):
@@ -497,7 +583,7 @@ fn analyze_physics_system(
         0.08
     } else if is_smbh {
         dt.min(0.000_005)
-    } else if is_little_red_dot || is_compact_system {
+    } else if is_little_red_dot || is_compact_system || has_black_hole {
         dt.min(0.00004)
     } else if body_data.len() > 300 {
         // Slightly larger substep intervals (~17.5 hours) for minor body swarms where perturbations are small
@@ -506,27 +592,17 @@ fn analyze_physics_system(
         dt
     };
 
-    let massive_indices: Vec<usize> = body_data
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| {
-            b.mass > EARTH_MASS_SOLAR * 0.1
-                || b.is_central_star
-                || b.body_type.is_star_or_remnant()
-                || matches!(
-                    b.body_type,
-                    BodyType::Protoplanet
-                        | BodyType::TerrestrialPlanet
-                        | BodyType::SuperEarth
-                        | BodyType::GasGiant
-                        | BodyType::IceGiant
-                )
-        })
-        .map(|(i, _)| i)
-        .collect();
+    massive_indices.clear();
+    massive_indices.extend(
+        body_data
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| is_massive_gravity_source(b.mass, b.body_type, b.is_central_star))
+            .map(|(i, _)| i),
+    );
 
     let dyn_limit =
-        compute_dynamical_dt_limit(body_data, &massive_indices, star_index, star_pos, star_mass);
+        compute_dynamical_dt_limit(body_data, massive_indices, star_index, star_pos, star_mass);
 
     // Prevent target_dt from forcing an unsafe sub_dt when fast-forwarding in chaotic GMC clusters or non-Keplerian interactions
     let safe_target_dt = if is_galaxy_collision {
@@ -538,7 +614,13 @@ fn analyze_physics_system(
     } else {
         target_dt
     };
-    let n_substeps = ((safe_target_dt / eff_dt).ceil() as usize).clamp(1, max_substeps);
+    let step_dt = if is_galaxy_collision || is_gmc_cluster {
+        eff_dt
+    } else {
+        dyn_limit.map_or(eff_dt, |cap| eff_dt.min(cap))
+    }
+    .max(1e-12);
+    let n_substeps = ((safe_target_dt / step_dt).ceil() as usize).clamp(1, max_substeps);
     let sub_dt = safe_target_dt / (n_substeps as f64);
 
     let inner_companion_radius =
@@ -549,6 +631,7 @@ fn analyze_physics_system(
         star_pos,
         star_mass,
         softening_sq,
+        is_gmc_cluster,
         inner_companion_radius,
     );
 
@@ -563,7 +646,6 @@ fn analyze_physics_system(
         is_galaxy_collision,
         n_substeps,
         sub_dt,
-        massive_indices,
     }
 }
 
@@ -572,25 +654,31 @@ fn initialize_zero_body_accelerations(
     star_pos: DVec3,
     star_mass: f64,
     softening_sq: f64,
+    is_gmc_cluster: bool,
     inner_companion_radius: Option<f64>,
 ) {
     for body in body_data {
-        if body.acc.length_squared() < 1e-12 && !body.is_central_star {
+        // Initialize strictly zeroed startup accelerations only; never erase small distant accelerations (< 1e-6 AU/yr^2)
+        if body.acc == DVec3::ZERO && !body.is_central_star && star_mass > 1e-12 {
             let r_vec = body.pos - star_pos;
             let dist_sq = r_vec.length_squared() + softening_sq;
             let dist = dist_sq.sqrt();
-            if should_use_kepler_splitting(
-                body.pos,
-                body.vel,
-                body.mass,
-                body.body_type,
-                star_pos,
-                star_mass,
-                inner_companion_radius,
-            ) {
-                body.acc = DVec3::ZERO;
-            } else {
-                body.acc = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
+            if dist > 1e-12 {
+                if !is_gmc_cluster
+                    && should_use_kepler_splitting(
+                        body.pos,
+                        body.vel,
+                        body.mass,
+                        body.body_type,
+                        star_pos,
+                        star_mass,
+                        inner_companion_radius,
+                    )
+                {
+                    body.acc = DVec3::ZERO;
+                } else {
+                    body.acc = -(G_ASTRO * star_mass / (dist_sq * dist)) * r_vec;
+                }
             }
         }
     }
@@ -730,6 +818,7 @@ type PhysicsBodiesQuery<'w, 's> = Query<
         &'static CelestialBody,
         Option<&'static mut SatelliteOf>,
         Option<&'static CentralStar>,
+        Has<crate::simulation::oort::OortComet>,
     ),
     (
         Without<crate::simulation::probes::SpaceProbe>,
@@ -742,22 +831,20 @@ fn populate_physics_bodies(
     body_data: &mut Vec<PhysicsBodyEntry>,
 ) {
     body_data.clear();
-    body_data.extend(
-        bodies_query.iter().map(
-            |(e, m, pos, vel, acc, rad, body, sat, opt_c)| PhysicsBodyEntry {
-                entity: e,
-                mass: m.0,
-                pos: pos.0,
-                vel: vel.0,
-                acc: acc.0,
-                radius: rad.0,
-                body_type: body.body_type,
-                satellite: sat.copied(),
-                is_central_star: opt_c.is_some(),
-                role_flags: compute_body_role_flags(&body.name),
-            },
-        ),
-    );
+    body_data.extend(bodies_query.iter().map(
+        |(e, m, pos, vel, acc, rad, body, sat, opt_c, _is_oort)| PhysicsBodyEntry {
+            entity: e,
+            mass: m.0,
+            pos: pos.0,
+            vel: vel.0,
+            acc: acc.0,
+            radius: rad.0,
+            body_type: body.body_type,
+            satellite: sat.copied(),
+            is_central_star: opt_c.is_some(),
+            role_flags: compute_body_role_flags(&body.name),
+        },
+    ));
 }
 
 #[allow(
@@ -806,6 +893,7 @@ pub fn step_physics_simulation(
         return;
     }
 
+    let scratch = &mut *scratch;
     let ctx = analyze_physics_system(
         &mut scratch.body_data,
         scenario_state.as_deref(),
@@ -814,32 +902,23 @@ pub fn step_physics_simulation(
         dt,
         target_dt,
         softening_sq,
+        &mut scratch.massive_indices,
     );
 
     let tractor = active_tractor_beam(&player_state);
-    let (jupiter_entity, saturn_entity, ice_giant_entities) =
-        identify_giant_planets(&scratch.body_data);
+    let (jupiter_entity, saturn_entity) =
+        identify_giant_planets(&scratch.body_data, &mut scratch.ice_giant_entities);
 
     run_physics_substeps(
-        &mut scratch,
-        ctx.n_substeps,
-        ctx.sub_dt,
-        &ctx.massive_indices,
+        scratch,
+        &ctx,
         &config,
-        ctx.star_mass,
-        ctx.star_pos,
-        ctx.star_index,
-        ctx.inner_companion_radius,
+        &disk_params,
         softening_sq,
         tractor,
-        ctx.is_little_red_dot,
-        ctx.is_compact_system,
-        ctx.is_gmc_cluster,
-        ctx.is_galaxy_collision,
         &mut lhb_state,
         jupiter_entity,
         saturn_entity,
-        &ice_giant_entities,
         sim_time.elapsed_years,
         far_field
             .as_deref()
@@ -854,7 +933,7 @@ pub fn step_physics_simulation(
         &mut commands,
         &bufs.body_data,
         &mut bufs.entity_to_idx,
-        ctx.is_little_red_dot,
+        ctx.is_little_red_dot || ctx.star_mass > 100_000.0,
         ctx.is_galaxy_collision,
         &mut bodies_query,
     );
@@ -862,11 +941,13 @@ pub fn step_physics_simulation(
     update_physics_energy_monitor(
         &mut energy_monitor,
         &scratch.body_data,
-        &ctx.massive_indices,
+        &scratch.massive_indices,
         ctx.star_index,
         ctx.star_pos,
         ctx.star_mass,
         eff_softening_au,
+        ctx.is_gmc_cluster,
+        ctx.is_galaxy_collision,
     );
 
     let actual_integrated_time = ctx.sub_dt * ctx.n_substeps as f64;

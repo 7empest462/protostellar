@@ -22,6 +22,13 @@ pub fn handle_body_editor_action(
     action: &UiButtonAction,
     player_state: &mut PlayerInteractionState,
     selected_query: &mut SelectedWorldQuery,
+    sat_diff_query: &mut Query<
+        (
+            Option<&crate::simulation::components::SatelliteOf>,
+            Option<&mut crate::simulation::components::InternalDifferentiation>,
+        ),
+        Without<PanOrbitCamera>,
+    >,
     camera_query: &mut Query<&mut PanOrbitCamera>,
     star_mass: f64,
     commands: &mut Commands,
@@ -30,13 +37,34 @@ pub fn handle_body_editor_action(
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
 ) -> bool {
-    if handle_mass_change(action, selected_query, player_state, toast) {
+    if handle_mass_change_with_effects(
+        action,
+        selected_query,
+        Some(sat_diff_query),
+        Some(commands),
+        player_state,
+        toast,
+    ) {
         return true;
     }
-    if handle_orbital_adjustment(action, selected_query, player_state, star_mass, toast) {
+    if handle_orbital_adjustment_relative(
+        action,
+        selected_query,
+        Some(&*sat_diff_query),
+        player_state,
+        star_mass,
+        toast,
+    ) {
         return true;
     }
-    if handle_velocity_burn_and_fix(action, selected_query, player_state, star_mass, toast) {
+    if handle_velocity_burn_and_fix_relative(
+        action,
+        selected_query,
+        Some(sat_diff_query),
+        player_state,
+        star_mass,
+        toast,
+    ) {
         return true;
     }
     if handle_view_and_target(

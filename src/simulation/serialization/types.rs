@@ -11,8 +11,12 @@ use crate::simulation::relativity::RelativisticState;
 use crate::simulation::resources::*;
 use crate::simulation::tides::TidalState;
 
+/// Current save-file schema version written by `build_system_save_data`.
+/// Saves with `version < CURRENT_SAVE_SCHEMA_VERSION` may run legacy thermal migration helpers.
+pub const CURRENT_SAVE_SCHEMA_VERSION: u32 = 2;
+
 /// Root serialized structure representing a snapshot of the solar system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SystemSaveData {
     /// Schema version for backwards/forwards compatibility.
     pub version: u32,
@@ -35,6 +39,12 @@ pub struct SystemSaveData {
     /// Saved scenario preset (e.g. MolecularCloudCluster, Trappist1System, SolarNebulaMmsn).
     #[serde(default)]
     pub scenario_preset: Option<crate::simulation::scenarios::ScenarioPreset>,
+    /// Active space probes and orbiters/rovers in the system.
+    #[serde(default)]
+    pub probes: Vec<SpaceProbeSave>,
+    /// Standalone expanding Alfvén blast wave shock fronts.
+    #[serde(default)]
+    pub alfven_waves: Vec<AlfvenBlastWaveSave>,
 }
 
 /// Serialized time warp parameters.
@@ -75,11 +85,26 @@ pub struct EventFlagsSave {
     pub theia_moon_formed: bool,
     pub lhb_active: bool,
     pub lhb_resonance_crossed: bool,
+    #[serde(default)]
+    pub lhb_migration_progress: f64,
+    #[serde(default)]
+    pub lhb_resonance_ratio: f64,
+    #[serde(default)]
+    pub lhb_water_delivered_earth_masses: f64,
+    #[serde(default)]
+    pub lhb_comets_scattered: usize,
+    #[serde(default)]
+    pub lhb_time_active_years: f64,
+    #[serde(default)]
+    pub lhb_manual_trigger_requested: bool,
 }
 
-/// Serialized satellite orbit link referencing parent by body name.
+/// Serialized satellite orbit link referencing parent by persistent save ID or name fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SatelliteSave {
+    /// Persistent save ID of the parent body (preferred on reload).
+    #[serde(default)]
+    pub parent_id: Option<u64>,
     /// Name of the primary parent body (e.g. "Earth", "Jupiter").
     pub parent_name: String,
     /// Semi-major axis in AU relative to parent body.
@@ -90,9 +115,96 @@ pub struct SatelliteSave {
     pub true_anomaly: f64,
 }
 
+/// Serialized Roche lobe overflow donor-companion link.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RocheLobeOverflowSave {
+    #[serde(default)]
+    pub companion_id: Option<u64>,
+    #[serde(default)]
+    pub companion_name: String,
+    pub mass_transfer_rate: f64,
+    pub l1_distance_au: f64,
+}
+
+/// Serialized Late Heavy Bombardment impactor target record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LhbImpactorSave {
+    #[serde(default)]
+    pub target_id: Option<u64>,
+    #[serde(default)]
+    pub target_name: String,
+    pub spawn_time_yr: f64,
+    pub expected_arrival_yr: f64,
+    pub target_r: f64,
+    pub target_q: f64,
+}
+
+/// Serialized guided bombardment projectile record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BombardmentProjectileSave {
+    #[serde(default)]
+    pub target_id: Option<u64>,
+    #[serde(default)]
+    pub target_name: String,
+    pub bombardment_type: crate::simulation::terraforming::BombardmentType,
+    pub launch_time_yr: f64,
+    pub expected_arrival_yr: f64,
+    pub trail_color_rgba: [f32; 4],
+    pub is_detonated: bool,
+    pub relative_offset: DVec3,
+    pub initial_distance: f64,
+    pub flight_duration_secs: f32,
+    pub flight_elapsed_secs: f32,
+}
+
+/// Serialized magnetar starquake Alfvén blast wave shock front.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlfvenBlastWaveSave {
+    #[serde(default)]
+    pub source_id: Option<u64>,
+    #[serde(default)]
+    pub source_name: String,
+    pub origin_au: DVec3,
+    pub radius_au: f64,
+    pub expansion_speed_au_yr: f64,
+    pub energy_erg: f64,
+    pub luminosity_solar: f64,
+    pub synchrotron_brightness: f32,
+    pub age_seconds: f64,
+    pub max_radius_au: f64,
+}
+
+/// Serialized probe flight guidance state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightComputerSave {
+    #[serde(default)]
+    pub target_id: Option<u64>,
+    pub target_name: String,
+    pub launch_pos: DVec3,
+    pub distance_to_target: f64,
+    pub relative_speed: f64,
+}
+
+/// Complete serialized snapshot of a deployed `SpaceProbe`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceProbeSave {
+    pub probe: crate::simulation::probes::SpaceProbe,
+    #[serde(default)]
+    pub flight_computer: Option<FlightComputerSave>,
+    pub name: String,
+    pub position: DVec3,
+    pub velocity: DVec3,
+    pub mass: f64,
+    pub radius: f64,
+    pub temperature: f64,
+    pub composition: Composition,
+}
+
 /// Complete serialized record of an individual celestial body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CelestialBodySave {
+    #[serde(default)]
+    pub save_id: Option<u64>,
     pub name: String,
     pub body_type: BodyType,
     pub position: DVec3,
@@ -130,11 +242,15 @@ pub struct CelestialBodySave {
     #[serde(default)]
     pub tidal_state: Option<TidalState>,
     #[serde(default)]
+    pub tidal_host_id: Option<u64>,
+    #[serde(default)]
     pub relativistic_state: Option<RelativisticState>,
     #[serde(default)]
     pub atmospheric_escape: Option<AtmosphericEscapeState>,
     #[serde(default)]
     pub kozai_lidov: Option<KozaiLidovState>,
+    #[serde(default)]
+    pub kozai_perturber_id: Option<u64>,
     #[serde(default)]
     pub geological_state: Option<crate::simulation::geology::GeologicalState>,
     #[serde(default)]
@@ -157,11 +273,40 @@ pub struct CelestialBodySave {
     pub auroral_oval: Option<crate::simulation::space_weather::AuroralOvalState>,
     #[serde(default)]
     pub cataclysmic_variable: Option<crate::simulation::accretion::CataclysmicVariable>,
+    #[serde(default)]
+    pub is_gmc_promoted_system: bool,
+    #[serde(default)]
+    pub circumstellar_disk: Option<CircumstellarDisk>,
+    #[serde(default)]
+    pub relativistic_jet: Option<RelativisticJetState>,
+    #[serde(default)]
+    pub dyson_swarm: Option<crate::rendering::effects::megastructures::DysonSwarm>,
+    #[serde(default)]
+    pub roche_lobe_overflow: Option<RocheLobeOverflowSave>,
+    #[serde(default)]
+    pub lhb_impactor: Option<LhbImpactorSave>,
+    #[serde(default)]
+    pub bombardment_projectile: Option<BombardmentProjectileSave>,
+    #[serde(default)]
+    pub alfven_blast_wave: Option<AlfvenBlastWaveSave>,
+    #[serde(default)]
+    pub atmospheric_escape_tail: Option<AtmosphericEscapeTail>,
+    #[serde(default)]
+    pub habitability_timer: Option<crate::simulation::biology::civilization::HabitabilityTimer>,
+    #[serde(default)]
+    pub auroral_storm_excitation: Option<crate::simulation::space_weather::AuroralStormExcitation>,
+    #[serde(default)]
+    pub stellar_activity_clock: Option<crate::simulation::space_weather::StellarActivityClock>,
+    #[serde(default)]
+    pub rogue_interloper: Option<crate::simulation::events::RogueInterloper>,
+    #[serde(default)]
+    pub is_hazard_comet: bool,
 }
 
 impl Default for CelestialBodySave {
     fn default() -> Self {
         Self {
+            save_id: None,
             name: String::new(),
             body_type: BodyType::TerrestrialPlanet,
             position: DVec3::ZERO,
@@ -185,9 +330,11 @@ impl Default for CelestialBodySave {
             black_hole_state: None,
             satellite: None,
             tidal_state: None,
+            tidal_host_id: None,
             relativistic_state: None,
             atmospheric_escape: None,
             kozai_lidov: None,
+            kozai_perturber_id: None,
             geological_state: None,
             terraforming: None,
             volcanic_state: None,
@@ -199,6 +346,20 @@ impl Default for CelestialBodySave {
             stellar_flare: None,
             auroral_oval: None,
             cataclysmic_variable: None,
+            is_gmc_promoted_system: false,
+            circumstellar_disk: None,
+            relativistic_jet: None,
+            dyson_swarm: None,
+            roche_lobe_overflow: None,
+            lhb_impactor: None,
+            bombardment_projectile: None,
+            alfven_blast_wave: None,
+            atmospheric_escape_tail: None,
+            habitability_timer: None,
+            auroral_storm_excitation: None,
+            stellar_activity_clock: None,
+            rogue_interloper: None,
+            is_hazard_comet: false,
         }
     }
 }

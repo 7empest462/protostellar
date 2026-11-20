@@ -433,7 +433,7 @@ fn spawn_orbit_tracking_row(actions: &mut ChildSpawnerCommands) {
                         ),
                         (
                             UiButtonAction::BrakeDeltaV,
-                            "-Δv [K]",
+                            "-Δv [Shift-B]",
                             Color::srgba(0.18, 0.12, 0.06, 0.9),
                             Color::srgb(0.95, 0.65, 0.25),
                         ),
@@ -666,7 +666,7 @@ fn spawn_astrophysics_actions_row(actions: &mut ChildSpawnerCommands) {
                         ),
                         (
                             UiButtonAction::InjectEmbryo,
-                            "Theia [M]",
+                            "Theia [Alt-M]",
                             Color::srgba(0.08, 0.18, 0.24, 0.9),
                             Color::srgb(0.4, 0.85, 1.0),
                         ),

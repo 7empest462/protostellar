@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
-use bevy::render::{Extract, ExtractSchedule, Render, RenderApp};
+use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -15,7 +15,7 @@ use crate::rendering::effects::remnants::PersistentRemnantPool;
 use crate::rendering::effects::supernova::SupernovaDebrisPool;
 use crate::simulation::components::*;
 use crate::simulation::resources::{SimTime, TimeWarp};
-use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
+use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset, ScenarioReloadGeneration};
 use crate::utils::constants::G_ASTRO;
 
 pub const GMC_DOMAIN_SIZE_AU: f32 = 2200.0;
@@ -154,8 +154,12 @@ pub struct GpuGmcFluidEngine {
     pub uniform_buffer: wgpu::Buffer,
     pub collapse_event_buffer: wgpu::Buffer,
     pub collapse_counter_buffer: wgpu::Buffer,
-    pub staging_buffer: wgpu::Buffer,
-    pub staging_state: Arc<AtomicU8>,
+    pub staging_buffers: [wgpu::Buffer; 2],
+    pub staging_states: [Arc<AtomicU8>; 2],
+    pub staging_epochs: [u64; 2],
+    pub restart_epoch: u64,
+    pub last_reload_generation: u64,
+    pub current_staging_idx: usize,
     pub bind_groups: [wgpu::BindGroup; 2],
     pub pipeline: wgpu::ComputePipeline,
     pub ping_pong_idx: usize,
@@ -171,6 +175,7 @@ pub struct GmcFluidExtractedParams {
     pub is_paused: bool,
     pub dt: f32,
     pub elapsed_years: f64,
+    pub reload_generation: u64,
     pub sinks: [GpuSinkParticle; 16],
     pub num_sinks: u32,
     pub supernovae: [GpuSupernovaBlast; 8],
@@ -203,11 +208,25 @@ impl Plugin for GmcFluidPlugin {
             return;
         };
 
-        render_app.insert_resource(GmcCollapseEventSender { tx });
-        render_app.init_resource::<GmcFluidExtractedParams>();
         render_app
-            .add_systems(ExtractSchedule, extract_gmc_fluid_data)
-            .add_systems(Render, step_gmc_fluid_simulation);
+            .insert_resource(GmcCollapseEventSender { tx })
+            .init_resource::<GmcFluidExtractedParams>()
+            .add_systems(
+                ExtractSchedule,
+                (
+                    extract_gmc_fluid_data,
+                    super::gmc_volume::extract_gmc_live_volume,
+                ),
+            )
+            .add_systems(
+                Render,
+                (
+                    step_gmc_fluid_simulation,
+                    super::gmc_volume::pack_gmc_live_volume_texture
+                        .after(step_gmc_fluid_simulation),
+                )
+                    .in_set(RenderSystems::PrepareResources),
+            );
     }
 }
 
@@ -282,6 +301,7 @@ where
 pub fn extract_gmc_fluid_data(
     mut commands: Commands,
     scenario_state: Extract<Option<Res<ActiveScenarioState>>>,
+    reload_gen: Extract<Option<Res<ScenarioReloadGeneration>>>,
     time_warp: Extract<Res<TimeWarp>>,
     sim_time: Extract<Res<SimTime>>,
     debris_pool: Extract<Option<Res<SupernovaDebrisPool>>>,
@@ -306,6 +326,7 @@ pub fn extract_gmc_fluid_data(
     let is_paused = time_warp.is_paused && !time_warp.step_once;
     let dt = sim_time.current_dt_yr as f32;
     let elapsed_years = sim_time.elapsed_years;
+    let reload_generation = reload_gen.as_ref().map_or(0, |g| g.0);
 
     let mut sinks = [GpuSinkParticle::default(); 16];
     let mut num_sinks = 0u32;
@@ -363,6 +384,7 @@ pub fn extract_gmc_fluid_data(
         is_paused,
         dt,
         elapsed_years,
+        reload_generation,
         sinks,
         num_sinks,
         supernovae,
@@ -459,7 +481,7 @@ struct GmcFluidBuffers {
     uniforms: wgpu::Buffer,
     collapse_event: wgpu::Buffer,
     collapse_counter: wgpu::Buffer,
-    staging: wgpu::Buffer,
+    staging: [wgpu::Buffer; 2],
 }
 
 fn create_gmc_fluid_buffers(device: &wgpu::Device) -> GmcFluidBuffers {
@@ -522,8 +544,15 @@ fn create_gmc_fluid_buffers(device: &wgpu::Device) -> GmcFluidBuffers {
             | wgpu::BufferUsages::COPY_DST,
     });
 
-    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("GMC Staging Readback Buffer"),
+    let staging_buffer_0 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Staging Readback Buffer 0"),
+        size: 16 + 32 * std::mem::size_of::<GpuJeansCollapseEvent>() as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let staging_buffer_1 = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("GMC Staging Readback Buffer 1"),
         size: 16 + 32 * std::mem::size_of::<GpuJeansCollapseEvent>() as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
@@ -536,7 +565,20 @@ fn create_gmc_fluid_buffers(device: &wgpu::Device) -> GmcFluidBuffers {
         uniforms: uniform_buffer,
         collapse_event: collapse_event_buffer,
         collapse_counter: collapse_counter_buffer,
-        staging: staging_buffer,
+        staging: [staging_buffer_0, staging_buffer_1],
+    }
+}
+
+fn storage_layout_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
     }
 }
 
@@ -544,64 +586,13 @@ fn create_gmc_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout 
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("GMC Fluid Bind Group Layout"),
         entries: &[
-            // 0: density_in
+            storage_layout_entry(0, true),  // density_in
+            storage_layout_entry(1, false), // density_out
+            storage_layout_entry(2, true),  // velocity_in
+            storage_layout_entry(3, false), // velocity_out
+            storage_layout_entry(4, false), // temperature
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // 1: density_out
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // 2: velocity_in
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // 3: velocity_out
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // 4: temperature
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // 5: uniforms
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
+                binding: 5, // uniforms
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -610,28 +601,8 @@ fn create_gmc_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout 
                 },
                 count: None,
             },
-            // 6: collapse_events
-            wgpu::BindGroupLayoutEntry {
-                binding: 6,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // 7: collapse_counter
-            wgpu::BindGroupLayoutEntry {
-                binding: 7,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            storage_layout_entry(6, false), // collapse_events
+            storage_layout_entry(7, false), // collapse_counter
         ],
     })
 }
@@ -667,89 +638,64 @@ fn create_gmc_bind_groups(
     layout: &wgpu::BindGroupLayout,
     buffers: &GmcFluidBuffers,
 ) -> [wgpu::BindGroup; 2] {
-    let bind_group_0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("GMC Fluid Bind Group 0 (Read 0, Write 1)"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffers.density[0].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buffers.density[1].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: buffers.velocity[0].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: buffers.velocity[1].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: buffers.temperature.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: buffers.uniforms.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: buffers.collapse_event.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: buffers.collapse_counter.as_entire_binding(),
-            },
-        ],
-    });
-
-    let bind_group_1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("GMC Fluid Bind Group 1 (Read 1, Write 0)"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffers.density[1].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buffers.density[0].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: buffers.velocity[1].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: buffers.velocity[0].as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: buffers.temperature.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: buffers.uniforms.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: buffers.collapse_event.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: buffers.collapse_counter.as_entire_binding(),
-            },
-        ],
-    });
-
-    [bind_group_0, bind_group_1]
+    let [d0, d1] = &buffers.density;
+    let [v0, v1] = &buffers.velocity;
+    let make_bg = |label: &str,
+                   d_read: &wgpu::Buffer,
+                   d_write: &wgpu::Buffer,
+                   v_read: &wgpu::Buffer,
+                   v_write: &wgpu::Buffer| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: d_read.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: d_write.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: v_read.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: v_write.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: buffers.temperature.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: buffers.uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: buffers.collapse_event.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: buffers.collapse_counter.as_entire_binding(),
+                },
+            ],
+        })
+    };
+    [
+        make_bg("GMC Fluid Bind Group 0 (Read 0, Write 1)", d0, d1, v0, v1),
+        make_bg("GMC Fluid Bind Group 1 (Read 1, Write 0)", d1, d0, v1, v0),
+    ]
 }
 
 /// Compiles the GMC fluid compute pipeline and sets up ping-pong buffers.
-fn setup_gmc_fluid_pipeline(commands: &mut Commands, device: &wgpu::Device) {
+fn setup_gmc_fluid_pipeline(
+    commands: &mut Commands,
+    device: &wgpu::Device,
+    reload_generation: u64,
+) {
     let buffers = create_gmc_fluid_buffers(device);
     let bind_group_layout = create_gmc_bind_group_layout(device);
     let pipeline = create_gmc_compute_pipeline(device, &bind_group_layout);
@@ -762,8 +708,15 @@ fn setup_gmc_fluid_pipeline(commands: &mut Commands, device: &wgpu::Device) {
         uniform_buffer: buffers.uniforms,
         collapse_event_buffer: buffers.collapse_event,
         collapse_counter_buffer: buffers.collapse_counter,
-        staging_buffer: buffers.staging,
-        staging_state: Arc::new(AtomicU8::new(STAGING_STATE_IDLE)),
+        staging_buffers: buffers.staging,
+        staging_states: [
+            Arc::new(AtomicU8::new(STAGING_STATE_IDLE)),
+            Arc::new(AtomicU8::new(STAGING_STATE_IDLE)),
+        ],
+        staging_epochs: [0, 0],
+        restart_epoch: 0,
+        last_reload_generation: reload_generation,
+        current_staging_idx: 0,
         bind_groups,
         pipeline,
         ping_pong_idx: 0,
@@ -774,27 +727,32 @@ fn setup_gmc_fluid_pipeline(commands: &mut Commands, device: &wgpu::Device) {
 }
 
 fn drain_mapped_gmc_staging_buffer(engine: &GpuGmcFluidEngine, sender: &GmcCollapseEventSender) {
-    if engine.staging_state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
-        let slice = engine.staging_buffer.slice(..);
-        if let Ok(view) = slice.get_mapped_range() {
-            let num_events = view
-                .get(..4)
-                .map_or(0u32, |bytes| *bytemuck::from_bytes::<u32>(bytes));
-            let count = (num_events as usize).min(32);
+    for ((state, staging_buf), &slot_epoch) in
+        std::iter::zip(&engine.staging_states, &engine.staging_buffers).zip(&engine.staging_epochs)
+    {
+        if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
+            if slot_epoch == engine.restart_epoch {
+                let slice = staging_buf.slice(..);
+                if let Ok(view) = slice.get_mapped_range() {
+                    let num_events = view
+                        .get(..4)
+                        .map_or(0u32, |bytes| *bytemuck::from_bytes::<u32>(bytes));
+                    let count = (num_events as usize).min(32);
 
-            if count > 0 {
-                let bytes_len = count * std::mem::size_of::<GpuJeansCollapseEvent>();
-                if let Some(event_bytes) = view.get(16..16 + bytes_len) {
-                    let events: &[GpuJeansCollapseEvent] = bytemuck::cast_slice(event_bytes);
-                    let _ = sender.tx.try_send(events.to_vec());
+                    if count > 0 {
+                        let bytes_len = count * std::mem::size_of::<GpuJeansCollapseEvent>();
+                        if let Some(event_bytes) = view.get(16..16 + bytes_len) {
+                            let events: &[GpuJeansCollapseEvent] =
+                                bytemuck::cast_slice(event_bytes);
+                            let _ = sender.tx.try_send(events.to_vec());
+                        }
+                    }
                 }
             }
-        }
 
-        engine.staging_buffer.unmap();
-        engine
-            .staging_state
-            .store(STAGING_STATE_IDLE, Ordering::Release);
+            staging_buf.unmap();
+            state.store(STAGING_STATE_IDLE, Ordering::Release);
+        }
     }
 }
 
@@ -821,50 +779,54 @@ fn schedule_gmc_staging_readback(
     mut encoder: wgpu::CommandEncoder,
     queue: &RenderQueue,
 ) {
+    let idx = engine.current_staging_idx & 1;
     let mut copy_initiated = false;
-    if engine
-        .staging_state
-        .compare_exchange(
-            STAGING_STATE_IDLE,
-            STAGING_STATE_MAPPING,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        )
-        .is_ok()
-    {
-        encoder.copy_buffer_to_buffer(
-            &engine.collapse_counter_buffer,
-            0,
-            &engine.staging_buffer,
-            0,
-            4,
-        );
-        encoder.copy_buffer_to_buffer(
-            &engine.collapse_event_buffer,
-            0,
-            &engine.staging_buffer,
-            16,
-            32 * std::mem::size_of::<GpuJeansCollapseEvent>() as u64,
-        );
-        copy_initiated = true;
-    }
+    if let (Some(state), Some(staging_buf)) = (
+        engine.staging_states.get(idx),
+        engine.staging_buffers.get(idx),
+    ) {
+        if state
+            .compare_exchange(
+                STAGING_STATE_IDLE,
+                STAGING_STATE_MAPPING,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            encoder.copy_buffer_to_buffer(&engine.collapse_counter_buffer, 0, staging_buf, 0, 4);
+            encoder.copy_buffer_to_buffer(
+                &engine.collapse_event_buffer,
+                0,
+                staging_buf,
+                16,
+                32 * std::mem::size_of::<GpuJeansCollapseEvent>() as u64,
+            );
+            copy_initiated = true;
+        }
 
-    // Submit compute and (if initiated) copy commands to queue
-    queue.submit(Some(encoder.finish()));
+        // Submit compute and (if initiated) copy commands to queue
+        queue.submit(Some(encoder.finish()));
 
-    // Map the staging buffer AFTER queue.submit has been executed
-    if copy_initiated {
-        let state_clone = Arc::clone(&engine.staging_state);
-        engine
-            .staging_buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |res| {
-                if res.is_ok() {
-                    state_clone.store(STAGING_STATE_MAPPED, Ordering::Release);
-                } else {
-                    state_clone.store(STAGING_STATE_IDLE, Ordering::Release);
-                }
-            });
+        // Map the staging buffer AFTER queue.submit has been executed
+        if copy_initiated {
+            if let Some(epoch_slot) = engine.staging_epochs.get_mut(idx) {
+                *epoch_slot = engine.restart_epoch;
+            }
+            let state_clone = Arc::clone(state);
+            staging_buf
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |res| {
+                    if res.is_ok() {
+                        state_clone.store(STAGING_STATE_MAPPED, Ordering::Release);
+                    } else {
+                        state_clone.store(STAGING_STATE_IDLE, Ordering::Release);
+                    }
+                });
+            engine.current_staging_idx = idx ^ 1;
+        }
+    } else {
+        queue.submit(Some(encoder.finish()));
     }
 }
 
@@ -885,28 +847,53 @@ pub fn step_gmc_fluid_simulation(
     }
 
     let Some(mut engine) = engine_opt else {
-        setup_gmc_fluid_pipeline(&mut commands, render_dev.wgpu_device());
+        setup_gmc_fluid_pipeline(
+            &mut commands,
+            render_dev.wgpu_device(),
+            params.reload_generation,
+        );
         return;
     };
 
     let was_inactive = !engine.was_active;
     engine.was_active = true;
-    let scenario_restarted = params.elapsed_years < engine.last_elapsed_years || was_inactive;
+    let scenario_restarted = params.reload_generation != engine.last_reload_generation
+        || params.elapsed_years < engine.last_elapsed_years
+        || was_inactive;
+    engine.last_reload_generation = params.reload_generation;
     engine.last_elapsed_years = params.elapsed_years;
 
     let queue = &render_queue;
     if scenario_restarted {
+        engine.restart_epoch = engine.restart_epoch.wrapping_add(1);
         reseed_gmc_fluid_buffers(&mut engine, queue);
+        let zero_counter = [0u32];
+        queue.write_buffer(
+            &engine.collapse_counter_buffer,
+            0,
+            bytemuck::cast_slice(&zero_counter),
+        );
+        // Never overwrite STAGING_STATE_MAPPING to IDLE while map_async is in flight:
+        // stale MAPPING callbacks will transition to MAPPED and get discarded + unmapped
+        // cleanly by drain_mapped_gmc_staging_buffer via the restart_epoch mismatch.
+        for (state, staging_buf) in std::iter::zip(&engine.staging_states, &engine.staging_buffers)
+        {
+            if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
+                staging_buf.unmap();
+                state.store(STAGING_STATE_IDLE, Ordering::Release);
+            }
+        }
     }
+
+    // 1. Drain previously mapped staging buffer if ready BEFORE checking is_paused,
+    // ensuring in-flight collapses complete and are emitted even when the user pauses.
+    drain_mapped_gmc_staging_buffer(&engine, &sender);
 
     if params.is_paused {
         return;
     }
 
     let device = render_dev.wgpu_device();
-
-    // 1. Drain previously mapped staging buffer if ready
-    drain_mapped_gmc_staging_buffer(&engine, &sender);
 
     // 2. Update uniforms buffer (calculate substepping for time warp scaling)
     // Fluid Eulerian grid requires bounded CFL step (<= 0.12 yr) so density filaments

@@ -165,9 +165,15 @@ fn update_or_despawn_circumstellar_children(
         if let Ok((mut transform, mat_handle)) = child_query.get_mut(child) {
             if let Some((scale, uniforms)) = opt_target {
                 found = true;
-                transform.scale = Vec3::splat(scale);
-                if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
-                    mat.uniforms = uniforms.clone();
+                let target_scale = Vec3::splat(scale);
+                if transform.scale != target_scale {
+                    transform.scale = target_scale;
+                }
+                if let Some(mat) = materials.get(&mat_handle.0)
+                    && mat.uniforms != *uniforms
+                    && let Some(mut mat_mut) = materials.get_mut(&mat_handle.0)
+                {
+                    mat_mut.uniforms = uniforms.clone();
                 }
             } else if let Ok(mut c_cmd) = commands.get_entity(child) {
                 c_cmd.try_despawn();

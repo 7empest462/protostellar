@@ -11,7 +11,7 @@ fn spawn_kepler_16_stars(commands: &mut Commands, m_a: f64, m_b: f64, m_total: f
     let star_a = commands
         .spawn((
             CelestialBody {
-                body_type: BodyType::YellowDwarf,
+                body_type: BodyType::OrangeDwarf,
                 name: "Kepler-16A (Primary K-Dwarf)".to_string(),
             },
             CentralStar,
@@ -104,10 +104,10 @@ fn spawn_kepler_16_planets(
                 organics_frac: 0.00,
                 gas_frac: 0.82,
             },
-            SpinState {
-                rotation_period_hours: 14.5,
-                axial_tilt_degrees: 3.2,
-                spin_vector: DVec3::new(0.0, 1.0, 0.0),
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(14.5, 3.2, m_planet, EARTH_RADIUS_AU * 8.4);
+                spin
             },
             PlanetaryRingSystem {
                 inner_radius_au: 0.0005,

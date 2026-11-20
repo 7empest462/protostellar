@@ -136,7 +136,7 @@ fn handle_intermediate_and_low_mass_aging(
                 evo.phase = StellarEvolutionPhase::WhiteDwarf;
                 body.body_type = BodyType::WhiteDwarf;
                 body.name = "The Star (White Dwarf Remnant)".to_string();
-                radius.0 = 0.009;
+                radius.0 = 0.009 * SOLAR_RADIUS_AU;
                 temp.0 = 30_000.0;
                 lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4);
                 toast.message =
@@ -148,8 +148,9 @@ fn handle_intermediate_and_low_mass_aging(
         evo.phase = StellarEvolutionPhase::WhiteDwarf;
         body.body_type = BodyType::WhiteDwarf;
         body.name = "The Star (Helium White Dwarf)".to_string();
-        radius.0 = 0.009;
+        radius.0 = 0.009 * SOLAR_RADIUS_AU;
         temp.0 = 25_000.0;
+        lum.0 = (radius.0 / SOLAR_RADIUS_AU).powi(2) * (temp.0 / 5778.0).powi(4);
         toast.message = "⚪ Low-Mass Helium White Dwarf Remnant Formed!".to_string();
     }
 }

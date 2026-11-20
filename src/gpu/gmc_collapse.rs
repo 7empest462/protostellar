@@ -10,9 +10,17 @@ pub fn receive_gmc_collapse_events(
     mut commands: Commands,
     receiver: Res<GmcCollapseEventReceiver>,
     scenario_state: Option<Res<ActiveScenarioState>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_gen: Local<u64>,
     existing_bodies: Query<(&SimPosition, &CelestialBody, Option<&Mass>)>,
     mut toast: Option<ResMut<crate::game::ui::NotificationToast>>,
 ) {
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        while receiver.rx.try_recv().is_ok() {}
+        return;
+    }
     if receiver.rx.is_empty() {
         return;
     }
@@ -127,7 +135,7 @@ fn compute_collapse_kinematics(
     let seed_vel = (tangent * v_circ * 0.98 + raw_vel.clamp_length_max(v_circ * 0.08))
         .clamp_length_max(v_circ * 1.05);
     let local_speed =
-        (seed_vel.length() * crate::utils::constants::AU_PER_YR_TO_KM_PER_S).max(0.25);
+        (raw_vel.length() * crate::utils::constants::AU_PER_YR_TO_KM_PER_S).clamp(0.15, 2.5);
     let jeans_mass =
         crate::simulation::scenarios::molecular_cloud::calculate_turbulent_jeans_mass_solar(
             f64::from(ev.local_mass_solar / GMC_CELL_VOLUME_AU3).max(4.8e-11),
@@ -271,10 +279,15 @@ fn spawn_jeans_collapse_system(
                 shockwave_radius: 0.5,
             },
             StellarEvolutionState::default(),
-            SpinState {
-                rotation_period_hours: 48.0,
-                axial_tilt_degrees: 15.0,
-                spin_vector: bevy::math::DVec3::new(0.0, 1.0, 0.0),
+            {
+                let mut spin = SpinState::default();
+                spin.set_period_and_tilt(
+                    48.0,
+                    15.0,
+                    props.seed_mass,
+                    3.5 * crate::utils::constants::SOLAR_RADIUS_AU,
+                );
+                spin
             },
         ))
         .id();

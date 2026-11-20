@@ -17,7 +17,11 @@ pub struct GeologyPlugin;
 
 impl Plugin for GeologyPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TimelineScrubber>()
-            .add_systems(Update, sync_geological_evolution_system);
+        app.init_resource::<TimelineScrubber>().add_systems(
+            Update,
+            sync_geological_evolution_system
+                .after(crate::simulation::thermodynamics::update_thermodynamics)
+                .after(crate::simulation::terraforming::update_terraforming_atmospheres),
+        );
     }
 }

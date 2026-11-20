@@ -429,6 +429,12 @@ impl Default for SpinState {
 impl SpinState {
     /// Recalculates day length and obliquity from spin angular momentum, mass, and radius.
     pub fn update_from_spin(&mut self, spin_vec: DVec3, mass_solar: f64, radius_au: f64) {
+        if !spin_vec.is_finite() || !mass_solar.is_finite() || !radius_au.is_finite() {
+            self.spin_vector = DVec3::new(0.0, 1e-12, 0.0);
+            self.rotation_period_hours = 24.0;
+            self.axial_tilt_degrees = 0.0;
+            return;
+        }
         self.spin_vector = spin_vec;
         let spin_mag = spin_vec.length();
 
@@ -460,12 +466,33 @@ impl SpinState {
         mass_solar: f64,
         radius_au: f64,
     ) {
-        self.rotation_period_hours = period_hours.clamp(0.5, 50000.0);
-        self.axial_tilt_degrees = tilt_degrees.clamp(0.0, 180.0);
+        let safe_period = if period_hours.is_finite() {
+            period_hours.clamp(1e-7, 50000.0)
+        } else {
+            24.0
+        };
+        let safe_tilt = if tilt_degrees.is_finite() {
+            tilt_degrees.clamp(0.0, 180.0)
+        } else {
+            0.0
+        };
+        self.rotation_period_hours = safe_period;
+        self.axial_tilt_degrees = safe_tilt;
 
-        let period_yr = (self.rotation_period_hours * (3600.0 / YEAR_SECONDS)).max(1e-8);
+        let safe_mass = if mass_solar.is_finite() {
+            mass_solar.max(1e-12)
+        } else {
+            1e-12
+        };
+        let safe_radius = if radius_au.is_finite() {
+            radius_au.max(1e-10)
+        } else {
+            1e-10
+        };
+
+        let period_yr = (self.rotation_period_hours * (3600.0 / YEAR_SECONDS)).max(1e-12);
         let omega_rad_yr = (2.0 * PI) / period_yr;
-        let i_moment = 0.33 * mass_solar.max(1e-12) * radius_au.max(1e-10).powi(2);
+        let i_moment = 0.33 * safe_mass * safe_radius.powi(2);
         let tilt_rad = self.axial_tilt_degrees.to_radians();
         let spin_dir = DVec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0);
         self.spin_vector = (i_moment * omega_rad_yr) * spin_dir;
@@ -667,20 +694,22 @@ impl Composition {
         }
     }
 
-    /// Normalizes fractions so that their exact sum equals 1.000000.
+    /// Normalizes fractions so that their exact sum equals 1.000000, guarding against non-finite or negative inputs.
     pub fn normalized(&self) -> Self {
-        let sum = self.metal_frac
-            + self.silicate_frac
-            + self.ice_frac
-            + self.organics_frac
-            + self.gas_frac;
-        if sum > 1e-12 {
+        let sanitize = |v: f64| if v.is_finite() { v.max(0.0) } else { 0.0 };
+        let metal = sanitize(self.metal_frac);
+        let silicate = sanitize(self.silicate_frac);
+        let ice = sanitize(self.ice_frac);
+        let organics = sanitize(self.organics_frac);
+        let gas = sanitize(self.gas_frac);
+        let sum = metal + silicate + ice + organics + gas;
+        if sum > 1e-12 && sum.is_finite() {
             Self {
-                metal_frac: self.metal_frac / sum,
-                silicate_frac: self.silicate_frac / sum,
-                ice_frac: self.ice_frac / sum,
-                organics_frac: self.organics_frac / sum,
-                gas_frac: self.gas_frac / sum,
+                metal_frac: metal / sum,
+                silicate_frac: silicate / sum,
+                ice_frac: ice / sum,
+                organics_frac: organics / sum,
+                gas_frac: gas / sum,
             }
         } else {
             Self::rocky()
@@ -796,9 +825,14 @@ impl InternalDifferentiation {
         let mass_earth = (mass_solar / EARTH_MASS_SOLAR).max(1e-6);
         let radius_earth = (total_radius_au / EARTH_RADIUS_AU).max(1e-4);
 
-        // Accretional impact heating + radionuclide decay
+        // Accretional impact heating + radionuclide decay (preserve existing hotter shock/radiogenic core state)
         let accretional_temp_boost = 4200.0 * mass_earth.powf(0.67) / radius_earth;
-        self.core_temp_k = (300.0 + accretional_temp_boost).clamp(300.0, 30000.0);
+        let baseline_temp = (300.0 + accretional_temp_boost).clamp(300.0, 30000.0);
+        self.core_temp_k = if self.core_temp_k.is_finite() {
+            self.core_temp_k.max(baseline_temp).clamp(300.0, 30000.0)
+        } else {
+            baseline_temp
+        };
 
         // Differentiation occurs if mass > 0.005 Earth Masses or T_core > 1400 K (Iron Melting Point)
         if mass_earth >= 0.005 || self.core_temp_k > 1400.0 {

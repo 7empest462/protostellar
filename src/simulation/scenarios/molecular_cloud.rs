@@ -30,7 +30,9 @@ pub const GMC_DARK_MATTER_MASS_SOLAR: f64 = 16_000.0;
 pub const GMC_NFW_SCALE_RADIUS_AU: f64 = 280.0;
 
 /// Marker indicating an ignited GMC cluster star has already spawned its bound planetary system.
-#[derive(Component, Debug, Clone, Copy, Default)]
+#[derive(
+    Component, Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 pub struct GmcPromotedSystem;
 
 /// Ambient cold molecular gas temperature in Kelvin (T ~ 10-15 K).
@@ -165,10 +167,15 @@ fn spawn_cluster_member(
         Luminosity(cfg.lum_solar),
         AngularMomentum(pos.cross(vel) * cfg.mass_solar),
         cfg.composition,
-        SpinState {
-            rotation_period_hours: 36.0,
-            axial_tilt_degrees: cfg.inclination_deg.abs() * 0.75,
-            spin_vector: DVec3::new(0.0, 1.0, 0.0),
+        {
+            let mut spin = SpinState::default();
+            spin.set_period_and_tilt(
+                36.0,
+                cfg.inclination_deg.abs() * 0.75,
+                cfg.mass_solar,
+                cfg.radius_au,
+            );
+            spin
         },
     ));
 
@@ -665,6 +672,11 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
             + tangent * (-v_circ * e.angle_rad.sin())
             + bitangent * (v_circ * e.angle_rad.cos());
 
+        let mut diff = InternalDifferentiation::default();
+        diff.recalculate(e.mass_solar, e.radius_au, &e.composition);
+        let mut spin = SpinState::default();
+        spin.set_period_and_tilt(14.0, 8.0, e.mass_solar, e.radius_au);
+
         commands.spawn((
             CelestialBody {
                 body_type: e.body_type,
@@ -677,10 +689,11 @@ pub fn attach_gmc_circumstellar_disk_and_embryos(
             Radius(e.radius_au),
             Temperature((280.0 / a_au.sqrt()).max(25.0)),
             Luminosity(0.0),
-            AngularMomentum::default(),
+            AngularMomentum(pos.cross(vel) * e.mass_solar),
             e.composition,
+            diff,
             VolatileInventory::default(),
-            SpinState::default(),
+            spin,
         ));
     }
 
@@ -820,21 +833,21 @@ pub fn update_gmc_cluster_com_camera(
         return;
     }
 
-    // Count systems (stars or protostars)
+    // Count systems (stars or protostars) without per-frame heap allocations
     let mut total_weighted_pos = DVec3::ZERO;
     let mut total_mass = 0.0f64;
-    let mut star_positions = Vec::new();
+    let mut system_count = 0usize;
 
     for (_e, pos, mass, body, _opt_disk) in stars_query.iter() {
         if body.body_type.is_star_or_remnant() || body.body_type == BodyType::Protostar {
             total_weighted_pos += pos.0 * mass.0;
             total_mass += mass.0;
-            star_positions.push(pos.0);
+            system_count += 1;
         }
     }
 
     // Only activate once you have 3+ systems
-    if star_positions.len() < 3 || total_mass <= 1e-6 {
+    if system_count < 3 || total_mass <= 1e-6 {
         return;
     }
 
@@ -844,12 +857,14 @@ pub fn update_gmc_cluster_com_camera(
     // Smoothly track Cluster Center of Mass
     camera.target_focus = com_vec3;
 
-    // Calculate cluster radius from COM to frame the chaotic multi-system fantasy
+    // Calculate cluster radius from COM in a zero-alloc second pass
     let mut max_dist = 0.0f64;
-    for pos in &star_positions {
-        let dist = (*pos - com).length();
-        if dist > max_dist {
-            max_dist = dist;
+    for (_e, pos, _mass, body, _opt_disk) in stars_query.iter() {
+        if body.body_type.is_star_or_remnant() || body.body_type == BodyType::Protostar {
+            let dist = (pos.0 - com).length();
+            if dist > max_dist {
+                max_dist = dist;
+            }
         }
     }
 

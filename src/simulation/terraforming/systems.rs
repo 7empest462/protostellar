@@ -46,7 +46,7 @@ fn resolve_bombardment_impact(
                 .as_ref()
                 .map_or(0.0, |v| v.atmospheric_pressure_bar)
         },
-        |t| t.total_pressure_bar(),
+        |t| t.total_pressure_bar_for_body(target.mass_solar, target.radius_au),
     );
 
     let delivery = calculate_impact_delivery(
@@ -326,22 +326,18 @@ fn build_initial_terraforming_atmosphere(
     p_mass_earth: f64,
 ) -> TerraformingAtmosphere {
     let (prev_water, prev_cov, prev_p_bar) = prev_vol.unwrap_or((0.0, 0.0, 0.0));
-    let (existing_liquid, existing_steam, seeded_p) = if prev_cov >= 0.005 {
-        let equiv_liquid = f64::from(prev_cov) * 0.0006;
-        let is_saturated_cap = prev_cov >= 0.849 && prev_water > 0.0005;
-        let liq = if is_saturated_cap {
-            prev_water.max(equiv_liquid)
+    let (existing_liquid, existing_steam, seeded_p) = if prev_water > 0.0 {
+        let liq = if prev_cov >= 0.005 {
+            (f64::from(prev_cov) * 0.0006).min(prev_water)
         } else {
-            equiv_liquid
-        };
-        let stm = if is_saturated_cap {
             0.0
-        } else {
-            (prev_water - f64::from(prev_cov) * 0.0005).max(0.0)
         };
-        (liq, stm, prev_p_bar.max(1.25))
+        let stm = (prev_water - liq).max(0.0);
+        (liq, stm, prev_p_bar.max(0.0))
+    } else if prev_cov >= 0.005 {
+        (f64::from(prev_cov) * 0.0006, 0.0, prev_p_bar.max(0.0))
     } else {
-        (0.0, prev_water, prev_p_bar)
+        (0.0, 0.0, prev_p_bar.max(0.0))
     };
 
     TerraformingAtmosphere {
@@ -377,7 +373,7 @@ fn apply_impact_delivery_to_target(
     if let Some(mut vol) = opt_vol {
         vol.delivered_water_m_earth += total_delivered_water;
         vol.cometary_impact_count += 1;
-        let cov_from_water = (vol.delivered_water_m_earth / 0.0005).clamp(0.0, 0.92) as f32;
+        let cov_from_water = (vol.delivered_water_m_earth / 0.0006).clamp(0.0, 0.92) as f32;
         vol.ocean_coverage_frac = vol.ocean_coverage_frac.max(cov_from_water).clamp(0.0, 0.98);
         vol.atmospheric_pressure_bar =
             (vol.atmospheric_pressure_bar + delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
@@ -385,7 +381,7 @@ fn apply_impact_delivery_to_target(
     } else if let Ok(mut cmd) = commands.get_entity(target_ent) {
         cmd.try_insert(VolatileInventory {
             delivered_water_m_earth: total_delivered_water,
-            ocean_coverage_frac: (total_delivered_water / 0.0005).clamp(0.0, 0.92) as f32,
+            ocean_coverage_frac: (total_delivered_water / 0.0006).clamp(0.0, 0.92) as f32,
             atmospheric_pressure_bar: (delivery.delta_co2_bar + delivery.delta_nitrogen_bar)
                 .clamp(0.01, 150.0),
             cometary_impact_count: 1,

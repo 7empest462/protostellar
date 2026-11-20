@@ -255,3 +255,211 @@ fn test_habitability_tracking_multi_star_pigment_and_bioluminescence() {
         "Established biosphere on low-eccentricity orbit must accrue technosignature"
     );
 }
+
+struct DynamicBiosphereTestEntities {
+    live_earth: bevy::prelude::Entity,
+    endor_moon: bevy::prelude::Entity,
+    jupiter: bevy::prelude::Entity,
+    eccentric_world: bevy::prelude::Entity,
+    desert_world: bevy::prelude::Entity,
+}
+
+fn spawn_terrestrial_candidate(
+    world: &mut bevy::prelude::World,
+    name: &str,
+    pos: bevy::math::DVec3,
+    vel: bevy::math::DVec3,
+    climate: protostellar::simulation::components::PlanetaryClimate,
+    volatiles: protostellar::simulation::components::VolatileInventory,
+) -> bevy::prelude::Entity {
+    use protostellar::simulation::components::*;
+    use protostellar::utils::constants::EARTH_MASS_SOLAR;
+
+    world
+        .spawn((
+            CelestialBody {
+                name: name.to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            Mass(EARTH_MASS_SOLAR),
+            SimPosition(pos),
+            SimVelocity(vel),
+            climate,
+            volatiles,
+        ))
+        .id()
+}
+
+fn setup_dynamic_biosphere_test_app() -> (bevy::prelude::App, DynamicBiosphereTestEntities) {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::biology::civilization::habitability_tracking_system;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<TimeWarp>()
+        .insert_resource(SimTime {
+            elapsed_years: 2_000_000.0,
+            current_dt_yr: 150_000.0,
+            ..default()
+        })
+        .add_systems(Update, habitability_tracking_system);
+
+    app.world_mut().spawn((
+        CentralStar,
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        Mass(1.0),
+        Temperature(5778.0),
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+    ));
+
+    let v_circ = (G_ASTRO * 1.0 / 1.0).sqrt();
+    let temperate_climate = PlanetaryClimate {
+        surface_temperature_k: 290.0,
+        equilibrium_temperature_k: 255.0,
+        greenhouse_delta_k: 35.0,
+        albedo: 0.30,
+        ice_coverage_frac: 0.05,
+        cloud_coverage_frac: 0.5,
+        climate_regime: ClimateRegime::TemperateHabitable,
+        polar_ice_cap_latitude_deg: 75.0,
+    };
+    let ocean_vol = VolatileInventory {
+        delivered_water_m_earth: 0.0005,
+        ocean_coverage_frac: 0.70,
+        atmospheric_pressure_bar: 1.0,
+        cometary_impact_count: 1,
+    };
+
+    // 1. Circular Earth WITHOUT TrackedOrbit -> must emerge BiosphereState dynamically!
+    let live_earth = spawn_terrestrial_candidate(
+        app.world_mut(),
+        "Live Earth",
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, v_circ),
+        temperate_climate,
+        ocean_vol,
+    );
+
+    // 2. Habitable moon orbiting a cold/temperate Super-Jupiter at 1.1 AU
+    let jupiter = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Temperate Giant".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            Mass(JUPITER_MASS_SOLAR),
+            SimPosition(DVec3::new(1.1, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, (G_ASTRO / 1.1).sqrt())),
+            PlanetaryClimate {
+                climate_regime: ClimateRegime::GasGiantEnvelope,
+                ..temperate_climate
+            },
+        ))
+        .id();
+    let v_moon_rel = (G_ASTRO * JUPITER_MASS_SOLAR / 0.003).sqrt();
+    let endor_moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Forest Moon".to_string(),
+                body_type: BodyType::Moon,
+            },
+            SatelliteOf {
+                parent: jupiter,
+                semi_major_axis_au: 0.003,
+                orbital_period_years: 0.01,
+                true_anomaly: 0.0,
+            },
+            Mass(0.15 * EARTH_MASS_SOLAR),
+            SimPosition(DVec3::new(1.103, 0.0, 0.0)),
+            SimVelocity(DVec3::new(0.0, 0.0, (G_ASTRO / 1.1).sqrt() + v_moon_rel)),
+            temperate_climate,
+            ocean_vol,
+        ))
+        .id();
+
+    // 3. Excluded: Eccentric orbit (e ~ 0.69) and 4. Excluded: Desiccated planet (0% oceans)
+    let eccentric_world = spawn_terrestrial_candidate(
+        app.world_mut(),
+        "Wild Eccentric",
+        DVec3::new(1.0, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, v_circ * 1.3),
+        temperate_climate,
+        ocean_vol,
+    );
+    let desert_world = spawn_terrestrial_candidate(
+        app.world_mut(),
+        "Arrakis",
+        DVec3::new(-1.0, 0.0, 0.0),
+        DVec3::new(0.0, 0.0, -v_circ),
+        temperate_climate,
+        VolatileInventory {
+            delivered_water_m_earth: 0.0,
+            ocean_coverage_frac: 0.0,
+            atmospheric_pressure_bar: 1.0,
+            cometary_impact_count: 0,
+        },
+    );
+
+    (
+        app,
+        DynamicBiosphereTestEntities {
+            live_earth,
+            endor_moon,
+            jupiter,
+            eccentric_world,
+            desert_world,
+        },
+    )
+}
+
+#[test]
+fn test_dynamic_biosphere_emergence_without_tracked_orbit_and_exclusions() {
+    use protostellar::simulation::components::BiosphereState;
+
+    let (mut app, entities) = setup_dynamic_biosphere_test_app();
+
+    // Step 1 starts HabitabilityTimer, Step 2 exceeds 100 kyr and emerges BiosphereState
+    app.update();
+    app.update();
+
+    assert!(
+        app.world()
+            .get::<BiosphereState>(entities.live_earth)
+            .is_some(),
+        "Live terrestrial planet with state vectors must emerge BiosphereState without TrackedOrbit"
+    );
+    assert!(
+        app.world()
+            .get::<BiosphereState>(entities.endor_moon)
+            .is_some(),
+        "Habitable moon on stable orbit around stable host planet must emerge BiosphereState"
+    );
+    assert!(
+        app.world()
+            .get::<BiosphereState>(entities.jupiter)
+            .is_none(),
+        "GasGiant must never emerge terrestrial surface biosphere"
+    );
+    assert!(
+        app.world()
+            .get::<BiosphereState>(entities.eccentric_world)
+            .is_none(),
+        "High-eccentricity world must not emerge stable biosphere"
+    );
+    assert!(
+        app.world()
+            .get::<BiosphereState>(entities.desert_world)
+            .is_none(),
+        "Desiccated world with zero surface oceans must not emerge biosphere"
+    );
+}

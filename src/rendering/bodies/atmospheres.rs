@@ -411,9 +411,7 @@ fn update_atmosphere_child_mesh(
 
 fn compute_spin_axis(opt_spin: Option<&SpinState>) -> Vec4 {
     opt_spin.map_or(Vec4::new(0.0, 1.0, 0.0, 0.0), |s| {
-        if s.spin_vector.length_squared() > 1e-12
-            && (s.spin_vector.x.abs() > 1e-6 || s.spin_vector.z.abs() > 1e-6)
-        {
+        if s.spin_vector.length_squared() > 1e-12 {
             let n = s.spin_vector.normalize();
             Vec4::new(n.x as f32, n.y as f32, n.z as f32, 0.0)
         } else {
@@ -462,7 +460,7 @@ fn extract_primary_star_lighting(
     clippy::too_many_arguments,
     reason = "Atmosphere uniform calculation requires planetary state components and starlight parameters"
 )]
-pub(crate) fn build_planet_atmosphere_uniforms(
+pub fn build_planet_atmosphere_uniforms(
     p_pos: &SimPosition,
     visual_r: f32,
     body: &CelestialBody,
@@ -568,7 +566,13 @@ pub(crate) fn build_planet_atmosphere_uniforms(
     }
 
     let oblateness = if is_gas_giant || is_ice_giant {
-        0.065
+        if ring_and_ozone.w >= 1.5
+            || opt_planet_mat.is_some_and(|m| m.extension.uniforms.storm_features.x > 0.001)
+        {
+            0.098
+        } else {
+            0.065
+        }
     } else {
         0.0
     };

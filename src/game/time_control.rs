@@ -151,15 +151,18 @@ pub fn handle_time_control_input(
         });
     }
 
-    // Step once (when paused with Period / .)
-    time_warp.step_once = keyboard.just_pressed(KeyCode::Period);
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    let is_alt = keyboard.pressed(KeyCode::AltLeft) || keyboard.pressed(KeyCode::AltRight);
 
-    // Continuous Granular Speed Controls ([ / ] or - / +)
-    if keyboard.just_pressed(KeyCode::BracketRight) || keyboard.just_pressed(KeyCode::Equal) {
+    // Step once (when paused with unmodified Period / .)
+    time_warp.step_once = !is_shift && !is_alt && keyboard.just_pressed(KeyCode::Period);
+
+    // Continuous Granular Speed Controls (unmodified - / =)
+    if !is_shift && !is_alt && keyboard.just_pressed(KeyCode::Equal) {
         time_warp.speed_up(1.5);
         toast_msg = Some(format!("⏩ Speed: {}", time_warp.human_readable_speed()));
     }
-    if keyboard.just_pressed(KeyCode::BracketLeft) || keyboard.just_pressed(KeyCode::Minus) {
+    if !is_shift && !is_alt && keyboard.just_pressed(KeyCode::Minus) {
         time_warp.slow_down(1.5);
         toast_msg = Some(format!("⏪ Speed: {}", time_warp.human_readable_speed()));
     }

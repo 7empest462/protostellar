@@ -155,11 +155,12 @@ pub fn handle_viewport_and_tool_hotkeys(
         opt_saves.as_deref_mut(),
         toast,
     );
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if keyboard.just_pressed(KeyCode::Comma) {
         config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
         info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
     }
-    if keyboard.just_pressed(KeyCode::Period) {
+    if is_shift && keyboard.just_pressed(KeyCode::Period) {
         config.size_exaggeration = (config.size_exaggeration * 1.4).min(20.0);
         info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
     }
@@ -180,7 +181,6 @@ pub fn handle_viewport_and_tool_hotkeys(
             toast,
         );
     }
-    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if is_shift {
         if keyboard.just_pressed(KeyCode::KeyX) {
             player_state.cutaway_mode = !player_state.cutaway_mode;
@@ -692,7 +692,9 @@ pub fn handle_theia_hotkey(
     mut theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
-    if keyboard.just_pressed(KeyCode::KeyM) {
+    let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    let is_alt = keyboard.pressed(KeyCode::AltLeft) || keyboard.pressed(KeyCode::AltRight);
+    if is_alt && !is_shift && keyboard.just_pressed(KeyCode::KeyM) {
         if let Some(ref mut state) = theia_state {
             state.manual_trigger_requested = true;
         }

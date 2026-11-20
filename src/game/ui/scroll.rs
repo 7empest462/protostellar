@@ -45,8 +45,8 @@ pub fn handle_inspector_scroll(
         if opt_node.is_some_and(|n| n.display == Display::None) {
             continue;
         }
-        // ComputedNode sizes are in the same logical pixel space. No scale factor needed.
-        let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0);
+        let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0)
+            * computed.inverse_scale_factor();
         if max_offset_y <= 0.5 {
             continue;
         }

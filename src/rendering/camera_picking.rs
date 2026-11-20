@@ -112,46 +112,26 @@ pub(crate) fn is_cursor_over_scroll_container(
     )
 }
 
-fn is_cursor_over_active_ui(
+pub(crate) fn is_cursor_over_active_ui(
     window: &Window,
     cursor_pos: Vec2,
     ui_interaction_query: &UiInteractionStateQuery,
     ui_nodes_query: &UiPickingNodesQuery,
-    opt_visibility: Option<&crate::game::ui::types::HudVisibilityState>,
+    _opt_visibility: Option<&crate::game::ui::types::HudVisibilityState>,
 ) -> bool {
-    let (w, h) = (window.width(), window.height());
-    let over_fixed_hud = match opt_visibility {
-        Some(v) if v.is_full_screen_clean => false,
-        Some(v) => {
-            let top = !(v.top_left_minimized && v.top_right_minimized);
-            let right = !(v.top_right_minimized
-                && v.top_controls_minimized
-                && v.scenarios_minimized
-                && !v.scenarios_is_open);
-            let bottom = !(v.bottom_center_minimized && v.bottom_right_minimized);
-            (top && cursor_pos.y <= 95.0)
-                || (!v.top_left_minimized && cursor_pos.x <= 360.0 && cursor_pos.y <= 340.0)
-                || (!v.inspector_minimized
-                    && cursor_pos.x <= 360.0
-                    && cursor_pos.y > 340.0
-                    && cursor_pos.y <= 700.0)
-                || (right && cursor_pos.x >= (w - 340.0) && cursor_pos.y <= 420.0)
-                || (bottom && cursor_pos.y >= (h - 75.0))
-        }
-        None => {
-            cursor_pos.y <= 95.0
-                || (cursor_pos.x <= 360.0 && cursor_pos.y <= 700.0)
-                || (cursor_pos.x >= (w - 340.0) && cursor_pos.y <= 420.0)
-                || cursor_pos.y >= (h - 75.0)
-        }
-    };
-    over_fixed_hud
-        || ui_interaction_query
-            .iter()
-            .any(|(h, p, n, s, c)| is_ui_interaction_blocking(h, p, n, s, c))
+    let full_w = window.width() * 0.95;
+    let full_h = window.height() * 0.95;
+    ui_interaction_query
+        .iter()
+        .any(|(h, p, n, s, c)| is_ui_interaction_blocking(h, p, n, s, c))
         || ui_nodes_query
             .iter()
             .any(|(cnode, opt_ui_gt, opt_gt, opt_node, opt_ivis, _)| {
+                let inv = cnode.inverse_scale_factor();
+                let size = cnode.size() * inv;
+                if size.x >= full_w && size.y >= full_h {
+                    return false;
+                }
                 is_cursor_inside_ui_node(cursor_pos, cnode, opt_ui_gt, opt_gt, opt_node, opt_ivis)
             })
 }

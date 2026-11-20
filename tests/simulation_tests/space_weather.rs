@@ -490,3 +490,88 @@ fn test_natural_stellar_flare_cycle_and_volcanic_moon_torus() {
     assert!(quiet_fallback.z > 0.0 && quiet_fallback.z < 0.15);
     assert_eq!(calculate_aurora_shader_uniforms(None, 0.0), Vec4::ZERO);
 }
+
+#[test]
+fn test_high_warp_cme_sweep_never_skips_planets() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::space_weather::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.insert_resource(SimTime {
+        elapsed_years: 0.0,
+        // High warp: dt = 0.05 yr, CME at 0.36 AU/day sweeps ~6.57 AU in one step!
+        current_dt_yr: 0.05,
+        step_count: 0,
+        ..Default::default()
+    });
+    app.init_resource::<TimeWarp>();
+    app.add_message::<CmeShockwaveEvent>();
+
+    app.world_mut().spawn((
+        CelestialBody {
+            name: "Sun".to_string(),
+            body_type: BodyType::YellowDwarf,
+        },
+        CentralStar,
+        Mass(1.0),
+        SimPosition(DVec3::ZERO),
+        StellarFlareState {
+            cme_active: true,
+            cme_front_radius_au: 0.10,
+            cme_speed_au_day: 0.36,
+            cme_density_multiplier: 15.0,
+            current_flare_intensity: 5.0,
+            flare_frequency: 0.0,
+            flare_decay_timer_years: 0.0,
+        },
+    ));
+
+    let earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(DVec3::new(1.0, 0.0, 0.0)),
+            Radius(EARTH_RADIUS_AU),
+            VolatileInventory {
+                atmospheric_pressure_bar: 1.0,
+                ..Default::default()
+            },
+            InternalDifferentiation {
+                is_differentiated: true,
+                magnetic_field_gauss: 0.5,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.add_systems(
+        Update,
+        (
+            update_stellar_flares_system,
+            update_planetary_auroral_ovals_system,
+        )
+            .chain(),
+    );
+
+    // Frame 1 attaches components; advance CME from 0.1 -> ~6.67 AU sweeping clean across 1.0 AU Earth
+    app.update();
+    app.update();
+
+    let storm = app
+        .world()
+        .get::<AuroralOvalState>(earth)
+        .expect("Aurora must be attached and swept by CME");
+    assert!(
+        storm.geomagnetic_kp_index >= 5.0 || storm.auroral_intensity > 0.5,
+        "High-time-warp CME shock jumping across 1.0 AU must still storm planet (kp={}, int={})",
+        storm.geomagnetic_kp_index,
+        storm.auroral_intensity
+    );
+}

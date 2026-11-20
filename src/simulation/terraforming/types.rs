@@ -94,10 +94,22 @@ impl Default for TerraformingAtmosphere {
 }
 
 impl TerraformingAtmosphere {
-    /// Returns the total atmospheric surface pressure in bars.
-    pub fn total_pressure_bar(&self) -> f32 {
-        let vapor_pressure_bar = (self.atmospheric_water_m_earth * 250.0) as f32;
+    /// Returns the total atmospheric surface pressure in bars for a planet with the given mass and radius.
+    pub fn total_pressure_bar_for_body(&self, mass_solar: f64, radius_au: f64) -> f32 {
+        let vapor_pressure_bar = crate::simulation::thermodynamics::hydrostatic_pressure_bar(
+            self.atmospheric_water_m_earth,
+            mass_solar,
+            radius_au,
+        );
         (self.co2_pressure_bar + self.nitrogen_pressure_bar + vapor_pressure_bar).max(0.0)
+    }
+
+    /// Returns the total atmospheric surface pressure in bars using Earth reference gravity when body geometry is omitted.
+    pub fn total_pressure_bar(&self) -> f32 {
+        self.total_pressure_bar_for_body(
+            crate::utils::constants::EARTH_MASS_SOLAR,
+            crate::utils::constants::EARTH_RADIUS_AU,
+        )
     }
 }
 

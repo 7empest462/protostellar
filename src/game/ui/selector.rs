@@ -913,6 +913,7 @@ pub fn update_quick_body_selector_bar(
 }
 
 pub use super::builder_spawner::{
-    compute_builder_spawn_coords, resolve_builder_body_type_and_temperature,
-    spawn_custom_builder_world, update_planet_builder_ui,
+    compute_builder_spawn_coords, compute_builder_spawn_coords_relative,
+    resolve_builder_body_type_and_temperature, spawn_custom_builder_world,
+    spawn_custom_builder_world_relative, update_planet_builder_ui,
 };

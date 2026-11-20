@@ -6,6 +6,7 @@ pub mod lagrange;
 pub mod megastructures;
 pub mod orbits;
 pub mod planetary;
+pub mod quasar_blowout;
 pub mod relativistic;
 pub mod remnants;
 pub mod roche_stream;
@@ -50,6 +51,7 @@ pub use planetary::{
     draw_planetary_magnetospheres, draw_volcanic_and_cryo_plumes, resolve_cutaway_strata,
     resolve_cutaway_strata_with_visual_radius,
 };
+pub use quasar_blowout::*;
 pub use relativistic::{
     draw_black_hole_spacetime_curvature, draw_ignition_shockwave, draw_kerr_ergosphere,
     draw_magnetar_reconnection_gizmos, draw_neutron_star_gizmos, draw_pulsar_lighthouse_gizmos,
@@ -64,11 +66,7 @@ pub use shockwaves::{
     draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
     update_impact_shockwaves, update_roche_debris_streams,
 };
-pub use supernova::{
-    EjectaLayer, SupernovaDebrisPool, SupernovaEjectaFragment, SupernovaExplosionInstance,
-    SupernovaType, SupernovaVisualShell, draw_supernova_explosions, sync_supernova_visuals,
-    update_supernova_explosions,
-};
+pub use supernova::*;
 pub use tde::{draw_tidal_disruption_streams, update_tidal_disruption_streams};
 pub use tools::{
     draw_bombardment_projectiles_gizmo, draw_planet_builder_preview, draw_slingshot_preview,
@@ -165,33 +163,6 @@ fn draw_star_effects(
     }
 }
 
-fn determine_orbit_color(
-    body_type: BodyType,
-    is_selected: bool,
-    is_satellite: bool,
-    eccentricity: f64,
-) -> Color {
-    if is_selected {
-        Color::srgba(0.15, 0.95, 1.0, 1.0)
-    } else if is_satellite {
-        Color::srgba(0.80, 0.85, 1.0, 0.85)
-    } else if eccentricity >= 1.0 {
-        Color::srgba(1.0, 0.25, 0.45, 0.95)
-    } else {
-        match body_type {
-            t if t.is_star_or_remnant() => Color::srgba(1.0, 0.92, 0.70, 0.95),
-            BodyType::TerrestrialPlanet => Color::srgba(0.25, 1.0, 0.55, 0.90),
-            BodyType::SuperEarth => Color::srgba(0.15, 0.90, 0.85, 0.90),
-            BodyType::GasGiant => Color::srgba(1.0, 0.75, 0.20, 0.90),
-            BodyType::IceGiant => Color::srgba(0.30, 0.80, 1.0, 0.90),
-            BodyType::Protoplanet => Color::srgba(1.0, 0.55, 0.20, 0.85),
-            BodyType::Planetesimal | BodyType::Asteroid => Color::srgba(0.70, 0.75, 0.85, 0.55),
-            BodyType::Comet => Color::srgba(0.45, 1.0, 0.95, 0.90),
-            _ => Color::srgba(0.75, 0.75, 0.85, 0.65),
-        }
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "Orbit rendering requires full state vectors, primary reference, and camera context"
@@ -224,7 +195,7 @@ fn draw_body_orbit(
             } else {
                 (
                     pos.0 - params.star_pos_dvec,
-                    vel.0,
+                    vel.0 - params.star_vel_dvec,
                     params.star_mass_val,
                     params.star_vec,
                     false,
@@ -233,7 +204,7 @@ fn draw_body_orbit(
         } else {
             (
                 pos.0 - params.star_pos_dvec,
-                vel.0,
+                vel.0 - params.star_vel_dvec,
                 params.star_mass_val,
                 params.star_vec,
                 false,
@@ -243,8 +214,12 @@ fn draw_body_orbit(
     if let Some(elements) =
         state_vectors_to_orbital_elements(rel_pos, rel_vel, primary_mass, mass.0)
     {
-        let base_color =
-            determine_orbit_color(body_type, is_selected, is_satellite, elements.eccentricity);
+        let base_color = orbits::determine_orbit_color(
+            body_type,
+            is_selected,
+            is_satellite,
+            elements.eccentricity,
+        );
         let base_rgba = base_color.to_srgba();
         let minor_body_lod = matches!(
             body_type,
@@ -292,10 +267,12 @@ fn draw_body_orbit(
 struct BodyEffectParams {
     star_vec: Vec3,
     star_pos_dvec: DVec3,
+    star_vel_dvec: DVec3,
     star_mass_val: f64,
     star_vis_r: f32,
     selected_occluder: Option<(Vec3, f32)>,
     elapsed: f32,
+    elapsed_years: f64,
     cam_tf: Option<Transform>,
 }
 
@@ -351,6 +328,7 @@ fn draw_body_physical_features(
             params.star_vec,
             params.cam_tf.map_or(Vec3::ZERO, |t| t.translation),
             params.elapsed,
+            params.elapsed_years,
         );
     }
 
@@ -757,6 +735,7 @@ type CentralStarQuery<'w, 's> = Query<
     's,
     (
         &'static SimPosition,
+        &'static SimVelocity,
         &'static Mass,
         &'static Radius,
         Option<&'static IgnitionState>,
@@ -793,20 +772,24 @@ pub fn draw_orbital_effects_and_gizmos(
         return;
     }
     let opt_star = star_query.iter().next();
-    let (star_pos_dvec, star_mass_val, star_vec) = if let Some((s_pos, s_mass, ..)) = opt_star {
-        (
-            s_pos.0,
-            s_mass.0,
-            Vec3::new(s_pos.x as f32, s_pos.y as f32, s_pos.z as f32),
-        )
-    } else {
-        (DVec3::ZERO, 1.0, Vec3::ZERO)
-    };
+    let (star_pos_dvec, star_vel_dvec, star_mass_val, star_vec) =
+        if let Some((s_pos, s_vel, s_mass, ..)) = opt_star {
+            (
+                s_pos.0,
+                s_vel.0,
+                s_mass.0,
+                Vec3::new(s_pos.x as f32, s_pos.y as f32, s_pos.z as f32),
+            )
+        } else {
+            (DVec3::ZERO, DVec3::ZERO, 1.0, Vec3::ZERO)
+        };
 
-    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
+    let (elapsed, elapsed_years) = sim_time
+        .as_deref()
+        .map_or((0.0, 0.0), |st| (st.visual_time_secs, st.elapsed_years));
     let cam_tf = camera_query.iter().next().copied();
     let cam_pos = cam_tf.map(|t| t.translation);
-    let star_vis_r = opt_star.map_or(0.05, |(_, _, s_rad, _, s_body, ..)| {
+    let star_vis_r = opt_star.map_or(0.05, |(_, _, _, s_rad, _, s_body, ..)| {
         let cam_dist = cam_pos.map_or(25.0, |cp| cp.distance(star_vec));
         crate::rendering::bodies::transforms::resolve_synced_visual_radius(
             None,
@@ -835,7 +818,8 @@ pub fn draw_orbital_effects_and_gizmos(
         )
     });
 
-    if let Some((_, s_mass, s_rad, opt_ign, s_body, opt_evo, _, opt_quasi, opt_kerr)) = opt_star {
+    if let Some((_, _, s_mass, s_rad, opt_ign, s_body, opt_evo, _, opt_quasi, opt_kerr)) = opt_star
+    {
         draw_star_effects(
             &mut gizmos,
             star_vec,
@@ -866,10 +850,12 @@ pub fn draw_orbital_effects_and_gizmos(
     let params = BodyEffectParams {
         star_vec,
         star_pos_dvec,
+        star_vel_dvec,
         star_mass_val,
         star_vis_r,
         selected_occluder,
         elapsed,
+        elapsed_years,
         cam_tf,
     };
 
@@ -882,11 +868,22 @@ pub fn draw_orbital_effects_and_gizmos(
         &parent_query,
     );
 
+    let slingshot_target_state = opt_slingshot
+        .as_deref()
+        .and_then(|s| s.target_entity)
+        .and_then(|ent| {
+            bodies_query
+                .get(ent)
+                .ok()
+                .map(|(_, _, vel, mass, ..)| (vel.0, mass.0))
+        });
+
     draw_interactive_tool_gizmos(
         &mut gizmos,
         &player_state,
         opt_builder.as_deref(),
         opt_slingshot.as_deref(),
+        slingshot_target_state,
         opt_predictor.as_deref(),
         &params,
     );
@@ -902,6 +899,7 @@ fn draw_interactive_tool_gizmos(
     player_state: &PlayerInteractionState,
     opt_builder: Option<&crate::game::ui::PlanetBuilderState>,
     opt_slingshot: Option<&crate::simulation::resources::SlingshotState>,
+    slingshot_target_state: Option<(DVec3, f64)>,
     opt_predictor: Option<&crate::simulation::predictor::TrajectoryPredictorState>,
     params: &BodyEffectParams,
 ) {
@@ -928,7 +926,9 @@ fn draw_interactive_tool_gizmos(
             gizmos,
             slingshot,
             params.star_vec,
+            params.star_vel_dvec,
             params.star_mass_val,
+            slingshot_target_state,
             params.elapsed,
         );
     }

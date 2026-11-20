@@ -61,24 +61,31 @@ pub fn calculate_impact_delivery(
     let liquid_water = delivered_water_raw * (1.0 - steam_fraction);
 
     // 5. Degassing of Carbon Dioxide and Nitrogen from volatile & organic impact pyrolysis
-    let (delta_co2, delta_n2) = match bombardment_type {
-        BombardmentType::IcyComet => {
-            let co2 = (delivered_organics * 200.0 + delivered_water_raw * 30.0) as f32;
-            let n2 = (delivered_organics * 80.0) as f32;
-            (co2, n2)
-        }
+    // Convert volatile gas yields into hydrostatic column pressure on the target world
+    let (co2_gas_earth, n2_gas_earth) = match bombardment_type {
+        BombardmentType::IcyComet => (
+            delivered_organics * 6.0e-4 + delivered_water_raw * 6.0e-5,
+            delivered_organics * 2.5e-4,
+        ),
         BombardmentType::CarbonaceousChondrite => {
-            let co2 = (delivered_organics * 650.0) as f32;
-            let n2 = (delivered_organics * 250.0) as f32;
-            (co2, n2)
+            (delivered_organics * 1.5e-3, delivered_organics * 5.0e-4)
         }
-        BombardmentType::VolatileAblationSalvo => {
-            let co2 = (delivered_organics * 400.0 + delivered_water_raw * 50.0) as f32;
-            let n2 = (delivered_organics * 150.0) as f32;
-            (co2, n2)
-        }
-        BombardmentType::IronAsteroid => (0.01, 0.005),
+        BombardmentType::VolatileAblationSalvo => (
+            delivered_organics * 9.0e-4 + delivered_water_raw * 1.0e-4,
+            delivered_organics * 3.5e-4,
+        ),
+        BombardmentType::IronAsteroid => (1.0e-8, 5.0e-9),
     };
+    let delta_co2 = crate::simulation::thermodynamics::hydrostatic_pressure_bar(
+        co2_gas_earth,
+        target_mass_solar,
+        target_radius_au,
+    );
+    let delta_n2 = crate::simulation::thermodynamics::hydrostatic_pressure_bar(
+        n2_gas_earth,
+        target_mass_solar,
+        target_radius_au,
+    );
 
     // 6. Impact Dust & Core Heating
     let mass_ratio = (m_impactor_earth / m_target_earth).clamp(1e-7, 1.0);

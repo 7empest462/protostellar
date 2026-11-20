@@ -12,7 +12,7 @@ use crate::rendering::materials::SkyboxMaterial;
 use crate::simulation::components::{
     BlackHoleStarState, BodyType, CelestialBody, CentralStar, Mass, Radius, SimPosition,
 };
-use crate::simulation::resources::SimulationConfig;
+use crate::simulation::resources::{SimulationConfig, TimeWarp};
 use crate::simulation::scenarios::{ActiveScenarioState, ScenarioPreset};
 
 /// Marker component for the procedural celestial skybox sphere.
@@ -145,6 +145,7 @@ pub fn compute_skybox_lensing_uniforms(
 )]
 pub fn update_skybox_uniforms(
     time: Res<Time>,
+    time_warp: Option<Res<TimeWarp>>,
     config: Res<SimulationConfig>,
     scenario_state: Option<Res<ActiveScenarioState>>,
     mut materials: ResMut<Assets<SkyboxMaterial>>,
@@ -211,7 +212,7 @@ pub fn update_skybox_uniforms(
     }
 
     for handle in skybox_query.iter() {
-        if let Some(mut mat) = materials.get_mut(handle) {
+        if let Some(mat) = materials.get(handle) {
             // Smooth exponential lerp toward target mode (transition speed ~ 2.2 / sec)
             let current_blend = mat.uniforms.params.y;
             let current_gc_blend = mat.uniforms.scenario_params.x;
@@ -221,22 +222,31 @@ pub fn update_skybox_uniforms(
             let new_gc_blend = current_gc_blend
                 + (target_gc_blend - current_gc_blend) * (dt * blend_speed).min(1.0);
 
-            // Update parameters
-            mat.uniforms.params.x += dt; // Animation time
-            mat.uniforms.params.y = new_blend; // Mode blend: 0.0 = Milky Way, 1.0 = Early Universe
-            mat.uniforms.scenario_params.x = new_gc_blend; // 1.0 = Galactic Center
-            mat.uniforms.params.z = 1.30; // Exposure
-            mat.uniforms.params.w = 1.0; // Star twinkle intensity
+            let is_paused = time_warp.as_deref().is_some_and(|tw| tw.is_paused);
+            let mut new_uniforms = mat.uniforms.clone();
+            if !is_paused {
+                new_uniforms.params.x += dt; // Animation time
+            }
+            new_uniforms.params.y = new_blend; // Mode blend: 0.0 = Milky Way, 1.0 = Early Universe
+            new_uniforms.scenario_params.x = new_gc_blend; // 1.0 = Galactic Center
+            new_uniforms.params.z = 1.30; // Exposure
+            new_uniforms.params.w = 1.0; // Star twinkle intensity
 
             // Fine-tune web and filament parameters
-            mat.uniforms.tuning.x = 1.0; // Star density
-            mat.uniforms.tuning.y = 1.0; // Nebula intensity
-            mat.uniforms.tuning.z = 1.0; // Cosmic web scale
-            mat.uniforms.tuning.w = 1.0; // Filament emission brightness
+            new_uniforms.tuning.x = 1.0; // Star density
+            new_uniforms.tuning.y = 1.0; // Nebula intensity
+            new_uniforms.tuning.z = 1.0; // Cosmic web scale
+            new_uniforms.tuning.w = 1.0; // Filament emission brightness
 
             // Update gravitational lensing parameters
-            mat.uniforms.lens_pos_and_mass = lens_pos_and_mass;
-            mat.uniforms.lens_params = lens_params;
+            new_uniforms.lens_pos_and_mass = lens_pos_and_mass;
+            new_uniforms.lens_params = lens_params;
+
+            if mat.uniforms != new_uniforms
+                && let Some(mut mat_mut) = materials.get_mut(handle)
+            {
+                mat_mut.uniforms = new_uniforms;
+            }
 
             // Dynamically adapt ambient cosmic lighting to match the era
             if let Some(ref mut amb) = ambient_light {
@@ -245,8 +255,14 @@ pub fn update_skybox_uniforms(
                 let r = 0.08 + new_blend * 0.07;
                 let g = 0.09 - new_blend * 0.04;
                 let b = 0.14 - new_blend * 0.07;
-                amb.color = Color::srgb(r, g, b);
-                amb.brightness = 120.0 + new_blend * 30.0;
+                let target_color = Color::srgb(r, g, b);
+                let target_brightness = 120.0 + new_blend * 30.0;
+                if amb.color != target_color {
+                    amb.color = target_color;
+                }
+                if (amb.brightness - target_brightness).abs() > 0.01 {
+                    amb.brightness = target_brightness;
+                }
             }
         }
     }

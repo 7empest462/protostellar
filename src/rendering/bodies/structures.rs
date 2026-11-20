@@ -16,7 +16,9 @@ struct RingVisualGeometry {
     outer_scale: f32,
     inner_ratio_mesh: f32,
     star_dir_local: Vec3,
+    star_dir_world: Vec3,
     planet_radius_ratio: f32,
+    planet_oblateness: f32,
 }
 
 #[allow(clippy::too_many_arguments, reason = "Planetary ring geometry helper")]
@@ -50,6 +52,8 @@ fn compute_ring_geometry(
     } else {
         1.0
     };
+    let (resolved_inner_ratio, resolved_outer_ratio) =
+        super::shadows::resolve_effective_ring_ratios_for_body(ring_sys, radius.0, &body.name);
     let ring_outer_scale = if is_star {
         let vis_r = planet_trans.scale.x.max(0.001);
         let target_outer_r = if ring_sys.outer_radius_au > 0.0 {
@@ -59,25 +63,23 @@ fn compute_ring_geometry(
         };
         (target_outer_r / vis_r) * 2.0
     } else {
-        let ring_ratio = if ring_sys.outer_radius_au > 0.0 && radius.0 > 0.0 {
-            (ring_sys.outer_radius_au / radius.0 as f32).clamp(2.0, 3.5)
-        } else {
-            2.85
-        };
-        ring_ratio * core_ratio_inv * 2.0
+        resolved_outer_ratio * core_ratio_inv * 2.0
     };
 
+    let star_dir_world = if is_star {
+        Vec3::Y
+    } else {
+        let d = (star_world_pos - planet_trans.translation).normalize_or_zero();
+        if d.length_squared() < 0.01 {
+            Vec3::Y
+        } else {
+            d
+        }
+    };
     let star_dir_local = if is_star {
         Vec3::Y
     } else {
-        let star_dir_world = (star_world_pos - planet_trans.translation).normalize_or_zero();
-        let star_dir_world = if star_dir_world.length_squared() < 0.01 {
-            Vec3::Y
-        } else {
-            star_dir_world
-        };
-        let ring_world_rot = planet_trans.rotation;
-        (ring_world_rot.inverse() * star_dir_world).normalize_or_zero()
+        (planet_trans.rotation.inverse() * star_dir_world).normalize_or_zero()
     };
     let planet_radius_ratio = if is_star {
         (planet_trans.scale.x / (ring_outer_scale * 0.5 * planet_trans.scale.x)).clamp(0.01, 0.25)
@@ -85,17 +87,31 @@ fn compute_ring_geometry(
         1.0 / (ring_outer_scale * 0.5)
     };
 
-    let inner_ratio_mesh = if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
-        (ring_sys.inner_radius_au / ring_sys.outer_radius_au).clamp(planet_radius_ratio, 0.95)
+    let inner_ratio_mesh = if is_star {
+        if ring_sys.outer_radius_au > 0.0 && ring_sys.inner_radius_au > 0.0 {
+            (ring_sys.inner_radius_au / ring_sys.outer_radius_au).clamp(planet_radius_ratio, 0.95)
+        } else {
+            (1.24f32 / 2.35f32).clamp(planet_radius_ratio, 0.95)
+        }
     } else {
-        (1.25f32 / 2.35f32).clamp(planet_radius_ratio, 0.95)
+        (resolved_inner_ratio / resolved_outer_ratio).clamp(planet_radius_ratio * 1.02, 0.95)
+    };
+    let planet_oblateness = if show_atmospheres
+        && !is_star
+        && matches!(body.body_type, BodyType::GasGiant | BodyType::IceGiant)
+    {
+        0.098
+    } else {
+        0.0
     };
 
     RingVisualGeometry {
         outer_scale: ring_outer_scale,
         inner_ratio_mesh,
         star_dir_local,
+        star_dir_world,
         planet_radius_ratio,
+        planet_oblateness,
     }
 }
 
@@ -115,22 +131,39 @@ fn update_existing_ring_children(
         for child in children.iter() {
             if let Ok((mut transform, mat_handle)) = ring_children_query.get_mut(child) {
                 found = true;
-                transform.scale = Vec3::new(geom.outer_scale, 1.0, geom.outer_scale);
-                transform.rotation = Quat::IDENTITY;
+                let target_scale = Vec3::new(geom.outer_scale, 1.0, geom.outer_scale);
+                if transform.scale != target_scale {
+                    transform.scale = target_scale;
+                }
+                if transform.rotation != Quat::IDENTITY {
+                    transform.rotation = Quat::IDENTITY;
+                }
 
-                if let Some(mut mat) = ring_materials.get_mut(&mat_handle.0) {
-                    mat.uniforms.inner_radius = geom.inner_ratio_mesh;
-                    mat.uniforms.outer_radius = 1.0;
-                    mat.uniforms.optical_depth = ring_sys.optical_depth;
-                    mat.uniforms.ice_fraction = ring_sys.ice_fraction;
-                    mat.uniforms.ring_color = calc_ring_color(ring_sys.ice_fraction);
-                    mat.uniforms.star_dir_local = Vec4::new(
+                let target_uniforms = RingUniforms {
+                    inner_radius: geom.inner_ratio_mesh,
+                    outer_radius: 1.0,
+                    optical_depth: ring_sys.optical_depth,
+                    ice_fraction: ring_sys.ice_fraction,
+                    ring_color: calc_ring_color(ring_sys.ice_fraction),
+                    star_dir_local: Vec4::new(
                         geom.star_dir_local.x,
                         geom.star_dir_local.y,
                         geom.star_dir_local.z,
                         geom.planet_radius_ratio,
-                    );
-                    mat.uniforms.shadow_params = Vec4::new(0.03, 0.022, 0.97, elapsed_secs);
+                    ),
+                    shadow_params: Vec4::new(0.005, 0.007, 0.995, elapsed_secs),
+                    star_dir_world_and_oblateness: Vec4::new(
+                        geom.star_dir_world.x,
+                        geom.star_dir_world.y,
+                        geom.star_dir_world.z,
+                        geom.planet_oblateness,
+                    ),
+                };
+                if let Some(mat) = ring_materials.get(&mat_handle.0)
+                    && mat.uniforms != target_uniforms
+                    && let Some(mut mat_mut) = ring_materials.get_mut(&mat_handle.0)
+                {
+                    mat_mut.uniforms = target_uniforms;
                 }
             }
         }
@@ -161,7 +194,13 @@ fn spawn_planetary_ring_child(
                 geom.star_dir_local.z,
                 geom.planet_radius_ratio,
             ),
-            shadow_params: Vec4::new(0.03, 0.022, 0.97, elapsed_secs),
+            shadow_params: Vec4::new(0.005, 0.007, 0.995, elapsed_secs),
+            star_dir_world_and_oblateness: Vec4::new(
+                geom.star_dir_world.x,
+                geom.star_dir_world.y,
+                geom.star_dir_world.z,
+                geom.planet_oblateness,
+            ),
         },
     });
 
@@ -219,12 +258,11 @@ pub fn sync_planetary_rings(
     let show_atmospheres = opt_player_state
         .as_deref()
         .is_none_or(PlayerInteractionState::show_atmospheres);
-    let star_world_pos = stars_query
+    let stars: Vec<Vec3> = stars_query
         .iter()
-        .find(|(_, b)| b.body_type.is_star_or_remnant())
-        .map_or(Vec3::ZERO, |(pos, _)| {
-            Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
-        });
+        .filter(|(_, b)| b.body_type.is_star_or_remnant())
+        .map(|(pos, _)| Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        .collect();
 
     for (
         planet_entity,
@@ -251,6 +289,16 @@ pub fn sync_planetary_rings(
             }
             continue;
         }
+
+        let star_world_pos = stars
+            .iter()
+            .copied()
+            .filter(|&sp| sp.distance_squared(planet_trans.translation) > 1e-8)
+            .min_by(|a, b| {
+                a.distance_squared(planet_trans.translation)
+                    .total_cmp(&b.distance_squared(planet_trans.translation))
+            })
+            .unwrap_or(Vec3::ZERO);
 
         let geom = compute_ring_geometry(
             body,
@@ -284,485 +332,6 @@ pub fn sync_planetary_rings(
                 elapsed_secs,
             );
         }
-    }
-}
-
-/// Root marker for the 3D Quasar Relativistic Jet Laser Beam system.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct QuasarBeamRoot;
-
-/// Sub-parts of the 3D Quasar Beam hierarchy.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuasarBeamPart {
-    NorthCore,
-    NorthSheath,
-    NorthLobe,
-    SouthCore,
-    SouthSheath,
-    SouthLobe,
-}
-
-fn update_quasar_beam_transforms(
-    root_trans: &mut Transform,
-    part_query: &mut Query<(&mut Transform, &QuasarBeamPart), Without<QuasarBeamRoot>>,
-    world_pos: Vec3,
-    beam_center: f32,
-    beam_len: f32,
-    jet_len: f32,
-    core_r: f32,
-    sheath_r: f32,
-    lobe_r: f32,
-) {
-    root_trans.translation = world_pos;
-    for (mut part_trans, part) in part_query.iter_mut() {
-        match part {
-            QuasarBeamPart::NorthCore => {
-                part_trans.translation = Vec3::new(0.0, beam_center, 0.0);
-                part_trans.scale = Vec3::new(core_r, beam_len, core_r);
-            }
-            QuasarBeamPart::NorthSheath => {
-                part_trans.translation = Vec3::new(0.0, beam_center, 0.0);
-                part_trans.scale = Vec3::new(sheath_r, beam_len, sheath_r);
-            }
-            QuasarBeamPart::NorthLobe => {
-                part_trans.translation = Vec3::new(0.0, jet_len, 0.0);
-                part_trans.scale = Vec3::splat(lobe_r);
-            }
-            QuasarBeamPart::SouthCore => {
-                part_trans.translation = Vec3::new(0.0, -beam_center, 0.0);
-                part_trans.scale = Vec3::new(core_r, beam_len, core_r);
-            }
-            QuasarBeamPart::SouthSheath => {
-                part_trans.translation = Vec3::new(0.0, -beam_center, 0.0);
-                part_trans.scale = Vec3::new(sheath_r, beam_len, sheath_r);
-            }
-            QuasarBeamPart::SouthLobe => {
-                part_trans.translation = Vec3::new(0.0, -jet_len, 0.0);
-                part_trans.scale = Vec3::splat(lobe_r);
-            }
-        }
-    }
-}
-
-fn spawn_quasar_beam_hierarchy(
-    commands: &mut Commands,
-    assets: &VisualAssets,
-    materials: &mut Assets<StandardMaterial>,
-    world_pos: Vec3,
-    beam_center: f32,
-    beam_len: f32,
-    jet_len: f32,
-    core_r: f32,
-    sheath_r: f32,
-    lobe_r: f32,
-) {
-    let core_mat = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        emissive: LinearRgba::new(75.0, 75.0, 90.0, 1.0),
-        unlit: true,
-        ..default()
-    });
-    let sheath_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.20, 0.75, 1.0, 0.22),
-        emissive: LinearRgba::new(2.5, 8.0, 20.0, 0.30),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-    let lobe_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.40, 0.85, 1.0, 0.60),
-        emissive: LinearRgba::new(8.0, 18.0, 35.0, 0.6),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-    commands
-        .spawn((
-            QuasarBeamRoot,
-            Transform::from_translation(world_pos),
-            Visibility::default(),
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                QuasarBeamPart::NorthCore,
-                Mesh3d(assets.beam_core_mesh.clone()),
-                MeshMaterial3d(core_mat.clone()),
-                Transform::from_xyz(0.0, beam_center, 0.0)
-                    .with_scale(Vec3::new(core_r, beam_len, core_r)),
-                NotShadowCaster,
-            ));
-            parent.spawn((
-                QuasarBeamPart::NorthSheath,
-                Mesh3d(assets.beam_sheath_mesh.clone()),
-                MeshMaterial3d(sheath_mat.clone()),
-                Transform::from_xyz(0.0, beam_center, 0.0)
-                    .with_scale(Vec3::new(sheath_r, beam_len, sheath_r)),
-                NotShadowCaster,
-            ));
-            parent.spawn((
-                QuasarBeamPart::NorthLobe,
-                Mesh3d(assets.star_mesh.clone()),
-                MeshMaterial3d(lobe_mat.clone()),
-                Transform::from_xyz(0.0, jet_len, 0.0).with_scale(Vec3::splat(lobe_r)),
-                NotShadowCaster,
-            ));
-
-            parent.spawn((
-                QuasarBeamPart::SouthCore,
-                Mesh3d(assets.beam_core_mesh.clone()),
-                MeshMaterial3d(core_mat.clone()),
-                Transform::from_xyz(0.0, -beam_center, 0.0)
-                    .with_scale(Vec3::new(core_r, beam_len, core_r)),
-                NotShadowCaster,
-            ));
-            parent.spawn((
-                QuasarBeamPart::SouthSheath,
-                Mesh3d(assets.beam_sheath_mesh.clone()),
-                MeshMaterial3d(sheath_mat.clone()),
-                Transform::from_xyz(0.0, -beam_center, 0.0)
-                    .with_scale(Vec3::new(sheath_r, beam_len, sheath_r)),
-                NotShadowCaster,
-            ));
-            parent.spawn((
-                QuasarBeamPart::SouthLobe,
-                Mesh3d(assets.star_mesh.clone()),
-                MeshMaterial3d(lobe_mat.clone()),
-                Transform::from_xyz(0.0, -jet_len, 0.0).with_scale(Vec3::splat(lobe_r)),
-                NotShadowCaster,
-            ));
-        });
-}
-
-#[inline]
-fn resolve_beam_host_visual_radius(
-    opt_transform: Option<&Transform>,
-    physical_radius_au: f64,
-    body_type: BodyType,
-    config: &SimulationConfig,
-) -> f32 {
-    if let Some(tf) = opt_transform {
-        let sx = tf.scale.x;
-        let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && physical_radius_au < 0.25;
-        if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
-            return sx;
-        }
-    }
-    config.calc_visual_radius_for_type(physical_radius_au, body_type)
-}
-
-/// Synchronizes 3D volumetric laser beam columns for active Quasars / Black Hole Stars.
-#[allow(clippy::type_complexity, reason = "Quasar Beam Sync")]
-pub fn sync_quasar_beams(
-    mut commands: Commands,
-    visual_assets: Option<Res<VisualAssets>>,
-    config: Res<SimulationConfig>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    quasi_query: Query<
-        (
-            &SimPosition,
-            &CelestialBody,
-            &Mass,
-            &Radius,
-            Option<&BlackHoleStarState>,
-            Option<&Transform>,
-        ),
-        (
-            Or<(With<CentralStar>, With<BlackHoleStarState>)>,
-            Without<QuasarBeamRoot>,
-            Without<QuasarBeamPart>,
-        ),
-    >,
-    mut root_query: Query<(Entity, &mut Transform), With<QuasarBeamRoot>>,
-    mut part_query: Query<(&mut Transform, &QuasarBeamPart), Without<QuasarBeamRoot>>,
-) {
-    let Some(assets) = visual_assets else {
-        return;
-    };
-
-    let target = quasi_query.iter().find(|(_, body, mass, _, opt_qs, _)| {
-        opt_qs.is_some()
-            || body.body_type == BodyType::QuasiStar
-            || body.name.contains("Quasar")
-            || (body.body_type == BodyType::BlackHole && mass.0 > 500.0)
-    });
-
-    let Some((pos, body, _mass, radius, opt_qs, opt_tf)) = target else {
-        for (ent, _) in root_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.try_despawn();
-            }
-        }
-        return;
-    };
-
-    let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let is_blown_out = opt_qs.is_some_and(|qs| qs.is_blown_out) || body.name.contains("Quasar");
-    let light_dist = opt_qs.map_or(0.0, |qs| qs.jet_travel_distance_au as f32);
-
-    if !is_blown_out || light_dist <= 0.1 {
-        for (ent, _) in root_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.try_despawn();
-            }
-        }
-        return;
-    }
-
-    let jet_len = light_dist;
-    let current_visual_radius =
-        resolve_beam_host_visual_radius(opt_tf, radius.0, body.body_type, &config);
-    let pole_start = (current_visual_radius * 0.90).max(0.002);
-    let beam_len = (jet_len - pole_start).max(0.1);
-    let beam_center = pole_start + beam_len * 0.5;
-
-    let core_r = (current_visual_radius * 0.12).clamp(0.002, 0.04);
-    let sheath_r = (current_visual_radius * 0.28).clamp(0.005, 0.09);
-    let lobe_r = (current_visual_radius * 0.85).clamp(0.02, 0.35);
-
-    if let Some((_, mut root_trans)) = root_query.iter_mut().next() {
-        update_quasar_beam_transforms(
-            &mut root_trans,
-            &mut part_query,
-            world_pos,
-            beam_center,
-            beam_len,
-            jet_len,
-            core_r,
-            sheath_r,
-            lobe_r,
-        );
-    } else {
-        spawn_quasar_beam_hierarchy(
-            &mut commands,
-            &assets,
-            &mut materials,
-            world_pos,
-            beam_center,
-            beam_len,
-            jet_len,
-            core_r,
-            sheath_r,
-            lobe_r,
-        );
-    }
-}
-
-/// Root marker for the 3D Pulsar Relativistic Lighthouse Beam system.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct PulsarBeamRoot;
-
-/// Sub-parts of the 3D Pulsar Beam hierarchy.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PulsarBeamPart {
-    NorthBeam,
-    SouthBeam,
-}
-
-/// Synchronizes 3D volumetric relativistic lighthouse beams for active Pulsars.
-#[allow(clippy::type_complexity, reason = "Pulsar Beam Sync")]
-pub fn sync_pulsar_beams(
-    mut commands: Commands,
-    sim_time: Option<Res<SimTime>>,
-    visual_assets: Option<Res<VisualAssets>>,
-    config: Res<SimulationConfig>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    pulsar_query: Query<
-        (&SimPosition, &CelestialBody, &Radius, Option<&Transform>),
-        (
-            Or<(With<CentralStar>, With<CelestialBody>)>,
-            Without<PulsarBeamRoot>,
-            Without<PulsarBeamPart>,
-        ),
-    >,
-    mut root_query: Query<(Entity, &mut Transform), With<PulsarBeamRoot>>,
-    mut part_query: Query<(&mut Transform, &PulsarBeamPart), Without<PulsarBeamRoot>>,
-) {
-    let Some(assets) = visual_assets else {
-        return;
-    };
-
-    let target = pulsar_query
-        .iter()
-        .find(|(_, body, _, _)| body.body_type == BodyType::Pulsar || body.name.contains("Pulsar"));
-
-    let Some((pos, body, radius, opt_tf)) = target else {
-        for (ent, _) in root_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.try_despawn();
-            }
-        }
-        return;
-    };
-
-    let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
-    let spin_rate = 24.0;
-    let beam_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.38);
-
-    let current_visual_radius =
-        resolve_beam_host_visual_radius(opt_tf, radius.0, body.body_type, &config);
-    let pole_start = (current_visual_radius * 0.92).max(0.0005);
-
-    if let Some((_, mut root_trans)) = root_query.iter_mut().next() {
-        root_trans.translation = world_pos;
-        root_trans.rotation = beam_rot;
-
-        for (mut part_trans, part) in part_query.iter_mut() {
-            match part {
-                PulsarBeamPart::NorthBeam => {
-                    part_trans.translation = Vec3::new(0.0, pole_start, 0.0);
-                }
-                PulsarBeamPart::SouthBeam => {
-                    part_trans.translation = Vec3::new(0.0, -pole_start, 0.0);
-                    part_trans.rotation = Quat::from_rotation_x(std::f32::consts::PI);
-                }
-            }
-        }
-    } else {
-        let beam_mat = materials.add(StandardMaterial {
-            base_color: Color::srgba(0.85, 0.95, 1.0, 0.70),
-            emissive: LinearRgba::new(55.0, 70.0, 95.0, 0.70),
-            alpha_mode: AlphaMode::Add,
-            cull_mode: None,
-            unlit: true,
-            ..default()
-        });
-
-        commands
-            .spawn((
-                PulsarBeamRoot,
-                Transform::from_translation(world_pos).with_rotation(beam_rot),
-                Visibility::default(),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    PulsarBeamPart::NorthBeam,
-                    Mesh3d(assets.pulsar_beam_mesh.clone()),
-                    MeshMaterial3d(beam_mat.clone()),
-                    Transform::from_xyz(0.0, pole_start, 0.0),
-                    NotShadowCaster,
-                ));
-                parent.spawn((
-                    PulsarBeamPart::SouthBeam,
-                    Mesh3d(assets.pulsar_beam_mesh.clone()),
-                    MeshMaterial3d(beam_mat.clone()),
-                    Transform::from_xyz(0.0, -pole_start, 0.0)
-                        .with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
-                    NotShadowCaster,
-                ));
-            });
-    }
-}
-
-/// Root marker for the 3D Magnetar Magnetic Arches and Equatorial Ring system.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct MagnetarStructureRoot;
-
-/// Sub-parts of the 3D Magnetar Structure hierarchy.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MagnetarStructurePart {
-    EquatorialRing,
-    MagneticFieldLoops,
-}
-
-/// Synchronizes 3D volumetric magnetic field loops and incandescent equatorial ring for active Magnetars.
-#[allow(clippy::type_complexity, reason = "Magnetar Structure Sync")]
-pub fn sync_magnetar_structures(
-    mut commands: Commands,
-    sim_time: Option<Res<SimTime>>,
-    visual_assets: Option<Res<VisualAssets>>,
-    _config: Res<SimulationConfig>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    magnetar_query: Query<
-        (
-            &SimPosition,
-            &CelestialBody,
-            Option<&ElectromagneticFieldState>,
-        ),
-        Or<(With<CentralStar>, With<CelestialBody>)>,
-    >,
-    mut root_query: Query<(Entity, &mut Transform), With<MagnetarStructureRoot>>,
-    _part_query: Query<(&mut Transform, &MagnetarStructurePart), Without<MagnetarStructureRoot>>,
-) {
-    let Some(assets) = visual_assets else {
-        return;
-    };
-
-    let target = magnetar_query
-        .iter()
-        .find(|(_, body, _)| body.body_type == BodyType::Magnetar)
-        .or_else(|| {
-            magnetar_query
-                .iter()
-                .find(|(_, _, opt_em)| opt_em.is_some_and(|em| em.magnetic_field_gauss >= 1.0e14))
-        })
-        .or_else(|| {
-            magnetar_query.iter().find(|(_, body, _)| {
-                crate::utils::math::contains_ignore_ascii_case(&body.name, "magnetar")
-                    && !body.name.contains("Clump")
-                    && !body.name.contains("Ejecta")
-            })
-        });
-
-    let Some((pos, _body, _)) = target else {
-        for (ent, _) in root_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.try_despawn();
-            }
-        }
-        return;
-    };
-
-    let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
-    let spin_rate = 1.2;
-    let mag_rot = Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.26);
-
-    if let Some((_, mut root_trans)) = root_query.iter_mut().next() {
-        root_trans.translation = world_pos;
-        root_trans.rotation = mag_rot;
-    } else {
-        let ring_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            emissive: LinearRgba::new(20.0, 45.0, 75.0, 0.85),
-            alpha_mode: AlphaMode::Add,
-            cull_mode: None,
-            unlit: true,
-            ..default()
-        });
-
-        let loops_mat = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            emissive: LinearRgba::new(6.0, 22.0, 42.0, 0.85),
-            alpha_mode: AlphaMode::Add,
-            cull_mode: None,
-            unlit: true,
-            ..default()
-        });
-
-        commands
-            .spawn((
-                MagnetarStructureRoot,
-                Transform::from_translation(world_pos).with_rotation(mag_rot),
-                Visibility::default(),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    MagnetarStructurePart::EquatorialRing,
-                    Mesh3d(assets.magnetar_ring_mesh.clone()),
-                    MeshMaterial3d(ring_mat.clone()),
-                    Transform::IDENTITY,
-                    NotShadowCaster,
-                ));
-                parent.spawn((
-                    MagnetarStructurePart::MagneticFieldLoops,
-                    Mesh3d(assets.magnetar_field_loops_mesh.clone()),
-                    MeshMaterial3d(loops_mat.clone()),
-                    Transform::IDENTITY,
-                    NotShadowCaster,
-                ));
-            });
     }
 }
 
@@ -864,14 +433,28 @@ pub fn sync_black_hole_accretion_disks(
                     disk_children_query.get_mut(child)
                 {
                     found_child = true;
-                    *transform = target_transform;
-                    if let Some(mut mat) = disk_materials.get_mut(&mat_handle.0) {
-                        mat.uniforms = uniforms.clone();
+                    if *transform != target_transform {
+                        *transform = target_transform;
+                    }
+                    if let Some(mat) = disk_materials.get(&mat_handle.0)
+                        && mat.uniforms != uniforms
+                        && let Some(mut mat_mut) = disk_materials.get_mut(&mat_handle.0)
+                    {
+                        mat_mut.uniforms = uniforms.clone();
                     }
                     if let Some(ref mut light) = opt_light {
-                        light.range = (target_transform.scale.x * 2.5).max(1.0);
-                        light.width = (target_transform.scale.x * 1.5).max(0.5);
-                        light.height = (target_transform.scale.z * 1.5).max(0.5);
+                        let target_range = (target_transform.scale.x * 2.5).max(1.0);
+                        let target_width = (target_transform.scale.x * 1.5).max(0.5);
+                        let target_height = (target_transform.scale.z * 1.5).max(0.5);
+                        if (light.range - target_range).abs() > 1e-4 {
+                            light.range = target_range;
+                        }
+                        if (light.width - target_width).abs() > 1e-4 {
+                            light.width = target_width;
+                        }
+                        if (light.height - target_height).abs() > 1e-4 {
+                            light.height = target_height;
+                        }
                     }
                 }
             }
@@ -919,7 +502,7 @@ fn calculate_disk_geometry_and_uniforms(
         }
     });
 
-    let spin_axis = opt_kerr.map_or(Vec3::Y, |k| {
+    let world_spin_axis = opt_kerr.map_or(Vec3::Y, |k| {
         let v = k.spin_axis.as_vec3();
         if v.length_squared() > 0.5 {
             v.normalize()
@@ -927,13 +510,19 @@ fn calculate_disk_geometry_and_uniforms(
             Vec3::Y
         }
     });
+    let spin_axis = (bh_trans.rotation.inverse() * world_spin_axis).normalize_or(Vec3::Y);
 
-    let cam_dir_world = (cam_pos - bh_trans.translation).normalize_or_zero();
-    let cam_dir_local = bh_trans.rotation.inverse() * cam_dir_world;
+    let cam_dir_world = (cam_pos - bh_trans.translation).normalize_or(Vec3::Z);
+    let cam_dir_local = (bh_trans.rotation.inverse() * cam_dir_world).normalize_or(Vec3::Z);
 
     let mut u_right = spin_axis.cross(cam_dir_local);
     if u_right.length_squared() < 1e-6 {
-        u_right = Vec3::X;
+        let fallback = if cam_dir_local.dot(Vec3::X).abs() < 0.9 {
+            Vec3::X
+        } else {
+            Vec3::Y
+        };
+        u_right = fallback.cross(cam_dir_local).normalize();
     } else {
         u_right = u_right.normalize();
     }
@@ -958,7 +547,7 @@ fn calculate_disk_geometry_and_uniforms(
         let r_inner = (0.16 * isco_ratio).clamp(0.055 * r_plus_ratio * 1.05, 0.45);
         (r_inner, 0.055 * r_plus_ratio, a_star)
     } else {
-        (0.16, 0.055, mass.0 as f32)
+        (0.16, 0.055, 0.0)
     };
 
     let uniforms = BlackHoleDiskUniforms {

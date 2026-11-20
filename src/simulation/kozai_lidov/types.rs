@@ -109,7 +109,11 @@ macro_rules! define_deserialize_nullable_f64 {
                 }
             }
 
-            deserializer.deserialize_any(F64OrNullVisitor)
+            if deserializer.is_human_readable() {
+                deserializer.deserialize_any(F64OrNullVisitor)
+            } else {
+                deserializer.deserialize_f64(F64OrNullVisitor)
+            }
         }
     };
 }

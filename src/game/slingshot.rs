@@ -4,7 +4,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use std::f64::consts::PI;
 
-use crate::game::ui::{HudButton, NotificationToast};
+use crate::game::ui::NotificationToast;
 use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
@@ -74,16 +74,24 @@ fn compute_cursor_plane_coords(
     }
 }
 
+type SlingshotBodiesQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static SimPosition,
+        &'static Radius,
+        &'static mut SimVelocity,
+        &'static CelestialBody,
+        &'static Mass,
+        Option<&'static Transform>,
+    ),
+>;
+
 fn execute_slingshot_release(
     commands: &mut Commands,
     slingshot_state: &mut SlingshotState,
-    bodies_query: &mut Query<(
-        Entity,
-        &SimPosition,
-        &Radius,
-        &mut SimVelocity,
-        &CelestialBody,
-    )>,
+    bodies_query: &mut SlingshotBodiesQuery,
     pan_orbit_query: &mut Query<&mut PanOrbitCamera>,
     player_state: &mut PlayerInteractionState,
     star_mass: f64,
@@ -101,7 +109,7 @@ fn execute_slingshot_release(
             let v_kms = launch_velocity.length() * AU_PER_YR_TO_KM_PER_S;
 
             if let Some(target_ent) = slingshot_state.target_entity {
-                if let Ok((_, _, _, mut vel, body)) = bodies_query.get_mut(target_ent) {
+                if let Ok((_, _, _, mut vel, body, _, _)) = bodies_query.get_mut(target_ent) {
                     vel.0 += launch_velocity;
                     toast.message = format!(
                         "⚡ Slingshot Impulse: {:+.1} km/s applied to {}!",
@@ -123,11 +131,12 @@ fn execute_slingshot_release(
                     cam.target_entity = Some(new_ent);
                 }
 
+                let proj_mass = archetype_preset_mass_solar(slingshot_state.archetype);
                 let elements = state_vectors_to_orbital_elements(
                     origin - star_pos,
                     launch_velocity,
                     star_mass,
-                    1e-6,
+                    proj_mass,
                 );
                 if let Some(el) = elements {
                     toast.message = format!(
@@ -160,7 +169,9 @@ fn execute_slingshot_release(
 fn update_slingshot_drag_feedback(
     slingshot_state: &SlingshotState,
     star_pos: DVec3,
+    star_vel: DVec3,
     star_mass: f64,
+    target_state: Option<(DVec3, f64)>,
     toast: &mut NotificationToast,
 ) {
     let (Some(origin), Some(current)) = (slingshot_state.drag_origin, slingshot_state.drag_current)
@@ -172,12 +183,21 @@ fn update_slingshot_drag_feedback(
         return;
     }
 
-    let launch_velocity = delta * slingshot_state.velocity_scale;
-    let v_au_yr = launch_velocity.length();
+    let delta_vel = delta * slingshot_state.velocity_scale;
+    let rel_vel = if let Some((existing_vel, _)) = target_state {
+        (existing_vel + delta_vel) - star_vel
+    } else {
+        delta_vel
+    };
+    let v_au_yr = delta_vel.length();
     let v_kms = v_au_yr * AU_PER_YR_TO_KM_PER_S;
     let rel_pos = origin - star_pos;
 
-    if let Some(el) = state_vectors_to_orbital_elements(rel_pos, launch_velocity, star_mass, 1e-6) {
+    let proj_mass = target_state.map_or_else(
+        || archetype_preset_mass_solar(slingshot_state.archetype),
+        |(_, m)| m,
+    );
+    if let Some(el) = state_vectors_to_orbital_elements(rel_pos, rel_vel, star_mass, proj_mass) {
         let (status, icon) = if el.eccentricity >= 1.0 {
             ("Hyperbolic Escape", "🚀")
         } else if el.periapsis <= 0.006 {
@@ -227,17 +247,11 @@ pub fn handle_slingshot_input(
     mut player_state: ResMut<PlayerInteractionState>,
     disk_params: Res<DiskParameters>,
     mut toast: ResMut<NotificationToast>,
-    ui_interaction_query: Query<
-        (&bevy::picking::hover::Hovered, Has<bevy::ui::Pressed>),
-        With<HudButton>,
-    >,
-    star_query: Query<&SimPosition, With<CentralStar>>,
-    mut bodies_query: Query<(
-        Entity,
-        &SimPosition,
-        &Radius,
-        &mut SimVelocity,
-        &CelestialBody,
+    ui_interaction_query: crate::rendering::camera_picking::UiInteractionStateQuery,
+    ui_nodes_query: crate::rendering::camera_picking::UiPickingNodesQuery,
+    mut star_and_bodies: ParamSet<(
+        Query<(&SimPosition, &SimVelocity), With<CentralStar>>,
+        SlingshotBodiesQuery,
     )>,
     (focus, editable_query): (
         Option<Res<bevy::input_focus::InputFocus>>,
@@ -266,10 +280,23 @@ pub fn handle_slingshot_input(
         return;
     };
 
-    let cursor_over_ui = ui_interaction_query.iter().any(|(h, p)| h.get() || p);
+    let cursor_over_ui = window.cursor_position().is_some_and(|cursor_pos| {
+        crate::rendering::camera_picking::is_cursor_over_active_ui(
+            window,
+            cursor_pos,
+            &ui_interaction_query,
+            &ui_nodes_query,
+            None,
+        )
+    });
 
     let hit_plane_coords = compute_cursor_plane_coords(window, camera, camera_transform);
-    let star_pos = star_query.iter().next().map_or(DVec3::ZERO, |p| p.0);
+    let (star_pos, star_vel) = star_and_bodies
+        .p0()
+        .iter()
+        .next()
+        .map_or((DVec3::ZERO, DVec3::ZERO), |(p, v)| (p.0, v.0));
+    let mut bodies_query = star_and_bodies.p1();
 
     // 1. Mouse down: Start drag
     if mouse_buttons.just_pressed(MouseButton::Left)
@@ -277,11 +304,12 @@ pub fn handle_slingshot_input(
         && let Some(plane_pt) = hit_plane_coords
     {
         let mut nearest_ent: Option<(Entity, DVec3)> = None;
-        let mut min_dist = 0.05f64;
+        let mut min_dist = 0.35f64;
 
-        for (ent, pos, rad, _, _body) in bodies_query.iter() {
-            // Only target existing bodies if clicked directly on their visible surface
-            let hit_radius = (rad.0 * 1.5).clamp(0.02, 0.05);
+        for (ent, pos, rad, _, _body, _, opt_tf) in bodies_query.iter() {
+            // Target existing bodies using scaled visual surface radius
+            let vis_r = opt_tf.map_or(rad.0 as f32 * 1.5, |tf| tf.scale.x * 1.25);
+            let hit_radius = f64::from(vis_r).clamp(0.02, 0.35);
             let d = (pos.0 - plane_pt).length();
             if d < hit_radius && d < min_dist {
                 min_dist = d;
@@ -305,10 +333,15 @@ pub fn handle_slingshot_input(
         if let Some(plane_pt) = hit_plane_coords {
             slingshot_state.drag_current = Some(plane_pt);
         }
+        let target_state = slingshot_state
+            .target_entity
+            .and_then(|ent| bodies_query.get(ent).ok().map(|t| (t.3.0, t.5.0)));
         update_slingshot_drag_feedback(
             &slingshot_state,
             star_pos,
+            star_vel,
             disk_params.central_star_mass,
+            target_state,
             &mut toast,
         );
     }
@@ -336,6 +369,10 @@ struct SlingshotWorldConfig {
     comp: Composition,
     temp_k: f64,
     has_tail: bool,
+}
+
+pub fn archetype_preset_mass_solar(archetype: SlingshotArchetype) -> f64 {
+    archetype_preset(archetype).mass_solar
 }
 
 fn archetype_preset(archetype: SlingshotArchetype) -> SlingshotWorldConfig {

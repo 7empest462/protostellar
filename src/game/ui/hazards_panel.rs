@@ -65,7 +65,8 @@ pub fn spawn_hazards_panel(root: &mut ChildSpawnerCommands) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.015, 0.025, 0.055, 0.96)),
-        Pickable::IGNORE,
+        bevy::ui::FocusPolicy::Block,
+        bevy::picking::hover::Hovered::default(),
         BorderColor::all(Color::srgba(1.0, 0.45, 0.25, 0.90)),
         HazardsPanelElement::ModalContainer,
     ))

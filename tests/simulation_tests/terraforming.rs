@@ -219,9 +219,12 @@ fn test_runaway_greenhouse_ocean_evaporation() {
         360.0,
     );
 
+    // Under real Earth hydrostatic column gravity (~1.15e6 bar / M_earth), ~1.5 bar saturated
+    // steam at 390 K corresponds to ~1.3e-6 M_earth of vapor rather than > 0.001 M_earth (>1100 bar).
     assert!(
-        terra_out.atmospheric_water_m_earth > 0.001,
-        "High temperature must cause liquid oceans to boil into atmospheric steam vapor"
+        terra_out.atmospheric_water_m_earth > 5.0e-7,
+        "High temperature must sustain substantial boiled atmospheric steam vapor (got {:.3e} M_earth)",
+        terra_out.atmospheric_water_m_earth
     );
     assert!(
         climate_out.surface_temperature_k > 360.0,
@@ -675,10 +678,11 @@ fn test_climate_boiling_steam_cloud_transition() {
     // Step climate at hot temperature T = 385 K (above boiling point): liquid water evaporates into steam
     let (terra, climate) = simulate_rocky_atmosphere_step(terra, climate, 1.0);
 
-    // Boiling should transfer water to atmosphere and trigger RunawayVenusian regime
+    // Boiling should transfer water into saturated ~1.5 bar steam (~1e-6 M_earth) and trigger RunawayVenusian regime
     assert!(
-        terra.atmospheric_water_m_earth > 0.0001,
-        "Boiling must convert liquid water to steam"
+        terra.atmospheric_water_m_earth > 5.0e-7,
+        "Boiling must convert liquid water into equilibrium steam vapor (got {:.3e} M_earth)",
+        terra.atmospheric_water_m_earth
     );
     assert_eq!(climate.climate_regime, ClimateRegime::RunawayVenusian);
     assert!(
@@ -845,5 +849,60 @@ fn test_guided_comet_impact_preserves_and_grows_existing_85_percent_oceans() {
         terra.atmospheric_water_m_earth,
         terra.co2_pressure_bar,
         terra.nitrogen_pressure_bar,
+    );
+}
+
+#[test]
+fn test_terraforming_water_conservation_and_anti_greenhouse_dust_cooling() {
+    let mut comp = Composition::rocky();
+    let mut vol = VolatileInventory {
+        delivered_water_m_earth: 0.0005,
+        ocean_coverage_frac: 0.75,
+        atmospheric_pressure_bar: 0.05,
+        cometary_impact_count: 1,
+    };
+    let mut terra = TerraformingAtmosphere {
+        co2_pressure_bar: 0.04,
+        nitrogen_pressure_bar: 0.01,
+        atmospheric_water_m_earth: 0.00001,
+        surface_liquid_water_m_earth: 0.00049,
+        impact_dust_optical_depth: 3.0,
+        total_bombarded_mass_earth: 0.0,
+    };
+    let initial_total_water = terra.surface_liquid_water_m_earth + terra.atmospheric_water_m_earth;
+    let mut climate = PlanetaryClimate {
+        surface_temperature_k: 265.0,
+        equilibrium_temperature_k: 255.0,
+        greenhouse_delta_k: 10.0,
+        albedo: 0.30,
+        ice_coverage_frac: 0.0,
+        cloud_coverage_frac: 0.2,
+        climate_regime: ClimateRegime::TemperateHabitable,
+        polar_ice_cap_latitude_deg: 80.0,
+    };
+
+    update_body_terraforming_climate(
+        &mut vol,
+        &mut terra,
+        &mut climate,
+        &mut comp,
+        EARTH_MASS_SOLAR,
+        1.0,
+    );
+
+    let final_total_water = terra.surface_liquid_water_m_earth + terra.atmospheric_water_m_earth;
+    assert!(
+        (final_total_water - initial_total_water).abs() < 1e-12,
+        "Liquid + vapor H2O mass must be strictly conserved (before={initial_total_water}, after={final_total_water})"
+    );
+    assert!(
+        (vol.delivered_water_m_earth - initial_total_water).abs() < 1e-12,
+        "VolatileInventory delivered_water must track conserved H2O mass"
+    );
+    assert!(
+        climate.surface_temperature_k < climate.equilibrium_temperature_k,
+        "Heavy stratospheric dust optical depth must produce anti-greenhouse cooling below T_eq (T_surf={}, T_eq={})",
+        climate.surface_temperature_k,
+        climate.equilibrium_temperature_k
     );
 }

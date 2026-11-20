@@ -22,11 +22,8 @@ use crate::utils::constants::G_ASTRO;
 
 /// Below this body count the exact CPU all-pairs path is cheap enough and is used unchanged.
 pub const GMC_FAR_FIELD_MIN_BODIES: usize = 600;
-/// Pairs closer than this are integrated exactly on the CPU; farther pairs come from the GPU.
+/// Minimum distance beyond which GPU far-field gravity evaluates pairs (AU).
 pub const GMC_FAR_FIELD_NEAR_RADIUS_AU: f64 = 50.0;
-/// Minimum mass (M_sun) for a non-stellar body to act as a far-field gravity source
-/// (matches CPU `massive_indices` threshold of ~0.1 M_earth).
-const FAR_FIELD_MIN_SOURCE_MASS: f64 = 3.0e-7;
 /// Plummer softening used by the CPU cluster kernel (1.5 AU).
 const CLUSTER_SOFTENING_SQ: f32 = 2.25;
 
@@ -107,10 +104,18 @@ pub fn receive_gmc_far_field(
     receiver: Res<GmcFarFieldReceiver>,
     mut far: ResMut<GmcFarField>,
     scenario: Option<Res<ActiveScenarioState>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_gen: Local<u64>,
 ) {
     let mut latest = None;
     while let Ok(batch) = receiver.rx.try_recv() {
         latest = Some(batch);
+    }
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        far.acc.clear();
+        return;
     }
     let active =
         scenario.is_some_and(|s| s.current_preset == ScenarioPreset::MolecularCloudCluster);
@@ -177,9 +182,11 @@ fn extract_gmc_far_field(
         targets.push([p[0], p[1], p[2], 0.0]);
         // The central star is always handled exactly on the CPU.
         let is_source = !is_central
-            && (body.body_type.is_star_or_remnant()
-                || body.body_type.is_planet()
-                || mass.0 >= FAR_FIELD_MIN_SOURCE_MASS);
+            && crate::simulation::physics::is_massive_gravity_source(
+                mass.0,
+                body.body_type,
+                is_central,
+            );
         if is_source {
             sources.push([p[0], p[1], p[2], mass.0 as f32]);
         }

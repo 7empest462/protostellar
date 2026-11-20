@@ -86,6 +86,28 @@ pub fn spawn_oort_cloud_swarm(
     comet_count: usize,
     rng: &mut fastrand::Rng,
 ) {
+    spawn_oort_cloud_swarm_with_vel(
+        commands,
+        config,
+        star_mass_solar,
+        star_pos,
+        DVec3::ZERO,
+        comet_count,
+        rng,
+    );
+}
+
+/// Procedurally spawns an isotropic, spherical swarm of long-period cometary bodies
+/// co-moving with `star_vel`.
+pub fn spawn_oort_cloud_swarm_with_vel(
+    commands: &mut Commands,
+    config: &OortCloudConfig,
+    star_mass_solar: f64,
+    star_pos: DVec3,
+    star_vel: DVec3,
+    comet_count: usize,
+    rng: &mut fastrand::Rng,
+) {
     let count = if comet_count == 0 {
         config.default_comet_count
     } else {
@@ -135,7 +157,7 @@ pub fn spawn_oort_cloud_swarm(
         );
 
         let pos = star_pos + rel_pos;
-        let vel = rel_vel;
+        let vel = star_vel + rel_vel;
 
         // Cometary mass: kilometer-scale icy bodies (10^13 to 10^16 kg in solar masses)
         let mass_solar = rng.f64_range(5.0e-18, 5.0e-15);
@@ -211,14 +233,14 @@ pub fn spawn_oort_cloud_swarm(
 pub fn handle_spawn_oort_cloud_swarm_system(
     mut commands: Commands,
     mut swarm_triggers: MessageReader<TriggerOortCloudSwarmEvent>,
-    star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
+    star_query: Query<(&SimPosition, &SimVelocity, &Mass), With<CentralStar>>,
     config: Res<OortCloudConfig>,
 ) {
     for event in swarm_triggers.read() {
-        let (star_pos, star_mass) = if let Ok((pos, mass)) = star_query.single() {
-            (pos.0, mass.0)
+        let (star_pos, star_vel, star_mass) = if let Ok((pos, vel, mass)) = star_query.single() {
+            (pos.0, vel.0, mass.0)
         } else {
-            (DVec3::ZERO, 1.0)
+            (DVec3::ZERO, DVec3::ZERO, 1.0)
         };
         let count = if event.comet_count == 0 {
             config.default_comet_count
@@ -226,6 +248,14 @@ pub fn handle_spawn_oort_cloud_swarm_system(
             event.comet_count
         };
         let mut rng = fastrand::Rng::new();
-        spawn_oort_cloud_swarm(&mut commands, &config, star_mass, star_pos, count, &mut rng);
+        spawn_oort_cloud_swarm_with_vel(
+            &mut commands,
+            &config,
+            star_mass,
+            star_pos,
+            star_vel,
+            count,
+            &mut rng,
+        );
     }
 }

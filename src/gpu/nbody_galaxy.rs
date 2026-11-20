@@ -2,19 +2,17 @@ use bevy::prelude::*;
 use bevy::render::Extract;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bytemuck::{Pod, Zeroable};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
 use wgpu::util::DeviceExt;
 
-use crate::gpu::buffers::{GpuParticle, MassiveBodyGpu};
+use crate::gpu::buffers::{
+    GPU_COMPACT_READBACK_MAGIC, GpuCompactReadback, GpuParticle, MassiveBodyGpu,
+};
+use crate::gpu::compute_node::{MAX_GPU_PARTICLES, send_compact_readback};
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::scenarios::ScenarioReloadGeneration;
 use crate::utils::constants::*;
 use crate::utils::math::FastRngExt;
-
-pub const STAGING_STATE_IDLE: u8 = 0;
-pub const STAGING_STATE_MAPPING: u8 = 1;
-pub const STAGING_STATE_MAPPED: u8 = 2;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -37,16 +35,18 @@ pub struct GalaxyUniforms {
     pub num_massive_bodies: u32,
     pub pad1: f32,
     pub massive_bodies: [MassiveBodyGpu; 32], // xyz: pos, w: mass
-    pub massive_body_velocities: [[f32; 4]; 32], // xyz: vel, w: unused
+    pub massive_body_velocities: [[f32; 4]; 32], // xyz: vel, w: halo_mass
 }
 
+/// GPU-resident N-body galaxy simulation engine rendered directly via GPU Vertex Pulling
+/// (zero 24 MB staging buffers and zero GPU -> CPU particle readback).
 #[derive(Resource)]
 pub struct GpuGalaxyOrbitEngine {
     pub particle_buffer: wgpu::Buffer,
+    pub buffer_uid: u64,
     pub uniform_buffer: wgpu::Buffer,
-    pub staging_buffers: [wgpu::Buffer; 2],
-    pub staging_states: [Arc<AtomicU8>; 2],
-    pub current_staging_idx: usize,
+    pub restart_epoch: u64,
+    pub last_reload_generation: u64,
     pub bind_group: wgpu::BindGroup,
     pub pipeline: wgpu::ComputePipeline,
     pub num_particles: u32,
@@ -59,8 +59,13 @@ pub struct GpuGalaxyExtractedParams {
     pub count: u32,
     pub is_paused: bool,
     pub step_once: bool,
+    pub enable_gpu_compute: bool,
+    pub is_swarm_visible: bool,
+    pub particle_render_scale: f32,
+    pub outer_radius: f32,
     pub dt: f32,
     pub elapsed_years: f64,
+    pub reload_generation: u64,
     pub num_massive_bodies: u32,
     pub massive_bodies: [MassiveBodyGpu; 32],
     pub massive_body_velocities: [[f32; 4]; 32],
@@ -72,25 +77,29 @@ pub struct GpuGalaxyExtractedParams {
     pub spiral_amplitude: f32,
     pub spiral_pitch: f32,
 }
+
 #[allow(
     clippy::type_complexity,
+    clippy::too_many_arguments,
     reason = "Bevy Extract Query tuple and multi-subsystem simulation parameters"
 )]
 pub fn extract_galaxy_sim_data(
     mut commands: Commands,
+    config: Extract<Res<SimulationConfig>>,
+    disk_params: Extract<Res<DiskParameters>>,
     time_warp: Extract<Res<TimeWarp>>,
     scenario_state: Extract<Res<crate::simulation::scenarios::ActiveScenarioState>>,
-    sim_time: Extract<Res<crate::simulation::resources::SimTime>>,
+    reload_gen: Extract<Option<Res<ScenarioReloadGeneration>>>,
+    sim_time: Extract<Res<SimTime>>,
     massive_query: Extract<
         Query<(
             &SimPosition,
             &Mass,
-            (
-                Entity,
-                Option<&crate::simulation::components::SimVelocity>,
-                &CelestialBody,
-            ),
+            (Entity, Option<&SimVelocity>, &CelestialBody),
         )>,
+    >,
+    swarm_vis_query: Extract<
+        Query<&Visibility, With<crate::rendering::particle_swarm::ParticleSwarmMesh>>,
     >,
     swarm: Extract<Option<Res<crate::rendering::particle_swarm::ParticleSwarmData>>>,
 ) {
@@ -136,30 +145,33 @@ pub fn extract_galaxy_sim_data(
             *vel_slot = [v.x as f32, v.y as f32, v.z as f32, halo_m];
             num_bodies += 1;
         } else {
-            break; // Maximum massive bodies reached
+            break;
         }
     }
 
-    // Use the exact same timestep as the CPU simulation for perfect sync
     let dt = sim_time.current_dt_yr as f32;
+    let count = swarm.as_ref().map_or(500_000, |s| s.count as u32);
+    let is_swarm_visible = swarm_vis_query
+        .iter()
+        .next()
+        .is_none_or(|v| *v != Visibility::Hidden);
 
-    let count = if let Some(s) = swarm.as_ref() {
-        s.count as u32
-    } else {
-        500_000
-    };
     commands.insert_resource(GpuGalaxyExtractedParams {
         count,
         is_paused: time_warp.is_paused,
         step_once: time_warp.step_once,
+        enable_gpu_compute: config.enable_gpu_compute,
+        is_swarm_visible,
+        particle_render_scale: config.particle_render_scale,
+        outer_radius: disk_params.outer_radius_au as f32,
         dt,
         elapsed_years: sim_time.elapsed_years,
+        reload_generation: reload_gen.as_ref().map_or(0, |g| g.0),
         num_massive_bodies: num_bodies,
         massive_bodies,
         massive_body_velocities,
-
-        halo_mass: 1.0e12,           // 1 trillion solar masses
-        halo_scale_radius: 50_000.0, // AU proxy for scale radius
+        halo_mass: 1.0e12,
+        halo_scale_radius: 50_000.0,
         pattern_speed: 0.0,
         spiral_arms: 0.0,
         spiral_amplitude: 0.0,
@@ -187,6 +199,7 @@ struct GalaxyDiskConfig {
     center_vel: [f32; 3],
     max_radius: f32,
     halo_mass: f32,
+    base_col: [f32; 3],
 }
 
 fn generate_galaxy_particles(cfg: &GalaxyDiskConfig, initial_particles: &mut Vec<GpuParticle>) {
@@ -205,8 +218,7 @@ fn generate_galaxy_particles(cfg: &GalaxyDiskConfig, initial_particles: &mut Vec
 
         let x = r / rs;
         let mass_enclosed = cfg.halo_mass * ((1.0 + x).ln() - x / (1.0 + x));
-        let v_circ =
-            (crate::utils::constants::G_ASTRO as f32 * (cfg.smbh_mass + mass_enclosed) / r).sqrt();
+        let v_circ = (G_ASTRO as f32 * (cfg.smbh_mass + mass_enclosed) / r).sqrt();
 
         let vel = [
             cfg.center_vel[0] - v_circ * phi.sin(),
@@ -214,10 +226,18 @@ fn generate_galaxy_particles(cfg: &GalaxyDiskConfig, initial_particles: &mut Vec
             cfg.center_vel[2] + v_circ * phi.cos(),
             5000.0,
         ];
+        let col_var = rng.f32_range(0.85, 1.15);
+        // Pack star RGB color directly into `composition` (`w = 1.0` sentinel) for GPU vertex pulling
+        let color = [
+            (cfg.base_col[0] * col_var).clamp(0.2, 1.5),
+            (cfg.base_col[1] * col_var).clamp(0.2, 1.5),
+            (cfg.base_col[2] * col_var).clamp(0.2, 1.5),
+            1.0,
+        ];
         initial_particles.push(GpuParticle {
             pos_mass: pos,
             vel_temp: vel,
-            composition: [0.0, 0.0, 0.0, 0.0],
+            composition: color,
         });
     }
 }
@@ -235,6 +255,7 @@ fn generate_colliding_galaxies(n_particles: u32) -> Vec<GpuParticle> {
             center_vel: [90.0, 12.0, 45.0],
             max_radius: 50_000.0,
             halo_mass: 1.0e12,
+            base_col: [1.0, 0.95, 0.85],
         },
         &mut particles,
     );
@@ -246,6 +267,7 @@ fn generate_colliding_galaxies(n_particles: u32) -> Vec<GpuParticle> {
             center_vel: [-90.0, -12.0, -45.0],
             max_radius: 65_000.0,
             halo_mass: 1.4e12,
+            base_col: [0.85, 0.92, 1.20],
         },
         &mut particles,
     );
@@ -253,22 +275,39 @@ fn generate_colliding_galaxies(n_particles: u32) -> Vec<GpuParticle> {
     particles
 }
 
-pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
+fn generate_colliding_galaxies_padded(active_particles: u32, capacity: u32) -> Vec<GpuParticle> {
+    let active = active_particles.min(capacity);
+    let mut particles = generate_colliding_galaxies(active);
+    particles.resize(
+        capacity as usize,
+        GpuParticle {
+            pos_mass: [0.0, -5000.0, 0.0, 0.0],
+            vel_temp: [0.0, 0.0, 0.0, 0.0],
+            composition: [0.0, 0.0, 0.0, 0.0],
+        },
+    );
+    particles
+}
+
+pub fn setup_galaxy_gpu_simulation(
+    commands: &mut Commands,
+    render_dev: &RenderDevice,
+    count: u32,
+    reload_generation: u64,
+) {
     let device = render_dev.wgpu_device();
-    let n_particles = count;
-    let initial_particles = generate_colliding_galaxies(n_particles);
+    let n_particles = count.clamp(50_000, MAX_GPU_PARTICLES);
+    let initial_particles = generate_colliding_galaxies_padded(n_particles, MAX_GPU_PARTICLES);
 
     let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Galaxy Particle Buffer"),
         contents: bytemuck::cast_slice(&initial_particles),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
 
     let initial_uniforms = GalaxyUniforms {
         dt: 0.0,
-        g_const: crate::utils::constants::G_ASTRO as f32,
+        g_const: G_ASTRO as f32,
         softening_sq: 1_000_000.0,
         num_particles: n_particles,
         halo_mass: 1.0e12,
@@ -306,35 +345,77 @@ pub fn setup_galaxy_gpu_simulation(commands: &mut Commands, render_dev: &RenderD
         ],
     });
 
-    let staging_buffer_size = u64::from(n_particles) * std::mem::size_of::<GpuParticle>() as u64;
-    let staging_buffer_0 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Galaxy Staging Buffer 0"),
-        size: staging_buffer_size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let staging_buffer_1 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Galaxy Staging Buffer 1"),
-        size: staging_buffer_size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
     commands.insert_resource(GpuGalaxyOrbitEngine {
         particle_buffer,
+        buffer_uid: crate::gpu::particle_pipeline::next_gpu_buffer_uid(),
         uniform_buffer,
-        staging_buffers: [staging_buffer_0, staging_buffer_1],
-        staging_states: [
-            std::sync::Arc::new(std::sync::atomic::AtomicU8::new(STAGING_STATE_IDLE)),
-            std::sync::Arc::new(std::sync::atomic::AtomicU8::new(STAGING_STATE_IDLE)),
-        ],
-        current_staging_idx: 0,
+        restart_epoch: 0,
+        last_reload_generation: reload_generation,
         bind_group,
         pipeline,
         num_particles: n_particles,
         is_ready: true,
         last_elapsed_years: 0.0,
     });
+}
+
+fn dispatch_galaxy_substeps(
+    device: &wgpu::Device,
+    queue: &RenderQueue,
+    engine: &GpuGalaxyOrbitEngine,
+    params: &GpuGalaxyExtractedParams,
+) {
+    // Subdivide high-dt frames on the host so the shader's 32-substep TDR cap never forces
+    // coarse steps near Andromeda's SMBH (each dispatch handles <= 0.25 yr).
+    let n_dispatches = ((params.dt.abs() / 0.25).ceil() as u32).clamp(1, 16);
+    let dispatch_dt = params.dt / (n_dispatches as f32);
+    let workgroups = engine.num_particles.div_ceil(64);
+
+    for sub_idx in 0..n_dispatches {
+        let elapsed_offset = (sub_idx as f32) * dispatch_dt;
+        let mut shifted_bodies = params.massive_bodies;
+        for (body, vel) in shifted_bodies
+            .iter_mut()
+            .zip(&params.massive_body_velocities)
+            .take(params.num_massive_bodies as usize)
+        {
+            body.pos_mass[0] += vel[0] * elapsed_offset;
+            body.pos_mass[1] += vel[1] * elapsed_offset;
+            body.pos_mass[2] += vel[2] * elapsed_offset;
+        }
+
+        let uniforms = GalaxyUniforms {
+            dt: dispatch_dt,
+            g_const: G_ASTRO as f32,
+            softening_sq: 1_000_000.0,
+            num_particles: engine.num_particles,
+            halo_mass: params.halo_mass,
+            halo_scale_radius: params.halo_scale_radius,
+            pattern_speed: params.pattern_speed,
+            spiral_arms: params.spiral_arms,
+            spiral_amplitude: params.spiral_amplitude,
+            spiral_pitch: params.spiral_pitch,
+            num_massive_bodies: params.num_massive_bodies,
+            pad1: 0.0,
+            massive_bodies: shifted_bodies,
+            massive_body_velocities: params.massive_body_velocities,
+        };
+        queue.write_buffer(&engine.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Galaxy Compute Encoder"),
+        });
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Galaxy Compute Pass"),
+                timestamp_writes: None,
+            });
+            compute_pass.set_pipeline(&engine.pipeline);
+            compute_pass.set_bind_group(0, &engine.bind_group, &[]);
+            compute_pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+        queue.submit(Some(encoder.finish()));
+    }
 }
 
 pub fn step_galaxy_simulation_render_world(
@@ -348,18 +429,33 @@ pub fn step_galaxy_simulation_render_world(
     let Some(params) = params else {
         return;
     };
+    if !params.enable_gpu_compute {
+        return;
+    }
 
     let Some(mut engine) = gpu_engine else {
-        setup_galaxy_gpu_simulation(&mut commands, &render_device, params.count);
+        setup_galaxy_gpu_simulation(
+            &mut commands,
+            &render_device,
+            params.count,
+            params.reload_generation,
+        );
         return;
     };
 
-    let scenario_restarted = params.elapsed_years < engine.last_elapsed_years;
+    let clamped_count = params.count.clamp(50_000, MAX_GPU_PARTICLES);
+    let count_changed = params.count > 0 && clamped_count != engine.num_particles;
+    let scenario_restarted = params.reload_generation != engine.last_reload_generation
+        || params.elapsed_years < engine.last_elapsed_years;
+    engine.last_reload_generation = params.reload_generation;
     engine.last_elapsed_years = params.elapsed_years;
 
     let queue = &render_queue;
-    if scenario_restarted {
-        let initial_particles = generate_colliding_galaxies(engine.num_particles);
+    if scenario_restarted || count_changed {
+        engine.num_particles = clamped_count;
+        engine.restart_epoch = engine.restart_epoch.wrapping_add(1);
+        let initial_particles =
+            generate_colliding_galaxies_padded(engine.num_particles, MAX_GPU_PARTICLES);
         queue.write_buffer(
             &engine.particle_buffer,
             0,
@@ -367,112 +463,24 @@ pub fn step_galaxy_simulation_render_world(
         );
     }
 
-    if params.is_paused && !params.step_once {
+    // Lightweight 144-byte heartbeat keeps CPU `gpu_compute_active` and HUD active count synced
+    // with zero 24 MB GPU -> CPU particle readback.
+    if let Some(ref s) = sender {
+        send_compact_readback(
+            s,
+            &GpuCompactReadback {
+                magic: GPU_COMPACT_READBACK_MAGIC,
+                active_particles: engine.num_particles,
+                is_galaxy: 1,
+                generation_lo: engine.last_reload_generation as u32,
+                accreted_per_body: [0; 32],
+            },
+        );
+    }
+
+    if (params.is_paused && !params.step_once) || !engine.is_ready {
         return;
     }
-    let device = render_device.wgpu_device();
 
-    if !engine.is_ready {
-        return;
-    }
-
-    let uniforms = GalaxyUniforms {
-        dt: params.dt,
-        g_const: G_ASTRO as f32,
-        softening_sq: 1_000_000.0,
-        num_particles: engine.num_particles,
-        halo_mass: params.halo_mass,
-        halo_scale_radius: params.halo_scale_radius,
-        pattern_speed: params.pattern_speed,
-        spiral_arms: params.spiral_arms,
-        spiral_amplitude: params.spiral_amplitude,
-        spiral_pitch: params.spiral_pitch,
-        num_massive_bodies: params.num_massive_bodies,
-        pad1: 0.0,
-        massive_bodies: params.massive_bodies,
-        massive_body_velocities: params.massive_body_velocities,
-    };
-
-    queue.write_buffer(&engine.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-    // Drain staging
-    for i in 0..2 {
-        if let (Some(state), Some(staging_buf)) =
-            (engine.staging_states.get(i), engine.staging_buffers.get(i))
-            && state.load(Ordering::Acquire) == STAGING_STATE_MAPPED
-        {
-            if let Some(sender) = sender.as_ref()
-                && let Ok(mapped) = staging_buf.slice(..).get_mapped_range()
-            {
-                let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
-                if buf.capacity() < mapped.len() {
-                    buf.reserve_exact(mapped.len().saturating_sub(buf.capacity()));
-                }
-                buf.clear();
-                buf.extend_from_slice(&mapped);
-                let _ = sender.tx.try_send(buf);
-            }
-            staging_buf.unmap();
-            state.store(STAGING_STATE_IDLE, Ordering::Release);
-        }
-    }
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("Galaxy Compute Encoder"),
-    });
-
-    let workgroups = engine.num_particles.div_ceil(64);
-    {
-        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("Galaxy Compute Pass"),
-            timestamp_writes: None,
-        });
-        compute_pass.set_pipeline(&engine.pipeline);
-        compute_pass.set_bind_group(0, &engine.bind_group, &[]);
-        compute_pass.dispatch_workgroups(workgroups, 1, 1);
-    }
-
-    let write_idx = engine.current_staging_idx;
-    let mut copy_initiated = false;
-
-    if let (Some(write_state), Some(write_buf)) = (
-        engine.staging_states.get(write_idx),
-        engine.staging_buffers.get(write_idx),
-    ) {
-        if write_state
-            .compare_exchange(
-                STAGING_STATE_IDLE,
-                STAGING_STATE_MAPPING,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            )
-            .is_ok()
-        {
-            let buf_size =
-                u64::from(engine.num_particles) * std::mem::size_of::<GpuParticle>() as u64;
-            encoder.copy_buffer_to_buffer(&engine.particle_buffer, 0, write_buf, 0, buf_size);
-            copy_initiated = true;
-        }
-
-        queue.submit(Some(encoder.finish()));
-
-        if copy_initiated {
-            let state_flag = write_state.clone();
-            write_buf
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    if result.is_ok() {
-                        state_flag.store(STAGING_STATE_MAPPED, Ordering::Release);
-                    } else {
-                        state_flag.store(STAGING_STATE_IDLE, Ordering::Release);
-                    }
-                });
-
-            engine.current_staging_idx = write_idx ^ 1;
-        }
-    } else {
-        queue.submit(Some(encoder.finish()));
-    }
-
-    let _ = render_device.poll(wgpu::PollType::Poll);
+    dispatch_galaxy_substeps(render_device.wgpu_device(), queue, &engine, &params);
 }

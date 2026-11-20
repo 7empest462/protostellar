@@ -28,7 +28,7 @@ impl Default for IgnitionState {
 /// Tracks delivered volatiles (water, nitrogen, organics) delivered via cometary impacts
 /// as well as endogenous mantle water outgassed from enstatite chondrite hydroxyls and
 /// primordial nebular H2 + FeO magma-ocean oxidation.
-#[derive(Component, Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct VolatileInventory {
     /// Total water ice mass delivered in Earth masses (M_earth)
     pub delivered_water_m_earth: f64,
@@ -154,6 +154,39 @@ impl Default for PlanetaryRingSystem {
     }
 }
 
+impl PlanetaryRingSystem {
+    /// Scales ring radial bounds proportionally when a host planet's radius changes so
+    /// circumplanetary rings preserve their physical `R_ring / R_planet` span without
+    /// engulfment or one-way ratchet inflation across transient radius shifts.
+    pub fn scale_with_host_radius(&mut self, old_radius_au: f64, new_radius_au: f64) {
+        if new_radius_au <= 0.0 || !new_radius_au.is_finite() {
+            return;
+        }
+        let new_r = new_radius_au as f32;
+        if old_radius_au > 0.0 && old_radius_au.is_finite() {
+            let ratio = (new_radius_au / old_radius_au) as f32;
+            if ratio.is_finite() && ratio > 0.0 {
+                self.inner_radius_au *= ratio;
+                self.outer_radius_au *= ratio;
+            }
+        }
+        // Recover engulfed proto-core ring bounds while preserving ring aspect ratio (~1.24..2.35 R_p)
+        if self.outer_radius_au < new_r * 1.25 {
+            let aspect =
+                if self.inner_radius_au > 0.0 && self.outer_radius_au > self.inner_radius_au {
+                    (self.outer_radius_au / self.inner_radius_au).clamp(1.75, 2.80)
+                } else {
+                    2.35 / 1.24
+                };
+            self.inner_radius_au = new_r * 1.24;
+            self.outer_radius_au =
+                (self.inner_radius_au * aspect).clamp(new_r * 2.25, new_r * 3.50);
+        } else if self.inner_radius_au < new_r * 1.08 {
+            self.inner_radius_au = (new_r * 1.20).min(self.outer_radius_au * 0.85);
+        }
+    }
+}
+
 /// Circumstellar protoplanetary accretion disk orbiting a young stabilized star.
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct CircumstellarDisk {
@@ -201,7 +234,7 @@ pub enum ClimateRegime {
 }
 
 /// Atmospheric radiative greenhouse climate equilibrium state.
-#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlanetaryClimate {
     /// Actual surface temperature in Kelvin (T_eq + dT_GH)
     pub surface_temperature_k: f32,
@@ -377,9 +410,9 @@ pub struct StellarEvolutionState {
     /// Current evolutionary phase of the central star
     pub phase: StellarEvolutionPhase,
     /// Core hydrogen nuclear fuel fraction remaining (1.0 = pristine, 0.0 = exhausted)
-    pub hydrogen_core_fraction: f32,
+    pub hydrogen_core_fraction: f64,
     /// Core helium nuclear fuel fraction (0.0 to 1.0)
-    pub helium_core_fraction: f32,
+    pub helium_core_fraction: f64,
     /// Ongoing stellar wind mass loss rate in solar masses per year (M_sun / yr)
     pub envelope_mass_loss_rate: f64,
     /// Time spent in the current evolutionary phase in simulation years
@@ -585,7 +618,7 @@ pub struct SupernovaEvent {
 }
 
 /// Atmospheric escape and photoevaporative cometary tail component.
-#[derive(Component, Debug, Clone, Reflect)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct AtmosphericEscapeTail {
     /// Mass loss rate in Earth masses per million years
     pub loss_rate_m_earth_per_myr: f32,

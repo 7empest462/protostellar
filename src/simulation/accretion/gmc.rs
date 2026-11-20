@@ -8,6 +8,10 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "GMC stellar promotion requires mutating mass/radius/thermal/ignition state"
+)]
 fn promote_gmc_accreted_stellar_state(
     commands: &mut Commands,
     entity: Entity,
@@ -17,7 +21,7 @@ fn promote_gmc_accreted_stellar_state(
     body: &mut CelestialBody,
     opt_lum: &mut Option<Mut<Luminosity>>,
     opt_temp: &mut Option<Mut<Temperature>>,
-    opt_ign: Option<&IgnitionState>,
+    opt_ign: &mut Option<Mut<IgnitionState>>,
 ) {
     let (promoted_type, promoted_label) = classify_stellar_type_and_label(new_m, comp);
     if new_m >= 500.0
@@ -35,22 +39,19 @@ fn promote_gmc_accreted_stellar_state(
         if let Some(lum) = opt_lum.as_mut() {
             lum.0 = 0.0;
         }
+        if let Some(ign) = opt_ign.as_mut() {
+            ign.is_ignited = false;
+            ign.fusion_fraction = 0.0;
+        }
         crate::simulation::thermodynamics::stellar_lifecycle::update_promoted_stellar_name(
             &mut body.name,
             BodyType::BlackHole,
             new_m,
             "Intermediate-Mass Black Hole",
         );
-        commands
-            .entity(entity)
-            .remove::<PlanetaryRingSystem>()
-            .remove::<PlanetaryClimate>()
-            .remove::<BiosphereState>()
-            .try_insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
-                new_m,
-                0.70,
-                bevy::math::DVec3::Y,
-            ));
+        crate::simulation::thermodynamics::stellar_lifecycle::attach_black_hole_remnant_components(
+            commands, entity, new_m,
+        );
         return;
     }
 
@@ -79,7 +80,9 @@ fn promote_gmc_accreted_stellar_state(
         && !matches!(body.body_type, BodyType::RedGiant | BodyType::RedSupergiant)
         && new_m >= 0.08
     {
-        if body.body_type == BodyType::Protostar && opt_ign.is_none_or(|ig| !ig.is_ignited) {
+        if body.body_type == BodyType::Protostar
+            && opt_ign.as_deref().is_none_or(|ig| !ig.is_ignited)
+        {
             rad.0 = (3.5 * SOLAR_RADIUS_AU * new_m.powf(0.5)).clamp(0.005, 0.04);
             if let Some(lum) = opt_lum.as_mut() {
                 lum.0 = (new_m * 2.5).max(0.5);
@@ -113,8 +116,12 @@ fn promote_gmc_accreted_stellar_state(
         if let Some(lum) = opt_lum.as_mut() {
             lum.0 = target_lum;
         }
-        if opt_ign.is_none() {
-            commands.entity(entity).try_insert((
+        if let Some(ign) = opt_ign.as_mut() {
+            ign.is_ignited = true;
+            ign.core_temperature = ign.core_temperature.max(1.2e7);
+            ign.fusion_fraction = ign.fusion_fraction.max(1.0);
+        } else if let Ok(mut cmd) = commands.get_entity(entity) {
+            cmd.try_insert((
                 IgnitionState {
                     core_temperature: 1.2e7,
                     fusion_fraction: 1.0,
@@ -147,7 +154,7 @@ fn compute_protostar_bondi_hoyle_accretion(
     body: &mut CelestialBody,
     opt_lum: &mut Option<Mut<Luminosity>>,
     opt_temp: &mut Option<Mut<Temperature>>,
-    opt_ign: Option<&IgnitionState>,
+    opt_ign: &mut Option<Mut<IgnitionState>>,
     dt_yr: f64,
     gas_scale: f64,
 ) {
@@ -162,15 +169,12 @@ fn compute_protostar_bondi_hoyle_accretion(
 
         let c_s = 0.058; // AU/yr sound speed (~0.27 km/s)
         let v_rel = vel.0.length();
-        // Gas co-rotates in the galactic disk; velocity relative to local gas is dominated
-        // by turbulent dispersion (~0.20 - 0.45 AU/yr) and minor orbital eccentricity
         let v_turb = 0.22f64; // AU/yr (~1.0 km/s turbulent dispersion)
         let v_eff = (c_s * c_s + v_turb * v_turb + (v_rel * 0.04).powi(2))
             .sqrt()
             .max(0.10);
 
-        // Bondi-Hoyle gas accretion from GMC core and spiral arms:
-        // Stars accrete gas proportional to M in dense regions, fueling rapid pre-supernova growth
+        // Bondi-Hoyle-Littleton rate normalized to physical cloud density without artificial vacuum floor
         let base_bondi = 0.015 * (m * m) / (v_eff * v_eff * v_eff);
         let is_pop_iii =
             body.body_type == BodyType::PopulationIIIStar || body.name.contains("Pop-III");
@@ -179,12 +183,10 @@ fn compute_protostar_bondi_hoyle_accretion(
         } else {
             (0.045 * m).clamp(0.025, 0.85)
         };
-        let bondi_rate = (base_bondi * (rho_cloud / rho_0)).clamp(0.002, max_rate);
+        let bondi_rate = (base_bondi * (rho_cloud / rho_0)).min(max_rate).max(0.0);
 
         // Radiation pressure and stellar wind suppression for ignited stars:
-        // Main-sequence stellar winds clear the local Bondi sphere so low/intermediate-mass stars
-        // maintain their birth spectral class rather than runaway-accreting to 120 M_sun.
-        let is_ignited = opt_ign.is_some_and(|ig| ig.is_ignited);
+        let is_ignited = opt_ign.as_deref().is_some_and(|ig| ig.is_ignited);
         let rad_suppression = if body.body_type.is_remnant() {
             0.0
         } else if body.body_type == BodyType::BrownDwarf && m < 0.08 && !is_ignited {
@@ -192,8 +194,6 @@ fn compute_protostar_bondi_hoyle_accretion(
         } else if is_ignited {
             let lum_val = opt_lum.as_deref().map_or(1.0, |l| l.0);
             if is_pop_iii {
-                // Pristine zero-metallicity Pop-III stars lack line-driven radiative winds,
-                // allowing massive hypergiant growth up to 500 M_sun before direct collapse
                 if m >= 500.0 {
                     0.0
                 } else {
@@ -264,7 +264,14 @@ fn compute_protoplanet_envelope_accretion(
 
     if m < max_planet_m {
         let growth_coef = if is_gas_giant { 0.00018 } else { 0.000_008 };
-        let d_mass = (growth_coef * m.powf(0.5) * omega_k * dt_yr).min(max_planet_m - m);
+        let gas_cap_dm = if is_gas_giant {
+            f64::INFINITY
+        } else {
+            (m * (0.08 - comp.gas_frac) / (1.0 - 0.08)).max(0.0)
+        };
+        let d_mass = (growth_coef * m.powf(0.5) * omega_k * dt_yr)
+            .min(max_planet_m - m)
+            .min(gas_cap_dm);
 
         if d_mass > 1e-12 {
             let new_m = m + d_mass;
@@ -272,32 +279,26 @@ fn compute_protoplanet_envelope_accretion(
 
             // Nebular composition blend from molecular cloud gas and icy volatiles
             let nebular_feed = Composition::solar_gas();
-            *comp = comp.mass_weighted_merge(m, &nebular_feed, d_mass);
+            *comp = comp
+                .mass_weighted_merge(m, &nebular_feed, d_mass)
+                .normalized();
 
-            if !is_gas_giant {
-                // In a GMC, rocky/ocean planets retain a primordial atmosphere
-                // clamped to physical terrestrial/sub-Neptune envelope limits (2% - 8%)
-                let max_gas = 0.08;
-                if comp.gas_frac > max_gas {
-                    let excess = comp.gas_frac - max_gas;
-                    comp.gas_frac = max_gas;
-                    comp.silicate_frac += excess;
-                } else if comp.gas_frac < 0.02 {
-                    let deficit = 0.02 - comp.gas_frac;
-                    comp.gas_frac = 0.02;
-                    comp.silicate_frac = (comp.silicate_frac - deficit).max(0.1);
-                }
-                *comp = comp.normalized();
-                comp.gas_frac = comp.gas_frac.clamp(0.02, 0.08);
+            // Re-classify Protoplanet into its mature body type before computing its radius
+            if body.body_type == BodyType::Protoplanet {
+                body.body_type = classify_body_by_mass_and_comp(new_m, comp, false);
             }
 
             // Update physical radius based on bulk density and degenerate envelope
-            if is_gas_giant {
+            if is_gas_giant || body.body_type == BodyType::GasGiant {
                 // Gas giant degenerate radius ~1.0-1.6 R_Jup
                 rad.0 = (0.000_477 * (new_m / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085);
             } else {
-                // Rocky terrestrial density
-                let density = comp.average_density();
+                // Rocky terrestrial density or compressed interior density for ice giants
+                let density = if body.body_type == BodyType::IceGiant {
+                    super::gas::ice_giant_bulk_density_astro(comp)
+                } else {
+                    comp.average_density()
+                };
                 let volume = new_m / density;
                 rad.0 = ((3.0 * volume) / (4.0 * PI))
                     .cbrt()
@@ -322,11 +323,6 @@ fn compute_protoplanet_envelope_accretion(
                     vol.ocean_coverage_frac =
                         (vol.delivered_water_m_earth / 0.005).clamp(0.0, 0.95) as f32;
                 }
-            }
-
-            // Re-classify Protoplanet into its mature body type
-            if body.body_type == BodyType::Protoplanet {
-                body.body_type = classify_body_by_mass_and_comp(new_m, comp, false);
             }
         }
     }
@@ -357,9 +353,10 @@ fn compute_gmc_black_hole_accretion(
     let v_bh = vel.0.length();
     let v_eff = (c_s * c_s + v_bh * v_bh).sqrt().max(0.04);
     let max_bondi = (0.5 * m.sqrt()).clamp(1.0, 50.0);
-    let bondi_bh = (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).clamp(1.0e-5, max_bondi);
-    let edd_rate = (0.015 * m).min(25.0);
-    let d_mass = (bondi_bh + edd_rate) * dt_yr;
+    let bondi_bh = (19500.0 * m * m / (v_eff * v_eff * v_eff) * rho_bh).min(max_bondi);
+    // Eddington rate (M_dot_Edd ~ 2.2e-8 M/yr at 10% efficiency, scaled for GMC epoch growth)
+    let edd_rate = (2.2e-8 * m * 100_000.0).clamp(0.0, 25.0);
+    let d_mass = bondi_bh.min(edd_rate) * dt_yr;
     if d_mass > 1e-12 {
         let new_m = m + d_mass;
         mass.0 = new_m;
@@ -446,7 +443,7 @@ pub fn gmc_cluster_gas_accretion(
             &mut CelestialBody,
             Option<&mut Luminosity>,
             Option<&mut Temperature>,
-            Option<&IgnitionState>,
+            Option<&mut IgnitionState>,
             Option<&mut VolatileInventory>,
             Option<&mut crate::simulation::components::RelativisticJetState>,
             Option<&CircumstellarDisk>,
@@ -501,7 +498,7 @@ pub fn gmc_cluster_gas_accretion(
         mut body,
         mut opt_lum,
         mut opt_temp,
-        opt_ign,
+        mut opt_ign,
         mut opt_vol,
         mut opt_jet,
         opt_disk,
@@ -527,7 +524,7 @@ pub fn gmc_cluster_gas_accretion(
                     &mut body,
                     &mut opt_lum,
                     &mut opt_temp,
-                    opt_ign,
+                    &mut opt_ign,
                     dt_yr,
                     gas_scale,
                 );

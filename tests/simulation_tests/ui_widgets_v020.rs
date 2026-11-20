@@ -391,6 +391,7 @@ fn test_seed_json_encode_decode_roundtrip() {
         bodies,
         event_flags: EventFlagsSave::default(),
         scenario_preset: None,
+        ..Default::default()
     };
 
     let encoded_seed = encode_system_seed_json(&save_data).unwrap();
@@ -882,4 +883,15 @@ fn test_audio_mute_button_visible_by_default_and_toggles_sound() {
         .find_map(|(t, kind)| matches!(kind, HudDynamicText::AudioMuteBadge).then(|| t.0.clone()))
         .expect("AudioMuteBadge label after re-mute");
     assert_eq!(remuted_label, "🔇 Sound: OFF [M]");
+}
+
+#[test]
+fn test_hud_font_source_resolution() {
+    let source = hud_font_source();
+    let fonts = Assets::<Font>::default();
+    let resolved = source.resolve_font_family(&fonts);
+    assert!(
+        resolved.is_ok(),
+        "hud_font_source must resolve without NoSuchFont error: {resolved:?}"
+    );
 }

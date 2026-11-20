@@ -81,7 +81,7 @@ pub fn spawn_galactic_collision_scenario(
             RelativisticState::default(),
             SpinState::default(),
         ))
-        .insert(KerrBlackHole::new(m31_mass, 0.85, DVec3::Y));
+        .insert(KerrBlackHole::new(m31_mass, 0.85, -DVec3::Y));
 
     mw_smbh
 }

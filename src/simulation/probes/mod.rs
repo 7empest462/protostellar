@@ -1,5 +1,6 @@
 use bevy::math::DVec3;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::game::ui::NotificationToast;
 use crate::simulation::components::*;
@@ -7,20 +8,20 @@ use crate::simulation::resources::{PlayerInteractionState, SimulationConfig};
 
 pub mod navigation;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProbeType {
     Orbiter,
     Rover,
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProbeStatus {
     Transit,
     InOrbit,
     Landed,
 }
 
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceProbe {
     pub probe_type: ProbeType,
     pub status: ProbeStatus,
@@ -88,12 +89,19 @@ pub struct LaunchProbeRequest {
 #[derive(Resource, Default)]
 pub struct ProbeCounter(pub usize);
 
+/// Marker inserted once a `SpaceProbe`'s 3D orbiter/rover mesh hierarchy has been spawned.
+#[derive(Component, Debug, Default)]
+pub struct ProbeMeshAttached;
+
 pub struct ProbesPlugin;
 
 impl Plugin for ProbesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ProbeCounter>()
-            .add_systems(Update, process_launch_requests)
+            .add_systems(
+                Update,
+                (process_launch_requests, attach_missing_probe_meshes),
+            )
             .add_systems(
                 Update,
                 (
@@ -102,6 +110,40 @@ impl Plugin for ProbesPlugin {
                     sync_probe_transforms.after(navigation::probe_navigation_system),
                 ),
             );
+    }
+}
+
+/// Ensures restored probes (from save/seed loads) and mission probes receive their 3D mesh hierarchy
+/// and `Transform` / `Visibility` / `VisualBody` components automatically when rendering assets exist.
+fn attach_missing_probe_meshes(
+    mut commands: Commands,
+    probes: Query<(Entity, &SpaceProbe, &SimPosition, Has<Transform>), Without<ProbeMeshAttached>>,
+    mut opt_meshes: Option<ResMut<Assets<Mesh>>>,
+    mut opt_materials: Option<ResMut<Assets<StandardMaterial>>>,
+    config: Option<Res<crate::simulation::resources::SimulationConfig>>,
+) {
+    let (Some(meshes), Some(materials)) = (&mut opt_meshes, &mut opt_materials) else {
+        return;
+    };
+    let min_vis_r = config
+        .as_ref()
+        .map_or(0.00035, |c| c.min_body_visual_radius * 0.45);
+    for (ent, probe, pos, has_tf) in probes.iter() {
+        let is_orbiter = probe.probe_type == ProbeType::Orbiter;
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            if !has_tf {
+                cmd.try_insert((
+                    Transform::from_translation(pos.0.as_vec3()).with_scale(Vec3::splat(min_vis_r)),
+                    GlobalTransform::default(),
+                    Visibility::default(),
+                    InheritedVisibility::default(),
+                    ViewVisibility::default(),
+                    crate::rendering::bodies::VisualBody,
+                ));
+            }
+            cmd.try_insert(ProbeMeshAttached);
+        }
+        spawn_probe_mesh_hierarchy(&mut commands, ent, is_orbiter, meshes, materials);
     }
 }
 
@@ -271,6 +313,7 @@ fn process_launch_requests(
 
         if let (Some(meshes), Some(materials)) = (&mut opt_meshes, &mut opt_materials) {
             spawn_probe_mesh_hierarchy(&mut commands, probe_entity, is_orbiter, meshes, materials);
+            commands.entity(probe_entity).try_insert(ProbeMeshAttached);
         }
 
         if let Some(ref mut t) = toast {

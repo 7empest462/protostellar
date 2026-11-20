@@ -803,3 +803,61 @@ fn test_defensive_duplicate_despawn_safety() {
     app.update();
     assert!(app.world().get_entity(ent).is_err());
 }
+
+#[test]
+fn test_parabolic_orbital_elements_and_component_nan_guards() {
+    use bevy::math::DVec3;
+    use protostellar::simulation::components::{Composition, SpinState};
+    use protostellar::utils::math::{
+        OrbitalElements, apsides_positions, conic_semilatus_rectum,
+        generate_hyperbolic_orbit_points, generate_trailing_ribbon_points,
+        position_at_true_anomaly,
+    };
+
+    // Exact parabolic orbit with infinite semi-major axis must never trigger inf * 0 = NaN
+    let parabolic = OrbitalElements {
+        semi_major_axis: f64::INFINITY,
+        eccentricity: 1.0,
+        periapsis: 1.5,
+        apoapsis: f64::INFINITY,
+        specific_energy: 0.0,
+        periapsis_dir: DVec3::X,
+        semilatus_dir: DVec3::Z,
+        ..Default::default()
+    };
+    let p = conic_semilatus_rectum(&parabolic).expect("Parabolic p must be defined");
+    assert!((p - 3.0).abs() < 1e-12);
+
+    let peri_pt = position_at_true_anomaly(&parabolic, 0.0).unwrap();
+    assert!(peri_pt.is_finite() && (peri_pt.length() - 1.5).abs() < 1e-4);
+    let (peri, apo) = apsides_positions(&parabolic);
+    assert!(peri.is_some_and(bevy::math::Vec3::is_finite) && apo.is_none());
+
+    let curve = generate_hyperbolic_orbit_points(&parabolic, 32);
+    assert!(!curve.is_empty() && curve.iter().all(|v| v.is_finite()));
+    let ribbon = generate_trailing_ribbon_points(&parabolic, 16, 1.2);
+    assert!(!ribbon.is_empty() && ribbon.iter().all(|(v, a)| v.is_finite() && a.is_finite()));
+
+    // NaN / negative component hardening on Composition & SpinState
+    let dirty_comp = Composition {
+        metal_frac: f64::NAN,
+        silicate_frac: -0.5,
+        ice_frac: f64::INFINITY,
+        organics_frac: 0.2,
+        gas_frac: 0.8,
+    }
+    .normalized();
+    let sum = dirty_comp.metal_frac
+        + dirty_comp.silicate_frac
+        + dirty_comp.ice_frac
+        + dirty_comp.organics_frac
+        + dirty_comp.gas_frac;
+    assert!(sum.is_finite() && (sum - 1.0).abs() < 1e-9);
+    assert!(dirty_comp.silicate_frac >= 0.0 && dirty_comp.ice_frac >= 0.0);
+
+    let mut spin = SpinState::default();
+    spin.update_from_spin(DVec3::splat(f64::NAN), 1.0, 1.0);
+    assert!(spin.spin_vector.is_finite() && spin.rotation_period_hours.is_finite());
+    spin.set_period_and_tilt(f64::NAN, f64::INFINITY, f64::NAN, 1.0);
+    assert!(spin.spin_vector.is_finite() && spin.axial_tilt_degrees.is_finite());
+}

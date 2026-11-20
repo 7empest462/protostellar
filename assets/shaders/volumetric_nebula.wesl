@@ -24,6 +24,10 @@ struct VolumetricNebulaUniforms {
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0)
 var<uniform> neb: VolumetricNebulaUniforms;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1)
+var density_volume: texture_3d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2)
+var density_sampler: sampler;
 
 const PI: f32 = 3.14159265359;
 
@@ -146,7 +150,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         // Galactic nucleus bulge smoothly transitions into sweeping spiral arms
         let bulge_profile = exp(-r_core / 85.0) * 1.65;
         let arm_weight = smoothstep(35.0, 120.0, r_cyl);
-        let arm_profile = exp(-r_cyl / 520.0) * z_disk * (0.06 + 2.60 * pow(spiral_modulation, 2.3));
+        let arm_profile = exp(-r_cyl / 520.0) * z_disk * (0.06 + 2.60 * pow(max(spiral_modulation, 0.0), 2.3));
         let spiral_composite = mix(bulge_profile, arm_profile, arm_weight);
 
         // Smooth evolution over cosmic time from turbulent collapse into rotating spiral galaxy,
@@ -154,14 +158,30 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let t_spiral = clamp((neb.elapsed_years - 600.0) / 1400.0, 0.0, 1.0);
         let boundary_fade = 1.0 - smoothstep(760.0, 1040.0, r_core);
         let eff_profile = mix(core_profile, spiral_composite, t_spiral) * boundary_fade;
-        
+
+        // Live 96^3 GPU Eulerian fluid density & shock-heat sampling (zero CPU readback).
+        // `vol_sample.a` is 1.0 once the live GPU compute pack pass populates the 3D volume,
+        // and 0.0 before initialization so fallback stays seamless.
+        let uvw = clamp(
+            (sample_pos - neb.box_min) / max(neb.box_max - neb.box_min, vec3<f32>(1.0)),
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+        );
+        let vol_sample = textureSampleLevel(density_volume, density_sampler, uvw, 0.0);
+        let live_active = clamp(vol_sample.a, 0.0, 1.0);
+        let live_rho = vol_sample.r * boundary_fade;
+        let live_shock_heat = vol_sample.g * boundary_fade;
+        let live_speed = vol_sample.b * boundary_fade;
+
         var density = 0.0;
         var fbm_turb = 0.5;
 
-        // Early exit optimization for empty space
-        if (eff_profile > 0.015) {
+        // Early exit optimization for empty space (skip procedural fbm3 when both fields are vacant)
+        if (eff_profile > 0.015 || live_rho > 0.02) {
             fbm_turb = fbm3(sample_pos * 0.0045);
-            density = eff_profile * (0.35 + 0.90 * fbm_turb);
+            let proc_density = eff_profile * (0.35 + 0.90 * fbm_turb);
+            let live_density = live_rho * (0.68 + 0.55 * fbm_turb);
+            density = mix(proc_density, live_density, live_active * 0.88);
         }
 
         // Ionization cavity carving and glowing H-alpha / [O III] emission fronts around protostars
@@ -220,12 +240,15 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
         let gas_color = mix(core_color, mix(mid_color, outer_color, smoothstep(0.35, 0.85, r_norm)), smoothstep(0.10, 0.45, r_norm));
         // Spiral arm contrast: luminous cyan/blue arm ridges and deep amber/smoky dust lanes
-        let arm_tint = mix(vec3<f32>(0.22, 0.12, 0.08), vec3<f32>(0.35, 0.95, 1.45), pow(spiral_modulation, 1.8));
+        let arm_tint = mix(vec3<f32>(0.22, 0.12, 0.08), vec3<f32>(0.35, 0.95, 1.45), pow(max(spiral_modulation, 0.0), 1.8));
         let final_gas_color = mix(gas_color, arm_tint, t_spiral * 0.85);
         let ambient_gas = final_gas_color * density * 0.11;
         let ambient_scatter = vec3<f32>(0.25, 0.45, 0.85) * density * neb.scattering_albedo * 0.05;
+        // Live GPU fluid thermal shock glow (supernova blast heating & dense collapsing Jeans cores)
+        let shock_tint = mix(vec3<f32>(1.40, 0.55, 0.22), vec3<f32>(0.45, 0.95, 1.65), clamp(live_speed * 0.4, 0.0, 1.0));
+        let live_thermal_glow = shock_tint * live_shock_heat * live_active * 0.32;
 
-        let total_emission = ambient_gas + ambient_scatter + in_scatter * neb.scattering_albedo + cavity_glow;
+        let total_emission = ambient_gas + ambient_scatter + in_scatter * neb.scattering_albedo + cavity_glow + live_thermal_glow;
         accumulated_color = accumulated_color + transmittance * total_emission * (1.0 - step_transmittance);
 
         transmittance = transmittance * step_transmittance;

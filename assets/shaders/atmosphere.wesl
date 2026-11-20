@@ -43,13 +43,19 @@ fn ray_sphere_intersect(ro: vec3<f32>, rd: vec3<f32>, center: vec3<f32>, radius:
 /// Evaluates directional radius multiplier for Maclaurin rotational oblateness and Roche Lobe teardrop deformation.
 fn directional_shape_scale(unit_dir: vec3<f32>) -> f32 {
     var scale = 1.0;
-    let oblate = clamp(atmo.spin_axis.w, 0.0, 0.25);
+    let cam_alt_ratio = length(view.world_position - atmo.planet_center.xyz)
+        / max(atmo.optical_params.z, 1e-6);
+    let surface_mode_blend = smoothstep(1.06, 1.38, cam_alt_ratio);
+    let oblate = clamp(atmo.spin_axis.w, 0.0, 0.25) * surface_mode_blend;
     if (oblate > 0.001) {
         var s_axis = atmo.spin_axis.xyz;
         if (length(s_axis) > 0.1) {
             s_axis = normalize(s_axis);
             let sin_lat = dot(unit_dir, s_axis);
-            scale += -oblate * (1.5 * sin_lat * sin_lat - 0.5);
+            let pol_scale = max(1.0 - oblate, 0.5);
+            let inv_pol2 = 1.0 / (pol_scale * pol_scale);
+            let denom = 1.0 + (sin_lat * sin_lat) * (inv_pol2 - 1.0);
+            scale *= 1.0 / sqrt(max(denom, 0.25));
         }
     }
     let roche = clamp(atmo.tidal_deformation.w, 0.0, 0.85);
@@ -109,12 +115,12 @@ fn evaluate_ring_shadow_transmittance(
         return 1.0;
     }
     let u = clamp((r_int - r_inner) / max(r_outer - r_inner, 0.001), 0.0, 1.0);
-    let c_ring = mix(0.10, 0.34, clamp(u / 0.22, 0.0, 1.0)) * smoothstep(0.0, 0.035, u) * (1.0 - smoothstep(0.195, 0.245, u));
-    let b_ring = mix(0.78, 0.96, smoothstep(0.22, 0.38, u)) * smoothstep(0.195, 0.245, u) * (1.0 - smoothstep(0.625, 0.665, u));
-    let cassini_floor = 0.08 * smoothstep(0.625, 0.665, u) * (1.0 - smoothstep(0.705, 0.745, u));
-    let encke_dip = 1.0 - 0.78 * exp(-pow((u - 0.865) / 0.011, 2.0));
-    let a_ring = 0.74 * encke_dip * smoothstep(0.705, 0.745, u) * (1.0 - smoothstep(0.935, 0.975, u));
-    let f_ring = 0.28 * smoothstep(0.935, 0.968, u) * (1.0 - smoothstep(0.968, 1.0, u));
+    let c_ring = mix(0.08, 0.24, clamp(u / 0.24, 0.0, 1.0)) * smoothstep(0.0, 0.03, u) * (1.0 - smoothstep(0.22, 0.255, u));
+    let b_ring = mix(0.76, 0.98, smoothstep(0.24, 0.42, u)) * smoothstep(0.22, 0.255, u) * (1.0 - smoothstep(0.625, 0.652, u));
+    let cassini_floor = 0.05 * smoothstep(0.625, 0.652, u) * (1.0 - smoothstep(0.70, 0.728, u));
+    let encke_dip = 1.0 - 0.85 * exp(-pow((u - 0.872) / 0.008, 2.0));
+    let a_ring = 0.70 * encke_dip * smoothstep(0.70, 0.728, u) * (1.0 - smoothstep(0.922, 0.946, u));
+    let f_ring = 0.24 * exp(-pow((u - 0.982) / 0.007, 2.0));
     let ring_density = c_ring + b_ring + cassini_floor + a_ring + f_ring;
 
     let edge_feather = smoothstep(r_inner, r_inner + 0.035, r_int) * (1.0 - smoothstep(r_outer - 0.035, r_outer, r_int));

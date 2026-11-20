@@ -328,7 +328,9 @@ fn update_existing_comet_tails(
 
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
         if let Some(candidate) = active_comet_map.get(&root.comet_entity) {
-            root_trans.translation = candidate.world_pos;
+            if root_trans.translation != candidate.world_pos {
+                root_trans.translation = candidate.world_pos;
+            }
             updated_entities.insert(root.comet_entity);
 
             let (anti_solar, in_plane_lag, rotation) =
@@ -345,47 +347,73 @@ fn update_existing_comet_tails(
             if let Some(children) = opt_children {
                 for child in children.iter() {
                     if let Ok((mut trans, mat_handle)) = tail_parts_query.get_mut(child) {
-                        trans.rotation = rotation;
-                        trans.scale = Vec3::new(tail_width, tail_len, tail_width);
-                        if let Some(mut mat) = comet_materials.get_mut(&mat_handle.0) {
-                            mat.uniforms.params = Vec4::new(elapsed, tail_len, coma_r, activity);
-                            mat.uniforms.anti_solar_and_lag =
-                                Vec4::new(anti_solar.x, anti_solar.y, anti_solar.z, 0.15);
-                            mat.uniforms.nucleus_pos_and_type = Vec4::new(
+                        let target_scale = Vec3::new(tail_width, tail_len, tail_width);
+                        if trans.rotation != rotation || trans.scale != target_scale {
+                            trans.rotation = rotation;
+                            trans.scale = target_scale;
+                        }
+                        let target_uniforms = CometTailUniforms {
+                            params: Vec4::new(elapsed, tail_len, coma_r, activity),
+                            anti_solar_and_lag: Vec4::new(
+                                anti_solar.x,
+                                anti_solar.y,
+                                anti_solar.z,
+                                0.15,
+                            ),
+                            nucleus_pos_and_type: Vec4::new(
                                 candidate.world_pos.x,
                                 candidate.world_pos.y,
                                 candidate.world_pos.z,
                                 0.0,
-                            );
-                            mat.uniforms.velocity_and_activity = Vec4::new(
+                            ),
+                            velocity_and_activity: Vec4::new(
                                 in_plane_lag.x,
                                 in_plane_lag.y,
                                 in_plane_lag.z,
                                 dust_ratio,
-                            );
-                            mat.uniforms.ion_color = ion_color;
-                            mat.uniforms.dust_color = dust_color;
+                            ),
+                            ion_color,
+                            dust_color,
+                        };
+                        if let Some(mat) = comet_materials.get(&mat_handle.0)
+                            && mat.uniforms != target_uniforms
+                            && let Some(mut mat_mut) = comet_materials.get_mut(&mat_handle.0)
+                        {
+                            mat_mut.uniforms = target_uniforms;
                         }
                     } else if let Ok((mut trans, mat_handle)) = coma_parts_query.get_mut(child) {
-                        trans.scale = Vec3::splat(coma_r);
-                        if let Some(mut mat) = comet_materials.get_mut(&mat_handle.0) {
-                            mat.uniforms.params = Vec4::new(elapsed, tail_len, coma_r, activity);
-                            mat.uniforms.anti_solar_and_lag =
-                                Vec4::new(anti_solar.x, anti_solar.y, anti_solar.z, 0.15);
-                            mat.uniforms.nucleus_pos_and_type = Vec4::new(
+                        let target_scale = Vec3::splat(coma_r);
+                        if trans.scale != target_scale {
+                            trans.scale = target_scale;
+                        }
+                        let target_uniforms = CometTailUniforms {
+                            params: Vec4::new(elapsed, tail_len, coma_r, activity),
+                            anti_solar_and_lag: Vec4::new(
+                                anti_solar.x,
+                                anti_solar.y,
+                                anti_solar.z,
+                                0.15,
+                            ),
+                            nucleus_pos_and_type: Vec4::new(
                                 candidate.world_pos.x,
                                 candidate.world_pos.y,
                                 candidate.world_pos.z,
                                 1.0,
-                            );
-                            mat.uniforms.velocity_and_activity = Vec4::new(
+                            ),
+                            velocity_and_activity: Vec4::new(
                                 in_plane_lag.x,
                                 in_plane_lag.y,
                                 in_plane_lag.z,
                                 dust_ratio,
-                            );
-                            mat.uniforms.ion_color = ion_color;
-                            mat.uniforms.dust_color = dust_color;
+                            ),
+                            ion_color,
+                            dust_color,
+                        };
+                        if let Some(mat) = comet_materials.get(&mat_handle.0)
+                            && mat.uniforms != target_uniforms
+                            && let Some(mut mat_mut) = comet_materials.get_mut(&mat_handle.0)
+                        {
+                            mat_mut.uniforms = target_uniforms;
                         }
                     }
                 }

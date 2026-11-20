@@ -790,14 +790,24 @@ fn test_gen1_primordial_pop_iii_hypergiant_spawning_masses() {
         Commands,
         Res<GmcCollapseEventReceiver>,
         Option<Res<ActiveScenarioState>>,
+        Option<Res<protostellar::simulation::scenarios::ScenarioReloadGeneration>>,
+        Local<u64>,
         Query<(&SimPosition, &CelestialBody, Option<&Mass>)>,
         Option<ResMut<protostellar::game::ui::NotificationToast>>,
     )> = bevy::ecs::system::SystemState::new(app.world_mut());
 
-    let (commands, receiver, scenario_state, existing_bodies, toast) =
+    let (commands, receiver, scenario_state, reload_gen, last_gen, existing_bodies, toast) =
         state.get_mut(app.world_mut()).expect("State valid");
 
-    receive_gmc_collapse_events(commands, receiver, scenario_state, existing_bodies, toast);
+    receive_gmc_collapse_events(
+        commands,
+        receiver,
+        scenario_state,
+        reload_gen,
+        last_gen,
+        existing_bodies,
+        toast,
+    );
     state.apply(app.world_mut());
 
     // Query spawned celestial bodies to find the Pop-III hypergiant
@@ -826,5 +836,152 @@ fn test_gen1_primordial_pop_iii_hypergiant_spawning_masses() {
         body.name.contains("Pop-III Hypergiant"),
         "Body name must indicate Pop-III Hypergiant, got: {}",
         body.name
+    );
+}
+
+#[test]
+fn test_planetary_nebula_ejection_synchronizes_white_dwarf_mass_below_chandrasekhar() {
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.insert_resource(SimTime {
+        current_dt_yr: 1.0,
+        elapsed_years: 100.0,
+        ..Default::default()
+    });
+    app.add_message::<SupernovaEvent>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_systems(Update, update_thermodynamics);
+
+    let nebula = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Progenitor Nebula".to_string(),
+                body_type: BodyType::RedGiant,
+            },
+            Mass(3.0),
+            Radius(0.01),
+            Temperature(30_000.0),
+            Luminosity(2000.0),
+            SimPosition(bevy::math::DVec3::ZERO),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            IgnitionState {
+                is_ignited: true,
+                fusion_fraction: 1.0,
+                core_temperature: 5.0e7,
+                shockwave_radius: 0.25,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::PlanetaryNebulaEjection,
+                nebula_expansion_radius_au: 2.0,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    for _ in 0..20 {
+        app.update();
+    }
+
+    let w = app.world();
+    let body = w.get::<CelestialBody>(nebula).unwrap();
+    let mass = w.get::<Mass>(nebula).unwrap().0;
+    assert_eq!(body.body_type, BodyType::WhiteDwarf);
+    assert!(
+        (0.45..=1.25).contains(&mass),
+        "White dwarf emergent mass must shed envelope below Chandrasekhar limit (got {mass:.3})"
+    );
+}
+
+#[test]
+fn test_substellar_protostar_and_small_dt_core_fuel_precision() {
+    use protostellar::simulation::resources::*;
+    use protostellar::simulation::thermodynamics::{StarIgnitionEvent, update_thermodynamics};
+
+    let mut app = App::new();
+    app.init_resource::<SimulationConfig>();
+    app.init_resource::<TimeWarp>();
+    app.insert_resource(SimTime {
+        current_dt_yr: 100.0,
+        elapsed_years: 35.0,
+        ..Default::default()
+    });
+    app.add_message::<SupernovaEvent>();
+    app.add_message::<StarIgnitionEvent>();
+    app.add_message::<PlanetaryEngulfmentEvent>();
+    app.add_systems(Update, update_thermodynamics);
+
+    let brown_dwarf = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Substellar Core".to_string(),
+                body_type: BodyType::Protostar,
+            },
+            Mass(0.05),
+            Radius(0.002),
+            Temperature(2200.0),
+            Luminosity(1.0),
+            SimPosition(bevy::math::DVec3::ZERO),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            IgnitionState {
+                is_ignited: false,
+                core_temperature: 1.5e7,
+                fusion_fraction: 0.9,
+                shockwave_radius: 0.0,
+            },
+        ))
+        .id();
+
+    let ms_star = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Solar Twin".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            Mass(1.0),
+            Radius(protostellar::utils::constants::SOLAR_RADIUS_AU),
+            Temperature(5778.0),
+            Luminosity(1.0),
+            SimPosition(bevy::math::DVec3::new(50.0, 0.0, 0.0)),
+            SimVelocity(bevy::math::DVec3::ZERO),
+            IgnitionState {
+                is_ignited: true,
+                core_temperature: 1.5e7,
+                fusion_fraction: 1.0,
+                shockwave_radius: 0.25,
+            },
+            StellarEvolutionState {
+                phase: StellarEvolutionPhase::MainSequence,
+                hydrogen_core_fraction: 1.0,
+                ..Default::default()
+            },
+        ))
+        .id();
+
+    app.update();
+
+    let w = app.world();
+    assert!(
+        !w.get::<IgnitionState>(brown_dwarf).unwrap().is_ignited,
+        "Sub-0.08 M_sun protostar must not ignite hydrogen fusion"
+    );
+    assert_eq!(
+        w.get::<CelestialBody>(brown_dwarf).unwrap().body_type,
+        BodyType::BrownDwarf
+    );
+    let h_frac = w
+        .get::<StellarEvolutionState>(ms_star)
+        .unwrap()
+        .hydrogen_core_fraction;
+    assert!(
+        h_frac < 1.0,
+        "f64 hydrogen_core_fraction must advance cleanly even for dt=100 yr (got {h_frac:.15})"
     );
 }

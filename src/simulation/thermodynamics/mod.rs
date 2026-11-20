@@ -1,6 +1,7 @@
 //! Thermodynamics, Hayashi Track Protostellar Evolution, Core Dynamos, Planetary Climate, Biosphere Genesis, and Far-Future Stellar Metamorphosis.
 
 mod climate;
+pub mod stellar_evolution;
 pub mod stellar_lifecycle;
 pub use climate::*;
 pub use stellar_lifecycle::*;
@@ -30,7 +31,6 @@ struct StarThermoInfo {
     temp: f64,
     radius: f64,
     shockwave_radius: f64,
-    is_ignited: bool,
     _is_central: bool,
 }
 
@@ -103,11 +103,12 @@ fn process_stars_thermodynamics(
                 temp: temp.0,
                 radius: radius.0,
                 shockwave_radius: ignition.shockwave_radius,
-                is_ignited: ignition.is_ignited,
                 _is_central: is_central_star,
             });
             continue;
         }
+
+        let was_black_hole = body.body_type == BodyType::BlackHole;
 
         step_protostar_ignition_and_limits(
             entity,
@@ -144,6 +145,10 @@ fn process_stars_thermodynamics(
             );
         }
 
+        if !was_black_hole && body.body_type == BodyType::BlackHole {
+            attach_black_hole_remnant_components(commands, entity, mass.0);
+        }
+
         let mut effective_lum = lum.0;
         if let Some(swarm) = opt_swarm {
             effective_lum *= 1.0 - (f64::from(swarm.completion_fraction) * 0.9);
@@ -155,7 +160,6 @@ fn process_stars_thermodynamics(
             temp: temp.0,
             radius: radius.0,
             shockwave_radius: ignition.shockwave_radius,
-            is_ignited: ignition.is_ignited,
             _is_central: is_central_star,
         });
     }
@@ -170,9 +174,12 @@ pub fn update_thermodynamics(
     sim_time: Res<SimTime>,
     mut config: ResMut<SimulationConfig>,
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_reload_gen: Local<u64>,
     mut ignition_events: MessageWriter<StarIgnitionEvent>,
     mut engulfment_events: MessageWriter<PlanetaryEngulfmentEvent>,
     mut supernova_events: MessageWriter<SupernovaEvent>,
+    mut prev_steam_cache: Local<rustc_hash::FxHashMap<Entity, (f32, f32)>>,
     mut star_query: Query<
         (
             Entity,
@@ -202,10 +209,14 @@ pub fn update_thermodynamics(
             &CelestialBody,
             Option<&mut InternalDifferentiation>,
             Option<&SpinState>,
-            Option<&mut VolatileInventory>,
-            Option<&mut PlanetaryClimate>,
-            Option<&mut BiosphereState>,
+            (
+                Option<&mut VolatileInventory>,
+                Option<&mut PlanetaryClimate>,
+                Option<&mut BiosphereState>,
+            ),
             Option<&SatelliteOf>,
+            Has<crate::simulation::terraforming::TerraformingAtmosphere>,
+            Option<&crate::simulation::atmosphere_escape::types::AtmosphericEscapeState>,
         ),
         (
             Without<CentralStar>,
@@ -239,16 +250,24 @@ pub fn update_thermodynamics(
         &mut supernova_events,
     );
 
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_reload_gen {
+        *last_reload_gen = current_gen;
+        prev_steam_cache.clear();
+    }
+
     // 2. Update Disk Body Temperatures & Planetary Thermal Processing
     if !stars_info.is_empty() {
         update_disk_bodies_thermodynamics(
             &mut commands,
             &mut bodies_query,
             &stars_info,
+            &mut prev_steam_cache,
             dt_yr,
             sim_time.elapsed_years,
             &mut engulfment_events,
         );
+        prev_steam_cache.retain(|&ent, _| bodies_query.contains(ent));
     }
 }
 
@@ -271,10 +290,14 @@ fn update_disk_bodies_thermodynamics(
             &CelestialBody,
             Option<&mut InternalDifferentiation>,
             Option<&SpinState>,
-            Option<&mut VolatileInventory>,
-            Option<&mut PlanetaryClimate>,
-            Option<&mut BiosphereState>,
+            (
+                Option<&mut VolatileInventory>,
+                Option<&mut PlanetaryClimate>,
+                Option<&mut BiosphereState>,
+            ),
             Option<&SatelliteOf>,
+            Has<crate::simulation::terraforming::TerraformingAtmosphere>,
+            Option<&crate::simulation::atmosphere_escape::types::AtmosphericEscapeState>,
         ),
         (
             Without<CentralStar>,
@@ -283,6 +306,7 @@ fn update_disk_bodies_thermodynamics(
         ),
     >,
     stars_info: &[StarThermoInfo],
+    prev_steam_cache: &mut rustc_hash::FxHashMap<Entity, (f32, f32)>,
     dt_yr: f64,
     elapsed_years: f64,
     engulfment_events: &mut MessageWriter<PlanetaryEngulfmentEvent>,
@@ -298,10 +322,10 @@ fn update_disk_bodies_thermodynamics(
         b_body,
         mut opt_diff,
         opt_spin,
-        mut opt_vol,
-        mut opt_climate,
-        mut opt_bio,
+        (mut opt_vol, mut opt_climate, mut opt_bio),
         opt_sat,
+        has_terraforming,
+        opt_escape_state,
     ) in bodies_query.iter_mut()
     {
         let Some(fallback_star) = stars_info.first() else {
@@ -324,11 +348,24 @@ fn update_disk_bodies_thermodynamics(
         let rel_pos = pos.0 - host_star.pos;
         let prev_gas = comp.gas_frac;
         let prev_ice = comp.ice_frac;
+        let b_radius_au = opt_rad.as_deref().map_or(0.0, |r| r.0);
+        let current_total_bar = opt_vol
+            .as_deref()
+            .map_or(0.0, |v| v.atmospheric_pressure_bar);
+        // Invalidate cached steam if pressure changed externally (epoch scrub or escape stripping)
+        let prev_steam_bar = prev_steam_cache
+            .get(&body_ent)
+            .copied()
+            .filter(|&(_, last_total)| (current_total_bar - last_total).abs() <= 0.05)
+            .map_or(0.0, |(steam, _)| steam);
+        let active_escape_rate =
+            opt_escape_state.map_or(0.0, |e| e.total_loss_rate_m_earth_per_myr);
 
-        update_body_thermodynamics(
+        let new_steam_bar = update_body_thermodynamics(
             commands,
             body_ent,
             &mut b_mass,
+            b_radius_au,
             rel_pos,
             &mut vel,
             &mut p_temp,
@@ -343,11 +380,19 @@ fn update_disk_bodies_thermodynamics(
             host_star.temp,
             host_star.radius,
             host_star.shockwave_radius,
-            host_star.is_ignited,
+            has_terraforming,
+            prev_steam_bar,
+            active_escape_rate,
             dt_yr,
             elapsed_years,
             engulfment_events,
         );
+        let post_total_bar = opt_vol
+            .as_deref()
+            .map_or(0.0, |v| v.atmospheric_pressure_bar);
+        if new_steam_bar > 0.0 || prev_steam_cache.contains_key(&body_ent) {
+            prev_steam_cache.insert(body_ent, (new_steam_bar, post_total_bar));
+        }
 
         let comp_shifted =
             (comp.gas_frac - prev_gas).abs() > 1e-5 || (comp.ice_frac - prev_ice).abs() > 1e-5;
@@ -446,34 +491,13 @@ fn update_planetary_core_dynamo(
     magnetic_field_gauss
 }
 
-fn apply_stellar_wind_and_outer_thaw(
+fn apply_outer_giant_thaw(
     opt_vol: &mut Option<Mut<'_, VolatileInventory>>,
-    comp: &mut Composition,
+    comp: &Composition,
     r: f64,
-    star_is_ignited: bool,
     star_lum: f64,
-    magnetic_field_gauss: f32,
     dt_yr: f64,
 ) {
-    if star_is_ignited
-        && r < 3.5
-        && let Some(vol) = opt_vol
-        && magnetic_field_gauss < 0.12
-    {
-        let unshielded_factor = (1.0 - (magnetic_field_gauss / 0.12)).clamp(0.0, 1.0);
-        let strip_rate = (0.00015 * (1.0 / (r * r)) * f64::from(unshielded_factor) * dt_yr) as f32;
-        vol.atmospheric_pressure_bar = (vol.atmospheric_pressure_bar - strip_rate).max(0.0);
-        if comp.gas_frac > 0.0 && comp.gas_frac <= 0.10 {
-            comp.gas_frac = (comp.gas_frac - f64::from(strip_rate) * 0.01).max(0.0);
-            if vol.atmospheric_pressure_bar <= 0.001 {
-                comp.gas_frac = 0.0;
-            }
-            *comp = comp.normalized();
-        } else if vol.atmospheric_pressure_bar <= 0.001 {
-            comp.gas_frac = (comp.gas_frac - f64::from(strip_rate * 0.0001)).max(0.0);
-        }
-    }
-
     if star_lum > 500.0
         && (25.0..=65.0).contains(&r)
         && comp.ice_frac > 0.25
@@ -494,19 +518,44 @@ fn apply_shockwave_ice_sublimation(
     shockwave_r: f64,
     dt_yr: f64,
 ) {
-    if shockwave_r > r && r < 2.7 && comp.ice_frac > 0.001 {
-        let sublimated = (comp.ice_frac * 0.15 * dt_yr).min(comp.ice_frac);
-        let dm_lost = mass.0 * sublimated;
-        mass.0 = (mass.0 - dm_lost).max(1e-15);
-        comp.ice_frac = (comp.ice_frac - sublimated).max(0.0);
-        *comp = comp.normalized();
+    if shockwave_r > 0.05
+        && shockwave_r < 25.0
+        && (r - shockwave_r).abs() < 2.5
+        && r < 2.7
+        && comp.ice_frac > 0.001
+    {
+        let old_mass = mass.0.max(1e-12);
+        let m_metal = old_mass * comp.metal_frac;
+        let m_silicate = old_mass * comp.silicate_frac;
+        let mut m_ice = old_mass * comp.ice_frac;
+        let m_organics = old_mass * comp.organics_frac;
+        let m_gas = old_mass * comp.gas_frac;
+
+        let frac_loss = (0.15 * dt_yr).clamp(0.0, 1.0);
+        let dm_lost = (m_ice * frac_loss).min((old_mass - 1e-12).max(0.0));
+        if dm_lost > 0.0 {
+            m_ice = (m_ice - dm_lost).max(0.0);
+            let new_total = (m_metal + m_silicate + m_ice + m_organics + m_gas).max(1e-12);
+            mass.0 = new_total;
+            comp.metal_frac = m_metal / new_total;
+            comp.silicate_frac = m_silicate / new_total;
+            comp.ice_frac = m_ice / new_total;
+            comp.organics_frac = m_organics / new_total;
+            comp.gas_frac = m_gas / new_total;
+            *comp = comp.normalized();
+        }
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Coordinates single-body engulfment, dynamo, outer thaw, climate, and shockwave checks"
+)]
 fn update_body_thermodynamics(
     commands: &mut Commands,
     body_ent: Entity,
     b_mass: &mut Mass,
+    b_radius_au: f64,
     pos: DVec3,
     vel: &mut SimVelocity,
     p_temp: &mut Temperature,
@@ -521,13 +570,15 @@ fn update_body_thermodynamics(
     star_temp: f64,
     star_r: f64,
     shockwave_r: f64,
-    star_is_ignited: bool,
+    has_terraforming: bool,
+    prev_steam_bar: f32,
+    active_escape_rate: f64,
     dt_yr: f64,
     elapsed_years: f64,
     engulfment_events: &mut MessageWriter<PlanetaryEngulfmentEvent>,
-) {
+) -> f32 {
     if b_body.body_type.is_star_or_remnant() {
-        return;
+        return 0.0;
     }
 
     let b_mass_solar = b_mass.0;
@@ -546,41 +597,69 @@ fn update_body_thermodynamics(
         dt_yr,
         engulfment_events,
     ) {
-        return;
+        return 0.0;
     }
 
     let magnetic_field_gauss =
         update_planetary_core_dynamo(opt_diff, b_mass_solar, period_hrs, dt_yr);
 
-    apply_stellar_wind_and_outer_thaw(
-        opt_vol,
-        comp,
-        r,
-        star_is_ignited,
-        star_lum,
-        magnetic_field_gauss,
-        dt_yr,
-    );
+    if has_terraforming {
+        let mut surface_temp = p_temp.0;
+        if let Some(climate) = opt_climate {
+            let eq = compute_equilibrium_temp_k(
+                r,
+                star_lum,
+                star_temp,
+                star_r,
+                climate.albedo.clamp(0.05, 0.90),
+            );
+            climate.equilibrium_temperature_k = eq as f32;
+            surface_temp = f64::from(climate.surface_temperature_k).max(20.0);
+        }
+        let (ocean_frac, atm_pressure) = opt_vol.as_deref().map_or((0.0, 0.0), |v| {
+            (v.ocean_coverage_frac, v.atmospheric_pressure_bar)
+        });
+        climate::update_body_biosphere(
+            commands,
+            body_ent,
+            b_mass_solar,
+            surface_temp,
+            star_temp,
+            ocean_frac,
+            magnetic_field_gauss,
+            atm_pressure,
+            opt_bio,
+            dt_yr,
+            elapsed_years,
+        );
+        0.0
+    } else {
+        apply_outer_giant_thaw(opt_vol, comp, r, star_lum, dt_yr);
 
-    update_body_climate_and_biosphere(
-        commands,
-        body_ent,
-        b_mass_solar,
-        b_body,
-        comp,
-        p_temp,
-        opt_vol.as_deref_mut(),
-        opt_climate,
-        opt_bio,
-        r,
-        star_lum,
-        star_temp,
-        star_r,
-        shockwave_r,
-        magnetic_field_gauss,
-        dt_yr,
-        elapsed_years,
-    );
+        let steam_bar = update_body_climate_and_biosphere(
+            commands,
+            body_ent,
+            b_mass_solar,
+            b_radius_au,
+            b_body,
+            comp,
+            p_temp,
+            opt_vol.as_deref_mut(),
+            opt_climate,
+            opt_bio,
+            r,
+            star_lum,
+            star_temp,
+            star_r,
+            shockwave_r,
+            magnetic_field_gauss,
+            prev_steam_bar,
+            active_escape_rate,
+            dt_yr,
+            elapsed_years,
+        );
 
-    apply_shockwave_ice_sublimation(b_mass, comp, r, shockwave_r, dt_yr);
+        apply_shockwave_ice_sublimation(b_mass, comp, r, shockwave_r, dt_yr);
+        steam_bar
+    }
 }

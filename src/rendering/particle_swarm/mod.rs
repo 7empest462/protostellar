@@ -30,6 +30,12 @@ pub use simulation::{
 #[derive(Component)]
 pub struct ParticleSwarmMesh;
 
+/// Zero-vertex placeholder mesh swapped onto [`ParticleSwarmMesh`] while GPU Vertex Pulling
+/// renders all 500k particles directly from VRAM, eliminating redundant legacy mesh draws
+/// without mutating scenario-controlled [`Visibility`].
+#[derive(Resource, Debug, Clone)]
+pub struct ParticleSwarmEmptyMesh(pub Handle<Mesh>);
+
 /// CPU storage for particle state synchronized with visual mesh buffers.
 #[derive(Resource)]
 pub struct ParticleSwarmData {
@@ -48,6 +54,27 @@ pub struct ParticleSwarmData {
     pub base_mass: f32,
     pub is_dirty: bool,
     pub pending_gpu_accretions: Vec<(usize, f32)>,
+}
+
+fn sync_swarm_mesh_handle_for_gpu_pulling(
+    gpu_active: bool,
+    data: &mut ParticleSwarmData,
+    empty_mesh: Option<&ParticleSwarmEmptyMesh>,
+    mesh_query: &mut Query<&mut Mesh3d, With<ParticleSwarmMesh>>,
+) {
+    let target = if gpu_active && let Some(empty) = empty_mesh {
+        &empty.0
+    } else {
+        &data.mesh_handle
+    };
+    for mut mesh3d in mesh_query.iter_mut() {
+        if mesh3d.0 != *target {
+            mesh3d.0 = target.clone();
+            if !gpu_active {
+                data.is_dirty = true;
+            }
+        }
+    }
 }
 
 fn sync_swarm_material_render_scale(
@@ -178,7 +205,13 @@ fn step_protoplanetary_disk_mechanics(
     );
     data.pending_gpu_accretions = pending_accretions;
 
-    if !params.gpu_active && elapsed_years >= 15.0 {
+    // When GPU Vertex Pulling is active, particle positions stay purely in VRAM (no 24 MB readback
+    // and no 500k CPU loop); only compact GPU accretion events are applied on CPU.
+    if params.gpu_active {
+        return had_accretions;
+    }
+
+    if elapsed_years >= 15.0 {
         build_spatial_hash_bins(data, disk_params);
         process_particle_collisions_and_sticking(data, disk_params, speed_mult);
     }
@@ -244,9 +277,11 @@ pub fn update_particle_swarm(
     >,
     lhb_state: Option<Res<crate::game::phases::LateHeavyBombardmentState>>,
     mut swarm: Option<ResMut<ParticleSwarmData>>,
+    empty_mesh: Option<Res<ParticleSwarmEmptyMesh>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut opt_swarm_materials: Option<ResMut<Assets<ParticleSwarmMaterial>>>,
     swarm_mat_query: Query<&MeshMaterial3d<ParticleSwarmMaterial>, With<ParticleSwarmMesh>>,
+    mut swarm_mesh_query: Query<&mut Mesh3d, With<ParticleSwarmMesh>>,
     mut last_size_state: Local<(usize, f32, f64, bool, usize, u32)>,
 ) {
     sync_swarm_material_render_scale(
@@ -255,8 +290,20 @@ pub fn update_particle_swarm(
         &swarm_mat_query,
     );
 
+    let gpu_active = config.enable_gpu_compute && config.gpu_compute_active;
+    if let Some(ref mut data) = swarm {
+        sync_swarm_mesh_handle_for_gpu_pulling(
+            gpu_active,
+            data,
+            empty_mesh.as_deref(),
+            &mut swarm_mesh_query,
+        );
+    }
+
     if time_warp.is_paused && !time_warp.step_once {
-        flush_dirty_mesh_if_paused(&mut swarm, &disk_params, &mut meshes);
+        if !gpu_active {
+            flush_dirty_mesh_if_paused(&mut swarm, &disk_params, &mut meshes);
+        }
         return;
     }
     let Some(mut data) = swarm else {
@@ -265,6 +312,10 @@ pub fn update_particle_swarm(
 
     let is_galaxy_collision = disk_params.outer_radius_au >= 10_000.0;
     if is_galaxy_collision {
+        if gpu_active {
+            data.is_dirty = false;
+            return;
+        }
         if data.is_dirty {
             update_gpu_billboard_mesh(&mut data, &disk_params, &mut meshes);
             last_size_state.4 = data.count;
@@ -288,7 +339,6 @@ pub fn update_particle_swarm(
     let tractor_pos_mass = compute_tractor_pos_mass(&player_state);
     let speed_mult = time_warp.multiplier as f32;
     let visual_flow_dt = compute_visual_flow_dt(speed_mult);
-    let gpu_active = config.enable_gpu_compute && config.gpu_compute_active;
     let (lhb_active, lhb_resonance) = lhb_state
         .as_ref()
         .map_or((false, false), |lhb| (lhb.is_active, lhb.resonance_crossed));
@@ -324,6 +374,11 @@ pub fn update_particle_swarm(
         speed_mult,
         sim_time.elapsed_years,
     );
+
+    if gpu_active {
+        data.is_dirty = false;
+        return;
+    }
 
     sync_swarm_billboard_mesh_selective(
         &mut data,

@@ -8,10 +8,14 @@ mod accretion_collisions;
 mod atmosphere_escape;
 #[path = "simulation_tests/atmospheres.rs"]
 mod atmospheres;
+#[path = "simulation_tests/audio.rs"]
+mod audio;
 #[path = "simulation_tests/black_hole_kerr.rs"]
 mod black_hole_kerr;
 #[path = "simulation_tests/black_hole_relativity.rs"]
 mod black_hole_relativity;
+#[path = "simulation_tests/body_visuals.rs"]
+mod body_visuals;
 #[path = "simulation_tests/camera.rs"]
 mod camera;
 #[path = "simulation_tests/camera_monotonicity.rs"]
@@ -32,6 +36,8 @@ mod engulfment;
 mod genesis_scenario;
 #[path = "simulation_tests/geological_epochs.rs"]
 mod geological_epochs;
+#[path = "simulation_tests/geological_epochs_stability.rs"]
+mod geological_epochs_stability;
 #[path = "simulation_tests/gmc_black_hole_sinking.rs"]
 mod gmc_black_hole_sinking;
 #[path = "simulation_tests/gmc_far_field.rs"]
@@ -78,6 +84,8 @@ mod orbits_and_effects;
 mod pebble_accretion;
 #[path = "simulation_tests/physics.rs"]
 mod physics;
+#[path = "simulation_tests/physics_dynamics.rs"]
+mod physics_dynamics;
 #[path = "simulation_tests/precision_events.rs"]
 mod precision_events;
 #[path = "simulation_tests/predictor.rs"]
@@ -90,10 +98,16 @@ mod relativistic_jets;
 mod relativity;
 #[path = "simulation_tests/save_load.rs"]
 mod save_load;
+#[path = "simulation_tests/save_load_phase5.rs"]
+mod save_load_phase5;
 #[path = "simulation_tests/scenarios.rs"]
 mod scenarios;
 #[path = "simulation_tests/scenarios_circumbinary.rs"]
 mod scenarios_circumbinary;
+#[path = "simulation_tests/scenarios_phase5.rs"]
+mod scenarios_phase5;
+#[path = "simulation_tests/scenarios_stability.rs"]
+mod scenarios_stability;
 #[path = "simulation_tests/shader_guardrails.rs"]
 mod shader_guardrails;
 #[path = "simulation_tests/shadows_and_eclipses.rs"]
@@ -102,6 +116,14 @@ mod shadows_and_eclipses;
 mod slingshot;
 #[path = "simulation_tests/space_weather.rs"]
 mod space_weather;
+#[path = "simulation_tests/stage1_hardening.rs"]
+mod stage1_hardening;
+#[path = "simulation_tests/stage2_hardening.rs"]
+mod stage2_hardening;
+#[path = "simulation_tests/stage2_shaders.rs"]
+mod stage2_shaders;
+#[path = "simulation_tests/stage3_gpu_shaders.rs"]
+mod stage3_gpu_shaders;
 #[path = "simulation_tests/storms.rs"]
 mod storms;
 #[path = "simulation_tests/supernova_enrichment.rs"]
@@ -118,6 +140,8 @@ mod terraforming;
 mod theia_moon;
 #[path = "simulation_tests/thermodynamics.rs"]
 mod thermodynamics;
+#[path = "simulation_tests/thermodynamics_climate.rs"]
+mod thermodynamics_climate;
 #[path = "simulation_tests/tides.rs"]
 mod tides;
 #[path = "simulation_tests/time_warp.rs"]
@@ -134,5 +158,7 @@ mod ui_modals_and_tabs;
 mod ui_widgets_v020;
 #[path = "simulation_tests/universal_stars.rs"]
 mod universal_stars;
+#[path = "simulation_tests/visuals_and_ui_phase6.rs"]
+mod visuals_and_ui_phase6;
 #[path = "simulation_tests/volcanism.rs"]
 mod volcanism;

@@ -98,7 +98,7 @@ impl ScenarioPreset {
                 "A 3.5 M_Jup interstellar rogue planet screaming through the solar system at 38 km/s, scattering orbits."
             }
             ScenarioPreset::LittleRedDot => {
-                "Cosmic Dawn (z ~ 8.5): A 100,000 M☉ supermassive black hole seed encased in a dense, dust-free primordial hydrogen gas cocoon spanning 60 AU."
+                "Cosmic Dawn (z ~ 8.5): A 400,000 M☉ (100,000 M☉-class) supermassive black hole seed encased in a dense, dust-free primordial hydrogen gas cocoon spanning 60 AU."
             }
             ScenarioPreset::PulsarSystem => {
                 "Millisecond pulsar (1.40 M☉, 6.22 ms relativistic spin) with 3 confirmed zombie exoplanets (Draugr, Poltergeist, Phobetor) and an irradiated post-supernova fallback disk."
@@ -170,6 +170,31 @@ impl ScenarioPreset {
 /// Message event to request loading a new sandbox scenario.
 #[derive(Event, Message, Debug, Clone, Copy)]
 pub struct LoadScenarioEvent(pub ScenarioPreset);
+
+/// Monotonic counter incremented on every scenario load, save load, or seed import.
+/// Systems with `Local<...>` caches or async GPU readback channels compare against this
+/// generation to flush stale state cleanly across reloads (including same-preset reloads).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScenarioReloadGeneration(pub u64);
+
+/// Returns `true` when the given scenario preset has no active particle-swarm disk or galaxy stars.
+/// Note: `GalacticCollision` renders its 100k–500k galaxy stars via `ParticleSwarmMesh`, so it is
+/// explicitly *not* an empty-swarm preset.
+pub fn is_empty_swarm_preset(preset: ScenarioPreset, disk_mass: f64) -> bool {
+    if preset == ScenarioPreset::GalacticCollision {
+        return false;
+    }
+    matches!(
+        preset,
+        ScenarioPreset::PulsarSystem
+            | ScenarioPreset::MagnetarOutburst
+            | ScenarioPreset::RelativisticBinary
+            | ScenarioPreset::KozaiLidovTriple
+            | ScenarioPreset::SagittariusAStar
+            | ScenarioPreset::MolecularCloudCluster
+            | ScenarioPreset::TidalDisruptionEvent
+    ) || disk_mass <= 0.0
+}
 
 /// Active state tracking for scenarios with ongoing events (e.g. Migration, Flyby).
 #[derive(Resource, Debug, Clone, Default)]
@@ -255,17 +280,167 @@ fn spawn_scenario_preset(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ScenarioResetResources<'w, 's> {
+    pub spawner: Option<ResMut<'w, crate::simulation::disk::planetesimals::PlanetesimalSpawner>>,
+    pub theia_state: Option<ResMut<'w, crate::simulation::accretion::TheiaImpactState>>,
+    pub galactic_tide: Option<ResMut<'w, crate::simulation::oort::GalacticTideState>>,
+    pub predictor: Option<ResMut<'w, crate::simulation::predictor::TrajectoryPredictorState>>,
+    pub slingshot: Option<ResMut<'w, SlingshotState>>,
+    pub campaign: Option<ResMut<'w, crate::simulation::campaign::CampaignState>>,
+    pub science: Option<ResMut<'w, crate::simulation::economy::ScienceData>>,
+    pub techs: Option<ResMut<'w, crate::simulation::economy::UnlockedTechs>>,
+    pub telemetry_history:
+        Option<ResMut<'w, crate::simulation::telemetry::SimulationTelemetryHistory>>,
+    pub event_log: Option<ResMut<'w, crate::game::ui::types::CosmicEventLog>>,
+    pub event_mgr: Option<ResMut<'w, crate::simulation::events::CosmicEventManager>>,
+    pub probe_counter: Option<ResMut<'w, crate::simulation::probes::ProbeCounter>>,
+    #[allow(
+        clippy::type_complexity,
+        reason = "Effect and debris resource pools cleared on scenario reset or save load"
+    )]
+    pub pools: (
+        Option<ResMut<'w, ImpactShockwavePool>>,
+        Option<ResMut<'w, ImpactEjectaPool>>,
+        Option<ResMut<'w, RocheDebrisPool>>,
+        Option<ResMut<'w, TidalDisruptionPool>>,
+        Option<ResMut<'w, crate::rendering::effects::supernova::SupernovaDebrisPool>>,
+        Option<ResMut<'w, crate::rendering::effects::remnants::PersistentRemnantPool>>,
+        Option<ResMut<'w, crate::rendering::effects::kilonova::KilonovaPool>>,
+        Option<ResMut<'w, crate::rendering::surface_terrain::SurfaceTerrainState>>,
+    ),
+    #[allow(
+        clippy::type_complexity,
+        reason = "GPU readback channels, reload generation, and timeline scrubber reset on load"
+    )]
+    pub gpu_and_reload: (
+        Option<ResMut<'w, ScenarioReloadGeneration>>,
+        Option<ResMut<'w, crate::gpu::gmc_far_field::GmcFarField>>,
+        Option<Res<'w, crate::gpu::compute_node::GpuReadbackReceiver>>,
+        Option<Res<'w, crate::gpu::gmc_fluid::GmcCollapseEventReceiver>>,
+        Option<ResMut<'w, crate::simulation::geology::types::TimelineScrubber>>,
+    ),
+    #[allow(
+        clippy::type_complexity,
+        reason = "Non-body transient entities cleared on scenario reset or save load"
+    )]
+    pub transient_entities: Query<
+        'w,
+        's,
+        Entity,
+        (
+            Without<CelestialBody>,
+            Or<(
+                With<crate::simulation::neutron_stars::AlfvenBlastWave>,
+                With<crate::rendering::effects::supernova::SupernovaVisualShell>,
+                With<crate::rendering::surface_terrain::PlanetarySurfaceTerrainRoot>,
+                With<crate::simulation::probes::SpaceProbe>,
+            )>,
+        ),
+    >,
+}
+
+/// Clears all transient non-body entities and ephemeral effect/gameplay pools.
+pub fn clear_transient_pools_and_entities(
+    commands: &mut Commands,
+    extra: &mut ScenarioResetResources,
+) {
+    for ent in extra.transient_entities.iter() {
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            cmd.try_despawn();
+        }
+    }
+    if let Some(spawner) = extra.spawner.as_mut() {
+        spawner.last_spawn_yr = 0.0;
+        spawner.last_minor_body_spawn_yr = 0.0;
+        spawner.total_spawned = 0;
+        spawner.name_counter = 0;
+    }
+    if let Some(theia) = extra.theia_state.as_mut() {
+        **theia = crate::simulation::accretion::TheiaImpactState::default();
+    }
+    if let Some(tide) = extra.galactic_tide.as_mut() {
+        **tide = crate::simulation::oort::GalacticTideState::default();
+    }
+    if let Some(pred) = extra.predictor.as_mut() {
+        pred.trajectory_points.clear();
+        pred.active_encounter = None;
+        pred.source_label.clear();
+    }
+    if let Some(slingshot) = extra.slingshot.as_mut() {
+        **slingshot = SlingshotState::default();
+    }
+    if let Some(camp) = extra.campaign.as_mut() {
+        **camp = crate::simulation::campaign::CampaignState::default();
+    }
+    if let Some(science) = extra.science.as_mut() {
+        **science = crate::simulation::economy::ScienceData::default();
+    }
+    if let Some(techs) = extra.techs.as_mut() {
+        **techs = crate::simulation::economy::UnlockedTechs::default();
+    }
+    if let Some(hist) = extra.telemetry_history.as_mut() {
+        hist.clear();
+    }
+    if let Some(log) = extra.event_log.as_mut() {
+        **log = crate::game::ui::types::CosmicEventLog::default();
+    }
+    if let Some(mgr) = extra.event_mgr.as_mut() {
+        **mgr = crate::simulation::events::CosmicEventManager::default();
+    }
+    if let Some(counter) = extra.probe_counter.as_mut() {
+        **counter = crate::simulation::probes::ProbeCounter::default();
+    }
+    if let Some(pool) = extra.pools.0.as_mut() {
+        **pool = ImpactShockwavePool::default();
+    }
+    if let Some(pool) = extra.pools.1.as_mut() {
+        **pool = ImpactEjectaPool::default();
+    }
+    if let Some(pool) = extra.pools.2.as_mut() {
+        **pool = RocheDebrisPool::default();
+    }
+    if let Some(pool) = extra.pools.3.as_mut() {
+        **pool = TidalDisruptionPool::default();
+    }
+    if let Some(pool) = extra.pools.4.as_mut() {
+        pool.clear();
+    }
+    if let Some(pool) = extra.pools.5.as_mut() {
+        pool.clear();
+    }
+    if let Some(pool) = extra.pools.6.as_mut() {
+        pool.clear();
+    }
+    if let Some(terrain) = extra.pools.7.as_mut() {
+        **terrain = crate::rendering::surface_terrain::SurfaceTerrainState::default();
+    }
+    if let Some(reload_gen) = extra.gpu_and_reload.0.as_mut() {
+        reload_gen.0 = reload_gen.0.wrapping_add(1);
+    }
+    if let Some(far_field) = extra.gpu_and_reload.1.as_mut() {
+        far_field.acc.clear();
+    }
+    if let Some(readback) = extra.gpu_and_reload.2.as_ref() {
+        while let Ok(bytes) = readback.rx.try_recv() {
+            let _ = readback.recycle_tx.try_send(bytes);
+        }
+    }
+    if let Some(collapse_rx) = extra.gpu_and_reload.3.as_ref() {
+        while collapse_rx.rx.try_recv().is_ok() {}
+    }
+    if let Some(scrubber) = extra.gpu_and_reload.4.as_mut() {
+        **scrubber = crate::simulation::geology::types::TimelineScrubber::default();
+    }
+}
+
 fn reset_scenario_simulation_state(
     sim_time: &mut SimTime,
     time_warp: &mut TimeWarp,
     energy_monitor: &mut EnergyMonitor,
     lhb_state: &mut crate::game::phases::LateHeavyBombardmentState,
     player_state: &mut PlayerInteractionState,
-    opt_scrubber: &mut Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
 ) {
-    if let Some(scrubber) = opt_scrubber {
-        **scrubber = crate::simulation::geology::types::TimelineScrubber::default();
-    }
     player_state.hovered_entity = None;
     player_state.impulse_target_entity = None;
     player_state.tractor_position = None;
@@ -273,6 +448,7 @@ fn reset_scenario_simulation_state(
 
     sim_time.elapsed_years = 0.0;
     sim_time.current_dt_yr = 0.001;
+    sim_time.step_count = 0;
     sim_time.visual_time_secs = 0.0;
     time_warp.multiplier = 1.0;
     time_warp.is_paused = false;
@@ -282,13 +458,7 @@ fn reset_scenario_simulation_state(
     energy_monitor.total_energy = 0.0;
     energy_monitor.relative_energy_drift = 0.0;
     energy_monitor.initialized = false;
-    lhb_state.is_active = false;
-    lhb_state.migration_progress = 0.0;
-    lhb_state.resonance_crossed = false;
-    lhb_state.manual_trigger_requested = false;
-    lhb_state.comets_scattered = 0;
-    lhb_state.scattered_bodies.clear();
-    lhb_state.time_active_years = 0.0;
+    *lhb_state = crate::game::phases::LateHeavyBombardmentState::default();
 }
 
 pub fn update_scenario_system_phase(
@@ -344,6 +514,7 @@ pub fn update_scenario_system_phase(
         ),
     };
     if let Some(pm) = phase_mgr {
+        **pm = crate::game::phases::PhaseManager::default();
         pm.current_phase = target_phase;
         pm.phase_description = desc;
         pm.milestones = milestones;
@@ -363,15 +534,7 @@ fn configure_scenario_particles_and_swarm(
     >,
     swarm: &mut Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
 ) {
-    let is_empty_swarm = matches!(
-        preset,
-        ScenarioPreset::PulsarSystem
-            | ScenarioPreset::MagnetarOutburst
-            | ScenarioPreset::RelativisticBinary
-            | ScenarioPreset::KozaiLidovTriple
-            | ScenarioPreset::SagittariusAStar
-            | ScenarioPreset::MolecularCloudCluster
-    ) || disk_params.disk_mass <= 0.0;
+    let is_empty_swarm = is_empty_swarm_preset(preset, disk_params.disk_mass);
 
     config.active_particles = if is_empty_swarm {
         0
@@ -417,6 +580,10 @@ fn align_camera_to_scenario(
 }
 
 /// System that listens for `LoadScenarioEvent` and reinitializes the entire simulation.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Scenario reload resets all simulation, UI, and pool resources cleanly"
+)]
 pub fn handle_load_scenario_events(
     mut commands: Commands,
     mut events: MessageReader<LoadScenarioEvent>,
@@ -435,70 +602,74 @@ pub fn handle_load_scenario_events(
         &mut Visibility,
         With<crate::rendering::particle_swarm::ParticleSwarmMesh>,
     >,
-    mut opt_scrubber: Option<ResMut<crate::simulation::geology::types::TimelineScrubber>>,
-    (mut phase_mgr, mut next_phase): (
+    (mut phase_mgr, mut next_phase, mut reset_res): (
         Option<ResMut<crate::game::phases::PhaseManager>>,
         Option<ResMut<NextState<crate::game::phases::SystemPhase>>>,
+        ScenarioResetResources,
     ),
 ) {
-    for event in events.read() {
-        let preset = event.0;
-        info!("🌟 Loading Scenario Preset: {:?}", preset);
+    let Some(preset) = events.read().last().map(|e| e.0) else {
+        return;
+    };
+    info!("🌟 Loading Scenario Preset: {:?}", preset);
 
-        for ent in bodies_query.iter() {
-            if let Ok(mut cmd) = commands.get_entity(ent) {
-                cmd.try_despawn();
-            }
+    for ent in bodies_query.iter() {
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            cmd.try_despawn();
         }
-
-        reset_scenario_simulation_state(
-            &mut sim_time,
-            &mut time_warp,
-            &mut energy_monitor,
-            &mut lhb_state,
-            &mut player_state,
-            &mut opt_scrubber,
-        );
-
-        update_scenario_system_phase(preset, &mut phase_mgr, &mut next_phase);
-
-        scenario_state.current_preset = preset;
-        scenario_state.scenario_time_years = 0.0;
-        scenario_state.migration_active = false;
-        match preset {
-            ScenarioPreset::Trappist1System
-            | ScenarioPreset::PulsarSystem
-            | ScenarioPreset::MagnetarOutburst
-            | ScenarioPreset::RelativisticBinary
-            | ScenarioPreset::KozaiLidovTriple
-            | ScenarioPreset::SagittariusAStar => {
-                config.gas_density_scale = 0.0;
-                disk_params.gas_disk_lifetime_yr = 0.0;
-            }
-            ScenarioPreset::SolarNebulaMmsn
-            | ScenarioPreset::AccretionDiskGenesis
-            | ScenarioPreset::MolecularCloudCluster => {
-                config.gas_density_scale = 1.0;
-                disk_params.gas_disk_lifetime_yr = 5.0e6;
-            }
-            _ => {}
-        }
-
-        let central_star_ent =
-            spawn_scenario_preset(preset, &mut commands, &mut disk_params, &mut scenario_state);
-
-        player_state.selected_entity = central_star_ent;
-
-        configure_scenario_particles_and_swarm(
-            preset,
-            &disk_params,
-            &mut config,
-            &mut swarm_mesh_query,
-            &mut swarm,
-        );
-
-        align_camera_to_scenario(preset, central_star_ent, &mut camera_query);
     }
+    clear_transient_pools_and_entities(&mut commands, &mut reset_res);
+
+    reset_scenario_simulation_state(
+        &mut sim_time,
+        &mut time_warp,
+        &mut energy_monitor,
+        &mut lhb_state,
+        &mut player_state,
+    );
+
+    update_scenario_system_phase(preset, &mut phase_mgr, &mut next_phase);
+
+    *disk_params = DiskParameters::default();
+    scenario_state.rogue_planet_entity = None;
+    scenario_state.current_preset = preset;
+    scenario_state.scenario_time_years = 0.0;
+    scenario_state.migration_active = false;
+    config.gas_density_scale = match preset {
+        ScenarioPreset::SolarNebulaMmsn
+        | ScenarioPreset::AccretionDiskGenesis
+        | ScenarioPreset::MolecularCloudCluster
+        | ScenarioPreset::HotJupiterMigration
+        | ScenarioPreset::LittleRedDot => 1.0,
+        ScenarioPreset::RoguePlanetFlyby => 0.5,
+        ScenarioPreset::Trappist1System
+        | ScenarioPreset::Kepler16Circumbinary
+        | ScenarioPreset::PulsarSystem
+        | ScenarioPreset::MagnetarOutburst
+        | ScenarioPreset::RelativisticBinary
+        | ScenarioPreset::KozaiLidovTriple
+        | ScenarioPreset::SagittariusAStar
+        | ScenarioPreset::GalacticCollision
+        | ScenarioPreset::TidalDisruptionEvent => {
+            disk_params.gas_disk_lifetime_yr = 0.0;
+            0.0
+        }
+    };
+
+    let central_star_ent =
+        spawn_scenario_preset(preset, &mut commands, &mut disk_params, &mut scenario_state);
+
+    player_state.selected_entity = central_star_ent;
+
+    configure_scenario_particles_and_swarm(
+        preset,
+        &disk_params,
+        &mut config,
+        &mut swarm_mesh_query,
+        &mut swarm,
+    );
+
+    align_camera_to_scenario(preset, central_star_ent, &mut camera_query);
 }
 
 /// System to execute continuous scenario dynamics (e.g. Type II migration drag).

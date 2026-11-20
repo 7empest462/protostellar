@@ -20,6 +20,8 @@ pub enum SupernovaType {
     TypeIa,
     /// Gentle thermal envelope shedding (0.5 - 8 M☉): multi-layer nebula leaving a White Dwarf
     PlanetaryNebula,
+    /// Cataclysmic Little Red Dot hydrogen cocoon blowout into a naked Supermassive Quasar
+    QuasarBlowout,
 }
 
 /// Chemical and physical layer of expanding stellar ejecta.
@@ -59,6 +61,7 @@ pub struct SupernovaExplosionInstance {
     pub center: Vec3,
     pub explosion_type: SupernovaType,
     pub blast_speed_au_s: f32,
+    pub initial_radius_au: f32,
     pub current_radius_au: f32,
     pub max_radius_au: f32,
     pub ejecta_mass_solar: f32,
@@ -105,8 +108,10 @@ fn spawn_ejecta_fragments(
     explosion_type: SupernovaType,
     speed_au_s: f32,
     center: Vec3,
+    spawn_radius: f32,
 ) -> Vec<SupernovaEjectaFragment> {
     let n_fragments = match explosion_type {
+        SupernovaType::QuasarBlowout => 240,
         SupernovaType::Hypernova => 160,
         SupernovaType::TypeII => 128,
         SupernovaType::TypeIa => 96,
@@ -131,8 +136,16 @@ fn spawn_ejecta_fragments(
         let speed_var = 0.55 + 0.90 * seed;
         let mut fragment_speed = speed_au_s * speed_var;
 
-        let layer = if explosion_type == SupernovaType::Hypernova && base_dir.y.abs() > 0.75 {
-            fragment_speed *= 1.45; // Relativistic polar jet boost
+        let is_polar_jet_type = matches!(
+            explosion_type,
+            SupernovaType::Hypernova | SupernovaType::QuasarBlowout
+        );
+        let layer = if is_polar_jet_type && base_dir.y.abs() > 0.72 {
+            fragment_speed *= if explosion_type == SupernovaType::QuasarBlowout {
+                1.85
+            } else {
+                1.45
+            };
             EjectaLayer::RelativisticJetBreakout
         } else if (0..n_fragments / 4).contains(&i) {
             EjectaLayer::CoreNickelIron
@@ -150,6 +163,7 @@ fn spawn_ejecta_fragments(
         };
 
         let scale = match explosion_type {
+            SupernovaType::QuasarBlowout => 0.45 + seed * 0.95,
             SupernovaType::Hypernova => 0.18 + seed * 0.25,
             SupernovaType::TypeII => 0.12 + seed * 0.18,
             SupernovaType::TypeIa => 0.10 + seed * 0.15,
@@ -157,7 +171,7 @@ fn spawn_ejecta_fragments(
         };
 
         fragments.push(SupernovaEjectaFragment {
-            pos: center + base_dir * 0.1,
+            pos: center + base_dir * spawn_radius.max(0.1),
             vel: base_dir * fragment_speed,
             scale,
             temp_k,
@@ -167,6 +181,48 @@ fn spawn_ejecta_fragments(
     }
 
     fragments
+}
+
+/// Spawns a cataclysmic multi-layer Quasar Blowout detonation expanding directly from the
+/// rendered visual radius of a Little Red Dot hydrogen cocoon.
+pub fn trigger_quasar_blowout_explosion(
+    pool: &mut SupernovaDebrisPool,
+    star_entity: Entity,
+    center: Vec3,
+    cocoon_mass_solar: f64,
+    bh_mass_solar: f64,
+    initial_visual_radius: f32,
+) {
+    let start_r = initial_visual_radius.max(1.77);
+    let blast_speed_au_s = 48.0;
+    let max_radius_au = 270.0;
+    let max_timer = 11.0;
+    let fragments = spawn_ejecta_fragments(
+        SupernovaType::QuasarBlowout,
+        blast_speed_au_s,
+        center,
+        start_r,
+    );
+    let ejecta_m = cocoon_mass_solar.max(1_000.0) as f32;
+    let metals_m = (bh_mass_solar.max(100.0) * 0.02) as f32;
+
+    pool.explosions.push(SupernovaExplosionInstance {
+        star_entity,
+        center,
+        explosion_type: SupernovaType::QuasarBlowout,
+        blast_speed_au_s,
+        initial_radius_au: start_r,
+        current_radius_au: start_r,
+        max_radius_au,
+        ejecta_mass_solar: ejecta_m,
+        metals_mass_solar: metals_m,
+        remnant_type: BodyType::BlackHole,
+        timer: 0.0,
+        max_timer,
+        flash_intensity: 1.0,
+        fragments,
+    });
+    pool.handled_entities.insert(star_entity);
 }
 
 /// Spawns a new visual and physical supernova explosion instance.
@@ -182,13 +238,14 @@ pub fn trigger_supernova_explosion(
     let explosion_type = determine_supernova_type(initial_mass, remnant_type);
 
     let (blast_speed_au_s, max_radius_au, max_timer, prompt_breakout_au) = match explosion_type {
+        SupernovaType::QuasarBlowout => (48.0, 270.0, 11.0, 1.77),
         SupernovaType::Hypernova => (75.0, 150.0, 3.0, 1.0),
         SupernovaType::TypeII => (45.0, 110.0, 2.5, 0.8),
         SupernovaType::TypeIa => (35.0, 95.0, 2.0, 0.4),
         SupernovaType::PlanetaryNebula => (4.5, 45.0, 4.0, 0.2),
     };
 
-    let fragments = spawn_ejecta_fragments(explosion_type, blast_speed_au_s, center);
+    let fragments = spawn_ejecta_fragments(explosion_type, blast_speed_au_s, center, 0.1);
     let ejecta_m = (initial_mass - remnant_mass).max(0.1) as f32;
     let metals_m = if ejected_metals_solar > 0.0 {
         ejected_metals_solar as f32
@@ -201,6 +258,7 @@ pub fn trigger_supernova_explosion(
         center,
         explosion_type,
         blast_speed_au_s,
+        initial_radius_au: prompt_breakout_au,
         current_radius_au: prompt_breakout_au,
         max_radius_au,
         ejecta_mass_solar: ejecta_m,
@@ -212,6 +270,20 @@ pub fn trigger_supernova_explosion(
         fragments,
     });
     pool.handled_entities.insert(star_entity);
+}
+
+fn apply_gmc_explosion_scale(pool: &mut SupernovaDebrisPool, is_gmc: bool) {
+    if is_gmc && let Some(exp) = pool.explosions.last_mut() {
+        let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
+            SupernovaType::QuasarBlowout => (28.0, 45.0),
+            SupernovaType::Hypernova => (16.0, 24.0),
+            SupernovaType::TypeII => (12.0, 18.0),
+            SupernovaType::TypeIa => (9.0, 14.0),
+            SupernovaType::PlanetaryNebula => (3.0, 8.0),
+        };
+        exp.blast_speed_au_s = scaled_blast_speed;
+        exp.max_radius_au = scaled_max_r;
+    }
 }
 
 /// Updates expanding ejecta fragments, applies interstellar drag, and blows away circumstellar matter.
@@ -227,6 +299,8 @@ pub fn update_supernova_explosions(
         &Mass,
         &CelestialBody,
         Option<&StellarEvolutionState>,
+        Option<&BlackHoleStarState>,
+        Option<&Transform>,
     )>,
     mut bodies_query: Query<(
         Entity,
@@ -263,21 +337,27 @@ pub fn update_supernova_explosions(
             ev.remnant_type,
             ev.ejected_metals_solar,
         );
-
-        if is_gmc && let Some(exp) = pool.explosions.last_mut() {
-            let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
-                SupernovaType::Hypernova => (16.0, 24.0),
-                SupernovaType::TypeII => (12.0, 18.0),
-                SupernovaType::TypeIa => (9.0, 14.0),
-                SupernovaType::PlanetaryNebula => (3.0, 8.0),
-            };
-            exp.blast_speed_au_s = scaled_blast_speed;
-            exp.max_radius_au = scaled_max_r;
-        }
+        apply_gmc_explosion_scale(&mut pool, is_gmc);
     }
 
-    // 2. Fallback check for stars entering SupernovaExplosion or PlanetaryNebulaEjection phase directly
-    for (entity, pos, mass, _body, opt_evo) in star_query.iter() {
+    // 2. Fallback check for stars entering SupernovaExplosion/PlanetaryNebulaEjection or LRD Quasar Blowout
+    for (entity, pos, mass, _body, opt_evo, opt_bhs, opt_tf) in star_query.iter() {
+        if let Some(bhs) = opt_bhs
+            && bhs.is_blown_out
+            && !pool.handled_entities.contains(&entity)
+        {
+            let center = Vec3::new(pos.0.x as f32, pos.0.y as f32, pos.0.z as f32);
+            let initial_vis_r = opt_tf.map_or(1.77, |tf| tf.scale.x).max(1.77);
+            trigger_quasar_blowout_explosion(
+                &mut pool,
+                entity,
+                center,
+                bhs.cocoon_mass_solar.max(50_000.0),
+                bhs.black_hole_mass_solar,
+                initial_vis_r,
+            );
+            continue;
+        }
         if let Some(evo) = opt_evo {
             let is_detonating = matches!(
                 evo.phase,
@@ -304,17 +384,7 @@ pub fn update_supernova_explosions(
                 trigger_supernova_explosion(
                     &mut pool, entity, center, mass.0, remnant_m, remnant, metals,
                 );
-
-                if is_gmc && let Some(exp) = pool.explosions.last_mut() {
-                    let (scaled_blast_speed, scaled_max_r) = match exp.explosion_type {
-                        SupernovaType::Hypernova => (16.0, 24.0),
-                        SupernovaType::TypeII => (12.0, 18.0),
-                        SupernovaType::TypeIa => (9.0, 14.0),
-                        SupernovaType::PlanetaryNebula => (3.0, 8.0),
-                    };
-                    exp.blast_speed_au_s = scaled_blast_speed;
-                    exp.max_radius_au = scaled_max_r;
-                }
+                apply_gmc_explosion_scale(&mut pool, is_gmc);
             }
         }
     }
@@ -350,19 +420,37 @@ fn advance_explosion_kinematics(exp: &mut SupernovaExplosionInstance, dt: f32) {
     exp.timer += dt;
     let progress = (exp.timer / exp.max_timer).clamp(0.0, 1.0);
 
-    // Flash decays sharply in the first second
-    exp.flash_intensity = (-3.5 * exp.timer).exp();
+    if exp.explosion_type == SupernovaType::QuasarBlowout {
+        // Two-act detonation: 0..0.45s violent superheating crack-swell, then relativistic blast wave
+        let breakout_t = 0.45_f32;
+        if exp.timer < breakout_t {
+            let u = (exp.timer / breakout_t).clamp(0.0, 1.0);
+            exp.flash_intensity = (0.45 + 0.55 * u * u).clamp(0.0, 1.0);
+            exp.current_radius_au = exp.initial_radius_au * (1.0 + 0.85 * u * u);
+        } else {
+            let post_t = exp.timer - breakout_t;
+            exp.flash_intensity = (-2.1 * post_t).exp();
+            let p_blast = (post_t / (exp.max_timer - breakout_t).max(0.1)).clamp(0.0, 1.0);
+            let r_breakout = exp.initial_radius_au * 1.85;
+            exp.current_radius_au =
+                r_breakout + (exp.max_radius_au - r_breakout) * p_blast.powf(0.72);
+        }
+    } else {
+        // Flash decays sharply in the first second
+        exp.flash_intensity = (-3.5 * exp.timer).exp();
 
-    // Expanding blast radius from prompt breakout front (r ~ t^0.65)
-    let prompt_breakout_au = match exp.explosion_type {
-        SupernovaType::Hypernova => 3.0,
-        SupernovaType::TypeII => 2.5,
-        SupernovaType::TypeIa => 0.8,
-        SupernovaType::PlanetaryNebula => 0.5,
-    };
-    let blast_progress = progress.powf(0.65);
-    exp.current_radius_au =
-        prompt_breakout_au + (exp.max_radius_au - prompt_breakout_au) * blast_progress;
+        // Expanding blast radius from prompt breakout front (r ~ t^0.65)
+        let prompt_breakout_au = match exp.explosion_type {
+            SupernovaType::QuasarBlowout => exp.initial_radius_au,
+            SupernovaType::Hypernova => 3.0,
+            SupernovaType::TypeII => 2.5,
+            SupernovaType::TypeIa => 0.8,
+            SupernovaType::PlanetaryNebula => 0.5,
+        };
+        let blast_progress = progress.powf(0.65);
+        exp.current_radius_au =
+            prompt_breakout_au + (exp.max_radius_au - prompt_breakout_au) * blast_progress;
+    }
 
     for frag in &mut exp.fragments {
         // Apply Rayleigh-Taylor curling turbulence
@@ -402,19 +490,31 @@ fn apply_swarm_blast(
         if dist >= r_prev && dist <= r_shock + 2.5 {
             let dir_x = if dist > 0.001 { px / dist } else { 1.0 };
             let dir_z = if dist > 0.001 { pz / dist } else { 0.0 };
-            let kick = 15.0; // Outward supersonic kick
+            let kick = if exp.explosion_type == SupernovaType::QuasarBlowout {
+                28.0
+            } else {
+                15.0
+            };
             if let Some(vel) = swarm_data.velocities.get_mut(i) {
                 vel[0] += dir_x * kick;
                 vel[2] += dir_z * kick;
             }
             if let Some(temp) = swarm_data.temperatures.get_mut(i) {
-                *temp = 4500.0;
+                *temp = if exp.explosion_type == SupernovaType::QuasarBlowout {
+                    8500.0
+                } else {
+                    4500.0
+                };
             }
             if let Some(comp) = swarm_data.compositions.get_mut(i) {
                 comp.ice_frac = 0.0;
             }
             if let Some(col) = swarm_data.colors.get_mut(i) {
-                *col = [1.0, 0.65, 0.25, 0.95];
+                *col = if exp.explosion_type == SupernovaType::QuasarBlowout {
+                    [1.0, 0.72, 0.35, 0.98]
+                } else {
+                    [1.0, 0.65, 0.25, 0.95]
+                };
             }
         }
     }
@@ -494,9 +594,11 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
     for exp in &pool.explosions {
         let p = (exp.timer / exp.max_timer).clamp(0.0, 1.0);
         let alpha = (1.0 - p).clamp(0.0, 1.0);
+        let is_quasar_blowout = exp.explosion_type == SupernovaType::QuasarBlowout;
 
         // 1. Prompt Core Detonation Flash (Shock Breakout Fireball)
-        if exp.flash_intensity > 0.01 {
+        // QuasarBlowout renders real 3D multi-shell volumetric WGSL meshes + HDR shards instead of wireframe cages.
+        if !is_quasar_blowout && exp.flash_intensity > 0.01 {
             let flash_r = (exp.timer * 4.5).min(2.5);
             gizmos.sphere(
                 Isometry3d::from_translation(exp.center),
@@ -511,34 +613,37 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
         }
 
         // 2. Supersonic Forward Shockwave Shell
-        let shock_col = match exp.explosion_type {
-            SupernovaType::Hypernova => Color::srgba(0.85, 0.45, 1.0, alpha * 0.85),
-            SupernovaType::TypeII => Color::srgba(0.40, 0.90, 1.0, alpha * 0.75),
-            SupernovaType::TypeIa => Color::srgba(1.0, 0.95, 0.80, alpha * 0.80),
-            SupernovaType::PlanetaryNebula => Color::srgba(0.25, 0.95, 0.75, alpha * 0.70),
-        };
+        if !is_quasar_blowout {
+            let shock_col = match exp.explosion_type {
+                SupernovaType::QuasarBlowout => Color::srgba(1.0, 0.42, 0.22, alpha * 0.85),
+                SupernovaType::Hypernova => Color::srgba(0.85, 0.45, 1.0, alpha * 0.85),
+                SupernovaType::TypeII => Color::srgba(0.40, 0.90, 1.0, alpha * 0.75),
+                SupernovaType::TypeIa => Color::srgba(1.0, 0.95, 0.80, alpha * 0.80),
+                SupernovaType::PlanetaryNebula => Color::srgba(0.25, 0.95, 0.75, alpha * 0.70),
+            };
 
-        gizmos.circle(
-            Isometry3d::new(
-                exp.center,
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
-            exp.current_radius_au,
-            shock_col,
-        );
-        gizmos.circle(
-            Isometry3d::new(
-                exp.center,
-                Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-            ),
-            exp.current_radius_au * 0.95,
-            Color::srgba(
-                shock_col.to_srgba().red,
-                shock_col.to_srgba().green,
-                shock_col.to_srgba().blue,
-                alpha * 0.45,
-            ),
-        );
+            gizmos.circle(
+                Isometry3d::new(
+                    exp.center,
+                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                ),
+                exp.current_radius_au,
+                shock_col,
+            );
+            gizmos.circle(
+                Isometry3d::new(
+                    exp.center,
+                    Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                ),
+                exp.current_radius_au * 0.95,
+                Color::srgba(
+                    shock_col.to_srgba().red,
+                    shock_col.to_srgba().green,
+                    shock_col.to_srgba().blue,
+                    alpha * 0.45,
+                ),
+            );
+        }
 
         // 3. 3D Filamentary Matter Ejecta Knots and Streamers
         for frag in &exp.fragments {
@@ -549,11 +654,16 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
                 EjectaLayer::OuterEnvelopeHydrogen => Color::srgba(0.95, 0.25, 0.30, alpha * 0.80),
             };
 
-            // Glowing ejecta knot
-            gizmos.sphere(Isometry3d::from_translation(frag.pos), frag.scale, knot_col);
+            if !is_quasar_blowout {
+                // Glowing ejecta knot
+                gizmos.sphere(Isometry3d::from_translation(frag.pos), frag.scale, knot_col);
+            }
 
             // Streamer trail connecting ejecta knot back toward center (Rayleigh-Taylor finger)
-            let tail_len = (frag.pos - exp.center).length().min(frag.scale * 6.0);
+            let streak_mult = if is_quasar_blowout { 12.0 } else { 6.0 };
+            let tail_len = (frag.pos - exp.center)
+                .length()
+                .min(frag.scale * streak_mult);
             let trail_dir = (exp.center - frag.pos).normalize_or_zero();
             let trail_end = frag.pos + trail_dir * tail_len;
 
@@ -561,7 +671,7 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
                 knot_col.to_srgba().red,
                 knot_col.to_srgba().green,
                 knot_col.to_srgba().blue,
-                alpha * 0.40,
+                alpha * if is_quasar_blowout { 0.62 } else { 0.40 },
             );
             gizmos.line(frag.pos, trail_end, trail_col);
         }
@@ -576,6 +686,7 @@ pub struct SupernovaVisualShell {
 
 fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaUniforms, f32) {
     let asphericity = match exp.explosion_type {
+        SupernovaType::QuasarBlowout => 0.65,
         SupernovaType::Hypernova => 0.45,
         SupernovaType::TypeII => 0.15,
         SupernovaType::TypeIa => 0.05,
@@ -587,7 +698,25 @@ fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaU
         SupernovaType::Hypernova => 1.0,
         SupernovaType::TypeIa => 2.0,
         SupernovaType::PlanetaryNebula => 3.0,
+        SupernovaType::QuasarBlowout => 4.0,
     };
+
+    let (core_color, mantle_color, envelope_color, jet_color) =
+        if exp.explosion_type == SupernovaType::QuasarBlowout {
+            (
+                Vec4::new(1.55, 0.92, 0.30, 1.0),
+                Vec4::new(0.20, 0.95, 1.15, 0.90),
+                Vec4::new(1.25, 0.18, 0.08, 0.95),
+                Vec4::new(0.45, 0.72, 1.65, 1.0),
+            )
+        } else {
+            (
+                Vec4::new(1.0, 0.75, 0.20, 1.0),
+                Vec4::new(0.15, 0.95, 0.85, 0.85),
+                Vec4::new(0.95, 0.25, 0.30, 0.80),
+                Vec4::new(0.65, 0.35, 1.0, 0.95),
+            )
+        };
 
     let uniforms = SupernovaUniforms {
         params: Vec4::new(
@@ -598,10 +727,10 @@ fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaU
         ),
         core_params: Vec4::new(exp.flash_intensity, type_id, exp.ejecta_mass_solar, 1.0),
         center_and_asphericity: Vec4::new(exp.center.x, exp.center.y, exp.center.z, asphericity),
-        core_color: Vec4::new(1.0, 0.75, 0.20, 1.0),
-        mantle_color: Vec4::new(0.15, 0.95, 0.85, 0.85),
-        envelope_color: Vec4::new(0.95, 0.25, 0.30, 0.80),
-        jet_color: Vec4::new(0.65, 0.35, 1.0, 0.95),
+        core_color,
+        mantle_color,
+        envelope_color,
+        jet_color,
     };
 
     let scale_r = exp.current_radius_au.max(0.05);
@@ -610,6 +739,7 @@ fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaU
 
 fn persistent_remnant_uniforms(rem: &PersistentSupernovaRemnant) -> (SupernovaUniforms, f32) {
     let asphericity = match rem.remnant_type {
+        SupernovaType::QuasarBlowout => 0.65,
         SupernovaType::Hypernova => 0.45,
         SupernovaType::TypeII => 0.15,
         SupernovaType::TypeIa => 0.05,
@@ -621,6 +751,7 @@ fn persistent_remnant_uniforms(rem: &PersistentSupernovaRemnant) -> (SupernovaUn
         SupernovaType::Hypernova => 1.0,
         SupernovaType::TypeIa => 2.0,
         SupernovaType::PlanetaryNebula => 3.0,
+        SupernovaType::QuasarBlowout => 4.0,
     };
 
     let core_color = if rem.has_pwn {
@@ -666,11 +797,19 @@ fn upsert_supernova_visual_shell(
     uniforms: SupernovaUniforms,
 ) {
     if let Some(&mut (_, ref mut trans, ref mat_handle)) = existing_shells.get_mut(&star_entity) {
-        trans.translation = center;
-        trans.scale = Vec3::splat(scale_r);
+        if trans.translation != center {
+            trans.translation = center;
+        }
+        let target_scale = Vec3::splat(scale_r);
+        if trans.scale != target_scale {
+            trans.scale = target_scale;
+        }
 
-        if let Some(mut mat) = materials.get_mut(mat_handle) {
-            mat.uniforms = uniforms;
+        if let Some(mat) = materials.get(mat_handle)
+            && mat.uniforms != uniforms
+            && let Some(mut mat_mut) = materials.get_mut(mat_handle)
+        {
+            mat_mut.uniforms = uniforms;
         }
     } else {
         let mat_handle = materials.add(SupernovaMaterial { uniforms });

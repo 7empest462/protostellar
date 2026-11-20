@@ -105,9 +105,11 @@ pub fn calculate_sync_timescale(
 
     let a = semi_major_axis_au;
     let r_over_a = (radius_au / a).clamp(1e-6, 0.5);
-    let mass_ratio = (m_body_solar / m_host_solar.max(1e-6)).clamp(1e-9, 1.0);
+    let m_host = m_host_solar.max(1e-6);
+    let mass_ratio =
+        ((m_body_solar / m_host) * ((m_host + m_body_solar) / m_host)).clamp(1e-12, 1e4);
 
-    // tau_sync = (2 alpha / 3) * (Q/k2) * (M_body / M_host) * (a / R)^3 / n
+    // tau_sync = (2 alpha / 3) * (Q/k2) * (M_body / M_host) * ((M_host + M_body) / M_host) * (a / R)^3 / n
     // Differentiated interior moment of inertia alpha = C / (M R^2) ~ 0.33
     let alpha = 0.33;
     let inv_k2_q = 1.0 / k2_over_q.max(1e-9);
@@ -146,13 +148,13 @@ pub fn calculate_tidal_heating_power(
     // Eccentricity tidal dissipation power (synchronous component)
     let p_ecc = 10.5 * k2_over_q * geom * n_si * e2;
 
-    // Non-synchronous rotational dissipation power
+    // Non-synchronous rotational dissipation power (constant-Q rheology: P_rot = Gamma * |omega - n|)
     let omega_norm = if mean_motion_rad_yr > 1e-6 {
-        ((spin_frequency_rad_yr - mean_motion_rad_yr) / mean_motion_rad_yr).clamp(-5.0, 5.0)
+        ((spin_frequency_rad_yr - mean_motion_rad_yr).abs() / mean_motion_rad_yr).clamp(0.0, 25.0)
     } else {
         0.0
     };
-    let p_rot = 1.5 * k2_over_q * geom * n_si * (omega_norm * omega_norm);
+    let p_rot = 1.5 * k2_over_q * geom * n_si * omega_norm;
 
     (p_ecc + p_rot).max(0.0)
 }

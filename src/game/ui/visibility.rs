@@ -91,12 +91,19 @@ fn update_inspector_tab_highlights(
 ) {
     for (action, base, mut bg, mut border) in tab_query.iter_mut() {
         if let UiButtonAction::SelectInspectorTab(tab) = action {
-            if *tab == active_tab {
-                *bg = BackgroundColor(Color::srgba(0.08, 0.28, 0.42, 0.95));
-                *border = BorderColor::all(Color::srgb(0.3, 1.0, 1.0));
+            let (target_bg, target_border) = if *tab == active_tab {
+                (
+                    BackgroundColor(Color::srgba(0.08, 0.28, 0.42, 0.95)),
+                    BorderColor::all(Color::srgb(0.3, 1.0, 1.0)),
+                )
             } else {
-                *bg = BackgroundColor(base.bg);
-                *border = BorderColor::all(base.border);
+                (BackgroundColor(base.bg), BorderColor::all(base.border))
+            };
+            if *bg != target_bg {
+                *bg = target_bg;
+            }
+            if *border != target_border {
+                *border = target_border;
             }
         }
     }
@@ -110,7 +117,7 @@ fn update_panel_nodes(
     hr_state: Option<&HrDiagramPanelState>,
 ) {
     for (mut node, element) in panels_query.iter_mut() {
-        node.display = match element {
+        let new_display = match element {
             HudPanelElement::RootContainer
             | HudPanelElement::QuickBarContainer
             | HudPanelElement::OrbitModeBadge
@@ -158,6 +165,9 @@ fn update_panel_nodes(
                 flex_or_none(hr_state.is_some_and(|h| h.is_open && h.is_minimized))
             }
         };
+        if node.display != new_display {
+            node.display = new_display;
+        }
     }
 }
 
@@ -166,7 +176,10 @@ fn update_builder_drawer(
     builder_state: &PlanetBuilderState,
 ) {
     if let Ok(mut node) = builder_query.single_mut() {
-        node.display = flex_or_none(builder_state.is_open && !builder_state.is_minimized);
+        let new_display = flex_or_none(builder_state.is_open && !builder_state.is_minimized);
+        if node.display != new_display {
+            node.display = new_display;
+        }
     }
 }
 
@@ -176,7 +189,11 @@ fn update_telemetry_drawer(
     hud_visibility: &HudVisibilityState,
 ) {
     if let Ok(mut node) = telemetry_query.single_mut() {
-        node.display = flex_or_none(telemetry_state.is_open && !hud_visibility.telemetry_minimized);
+        let new_display =
+            flex_or_none(telemetry_state.is_open && !hud_visibility.telemetry_minimized);
+        if node.display != new_display {
+            node.display = new_display;
+        }
     }
 }
 
@@ -186,9 +203,12 @@ fn update_hr_diagram_drawer(
     hud_visibility: &HudVisibilityState,
 ) {
     if let (Some(state), Ok(mut node)) = (hr_state, hr_query.single_mut()) {
-        node.display = flex_or_none(
+        let new_display = flex_or_none(
             state.is_open && !state.is_minimized && !hud_visibility.is_full_screen_clean,
         );
+        if node.display != new_display {
+            node.display = new_display;
+        }
     }
 }
 
@@ -207,106 +227,116 @@ fn update_dynamic_badges(
     opt_config: Option<&SimulationConfig>,
     opt_audio: Option<&crate::game::audio::CosmicAudioState>,
 ) {
-    for (mut text, mut opt_color, dynamic_text) in text_query.iter_mut() {
-        match dynamic_text {
+    for (mut text, opt_color, dynamic_text) in text_query.iter_mut() {
+        let (new_text, new_color): (&str, Option<Color>) = match dynamic_text {
             HudDynamicText::FullScreenBadge => {
-                text.0 = if hud_visibility.is_full_screen_clean {
-                    "👁️ Show HUD".to_string()
+                if hud_visibility.is_full_screen_clean {
+                    ("👁️ Show HUD", None)
                 } else {
-                    "⛶ Fullscreen".to_string()
-                };
+                    ("⛶ Fullscreen", None)
+                }
             }
             HudDynamicText::OrbitModeBadge => {
-                text.0 = format!("궤 Orbits: {} [Y]", player_state.orbit_mode.display_label());
+                let s = format!("궤 Orbits: {} [Y]", player_state.orbit_mode.display_label());
+                if text.0 != s {
+                    text.0 = s;
+                }
+                continue;
             }
             HudDynamicText::OverlayModeBadge => {
-                text.0 = format!("OVERLAY: {} [V]", player_state.overlay_mode.display_name());
+                let s = format!("OVERLAY: {} [V]", player_state.overlay_mode.display_name());
+                if text.0 != s {
+                    text.0 = s;
+                }
+                continue;
             }
             HudDynamicText::ParticleDensityBadge => {
                 let label = opt_config.map_or("500k [Ultra]", |c| c.particle_density.label());
-                text.0 = format!("✨ Swarm: {label}");
+                let s = format!("✨ Swarm: {label}");
+                if text.0 != s {
+                    text.0 = s;
+                }
+                continue;
             }
             HudDynamicText::TrajectoryPredictorBadge => {
                 let is_on = opt_predictor.is_none_or(|p| p.is_enabled);
-                text.0 = if is_on {
-                    "🎯 Forecast: ON [N]".to_string()
+                if is_on {
+                    ("🎯 Forecast: ON [N]", None)
                 } else {
-                    "🎯 Forecast: OFF [N]".to_string()
-                };
+                    ("🎯 Forecast: OFF [N]", None)
+                }
             }
             HudDynamicText::LagrangePointsBadge => {
                 let is_on = opt_lagrange.is_some_and(|l| l.show_lagrange_points)
                     || player_state.overlay_mode == DiagnosticOverlayMode::HillSpheresAndGaps;
-                text.0 = if is_on {
-                    "🪐 Lagrange: ON [Shift-L]".to_string()
+                if is_on {
+                    ("🪐 Lagrange: ON [Shift-L]", None)
                 } else {
-                    "🪐 Lagrange: OFF [Shift-L]".to_string()
-                };
+                    ("🪐 Lagrange: OFF [Shift-L]", None)
+                }
             }
             HudDynamicText::HabitableZoneBadge => {
                 let is_on = opt_hz.is_none_or(|h| h.is_enabled);
-                text.0 = if is_on {
-                    "🌱 Hab Zone: ON".to_string()
+                if is_on {
+                    ("🌱 Hab Zone: ON", None)
                 } else {
-                    "🌱 Hab Zone: OFF".to_string()
-                };
+                    ("🌱 Hab Zone: OFF", None)
+                }
             }
             HudDynamicText::AtmospheresBadge => {
                 let is_on = player_state.show_atmospheres();
-                text.0 = if is_on {
-                    "🌫️ Atmo: ON [Shift-A]".to_string()
+                if is_on {
+                    ("🌫️ Atmo: ON [Shift-A]", Some(Color::srgb(0.55, 0.88, 1.0)))
                 } else {
-                    "🪨 Atmo: OFF [Shift-A]".to_string()
-                };
-                if let Some(ref mut color) = opt_color {
-                    color.0 = if is_on {
-                        Color::srgb(0.55, 0.88, 1.0)
-                    } else {
-                        Color::srgb(1.0, 0.68, 0.35)
-                    };
+                    ("🪨 Atmo: OFF [Shift-A]", Some(Color::srgb(1.0, 0.68, 0.35)))
                 }
             }
             HudDynamicText::CloudsBadge => {
                 let is_on = player_state.show_clouds();
-                text.0 = if is_on {
-                    "☁️ Clouds: ON [Shift-W]".to_string()
+                if is_on {
+                    (
+                        "☁️ Clouds: ON [Shift-W]",
+                        Some(Color::srgb(0.85, 0.92, 1.0)),
+                    )
                 } else {
-                    "☀️ Clouds: OFF [Shift-W]".to_string()
-                };
-                if let Some(ref mut color) = opt_color {
-                    color.0 = if is_on {
-                        Color::srgb(0.85, 0.92, 1.0)
-                    } else {
-                        Color::srgb(1.0, 0.82, 0.38)
-                    };
+                    (
+                        "☀️ Clouds: OFF [Shift-W]",
+                        Some(Color::srgb(1.0, 0.82, 0.38)),
+                    )
                 }
             }
             HudDynamicText::AudioMuteBadge => {
                 let is_on = opt_audio.is_some_and(|a| a.enabled);
-                text.0 = if is_on {
-                    "🔊 Sound: ON [M]".to_string()
+                if is_on {
+                    ("🔊 Sound: ON [M]", Some(Color::srgb(0.35, 0.98, 0.65)))
                 } else {
-                    "🔇 Sound: OFF [M]".to_string()
-                };
-                if let Some(ref mut color) = opt_color {
-                    color.0 = if is_on {
-                        Color::srgb(0.35, 0.98, 0.65)
-                    } else {
-                        Color::srgb(0.68, 0.76, 0.90)
-                    };
+                    ("🔇 Sound: OFF [M]", Some(Color::srgb(0.68, 0.76, 0.90)))
                 }
             }
             HudDynamicText::InspectorChip => {
-                if let Some(target) = player_state.selected_entity {
+                let chip_text = if let Some(target) = player_state.selected_entity {
                     if let Ok(body) = names_query.get(target) {
-                        text.0 = format!("🔍 Inspector: {} ▲ Expand", body.name);
+                        format!("🔍 Inspector: {} ▲ Expand", body.name)
                     } else {
-                        text.0 = "🔍 Inspector ▲ Expand".to_string();
+                        "🔍 Inspector ▲ Expand".to_string()
                     }
                 } else {
-                    text.0 = "🔍 Inspector (No Selection) ▲ Expand".to_string();
+                    "🔍 Inspector (No Selection) ▲ Expand".to_string()
+                };
+                if text.0 != chip_text {
+                    text.0 = chip_text;
                 }
+                continue;
             }
+        };
+
+        if text.0 != new_text {
+            text.0 = new_text.to_string();
+        }
+        if let (Some(target_color), Some(mut color)) = (new_color, opt_color)
+            && color.0 != target_color
+        {
+            color.0 = target_color;
         }
     }
 }
@@ -374,7 +404,7 @@ pub fn update_scenario_contextual_ui(
                     }
                 });
 
-        node.display = match section {
+        let target_display = match section {
             InspectorSection::TerraformingBombardment | InspectorSection::HydrosphereBathymetry => {
                 // Targeted bombardment (Comet, Chondrite Asteroid, Volatile Salvo, Core Impactor)
                 // and hydrosphere bathymetry are universally available across all scenarios
@@ -386,74 +416,65 @@ pub fn update_scenario_contextual_ui(
             | InspectorSection::MassComposition
             | InspectorSection::Astrophysics => flex_or_none(!is_probe && matches_tab),
         };
+        if node.display != target_display {
+            node.display = target_display;
+        }
     }
 
     // 2. Synchronize individual buttons according to their scenario correlation
     for (action, mut node) in button_nodes.iter_mut() {
-        match action {
+        let target_display = match action {
             // Relativistic Binary Scenario actions
-            UiButtonAction::AccelerateInspiral => {
-                node.display = flex_or_none(
-                    preset == crate::simulation::scenarios::ScenarioPreset::RelativisticBinary,
-                );
-            }
+            UiButtonAction::AccelerateInspiral => flex_or_none(
+                preset == crate::simulation::scenarios::ScenarioPreset::RelativisticBinary,
+            ),
             // Solar Nebula MMSN Scenario actions
-            UiButtonAction::InjectEmbryo | UiButtonAction::TriggerLhb => {
-                node.display = flex_or_none(
-                    preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
-                );
-            }
+            UiButtonAction::InjectEmbryo | UiButtonAction::TriggerLhb => flex_or_none(
+                preset == crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn,
+            ),
             // Little Red Dot Scenario actions
             UiButtonAction::ToggleSuperEddington | UiButtonAction::TriggerBlowoutCocoon => {
-                node.display = flex_or_none(
-                    preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot,
-                );
+                flex_or_none(preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot)
             }
             // Pop-III Hypergiant, Surface Horizon Camera, and 3D Internal Cutaway are UNIVERSAL (always visible)
             UiButtonAction::SpawnInfallPop3Star
             | UiButtonAction::ToggleSurfaceHorizonCamera
-            | UiButtonAction::ToggleInternalCutaway => {
-                node.display = Display::Flex;
-            }
+            | UiButtonAction::ToggleInternalCutaway => Display::Flex,
             // Molecular Cloud Supernova shockwave trigger
-            UiButtonAction::TriggerGmcSupernovaShock => {
-                node.display = flex_or_none(
-                    preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster,
-                );
-            }
+            UiButtonAction::TriggerGmcSupernovaShock => flex_or_none(
+                preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster,
+            ),
             // Coronal Mass Ejection: Magnetar Outburst scenario or active stars
-            UiButtonAction::TriggerCoronalMassEjection => {
-                node.display = flex_or_none(
-                    preset == crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst
-                        || is_star_like,
-                );
-            }
+            UiButtonAction::TriggerCoronalMassEjection => flex_or_none(
+                preset == crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst
+                    || is_star_like,
+            ),
             // Biosphere seeding: universally available on solid non-star, non-probe worlds
-            UiButtonAction::SeedLife => {
-                node.display = flex_or_none(!is_star_like && !is_probe);
-            }
+            UiButtonAction::SeedLife => flex_or_none(!is_star_like && !is_probe),
             // Stellar ignition & aging: only active on hydrogen-burning or protostellar bodies (never degenerate remnants)
-            UiButtonAction::IgniteStar | UiButtonAction::AgeStar => {
-                node.display = flex_or_none(is_active_star);
-            }
+            UiButtonAction::IgniteStar | UiButtonAction::AgeStar => flex_or_none(is_active_star),
             // Geological Epoch scrubber: scenarios with planetary era timelines
-            UiButtonAction::ToggleEpochScrubberPanel => {
-                node.display = flex_or_none(matches!(
-                    preset,
-                    crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
-                        | crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
-                ));
-            }
-            _ => {}
+            UiButtonAction::ToggleEpochScrubberPanel => flex_or_none(matches!(
+                preset,
+                crate::simulation::scenarios::ScenarioPreset::SolarNebulaMmsn
+                    | crate::simulation::scenarios::ScenarioPreset::AccretionDiskGenesis
+            )),
+            _ => node.display,
+        };
+        if node.display != target_display {
+            node.display = target_display;
         }
     }
 
     // 3. Dynamic header text for exotic experiments
+    let target_header = if preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot {
+        "EXOTIC / LITTLE RED DOT:"
+    } else {
+        "EXOTIC PHENOMENA:"
+    };
     for mut text in header_text.iter_mut() {
-        if preset == crate::simulation::scenarios::ScenarioPreset::LittleRedDot {
-            text.0 = "EXOTIC / LITTLE RED DOT:".to_string();
-        } else {
-            text.0 = "EXOTIC PHENOMENA:".to_string();
+        if text.0 != target_header {
+            text.0 = target_header.to_string();
         }
     }
 }

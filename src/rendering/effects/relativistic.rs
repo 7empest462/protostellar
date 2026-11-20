@@ -424,7 +424,7 @@ pub fn draw_quasar_relativistic_jets(
     body_type: BodyType,
     config: &SimulationConfig,
     is_blown_out: bool,
-    blowout_p: f32,
+    _blowout_p: f32,
     light_dist: f32,
     elapsed: f32,
 ) {
@@ -444,31 +444,6 @@ pub fn draw_quasar_relativistic_jets(
 
         let isco_r = (current_visual_radius * 1.50).max(0.02);
         draw_quasar_isco_particles(gizmos, star_vec, isco_r, elapsed);
-    }
-
-    if blowout_p > 0.001 && blowout_p < 1.0 {
-        let r_blast = (60.0 + blowout_p * 240.0).clamp(60.0, 300.0);
-        let blast_fade = (1.0 - blowout_p).clamp(0.0, 1.0);
-        gizmos.circle(
-            Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            r_blast,
-            Color::srgba(1.0, 0.45, 0.20, 0.90 * blast_fade),
-        );
-        gizmos.circle(
-            Isometry3d::new(star_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            r_blast * 0.97,
-            Color::srgba(1.0, 0.75, 0.30, 0.75 * blast_fade),
-        );
-        gizmos.circle(
-            Isometry3d::new(star_vec, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-            r_blast,
-            Color::srgba(0.85, 0.25, 0.15, 0.50 * blast_fade),
-        );
-        gizmos.sphere(
-            Isometry3d::from_translation(star_vec),
-            r_blast,
-            Color::srgba(0.70, 0.20, 0.10, 0.06 * blast_fade),
-        );
     }
 }
 

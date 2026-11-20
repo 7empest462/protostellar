@@ -47,39 +47,40 @@ fn spawn_lhb_impactor(
 
     let r_spawn = 2.6 + ((c_idx * 17) % 24) as f64 * 0.05;
 
-    let (pos, vel, t_flight, target_ent) = if let Some((t_ent, t_pos, _t_vel)) = target_info {
-        let r_t = (t_pos.x * t_pos.x + t_pos.z * t_pos.z).sqrt().max(0.3);
-        let phi_t = t_pos.z.atan2(t_pos.x);
-        let omega_t = (G_ASTRO * star_m / (r_t * r_t * r_t)).sqrt();
-        let q = r_t; // Perihelion matches target's exact orbital distance!
-        let a = f64::midpoint(r_spawn, q);
-        let t_f = std::f64::consts::PI * (a * a * a / (G_ASTRO * star_m)).sqrt();
-        let delta_theta = omega_t * t_f;
-        let target_theta = phi_t + delta_theta;
-        let spawn_angle = target_theta + std::f64::consts::PI;
+    let (pos, vel, t_flight, target_ent, target_q) =
+        if let Some((t_ent, t_pos, _t_vel)) = target_info {
+            let r_t = (t_pos.x * t_pos.x + t_pos.z * t_pos.z).sqrt().max(0.3);
+            let phi_t = t_pos.z.atan2(t_pos.x);
+            let omega_t = (G_ASTRO * star_m / (r_t * r_t * r_t)).sqrt();
+            let q = r_t; // Perihelion matches target's exact orbital distance!
+            let a = f64::midpoint(r_spawn, q);
+            let t_f = std::f64::consts::PI * (a * a * a / (G_ASTRO * star_m)).sqrt();
+            let delta_theta = omega_t * t_f;
+            let target_theta = phi_t + delta_theta;
+            let spawn_angle = target_theta + std::f64::consts::PI;
 
-        let p = star_pos
-            + DVec3::new(
-                r_spawn * spawn_angle.cos(),
-                t_pos.y,
-                r_spawn * spawn_angle.sin(),
-            );
-        let v_apo = (G_ASTRO * star_m * (2.0 * q) / (r_spawn * (r_spawn + q))).sqrt();
-        let u_tan = DVec3::new(-spawn_angle.sin(), 0.0, spawn_angle.cos());
-        let v = u_tan * v_apo;
-        (p, v, t_f, Some(t_ent))
-    } else {
-        let angle = ((c_idx * 137) % 360) as f64 * std::f64::consts::PI / 180.0;
-        let p = star_pos + DVec3::new(r_spawn * angle.cos(), 0.0, r_spawn * angle.sin());
-        let q_target = 1.0;
-        let v_tangential =
-            (G_ASTRO * star_m * (2.0 * q_target) / (r_spawn * (r_spawn + q_target))).sqrt();
-        let v_inward = -v_tangential * 0.15;
-        let u_tan = DVec3::new(-angle.sin(), 0.0, angle.cos());
-        let u_rad = DVec3::new(angle.cos(), 0.0, angle.sin()).normalize_or_zero();
-        let v = u_tan * v_tangential + u_rad * v_inward;
-        (p, v, 1.5, None)
-    };
+            let p = star_pos
+                + DVec3::new(
+                    r_spawn * spawn_angle.cos(),
+                    t_pos.y,
+                    r_spawn * spawn_angle.sin(),
+                );
+            let v_apo = (G_ASTRO * star_m * (2.0 * q) / (r_spawn * (r_spawn + q))).sqrt();
+            let u_tan = DVec3::new(-spawn_angle.sin(), 0.0, spawn_angle.cos());
+            let v = u_tan * v_apo;
+            (p, v, t_f, Some(t_ent), q)
+        } else {
+            let angle = ((c_idx * 137) % 360) as f64 * std::f64::consts::PI / 180.0;
+            let p = star_pos + DVec3::new(r_spawn * angle.cos(), 0.0, r_spawn * angle.sin());
+            let q_target = 1.0;
+            let v_tangential =
+                (G_ASTRO * star_m * (2.0 * q_target) / (r_spawn * (r_spawn + q_target))).sqrt();
+            let v_inward = -v_tangential * 0.15;
+            let u_tan = DVec3::new(-angle.sin(), 0.0, angle.cos());
+            let u_rad = DVec3::new(angle.cos(), 0.0, angle.sin()).normalize_or_zero();
+            let v = u_tan * v_tangential + u_rad * v_inward;
+            (p, v, 1.5, None, q_target)
+        };
 
     let mut diff = InternalDifferentiation::default();
     diff.recalculate(mass_solar, rad_au, &comp);
@@ -111,7 +112,7 @@ fn spawn_lhb_impactor(
             spawn_time_yr: current_sim_yr,
             expected_arrival_yr: current_sim_yr + t_flight,
             target_r: r_spawn,
-            target_q: pos.length(),
+            target_q,
         });
     }
 }
@@ -199,14 +200,17 @@ fn step_lhb_impactor_guidance(
         *i_vel = i_vel.lerp(v_desired, blend);
     }
 
-    // Proximity capture: pull into contact and match closing velocity so accretion merges cleanly
-    let is_imminent_impact = dist <= contact_dist * 1.8
-        || swept_dist <= contact_dist * 2.2
-        || (current_sim_yr >= impactor.expected_arrival_yr && dist <= 0.045);
+    // Proximity capture: smoothly guide terminal approach across final 0.045 AU and only snap to
+    // surface contact if physically within contact/swept-tunneling distance.
+    let is_physical_contact = dist <= contact_dist * 1.8 || swept_dist <= contact_dist * 2.2;
+    let is_terminal_glide = current_sim_yr >= impactor.expected_arrival_yr && dist <= 0.045;
 
-    if is_imminent_impact {
-        *i_pos = t_pos - r_dir * (contact_dist * 0.50);
+    if is_physical_contact {
+        *i_pos = t_pos - r_dir * (contact_dist * 0.45);
         *i_vel = t_vel + r_dir * 0.5;
+    } else if is_terminal_glide {
+        let closing_speed = (dist / dt.max(1e-4)).clamp(1.5, 10.0);
+        *i_vel = i_vel.lerp(t_vel + r_dir * closing_speed, 0.75);
     } else if current_sim_yr > impactor.expected_arrival_yr + 0.8 {
         let r_sun = (*i_pos - star_pos).length();
         let v_radial = (*i_pos - star_pos).dot(*i_vel);
@@ -232,8 +236,16 @@ pub fn update_late_heavy_bombardment_cascade(
     star_query: StarBodyQuery,
     mut cascade_timer: Local<f64>,
     mut cascade_counter: Local<usize>,
+    mut last_gen: Local<u64>,
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
 ) {
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        *cascade_timer = 0.0;
+        *cascade_counter = 0;
+    }
     if time_warp.is_paused && !time_warp.step_once {
         return;
     }

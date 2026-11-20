@@ -4,7 +4,7 @@
 //! as well as forward-scattering water-ice geysers venting from polar fissures on Enceladus and Europa.
 
 use bevy::prelude::*;
-use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use super::orbits::{draw_occluded_circle, sphere_occlusion_fade};
 use crate::simulation::components::SpinState;
@@ -256,20 +256,16 @@ pub fn draw_volcanic_and_cryo_plumes(
     star_vec: Vec3,
     cam_pos: Vec3,
     elapsed: f32,
+    elapsed_years: f64,
 ) {
     if volc.active_plumes == 0 {
         return;
     }
 
-    let rot: Quat = if let Some(spin) = opt_spin {
-        let spin_dir = if spin.spin_vector.length_squared() > 1e-12 {
-            spin.spin_vector.normalize().as_vec3()
-        } else {
-            Vec3::Y
-        };
-        let period_s = (spin.rotation_period_hours * 3600.0).max(1.0) as f32;
-        let angle = (elapsed * 2.0 * PI / period_s) % TAU;
-        Quat::from_axis_angle(spin_dir, angle)
+    let (spin_dir_d, spin_angle_d) =
+        crate::simulation::probes::navigation::compute_planet_spin_frame(opt_spin, elapsed_years);
+    let rot = if opt_spin.is_some() {
+        Quat::from_axis_angle(spin_dir_d.as_vec3(), spin_angle_d as f32)
     } else {
         Quat::IDENTITY
     };

@@ -1,6 +1,7 @@
 //! ECS systems for detecting hierarchical triples, evaluating Kozai-Lidov resonance,
 //! applying secular orbital evolution, and coupling with tidal dissipation.
 
+use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use super::physics::*;
@@ -29,6 +30,7 @@ pub fn detect_hierarchical_triples(
         (Without<CentralStar>, Without<SpaceProbe>),
     >,
     existing_state_query: Query<&KozaiLidovState>,
+    mut candidates_buf: Local<Vec<(Entity, f64, f64, DVec3, DVec3)>>,
 ) {
     if time_warp
         .as_deref()
@@ -56,17 +58,18 @@ pub fn detect_hierarchical_triples(
     }
 
     // Collect outer perturber candidates: must have substantial mass (> 1e-5 M_sun, ~3 M_earth)
-    let candidates: Vec<(Entity, f64, f64, &str, bevy::math::DVec3, bevy::math::DVec3)> =
+    candidates_buf.clear();
+    candidates_buf.extend(
         all_bodies_query
             .iter()
             .filter(|(_, _, _, mass, _)| mass.0 >= 1e-5)
-            .map(|(ent, pos, vel, mass, body)| {
+            .map(|(ent, pos, vel, mass, _body)| {
                 let dist = (pos.0 - p_pos.0).length();
-                (ent, mass.0, dist, body.name.as_str(), pos.0, vel.0)
-            })
-            .collect();
+                (ent, mass.0, dist, pos.0, vel.0)
+            }),
+    );
 
-    if candidates.is_empty() {
+    if candidates_buf.is_empty() {
         return;
     }
 
@@ -89,8 +92,8 @@ pub fn detect_hierarchical_triples(
         let mut best_perturber = None;
         let mut max_quadrupole_strength = 0.0;
 
-        for (cand_idx, &(cand_ent, cand_mass, cand_dist, _, cand_pos, cand_vel)) in
-            candidates.iter().enumerate()
+        for (cand_idx, &(cand_ent, cand_mass, cand_dist, cand_pos, cand_vel)) in
+            candidates_buf.iter().enumerate()
         {
             if cand_ent == inner_ent || cand_dist < 2.5 * inner_dist {
                 continue;
@@ -104,11 +107,12 @@ pub fn detect_hierarchical_triples(
             }
         }
 
-        if let Some((cand_idx, pert_ent, pert_dist, pert_pos, pert_vel, pert_mass)) = best_perturber
+        if let Some((_cand_idx, pert_ent, pert_dist, pert_pos, pert_vel, pert_mass)) =
+            best_perturber
         {
-            let pert_name = candidates
-                .get(cand_idx)
-                .map_or_else(String::new, |c| c.3.to_string());
+            let pert_name = all_bodies_query
+                .get(pert_ent)
+                .map_or_else(|_| String::new(), |(_, _, _, _, b)| b.name.clone());
             let h_inner = (pos.0 - p_pos.0).cross(vel.0 - p_vel.0);
             let h_outer = (pert_pos - p_pos.0).cross(pert_vel - p_vel.0);
             let i_mut_rad = compute_mutual_inclination(h_inner, h_outer);
@@ -175,6 +179,8 @@ pub fn update_kozai_lidov_evolution(
         >,
     )>,
     mut disruption_events: MessageWriter<KozaiDisruptionEvent>,
+    mut perturber_snapshots_buf: Local<Vec<(Entity, String, DVec3, DVec3, f64)>>,
+    mut perturber_index_buf: Local<rustc_hash::FxHashMap<Entity, usize>>,
 ) {
     if !config.enable_kozai_lidov || (time_warp.is_paused && !time_warp.step_once) {
         return;
@@ -189,26 +195,24 @@ pub fn update_kozai_lidov_evolution(
     } else {
         time_warp.multiplier * (1.0 / 365.25)
     };
-    let dt_years = base_dt_yr * config.secular_time_scale;
 
     let need_names = bodies_params
         .p1()
         .iter()
         .any(|(_, _, _, _, _, _, state, _)| state.perturber_entity.is_none());
 
-    let perturber_snapshots: Vec<(Entity, String, bevy::math::DVec3, bevy::math::DVec3, f64)> =
-        bodies_params
-            .p0()
-            .iter()
-            .map(|(e, pos, vel, mass, body)| {
-                let name = if need_names {
-                    body.name.clone()
-                } else {
-                    String::new()
-                };
-                (e, name, pos.0, vel.0, mass.0)
-            })
-            .collect();
+    perturber_snapshots_buf.clear();
+    perturber_index_buf.clear();
+    for (e, pos, vel, mass, body) in bodies_params.p0().iter() {
+        let idx = perturber_snapshots_buf.len();
+        let name = if need_names {
+            body.name.clone()
+        } else {
+            String::new()
+        };
+        perturber_snapshots_buf.push((e, name, pos.0, vel.0, mass.0));
+        perturber_index_buf.insert(e, idx);
+    }
 
     let primary = PrimaryContext {
         entity: primary_ent,
@@ -220,11 +224,12 @@ pub fn update_kozai_lidov_evolution(
 
     for (inner_ent, pos, vel, mass, rad, body, mut state, opt_tide) in bodies_params.p1().iter_mut()
     {
-        // Resolve perturber: check if cached entity is still valid, else try matching by name
+        // Resolve perturber: check if cached entity is still valid via O(1) index map, else fallback to name
         let perturber_opt = resolve_perturber_snapshot(
             state.perturber_entity,
             &state.perturber_name,
-            &perturber_snapshots,
+            &perturber_snapshots_buf,
+            &perturber_index_buf,
         );
 
         let Some((pert_ent, pert_pos, pert_vel, pert_mass)) = perturber_opt else {
@@ -245,7 +250,7 @@ pub fn update_kozai_lidov_evolution(
 
         evolve_body_resonance(
             &config,
-            dt_years,
+            base_dt_yr,
             &primary,
             &perturber,
             inner_ent,
@@ -349,14 +354,23 @@ fn evolve_body_resonance(
     let roche_radius_au = compute_roche_disruption_radius(rad, primary.mass, mass);
     let danger_radius_au = roche_radius_au.max(primary.radius);
 
-    // Classify regime
+    let mu_in = crate::utils::constants::G_ASTRO * (primary.mass + mass);
+    let omega_mut = compute_mutual_argument_of_periapsis(
+        rel_inner_pos,
+        rel_inner_vel,
+        h_outer,
+        mu_in,
+        orb_in.argument_of_periapsis,
+    );
+
+    // Classify regime using mutual argument of periapsis
     let prev_regime = state.regime;
     state.regime = classify_kozai_regime(
         state.is_in_resonance,
         state.is_gr_suppressed,
         q_min,
         danger_radius_au,
-        orb_in.argument_of_periapsis,
+        omega_mut,
     );
 
     // Disruption detection: if current periastron breaches the stellar surface or Roche limit
@@ -376,9 +390,23 @@ fn evolve_body_resonance(
         }
     }
 
-    // Secular evolution and tidal coupling
+    // Secular evolution fed back into state vectors before tidal dissipation runs
     apply_secular_evolution_and_tides(
-        config, dt_years, orb_in, tau_kl, i_mut_rad, tau_gr, rad, &mut state, opt_tide,
+        config,
+        dt_years,
+        primary.vel,
+        rel_inner_pos,
+        vel,
+        h_outer,
+        orb_in,
+        omega_mut,
+        tau_kl,
+        i_mut_rad,
+        tau_gr,
+        mu_in,
+        rad,
+        &mut state,
+        opt_tide,
     );
 }
 
@@ -387,9 +415,11 @@ fn resolve_perturber_snapshot(
     cached_ent: Option<Entity>,
     cached_name: &str,
     snapshots: &[(Entity, String, bevy::math::DVec3, bevy::math::DVec3, f64)],
+    index_map: &rustc_hash::FxHashMap<Entity, usize>,
 ) -> Option<(Entity, bevy::math::DVec3, bevy::math::DVec3, f64)> {
     if let Some(ent) = cached_ent
-        && let Some(cand) = snapshots.iter().find(|s| s.0 == ent)
+        && let Some(&idx) = index_map.get(&ent)
+        && let Some(cand) = snapshots.get(idx)
     {
         return Some((cand.0, cand.2, cand.3, cand.4));
     }
@@ -401,18 +431,29 @@ fn resolve_perturber_snapshot(
     None
 }
 
-/// Helper to apply secular time step evolution and tidal dissipation coupling.
+/// Helper to apply secular time step evolution into Cartesian velocity vectors and tidal coupling.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Secular Kozai element integration updates orbital velocity vector and tidal state"
+)]
 fn apply_secular_evolution_and_tides(
     config: &KozaiLidovConfig,
-    dt_years: f64,
+    base_dt_yr: f64,
+    primary_vel: bevy::math::DVec3,
+    rel_pos: bevy::math::DVec3,
+    mut vel: Mut<SimVelocity>,
+    h_outer: bevy::math::DVec3,
     orb_in: crate::utils::math::OrbitalElements,
+    omega_mut: f64,
     tau_kl: f64,
     i_mut_rad: f64,
     tau_gr: f64,
+    mu_in: f64,
     rad_au: f64,
     state: &mut Mut<KozaiLidovState>,
     mut opt_tide: Option<Mut<TidalState>>,
 ) {
+    let dt_years = base_dt_yr * config.secular_time_scale;
     if !state.is_in_resonance || state.is_gr_suppressed || dt_years <= 1e-6 {
         return;
     }
@@ -425,25 +466,82 @@ fn apply_secular_evolution_and_tides(
         0.0
     };
 
-    // Secular stepping
-    let (new_e, new_i, _) = evaluate_secular_kozai_step(
-        orb_in.eccentricity,
-        i_mut_rad,
-        orb_in.argument_of_periapsis,
-        tau_kl,
-        dt_years,
-        gr_rate,
-    );
+    // Subtract the 1x physical N-body quadrupole contribution already integrated by the physics step
+    // so secular acceleration does not double-count quadrupole precession.
+    let extra_dt_years = base_dt_yr * (config.secular_time_scale - 1.0).max(0.0);
+    let (new_e, new_i, new_omega) = if extra_dt_years > 1e-9 {
+        evaluate_secular_kozai_step(
+            orb_in.eccentricity,
+            i_mut_rad,
+            omega_mut,
+            tau_kl,
+            extra_dt_years,
+            gr_rate,
+        )
+    } else {
+        (orb_in.eccentricity, i_mut_rad, omega_mut)
+    };
+
+    // Apply incremental secular torque into orbital state vectors when accelerated secular time scale is active
+    if extra_dt_years > 1e-9 {
+        let rel_vel = vel.0 - primary_vel;
+        let r_len = rel_pos.length();
+        let v_sq = rel_vel.length_squared();
+        if r_len > 1e-6 && v_sq > 1e-12 && orb_in.semi_major_axis > 1e-6 {
+            let mut rel_v = rel_vel;
+            let r_hat = rel_pos / r_len;
+
+            // 1. Apply inclination step delta_i around r_hat scaled by 1 / (r_hat · n_mut)
+            //    so the orbital angular momentum plane tilts by delta_i without moving rel_pos.
+            let delta_i = (new_i - i_mut_rad).clamp(-0.02, 0.02);
+            let h_in = rel_pos.cross(rel_v);
+            let plane_axis = h_outer.cross(h_in);
+            let n_mut = if plane_axis.length_squared() >= 1e-12 {
+                plane_axis.normalize()
+            } else {
+                r_hat
+            };
+            let proj = n_mut.dot(r_hat);
+            if delta_i.abs() > 1e-9 && proj.abs() > 0.15 {
+                let rot_angle = (delta_i / proj).clamp(-0.08, 0.08);
+                let (s, c) = rot_angle.sin_cos();
+                rel_v = rel_v * c + r_hat.cross(rel_v) * s + r_hat * (r_hat.dot(rel_v) * (1.0 - c));
+            }
+
+            // 2. Adjust tangential vs radial speed at constant energy (a = const) to track new_e
+            let target_h2 = mu_in * orb_in.semi_major_axis * (1.0 - new_e * new_e).max(1e-4);
+            let target_vt_sq = (target_h2 / (r_len * r_len)).min(v_sq);
+            let v_rad_mag = rel_v.dot(r_hat);
+            let v_tan_vec = rel_v - r_hat * v_rad_mag;
+            let cur_vt = v_tan_vec.length();
+            if cur_vt > 1e-8 && target_vt_sq >= 0.0 {
+                let new_vt = target_vt_sq.sqrt();
+                let new_vr_mag = (v_sq - target_vt_sq).max(0.0).sqrt();
+                let new_vr_sign = if v_rad_mag.abs() > 1e-10 {
+                    v_rad_mag.signum()
+                } else if new_omega.sin() < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                rel_v = (v_tan_vec / cur_vt) * new_vt + r_hat * (new_vr_sign * new_vr_mag);
+            }
+
+            if rel_v.is_finite() {
+                vel.0 = primary_vel + rel_v;
+            }
+        }
+    }
+
     if new_i.is_finite() {
         state.mutual_inclination_deg = new_i.to_degrees();
     }
 
-    // Couple with high-eccentricity tidal dissipation if enabled
+    // Couple with high-eccentricity tidal dissipation if enabled (update_tidal_evolution runs next)
     if config.enable_tidal_circularization
         && let Some(ref mut tide) = opt_tide
         && new_e > 0.4
     {
-        // Hut (1981) tidal energy dissipation boost factor
         let one_minus_e2 = (1.0 - new_e * new_e).max(0.01);
         let tidal_boost = ((1.0 + 3.75 * new_e * new_e) / one_minus_e2.powf(7.5)).clamp(1.0, 1e5);
         tide.tidal_heating_power_watts = (tide.tidal_heating_power_watts * tidal_boost).min(1e24);

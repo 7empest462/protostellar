@@ -17,6 +17,15 @@ pub const CRUST_SHEAR_MODULUS_CGS: f64 = 1.0e30;
 /// Standard crust volume in $\text{cm}^3$ ($V \approx 4\pi R^2 \Delta R \approx 1.25 \times 10^{18}\text{ cm}^3$).
 pub const CRUST_VOLUME_CGS: f64 = 1.25e18;
 
+/// Solar luminosity in CGS ($\text{erg/s}$).
+const SOLAR_LUMINOSITY_ERG_S: f64 = crate::utils::constants::SOLAR_LUMINOSITY_WATTS * 1.0e7;
+
+/// Prompt pulsating-tail duration of a giant magnetar flare in seconds (SGR 1806-20 scale).
+const PROMPT_FLARE_DURATION_S: f64 = 380.0;
+
+/// Baseline quiescent X-ray luminosity of an active magnetar in Solar units ($L_\odot$).
+const BASELINE_MAGNETAR_LUMINOSITY_SOLAR: f64 = 10_000.0;
+
 /// Computes the mechanical and magnetic shear strain energy released during a crust rupture:
 /// $$E_{\text{quake}} = \frac{1}{2} \mu_{\text{crust}} \theta_{\text{strain}}^2 V_{\text{crust}}$$
 pub fn evaluate_starquake_energy_erg(strain: f64) -> f64 {
@@ -32,8 +41,10 @@ pub fn trigger_instantaneous_starquake(
 ) -> (f64, f64) {
     let energy_erg = evaluate_starquake_energy_erg(stress.accumulated_magnetic_strain);
 
-    // Peak giant flare luminosity: L ~ 10^7 to 10^10 L_sun (e.g. SGR 1806-20 giant flare Dec 2004)
-    let flare_solar = (energy_erg / 1.0e39).clamp(1.0e6, 5.0e9);
+    // Peak flare luminosity matched to starquake energy released over prompt burst duration:
+    // L_peak = E_quake / (tau_prompt * L_sun)
+    let flare_solar =
+        (energy_erg / (PROMPT_FLARE_DURATION_S * SOLAR_LUMINOSITY_ERG_S)).clamp(1.0e6, 1.0e10);
 
     stress.last_starquake_energy_erg = energy_erg;
     stress.peak_flare_luminosity_solar = flare_solar;
@@ -87,7 +98,7 @@ pub fn step_magnetar_crust_stress_and_starquakes_system(
         }
     });
 
-    let mut manual_entities = Vec::new();
+    let mut manual_entities: smallvec::SmallVec<[Entity; 4]> = smallvec::SmallVec::new();
     let mut trigger_all = false;
     for ev in manual_triggers.read() {
         if let Some(ent) = ev.target_entity {
@@ -141,7 +152,8 @@ pub fn step_magnetar_crust_stress_and_starquakes_system(
             let decay_factor = (stress.burst_cooldown_years / 0.35).clamp(0.0, 1.0);
 
             if let Some(ref mut lum) = opt_lum {
-                lum.0 = 10.0 + stress.peak_flare_luminosity_solar * (decay_factor * decay_factor);
+                lum.0 = BASELINE_MAGNETAR_LUMINOSITY_SOLAR
+                    + stress.peak_flare_luminosity_solar * (decay_factor * decay_factor);
             }
             if let Some(ref mut em) = opt_em {
                 em.synchrotron_intensity = (15.0 * decay_factor as f32).max(1.0);
@@ -150,6 +162,9 @@ pub fn step_magnetar_crust_stress_and_starquakes_system(
             if stress.burst_cooldown_years <= 0.0 {
                 stress.burst_active = false;
                 stress.peak_flare_luminosity_solar = 0.0;
+                if let Some(ref mut lum) = opt_lum {
+                    lum.0 = BASELINE_MAGNETAR_LUMINOSITY_SOLAR;
+                }
             }
         }
     }
@@ -181,14 +196,14 @@ pub fn step_alfven_blast_waves_system(
 
     for (entity, mut wave, opt_pos) in blast_waves_query.iter_mut() {
         let delta_r = (wave.expansion_speed_au_yr * dt_years.min(0.001))
-            .clamp(0.05, wave.max_radius_au * 0.65);
+            .clamp(0.0, wave.max_radius_au * 0.65);
         let old_r = wave.radius_au;
         let new_r = old_r + delta_r;
         wave.radius_au = new_r;
         wave.age_seconds += dt_sec;
 
-        // Inverse-square geometric attenuation of the propagating pulse
-        let radial_ratio = old_r.max(1.0) / new_r.max(1.0);
+        // Inverse-square geometric attenuation of the propagating pulse from launch radius onward
+        let radial_ratio = (old_r.max(0.05) / new_r.max(0.05)).clamp(0.0, 1.0);
         let attenuation = radial_ratio.powi(2);
         wave.luminosity_solar = (wave.luminosity_solar * attenuation).max(0.0);
         wave.synchrotron_brightness = (wave.synchrotron_brightness * radial_ratio as f32).max(0.0);

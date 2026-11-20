@@ -550,7 +550,7 @@ fn test_tidal_geothermal_coupling_does_not_runaway_temperature() {
         ))
         .id();
 
-    // Advance simulation 10 times to establish equilibrium
+    // Advance simulation 10 times, then 20 more times during Goldreich-Soter spin-down (~632 yr)
     for _ in 0..10 {
         app.update();
     }
@@ -560,7 +560,6 @@ fn test_tidal_geothermal_coupling_does_not_runaway_temperature() {
         .unwrap()
         .surface_temperature_k;
 
-    // Advance simulation another 20 times
     for _ in 0..20 {
         app.update();
     }
@@ -570,17 +569,40 @@ fn test_tidal_geothermal_coupling_does_not_runaway_temperature() {
         .unwrap()
         .surface_temperature_k;
 
-    // Surface temperature should be a stable equilibrium (never accumulating to 3000 K clamp)
+    // During spin synchronization, dissipation monotonically cools (no runaway upward accumulation)
     assert!(
-        (temp_30 - temp_10).abs() < 1.0,
-        "Surface temperature must remain at stable equilibrium between step 10 ({temp_10:.1} K) and step 30 ({temp_30:.1} K)"
+        temp_30 <= temp_10 + 1e-3,
+        "Surface temperature must cool monotonically during spin-down rather than runaway upward (step 10: {temp_10:.1} K, step 30: {temp_30:.1} K)"
+    );
+
+    // Advance past spin-lock convergence (~1500 * 10 yr = 15,000 yr >> tau_sync ~ 1,600 yr) and verify steady equilibrium
+    for _ in 0..1500 {
+        app.update();
+    }
+    let temp_locked_start = app
+        .world()
+        .get::<PlanetaryClimate>(planet_ent)
+        .unwrap()
+        .surface_temperature_k;
+    for _ in 0..20 {
+        app.update();
+    }
+    let temp_locked_end = app
+        .world()
+        .get::<PlanetaryClimate>(planet_ent)
+        .unwrap()
+        .surface_temperature_k;
+
+    assert!(
+        (temp_locked_end - temp_locked_start).abs() < 1.0,
+        "Surface temperature must reach stable equilibrium once spin-synchronized (step 1530: {temp_locked_start:.1} K, step 1550: {temp_locked_end:.1} K)"
     );
     assert!(
-        temp_30 > 283.0,
-        "Surface temperature should be warmed above base equilibrium (283 K) by tidal dissipation, got {temp_30:.1} K"
+        temp_locked_end > 283.0,
+        "Surface temperature should remain warmed above base equilibrium (283 K) by eccentricity tidal dissipation, got {temp_locked_end:.1} K"
     );
     assert!(
-        temp_30 < 1000.0,
-        "Surface temperature must not runaway to extreme clamped values (3000 K), got {temp_30:.1} K"
+        temp_locked_end < 1000.0,
+        "Surface temperature must not runaway to extreme clamped values (3000 K), got {temp_locked_end:.1} K"
     );
 }

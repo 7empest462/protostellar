@@ -19,6 +19,24 @@ use crate::simulation::components::classify_body_by_mass_and_comp;
 
 use super::giant_impact::{count_parent_satellites, strip_tenuous_moon_gas};
 
+fn detach_orphaned_satellites(ctx: &mut CollisionContext, lost_parent: Entity) {
+    let mut orphaned: smallvec::SmallVec<[Entity; 4]> = smallvec::SmallVec::new();
+    for (ent, .., opt_sat, _) in ctx.bodies_query.iter() {
+        if ent != lost_parent
+            && opt_sat
+                .as_ref()
+                .is_some_and(|sat| sat.parent == lost_parent)
+        {
+            orphaned.push(ent);
+        }
+    }
+    for ent in orphaned {
+        if let Ok(mut cmd) = ctx.commands.get_entity(ent) {
+            cmd.remove::<SatelliteOf>();
+        }
+    }
+}
+
 pub fn handle_roche_disruption(
     ctx: &mut CollisionContext,
     pair: &SortedPair,
@@ -26,6 +44,8 @@ pub fn handle_roche_disruption(
     d_roche: f64,
     p_rad_au: f64,
 ) {
+    detach_orphaned_satellites(ctx, pair.secondary_entity);
+
     let ring_mass_earth = pair.s_m / EARTH_MASS_SOLAR;
     let inner_r = (p_rad_au * 1.25) as f32;
     let outer_r = (d_roche.min(p_rad_au * 3.2)).max(f64::from(inner_r) * 1.35) as f32;
@@ -36,10 +56,17 @@ pub fn handle_roche_disruption(
         p_cmd
             .entry::<PlanetaryRingSystem>()
             .and_modify(move |mut ring| {
-                ring.ring_mass_earth += ring_mass_earth;
+                let prev_mass = ring.ring_mass_earth.max(0.0);
+                let new_mass = prev_mass + ring_mass_earth;
+                if new_mass > 0.0 {
+                    ring.ice_fraction = ((f64::from(ring.ice_fraction) * prev_mass
+                        + f64::from(s_ice_frac) * ring_mass_earth)
+                        / new_mass)
+                        .clamp(0.0, 1.0) as f32;
+                }
+                ring.ring_mass_earth = new_mass;
                 ring.outer_radius_au = ring.outer_radius_au.max(outer_r);
                 ring.optical_depth = (ring.optical_depth + 0.35).min(1.0);
-                ring.ice_fraction = (ring.ice_fraction * 0.5 + s_ice_frac * 0.5).clamp(0.0, 1.0);
                 ring.silicate_fraction = (1.0 - ring.ice_fraction).max(0.0);
             })
             .or_insert(PlanetaryRingSystem {
@@ -140,19 +167,21 @@ pub fn handle_grazing_bounce(
         let total_m = m1 + m2;
         let kinetic_dissipation =
             0.5 * ((m1 * m2) / total_m.max(1e-30)) * (v_rel_normal * v_rel_normal);
-        let delta_temp = (kinetic_dissipation * 3e5).clamp(150.0, 3000.0);
+        let base_delta_temp = (kinetic_dissipation * 3e5).clamp(0.0, 600.0);
+        let delta_temp1 = (base_delta_temp * (m2 / total_m.max(1e-30))).clamp(0.0, 120.0);
+        let delta_temp2 = (base_delta_temp * (m1 / total_m.max(1e-30))).clamp(0.0, 120.0);
 
         if !is_central1
             && let Ok((_, _, _, mut v1, _, _, mut t1, ..)) = ctx.bodies_query.get_mut(e1)
         {
             v1.0 += impulse / m1;
-            t1.0 = (t1.0 + delta_temp).min(4000.0);
+            t1.0 = (t1.0 + delta_temp1).min(2500.0);
         }
         if !is_central2
             && let Ok((_, _, _, mut v2, _, _, mut t2, ..)) = ctx.bodies_query.get_mut(e2)
         {
             v2.0 -= impulse / m2;
-            t2.0 = (t2.0 + delta_temp).min(4000.0);
+            t2.0 = (t2.0 + delta_temp2).min(2500.0);
         }
 
         ctx.bounce_events.write(CollisionBounceEvent {
@@ -245,10 +274,14 @@ fn classify_merged_body_type(
         // Giant convective envelope swallows neutron star -> Thorne-Żytkow Object
         return BodyType::ThorneZytkow;
     }
-    if matches!(pair.p_type, BodyType::NeutronStar | BodyType::Pulsar)
-        && matches!(pair.s_type, BodyType::NeutronStar | BodyType::Pulsar)
-    {
-        return if total_mass > 2.17 {
+    if matches!(
+        pair.p_type,
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+    ) && matches!(
+        pair.s_type,
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+    ) {
+        return if total_mass > TOV_LIMIT_SOLAR {
             BodyType::BlackHole
         } else {
             // Sub-critical double neutron star merger -> Strange Quark Matter Star
@@ -265,23 +298,23 @@ fn classify_merged_body_type(
             } else {
                 classify_body_by_mass_and_comp(total_mass, merged_comp, true)
             }
-        } else if total_mass >= 25.0 {
-            BodyType::BlackHole // Direct collapse if merged mass is huge
-        } else if pair.p_type.is_remnant() {
-            pair.p_type
         } else {
-            pair.s_type
-        };
-    }
-    if pair.p_type.is_star_or_remnant() || pair.s_type.is_star_or_remnant() {
-        if pair.p_type.is_remnant() || pair.s_type.is_remnant() {
-            return if total_mass >= 25.0 {
-                BodyType::BlackHole
-            } else if pair.p_type.is_remnant() {
+            let remnant = if pair.p_type.is_remnant() {
                 pair.p_type
             } else {
                 pair.s_type
             };
+            collapse_remnant_if_over_limit(remnant, total_mass)
+        };
+    }
+    if pair.p_type.is_star_or_remnant() || pair.s_type.is_star_or_remnant() {
+        if pair.p_type.is_remnant() || pair.s_type.is_remnant() {
+            let remnant = if pair.p_type.is_remnant() {
+                pair.p_type
+            } else {
+                pair.s_type
+            };
+            return collapse_remnant_if_over_limit(remnant, total_mass);
         }
         let star_type = if pair.p_type.is_star_or_remnant() {
             pair.p_type
@@ -316,6 +349,31 @@ fn classify_merged_body_type(
     classify_body_by_mass_and_comp(total_mass, merged_comp, false)
 }
 
+fn collapse_remnant_if_over_limit(remnant: BodyType, total_mass: f64) -> BodyType {
+    if total_mass >= 25.0 {
+        return BodyType::BlackHole;
+    }
+    match remnant {
+        BodyType::WhiteDwarf => {
+            if total_mass > TOV_LIMIT_SOLAR {
+                BodyType::BlackHole
+            } else if total_mass > CHANDRASEKHAR_LIMIT_SOLAR {
+                BodyType::Pulsar
+            } else {
+                BodyType::WhiteDwarf
+            }
+        }
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar | BodyType::QuarkStar => {
+            if total_mass > TOV_LIMIT_SOLAR {
+                BodyType::BlackHole
+            } else {
+                remnant
+            }
+        }
+        _ => remnant,
+    }
+}
+
 fn apply_post_merger_thermo_state(
     commands: &mut Commands,
     primary_entity: Entity,
@@ -326,19 +384,24 @@ fn apply_post_merger_thermo_state(
     if physics.updated_type == BodyType::BlackHole {
         rad.0 = (1.974e-8 * physics.total_mass).max(1e-7);
         t.0 = 10.0;
-        if let Ok(mut cmd) = commands.get_entity(primary_entity) {
-            cmd.remove::<PlanetaryRingSystem>();
-            cmd.remove::<PlanetaryClimate>();
-            cmd.remove::<BiosphereState>();
-            cmd.insert(crate::simulation::relativity::kerr::KerrBlackHole::new(
-                physics.total_mass,
-                0.70,
-                bevy::math::DVec3::Y,
-            ));
-        }
+        crate::simulation::thermodynamics::stellar_lifecycle::attach_black_hole_remnant_components(
+            commands,
+            primary_entity,
+            physics.total_mass,
+        );
     } else if physics.updated_type == BodyType::QuarkStar {
         rad.0 = 0.00008;
         t.0 = 10_000_000.0;
+    } else if physics.updated_type == BodyType::WhiteDwarf {
+        rad.0 = (0.008 * SOLAR_RADIUS_AU * (0.6 / physics.total_mass.max(0.05)).cbrt())
+            .clamp(1.0e-6, 1.0e-3);
+        t.0 = t.0.max(25_000.0);
+    } else if matches!(
+        physics.updated_type,
+        BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar
+    ) {
+        rad.0 = rad.0.clamp(5.0e-8, 2.0e-4);
+        t.0 = t.0.max(500_000.0);
     } else if physics.updated_type == BodyType::ThorneZytkow {
         rad.0 = (SOLAR_RADIUS_AU * 180.0).min(0.85);
         t.0 = 3200.0;
@@ -415,11 +478,11 @@ fn compute_inelastic_merger_physics(
         0.5 * ((pair.p_m * pair.s_m) / total_mass.max(1e-30)) * (v_rel * v_rel + v_esc_sq * 0.25);
     let gamma = (pair.s_m / pair.p_m.max(1e-30)).min(1.0);
     let delta_temp = if gamma >= 0.05 {
-        (kinetic_loss * 5e5).clamp(250.0, 4000.0)
+        (gamma * 600.0).clamp(20.0, 320.0)
     } else {
-        (gamma * 1500.0).clamp(0.5, 50.0)
+        (gamma * 350.0).clamp(0.0, 18.0)
     };
-    let new_temp = (b1_temp + delta_temp).min(10000.0);
+    let new_temp = (b1_temp + delta_temp).min(2500.0);
 
     let updated_type = classify_merged_body_type(pair, total_mass, &merged_comp);
 
@@ -455,15 +518,19 @@ pub fn handle_inelastic_merger(
         return;
     }
 
-    let primary_snap = if pair.primary_entity == b1.entity {
-        b1
+    let initial_primary_temp = if pair.primary_entity == b1.entity {
+        b1.temp
     } else {
-        b2
+        b2.temp
     };
 
-    let physics = compute_inelastic_merger_physics(pair, v_rel, primary_snap.temp, ctx.star_mass);
-    let is_star_like = pair.p_type.is_star_or_remnant();
+    let physics =
+        compute_inelastic_merger_physics(pair, v_rel, initial_primary_temp, ctx.star_mass);
 
+    detach_orphaned_satellites(ctx, pair.secondary_entity);
+
+    let mut final_radius = physics.new_radius;
+    let mut final_temp = physics.new_temp;
     if let Ok((
         _,
         mut m,
@@ -491,6 +558,8 @@ pub fn handle_inelastic_merger(
             &mut rad,
             &mut t,
         );
+        final_radius = rad.0;
+        final_temp = t.0;
         *comp = physics.merged_comp;
         body.body_type = physics.updated_type;
 
@@ -502,14 +571,16 @@ pub fn handle_inelastic_merger(
         );
 
         if let Some(mut diff) = opt_diff {
-            diff.recalculate(physics.total_mass, physics.new_radius, &physics.merged_comp);
+            diff.recalculate(physics.total_mass, final_radius, &physics.merged_comp);
         }
         if let Some(mut spin) = opt_spin_mut {
-            spin.update_from_spin(physics.merged_spin, physics.total_mass, physics.new_radius);
+            spin.update_from_spin(physics.merged_spin, physics.total_mass, final_radius);
         }
     }
 
-    deliver_volatiles_and_crater(ctx, pair);
+    if !pair.p_type.is_star_or_remnant() && !physics.updated_type.is_star_or_remnant() {
+        deliver_volatiles_and_crater(ctx, pair);
+    }
 
     // Only remove SatelliteOf from secondary (despawned) entity, preserving orbit for primary if it was a satellite!
     if let Ok(mut cmd) = ctx.commands.get_entity(pair.secondary_entity) {
@@ -538,24 +609,25 @@ pub fn handle_inelastic_merger(
         primary_entity: pair.primary_entity,
         secondary_entity: pair.secondary_entity,
         merged_mass: physics.total_mass,
-        merged_position: physics.merged_pos + impact_dir * physics.new_radius.max(1e-5),
+        merged_position: physics.merged_pos + impact_dir * final_radius.max(1e-5),
         merged_velocity: physics.merged_vel,
         new_body_type: physics.updated_type,
-        energy_released: physics.kinetic_loss,
+        energy_released: physics.kinetic_loss * ASTRO_ENERGY_TO_JOULES,
     });
 
+    let primary_snap = if pair.primary_entity == b1.entity {
+        b1
+    } else {
+        b2
+    };
     primary_snap.mass = physics.total_mass;
     primary_snap.pos = physics.merged_pos;
     primary_snap.vel = physics.merged_vel;
     primary_snap.comp = physics.merged_comp;
     primary_snap.body_type = physics.updated_type;
     primary_snap.spin = physics.merged_spin;
-    if primary_snap.body_type == BodyType::BlackHole {
-        primary_snap.radius = (1.974e-8 * physics.total_mass).max(1e-7);
-    } else if !is_star_like {
-        primary_snap.radius = physics.new_radius;
-        primary_snap.temp = physics.new_temp;
-    }
+    primary_snap.radius = final_radius;
+    primary_snap.temp = final_temp;
 }
 
 fn deliver_volatiles_and_crater(ctx: &mut CollisionContext, pair: &SortedPair) {
@@ -594,11 +666,11 @@ pub fn handle_aerocapture(
 
     if is_capturing_body && valid_mass_ratio && !p_type.is_star_or_remnant() {
         let orbit_radius = p_pos.length().max(1e-4);
-        let hill_radius = orbit_radius * (p_m / (3.0 * ctx.star_mass)).cbrt();
+        let hill_radius = orbit_radius * (p_m / (3.0 * ctx.star_mass.max(0.01))).cbrt();
 
-        if min_dist < hill_radius * 0.65 {
+        if min_dist < hill_radius * 0.50 {
             let v_esc_local = (2.0 * G_ASTRO * p_m / min_dist.max(1e-6)).sqrt();
-            if (v_esc_local * 0.05..v_esc_local * 1.5).contains(&v_rel) {
+            if (v_esc_local * 0.05..v_esc_local).contains(&v_rel) {
                 let p_vis = f64::from(config.calc_visual_radius_for_type(p.radius, p.body_type));
                 let s_vis = f64::from(config.calc_visual_radius_for_type(s.radius, s.body_type));
                 let contact_r = p_vis + s_vis;
@@ -619,6 +691,13 @@ pub fn handle_aerocapture(
                     .rem_euclid(2.0 * PI);
                 let existing_sats =
                     count_parent_satellites(ctx, primary_entity, secondary_entity, &p_name);
+
+                detach_orphaned_satellites(ctx, secondary_entity);
+
+                let mut captured_rad = s.radius;
+                let mut captured_comp = s.comp;
+                let mut captured_type = s.body_type;
+                let mut captured_name = s_name.clone();
 
                 if let Ok((
                     _,
@@ -657,9 +736,18 @@ pub fn handle_aerocapture(
                         body.name = format!("Captured {s_name}");
                     }
 
+                    captured_rad = rad.0;
+                    captured_comp = *comp;
+                    captured_type = body.body_type;
+                    captured_name.clone_from(&body.name);
+
                     if let Some(mut sat) = opt_sat_mut {
+                        sat.semi_major_axis_au = if sat.parent == primary_entity {
+                            orbit_dist_au.max(sat.semi_major_axis_au)
+                        } else {
+                            orbit_dist_au
+                        };
                         sat.parent = primary_entity;
-                        sat.semi_major_axis_au = orbit_dist_au.max(sat.semi_major_axis_au);
                         sat.orbital_period_years = p_moon_yr;
                         sat.true_anomaly = init_anomaly;
                     } else if let Ok(mut s_cmd) = ctx.commands.get_entity(secondary_entity) {
@@ -670,7 +758,19 @@ pub fn handle_aerocapture(
                             true_anomaly: init_anomaly,
                         });
                     }
+                    ctx.newly_formed_moons.insert(secondary_entity);
                 }
+
+                let sec_snap = if secondary_entity == b1.entity {
+                    b1
+                } else {
+                    b2
+                };
+                sec_snap.radius = captured_rad;
+                sec_snap.comp = captured_comp;
+                sec_snap.body_type = captured_type;
+                sec_snap.name = captured_name;
+                sec_snap.satellite_parent = Some(primary_entity);
             }
         }
     }
@@ -684,6 +784,8 @@ pub fn handle_tidal_disruption_event(
     b1: &mut BodySnapshot,
     b2: &mut BodySnapshot,
 ) {
+    detach_orphaned_satellites(ctx, pair.secondary_entity);
+
     let primary_snap = if pair.primary_entity == b1.entity {
         b1
     } else {
@@ -775,7 +877,12 @@ pub fn handle_tidal_disruption_event(
         merged_position: merged_pos,
         merged_velocity: merged_vel,
         new_body_type: BodyType::BlackHole,
-        energy_released: 0.1 * pair.s_m * SPEED_OF_LIGHT_AU_YR * SPEED_OF_LIGHT_AU_YR * 0.01,
+        energy_released: 0.1
+            * pair.s_m
+            * SPEED_OF_LIGHT_AU_YR
+            * SPEED_OF_LIGHT_AU_YR
+            * 0.01
+            * ASTRO_ENERGY_TO_JOULES,
     });
 
     primary_snap.mass = total_mass;

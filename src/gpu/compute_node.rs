@@ -3,7 +3,6 @@
 use bevy::prelude::*;
 use bevy::render::Extract;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
-use rayon::prelude::*;
 use std::f64::consts::PI;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -26,21 +25,26 @@ pub const MAX_GPU_PARTICLES: u32 = 500_000;
 #[derive(Resource)]
 pub struct GpuParticleOrbitEngine {
     pub particle_buffer: wgpu::Buffer,
+    pub buffer_uid: u64,
     pub uniform_buffer: wgpu::Buffer,
+    pub accretion_summary_buffer: wgpu::Buffer,
     pub staging_buffers: [wgpu::Buffer; 2],
     pub staging_states: [Arc<AtomicU8>; 2],
-    pub staging_counts: [u32; 2],
+    pub staging_epochs: [u64; 2],
+    pub restart_epoch: u64,
+    pub last_reload_generation: u64,
     pub current_staging_idx: usize,
     pub bind_group: wgpu::BindGroup,
     pub pipeline: wgpu::ComputePipeline,
     pub num_particles: u32,
+    pub base_mass: f32,
     pub is_ready: bool,
     pub last_disk_outer_r: f32,
     pub last_star_mass: f32,
     pub last_elapsed_years: f64,
 }
 
-/// Resource in the Main world that receives GPU particle readback data.
+/// Resource in the Main world that receives compact GPU readback data.
 #[derive(Resource)]
 pub struct GpuReadbackReceiver {
     pub rx: flume::Receiver<Vec<u8>>,
@@ -53,6 +57,8 @@ pub struct GpuSimExtractedParams {
     pub is_paused: bool,
     pub step_once: bool,
     pub enable_gpu_compute: bool,
+    pub is_swarm_visible: bool,
+    pub particle_render_scale: f32,
     pub dt: f32,
     pub star_pos: [f32; 3],
     pub star_mass: f32,
@@ -67,12 +73,18 @@ pub struct GpuSimExtractedParams {
     pub tractor_pos_mass: [f32; 4],
     pub massive_bodies: [MassiveBodyGpu; 32],
     pub count: u32,
+    pub active_particles: u32,
     pub disk_mass: f32,
     pub elapsed_years: f64,
+    pub reload_generation: u64,
 }
 
 /// Extracts state from the Main App into the Render Sub-App.
-#[allow(clippy::type_complexity, reason = "GPU Sim Data Extraction")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "GPU Sim Data Extraction"
+)]
 pub fn extract_gpu_sim_data(
     mut commands: Commands,
     config: Extract<Res<SimulationConfig>>,
@@ -102,8 +114,17 @@ pub fn extract_gpu_sim_data(
             ),
         >,
     >,
+    swarm_vis_query: Extract<
+        Query<&Visibility, With<crate::rendering::particle_swarm::ParticleSwarmMesh>>,
+    >,
     scenario_state: Extract<Option<Res<crate::simulation::scenarios::ActiveScenarioState>>>,
+    reload_gen: Extract<Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>>,
 ) {
+    let reload_generation = reload_gen.as_ref().map_or(0, |g| g.0);
+    let is_swarm_visible = swarm_vis_query
+        .iter()
+        .next()
+        .is_none_or(|v| *v != Visibility::Hidden);
     if let Some(scenario_state) = scenario_state.as_ref()
         && scenario_state.current_preset
             == crate::simulation::scenarios::ScenarioPreset::GalacticCollision
@@ -112,6 +133,8 @@ pub fn extract_gpu_sim_data(
             is_paused: time_warp.is_paused,
             step_once: time_warp.step_once,
             enable_gpu_compute: false, // DISABLE PREVIOUS COMPUTE NODE
+            is_swarm_visible: false,
+            particle_render_scale: config.particle_render_scale,
             dt: 0.0,
             star_pos: [0.0; 3],
             star_mass: 0.0,
@@ -126,8 +149,10 @@ pub fn extract_gpu_sim_data(
             tractor_pos_mass: [0.0; 4],
             massive_bodies: [MassiveBodyGpu::default(); 32],
             count: 0,
+            active_particles: 0,
             disk_mass: 0.0,
             elapsed_years: 0.0,
+            reload_generation,
         });
         return;
     }
@@ -179,6 +204,8 @@ pub fn extract_gpu_sim_data(
         is_paused: time_warp.is_paused,
         step_once: time_warp.step_once,
         enable_gpu_compute: config.enable_gpu_compute,
+        is_swarm_visible,
+        particle_render_scale: config.particle_render_scale,
         dt: visual_flow_dt,
         star_pos,
         star_mass,
@@ -193,8 +220,10 @@ pub fn extract_gpu_sim_data(
         tractor_pos_mass,
         massive_bodies,
         count: config.target_particle_count as u32,
+        active_particles: config.active_particles,
         disk_mass: disk_params.disk_mass as f32,
         elapsed_years: sim_time.elapsed_years,
+        reload_generation,
     });
 }
 
@@ -288,6 +317,16 @@ fn create_gpu_orbit_pipeline(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     });
 
@@ -310,7 +349,12 @@ fn create_gpu_orbit_pipeline(
 }
 
 /// Initializes the 100k-500k particle VRAM storage buffers and compiles WGSL compute pipelines in RenderApp.
-pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, count: u32) {
+pub fn setup_gpu_simulation(
+    commands: &mut Commands,
+    render_dev: &RenderDevice,
+    count: u32,
+    reload_generation: u64,
+) {
     let device = render_dev.wgpu_device();
     let n_particles = count.clamp(50_000, MAX_GPU_PARTICLES);
     let default_params = DiskParameters::default();
@@ -351,6 +395,15 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, 
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
+    let summary_bytes = (GPU_ACCRETION_SUMMARY_SLOTS * std::mem::size_of::<u32>()) as u64;
+    let accretion_summary_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Protostellar Accretion Summary Buffer"),
+        contents: bytemuck::cast_slice(&[0u32; GPU_ACCRETION_SUMMARY_SLOTS]),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+    });
+
     let (bind_group_layout, pipeline) = create_gpu_orbit_pipeline(device);
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -365,20 +418,23 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, 
                 binding: 1,
                 resource: uniform_buffer.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: accretion_summary_buffer.as_entire_binding(),
+            },
         ],
     });
 
-    let staging_buffer_size =
-        u64::from(MAX_GPU_PARTICLES) * std::mem::size_of::<GpuParticle>() as u64;
+    // Compact 132-byte staging buffers replace the legacy 24 MB/frame full-particle readback
     let staging_buffer_0 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Protostellar Orbit Staging Readback Buffer 0"),
-        size: staging_buffer_size,
+        label: Some("Protostellar Compact Accretion Staging Buffer 0"),
+        size: summary_bytes,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let staging_buffer_1 = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Protostellar Orbit Staging Readback Buffer 1"),
-        size: staging_buffer_size,
+        label: Some("Protostellar Compact Accretion Staging Buffer 1"),
+        size: summary_bytes,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -388,16 +444,23 @@ pub fn setup_gpu_simulation(commands: &mut Commands, render_dev: &RenderDevice, 
         Arc::new(AtomicU8::new(STAGING_STATE_IDLE)),
     ];
 
+    let base_mass = (default_params.disk_mass / f64::from(n_particles.max(1))) as f32;
+
     commands.insert_resource(GpuParticleOrbitEngine {
         particle_buffer,
+        buffer_uid: crate::gpu::particle_pipeline::next_gpu_buffer_uid(),
         uniform_buffer,
+        accretion_summary_buffer,
         staging_buffers: [staging_buffer_0, staging_buffer_1],
         staging_states,
-        staging_counts: [0, 0],
+        staging_epochs: [0, 0],
+        restart_epoch: 0,
+        last_reload_generation: reload_generation,
         current_staging_idx: 0,
         bind_group,
         pipeline,
         num_particles: n_particles,
+        base_mass,
         is_ready: true,
         last_disk_outer_r: default_params.outer_radius_au as f32,
         last_star_mass: default_params.central_star_mass as f32,
@@ -410,8 +473,11 @@ fn check_and_reseed_scenario(
     params: &GpuSimExtractedParams,
     queue: &RenderQueue,
 ) {
-    let count_changed = params.count > 0 && params.count != engine.num_particles;
-    let scenario_restarted = params.elapsed_years < engine.last_elapsed_years;
+    let clamped_count = params.count.clamp(50_000, MAX_GPU_PARTICLES);
+    let count_changed = params.count > 0 && clamped_count != engine.num_particles;
+    let scenario_restarted = params.reload_generation != engine.last_reload_generation
+        || params.elapsed_years < engine.last_elapsed_years;
+    engine.last_reload_generation = params.reload_generation;
     engine.last_elapsed_years = params.elapsed_years;
     if !scenario_restarted
         && !count_changed
@@ -422,7 +488,14 @@ fn check_and_reseed_scenario(
     }
 
     if count_changed {
-        engine.num_particles = params.count.clamp(50_000, MAX_GPU_PARTICLES);
+        engine.num_particles = clamped_count;
+    }
+    engine.restart_epoch = engine.restart_epoch.wrapping_add(1);
+    for (state, staging_buf) in std::iter::zip(&engine.staging_states, &engine.staging_buffers) {
+        if state.load(Ordering::Acquire) == STAGING_STATE_MAPPED {
+            staging_buf.unmap();
+            state.store(STAGING_STATE_IDLE, Ordering::Release);
+        }
     }
 
     let mut rng = fastrand::Rng::new();
@@ -499,44 +572,58 @@ fn check_and_reseed_scenario(
         0,
         bytemuck::cast_slice(&reseed_particles),
     );
+    engine.base_mass = if is_empty_disk {
+        0.0
+    } else {
+        (disk_mass / f64::from(engine.num_particles.max(1))) as f32
+    };
     engine.last_disk_outer_r = params.outer_radius;
     engine.last_star_mass = params.star_mass;
+}
+
+/// Sends a compact 144-byte [`GpuCompactReadback`] packet over the recycled channel.
+pub(crate) fn send_compact_readback(
+    sender: &crate::gpu::GpuReadbackSender,
+    packet: &GpuCompactReadback,
+) {
+    let bytes = bytemuck::bytes_of(packet);
+    let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
+    if buf.capacity() < bytes.len() {
+        buf.reserve_exact(bytes.len().saturating_sub(buf.capacity()));
+    }
+    buf.clear();
+    buf.extend_from_slice(bytes);
+    let _ = sender.tx.try_send(buf);
 }
 
 fn drain_mapped_staging_buffers(
     engine: &GpuParticleOrbitEngine,
     sender: Option<&Res<crate::gpu::GpuReadbackSender>>,
 ) {
+    let expected_bytes = GPU_ACCRETION_SUMMARY_SLOTS * std::mem::size_of::<u32>();
     for i in 0..2 {
         if let (Some(state), Some(staging_buf)) =
             (engine.staging_states.get(i), engine.staging_buffers.get(i))
             && state.load(Ordering::Acquire) == STAGING_STATE_MAPPED
         {
-            if let Some(sender) = sender
+            let is_fresh = engine.staging_epochs.get(i).copied() == Some(engine.restart_epoch);
+            if is_fresh
+                && let Some(sender) = sender
                 && let Ok(mapped) = staging_buf.slice(..).get_mapped_range()
+                && let Some(slice) = mapped.get(..expected_bytes)
             {
-                let count = engine
-                    .staging_counts
-                    .get(i)
-                    .copied()
-                    .unwrap_or(0)
-                    .min(MAX_GPU_PARTICLES);
-                let active_bytes =
-                    usize::try_from(count).unwrap_or(0) * std::mem::size_of::<GpuParticle>();
-                let copy_len = if active_bytes == 0 {
-                    mapped.len()
-                } else {
-                    active_bytes.min(mapped.len())
+                let counts: &[u32] = bytemuck::cast_slice(slice);
+                let mut packet = GpuCompactReadback {
+                    magic: GPU_COMPACT_READBACK_MAGIC,
+                    active_particles: counts.get(32).copied().unwrap_or(0),
+                    is_galaxy: 0,
+                    generation_lo: engine.last_reload_generation as u32,
+                    accreted_per_body: [0; 32],
                 };
-                if let Some(slice) = mapped.get(..copy_len) {
-                    let mut buf = sender.recycle_rx.try_recv().unwrap_or_default();
-                    if buf.capacity() < copy_len {
-                        buf.reserve_exact(copy_len.saturating_sub(buf.capacity()));
-                    }
-                    buf.clear();
-                    buf.extend_from_slice(slice);
-                    let _ = sender.tx.try_send(buf);
+                if let Some(body_counts) = counts.get(..32) {
+                    packet.accreted_per_body.copy_from_slice(body_counts);
                 }
+                send_compact_readback(sender, &packet);
             }
             staging_buf.unmap();
             state.store(STAGING_STATE_IDLE, Ordering::Release);
@@ -549,6 +636,13 @@ fn dispatch_compute_and_stage(
     queue: &RenderQueue,
     engine: &mut GpuParticleOrbitEngine,
 ) {
+    // Reset the 132-byte atomic accretion + active-count summary buffer before dispatching
+    queue.write_buffer(
+        &engine.accretion_summary_buffer,
+        0,
+        bytemuck::cast_slice(&[0u32; GPU_ACCRETION_SUMMARY_SLOTS]),
+    );
+
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("Protostellar GPU Orbit Compute Encoder"),
     });
@@ -580,11 +674,16 @@ fn dispatch_compute_and_stage(
             )
             .is_ok()
         {
-            let particle_count = engine.num_particles.min(MAX_GPU_PARTICLES);
-            let buf_size = u64::from(particle_count) * std::mem::size_of::<GpuParticle>() as u64;
-            encoder.copy_buffer_to_buffer(&engine.particle_buffer, 0, write_buf, 0, buf_size);
-            if let Some(slot) = engine.staging_counts.get_mut(write_idx) {
-                *slot = particle_count;
+            let summary_bytes = (GPU_ACCRETION_SUMMARY_SLOTS * std::mem::size_of::<u32>()) as u64;
+            encoder.copy_buffer_to_buffer(
+                &engine.accretion_summary_buffer,
+                0,
+                write_buf,
+                0,
+                summary_bytes,
+            );
+            if let Some(epoch_slot) = engine.staging_epochs.get_mut(write_idx) {
+                *epoch_slot = engine.restart_epoch;
             }
             copy_initiated = true;
         }
@@ -610,7 +709,7 @@ fn dispatch_compute_and_stage(
     }
 }
 
-/// Dispatches GPU compute passes inside the RenderApp every frame with zero-stall double buffering.
+/// Dispatches GPU compute passes inside the RenderApp every frame with compact 132-byte readback.
 pub fn step_gpu_simulation_render_world(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -623,16 +722,17 @@ pub fn step_gpu_simulation_render_world(
     let Some(params) = params else {
         return;
     };
-    if !params.enable_gpu_compute || (params.is_paused && !params.step_once) {
-        return;
-    }
-
-    if galaxy_params.is_some() {
+    if !params.enable_gpu_compute || galaxy_params.is_some() {
         return;
     }
 
     let Some(mut engine) = gpu_engine else {
-        setup_gpu_simulation(&mut commands, &render_device, params.count);
+        setup_gpu_simulation(
+            &mut commands,
+            &render_device,
+            params.count,
+            params.reload_generation,
+        );
         return;
     };
     let queue = &render_queue;
@@ -642,7 +742,39 @@ pub fn step_gpu_simulation_render_world(
         return;
     }
 
+    // Always reseed on scenario switch / count change even while paused so GPU vertex pulling
+    // immediately displays the newly loaded scenario.
+    let prev_epoch = engine.restart_epoch;
     check_and_reseed_scenario(&mut engine, &params, queue);
+    let reseeded = engine.restart_epoch != prev_epoch;
+
+    drain_mapped_staging_buffers(&engine, sender.as_ref());
+
+    if reseeded && let Some(ref s) = sender {
+        let active_particles = if params.disk_mass <= 0.0 {
+            0
+        } else {
+            engine.num_particles
+        };
+        send_compact_readback(
+            s,
+            &GpuCompactReadback {
+                magic: GPU_COMPACT_READBACK_MAGIC,
+                active_particles,
+                is_galaxy: 0,
+                generation_lo: engine.last_reload_generation as u32,
+                accreted_per_body: [0; 32],
+            },
+        );
+    }
+
+    if (params.is_paused && !params.step_once)
+        || params.disk_mass <= 0.0
+        || (params.active_particles == 0 && !reseeded)
+    {
+        let _ = render_device.poll(wgpu::PollType::Poll);
+        return;
+    }
 
     let uniforms = GpuOrbitUniforms {
         star_pos: params.star_pos,
@@ -664,8 +796,6 @@ pub fn step_gpu_simulation_render_world(
     };
 
     queue.write_buffer(&engine.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-    drain_mapped_staging_buffers(&engine, sender.as_ref());
 
     dispatch_compute_and_stage(device, queue, &mut engine);
 
@@ -726,211 +856,73 @@ fn adjust_particle_count(
     data.is_dirty = true;
 }
 
-fn sync_dormant_particle_color(
-    comp_slot: &mut Composition,
-    color_slot: &mut [f32; 4],
-    raw_comp: [f32; 4],
-    temp: f32,
-) {
-    if color_slot[3] > 0.0 {
-        return;
-    }
-    let s = f64::from(raw_comp[0]);
-    let ice = f64::from(raw_comp[1]);
-    let m = f64::from(raw_comp[2]);
-    let g = f64::from(raw_comp[3]);
-    let total = s + ice + m + g;
-    let comp = Composition {
-        silicate_frac: s,
-        ice_frac: ice,
-        metal_frac: m,
-        gas_frac: g,
-        organics_frac: if total > 0.0 {
-            (1.0 - total).max(0.0)
-        } else {
-            0.0
-        },
-    };
-    *comp_slot = comp;
-    *color_slot = crate::rendering::particle_swarm::setup::calculate_particle_color(&comp, temp);
-}
-
-/// Main-world system that receives GPU readback data and updates ParticleSwarmData positions.
-/// This bridges GPU compute results → CPU visual mesh and accretion without frame stalls.
+/// Main-world system receiving compact 144-byte GPU accretion & active-count readbacks.
+/// Replaces the legacy 24 MB/frame full-particle copy while preserving exact planetary mass
+/// accretion and live active-particle telemetry for GPU Vertex Pulling.
 pub fn receive_gpu_readback(
     receiver: Option<Res<GpuReadbackReceiver>>,
     mut swarm: Option<ResMut<crate::rendering::particle_swarm::ParticleSwarmData>>,
     mut config: Option<ResMut<SimulationConfig>>,
-    sim_time: Option<Res<SimTime>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_gen: Local<u64>,
 ) {
     let Some(receiver) = receiver else {
         return;
     };
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        while let Ok(bytes) = receiver.rx.try_recv() {
+            let _ = receiver.recycle_tx.try_send(bytes);
+        }
+        return;
+    }
     let Some(ref mut data) = swarm else {
         return;
     };
 
-    let mut latest: Option<Vec<u8>> = None;
+    let packet_size = std::mem::size_of::<GpuCompactReadback>();
+    let mut received_any = false;
+    let mut latest_active = 0u32;
+    let mut total_accreted = [0u32; 32];
+
     while let Ok(bytes) = receiver.rx.try_recv() {
-        if let Some(old) = latest {
-            let _ = receiver.recycle_tx.try_send(old);
+        if bytes.len() == packet_size {
+            let packet: &GpuCompactReadback = bytemuck::from_bytes(&bytes);
+            if packet.magic == GPU_COMPACT_READBACK_MAGIC
+                && packet.generation_lo == (current_gen as u32)
+            {
+                let is_galaxy_swarm = data.base_mass >= 0.5;
+                let is_galaxy_pkt = packet.is_galaxy != 0;
+                if is_galaxy_pkt == is_galaxy_swarm || data.base_mass <= 0.0 {
+                    received_any = true;
+                    latest_active = packet.active_particles;
+                    for (dst, &src) in total_accreted.iter_mut().zip(&packet.accreted_per_body) {
+                        *dst = dst.saturating_add(src);
+                    }
+                }
+            }
         }
-        latest = Some(bytes);
+        let _ = receiver.recycle_tx.try_send(bytes);
     }
 
-    let Some(bytes) = latest else {
+    if !received_any {
         return;
-    };
+    }
 
     if let Some(ref mut cfg) = config {
         adjust_particle_count(cfg.target_particle_count, data);
+        cfg.gpu_compute_active = true;
+        cfg.active_particles = latest_active;
     }
 
-    if data.base_mass <= 0.0 {
-        let _ = receiver.recycle_tx.try_send(bytes);
-        return;
-    }
-
-    {
-        let particles: &[GpuParticle] = bytemuck::cast_slice(&bytes);
-        if particles.len() != data.count {
-            let _ = receiver.recycle_tx.try_send(bytes);
-            return;
-        }
-        if let Some(first_active) = particles.iter().find(|p| p.pos_mass[3] > 0.0) {
-            let is_galaxy_buf = first_active.pos_mass[3] >= 0.5;
-            let is_galaxy_swarm = data.base_mass >= 0.5;
-            if is_galaxy_buf != is_galaxy_swarm {
-                let _ = receiver.recycle_tx.try_send(bytes);
-                return;
+    let base_mass = data.base_mass;
+    if base_mass > 0.0 {
+        for (body_idx, &count) in total_accreted.iter().enumerate() {
+            if count > 0 {
+                data.pending_gpu_accretions
+                    .push((body_idx, count as f32 * base_mass));
             }
         }
-        let is_scenario_start = sim_time.is_some_and(|t| t.elapsed_years < 0.005);
-        let active = unpack_gpu_readback_particles(particles, data, is_scenario_start);
-        data.is_dirty = true;
-
-        if let Some(ref mut cfg) = config {
-            cfg.gpu_compute_active = true;
-            cfg.active_particles = active;
-        }
     }
-
-    let _ = receiver.recycle_tx.try_send(bytes);
-}
-
-fn unpack_gpu_readback_particles(
-    particles: &[GpuParticle],
-    data: &mut crate::rendering::particle_swarm::ParticleSwarmData,
-    is_scenario_start: bool,
-) -> u32 {
-    let n = data
-        .count
-        .min(particles.len())
-        .min(data.masses.len())
-        .min(data.positions.len())
-        .min(data.velocities.len())
-        .min(data.temperatures.len())
-        .min(data.compositions.len())
-        .min(data.colors.len());
-    let crate::rendering::particle_swarm::ParticleSwarmData {
-        masses,
-        positions,
-        velocities,
-        compositions,
-        temperatures,
-        colors,
-        pending_gpu_accretions,
-        ..
-    } = data;
-
-    let (
-        Some(masses_slice),
-        Some(pos_slice),
-        Some(vel_slice),
-        Some(temp_slice),
-        Some(comp_slice),
-        Some(col_slice),
-        Some(p_slice),
-    ) = (
-        masses.get_mut(..n),
-        positions.get_mut(..n),
-        velocities.get_mut(..n),
-        temperatures.get_mut(..n),
-        compositions.get_mut(..n),
-        colors.get_mut(..n),
-        particles.get(..n),
-    )
-    else {
-        return 0;
-    };
-
-    let (chunk_accretions, active): (Vec<(usize, f32)>, u32) = masses_slice
-        .par_chunks_mut(4096)
-        .zip(pos_slice.par_chunks_mut(4096))
-        .zip(vel_slice.par_chunks_mut(4096))
-        .zip(temp_slice.par_chunks_mut(4096))
-        .zip(comp_slice.par_chunks_mut(4096))
-        .zip(col_slice.par_chunks_mut(4096))
-        .zip(p_slice.par_chunks(4096))
-        .map(
-            |(
-                (((((m_chunk, pos_chunk), vel_chunk), temp_chunk), comp_chunk), col_chunk),
-                p_chunk,
-            )| {
-                let mut local_accretions = Vec::new();
-                let mut local_active = 0u32;
-                for ((((((mass, pos), vel), temp), comp), col), p) in m_chunk
-                    .iter_mut()
-                    .zip(pos_chunk.iter_mut())
-                    .zip(vel_chunk.iter_mut())
-                    .zip(temp_chunk.iter_mut())
-                    .zip(comp_chunk.iter_mut())
-                    .zip(col_chunk.iter_mut())
-                    .zip(p_chunk.iter())
-                {
-                    let [px, py, pz, pm] = p.pos_mass;
-                    let [vx, vy, vz, vt] = p.vel_temp;
-
-                    if pm > 0.0 && (*mass > 0.0 || is_scenario_start) {
-                        local_active += 1;
-                    }
-
-                    // Never resurrect a particle that the CPU has already accreted/killed
-                    if !is_scenario_start && *mass <= 0.0 {
-                        continue;
-                    }
-
-                    // If GPU marked particle as dead/accreted, record its mass before zeroing
-                    if pm <= 0.0 {
-                        if *mass > 0.0 {
-                            let m = *mass;
-                            let code = -pm;
-                            if (0.99..=33.5).contains(&code) {
-                                let body_idx = (code - 1.0).round() as usize;
-                                local_accretions.push((body_idx, m));
-                            }
-                            *mass = 0.0;
-                            *pos = [0.0, -5000.0, 0.0];
-                        }
-                        continue;
-                    }
-
-                    *pos = [px, py, pz];
-                    *vel = [vx, vy, vz];
-                    *mass = pm;
-                    *temp = vt;
-                    sync_dormant_particle_color(comp, col, p.composition, vt);
-                }
-                (local_accretions, local_active)
-            },
-        )
-        .reduce(
-            || (Vec::new(), 0u32),
-            |(mut acc_a, cnt_a), (acc_b, cnt_b)| {
-                acc_a.extend(acc_b);
-                (acc_a, cnt_a + cnt_b)
-            },
-        );
-    pending_gpu_accretions.extend(chunk_accretions);
-    active
 }

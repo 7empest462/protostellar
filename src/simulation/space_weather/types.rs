@@ -106,7 +106,7 @@ impl Default for AuroralOvalState {
 
 /// Ephemeral magnetospheric storm & substorm excitation accumulator attached alongside `AuroralOvalState`.
 /// Keeps `AuroralOvalState` save serialization layout stable while tracking transient storm recovery.
-#[derive(Component, Debug, Clone, Copy, Default)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct AuroralStormExcitation {
     /// Decaying ring-current / magnetotail storm excitation energy (0.0 = quiet, 1.0..4.0 = storm).
     pub excitation: f32,
@@ -117,7 +117,7 @@ pub struct AuroralStormExcitation {
 }
 
 /// Natural coronal flare & CME activity cadence tracker attached to stars.
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct StellarActivityClock {
     /// Accumulated simulated years toward the next natural coronal flare / CME cycle.
     pub sim_years_accum: f32,

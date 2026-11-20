@@ -36,7 +36,7 @@ impl Default for KerrBlackHole {
 impl KerrBlackHole {
     /// Constructs a non-rotating Schwarzschild black hole ($a_* = 0$).
     pub fn schwarzschild(mass_solar: f64) -> Self {
-        Self::new(mass_solar, 0.0, DVec3::Y)
+        Self::new(mass_solar, 0.0, -DVec3::Y)
     }
 
     /// Constructs a Kerr black hole with a given mass, dimensionless spin parameter $a_* \in (-1.0, 1.0)$,
@@ -46,7 +46,7 @@ impl KerrBlackHole {
         let axis = if spin_axis.length_squared() > 1e-12 {
             spin_axis.normalize()
         } else {
-            DVec3::Y
+            -DVec3::Y
         };
 
         let r_g = calculate_gravitational_radius(mass_solar);
@@ -66,15 +66,17 @@ impl KerrBlackHole {
     }
 
     /// Constructs a calibrated Kerr black hole for Sagittarius A* based on the canonical
-    /// GRAVITY Collaboration and Event Horizon Telescope (EHT) measurements ($a_* \approx 0.90$).
+    /// GRAVITY Collaboration and Event Horizon Telescope (EHT) measurements ($a_* \approx 0.90$),
+    /// with prograde spin axis `-DVec3::Y` aligned with the simulator's XZ disk orbital normal $\vec{h} = \vec{r} \times \vec{v}$.
     pub fn sagittarius_a() -> Self {
         use crate::simulation::scenarios::sagittarius::SGR_A_STAR_MASS_SOLAR;
-        Self::new(SGR_A_STAR_MASS_SOLAR, 0.90, DVec3::Y)
+        Self::new(SGR_A_STAR_MASS_SOLAR, 0.90, -DVec3::Y)
     }
 
-    /// Constructs a calibrated near-extremal Kerr black hole for Messier 87* ($M87^*$, $a_* \approx 0.94$).
+    /// Constructs a calibrated near-extremal Kerr black hole for Messier 87* ($M87^*$, $a_* \approx 0.94$),
+    /// with prograde spin axis `-DVec3::Y` aligned with the simulator's XZ orbital angular momentum.
     pub fn m87() -> Self {
-        Self::new(6.5e9, 0.94, DVec3::Y)
+        Self::new(6.5e9, 0.94, -DVec3::Y)
     }
 
     /// Recalculates event horizon, ergosphere, and ISCO radii when the black hole mass changes.
@@ -223,7 +225,7 @@ pub fn calculate_lense_thirring_acceleration(
     let s_hat = if spin_axis.length_squared() > 1e-12 {
         spin_axis.normalize()
     } else {
-        DVec3::Y
+        -DVec3::Y
     };
 
     // J = (a_* G M^2) / c * s_hat
@@ -233,11 +235,13 @@ pub fn calculate_lense_thirring_acceleration(
     // B_g dipole field: (3 (J . r_hat) r_hat - J)
     let dipole_field = 3.0 * j_vec.dot(r_hat) * r_hat - j_vec;
 
-    // a_LT = (2 G / c^2 r^3) * (v x dipole_field)
+    // a_LT = -(2 G / c^2 r^3) * (v x (3(J . r_hat) r_hat - J))
+    // so <r x a_LT> = +(2G/c^2 r^3)(J x h) gives prograde nodal precession and
+    // prograde equatorial orbits feel outward frame-dragging repulsion (-2 * Omega_LT cos i).
     let prefactor = (2.0 * G_ASTRO) / (c_sq * r3);
     let cross_term = rel_vel.cross(dipole_field);
 
-    let a_vec = cross_term * prefactor;
+    let a_vec = -cross_term * prefactor;
     // Safety clamp to avoid numerical singularity inside event horizon
     let max_accel = 1e12;
     if a_vec.length_squared() > max_accel * max_accel {

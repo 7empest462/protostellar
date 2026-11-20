@@ -16,6 +16,7 @@ use crate::simulation::space_weather::types::*;
 #[derive(Clone, Copy)]
 struct SpaceWeatherContext {
     star_flare: Option<StellarFlareState>,
+    prev_cme_front_au: f32,
     star_mass: f64,
     star_pos: Vec3,
     is_young_protostar: bool,
@@ -77,13 +78,13 @@ pub fn update_stellar_flares_system(
     for (_ent, mut flare, opt_clock, body) in stars_query.iter_mut() {
         // 1. Advance active CME plasma shock front (keeps both simulated AU/day speed and real-time visibility)
         if flare.cme_active {
-            let sim_step_au = flare.cme_speed_au_day * dt_yr.max(0.0) * 365.25;
-            let realtime_step_au = real_dt * flare.cme_speed_au_day.clamp(0.15, 0.90) * 0.55;
-            flare.cme_front_radius_au += sim_step_au.max(realtime_step_au);
-
             if flare.cme_front_radius_au > 50.0 {
                 flare.cme_active = false;
                 flare.cme_front_radius_au = 0.0;
+            } else {
+                let sim_step_au = flare.cme_speed_au_day * dt_yr.max(0.0) * 365.25;
+                let realtime_step_au = real_dt * flare.cme_speed_au_day.clamp(0.15, 0.90) * 0.55;
+                flare.cme_front_radius_au += sim_step_au.max(realtime_step_au);
             }
         }
 
@@ -229,9 +230,12 @@ fn accumulate_stellar_storm_drivers(
 
     if flare.cme_active {
         let shock_thickness = 0.35;
-        let prev_front_au = (flare.cme_front_radius_au
-            - flare.cme_speed_au_day * ctx.dt_yr.max(0.0) * 365.25)
-            .max(0.0);
+        let sim_step_au = flare.cme_speed_au_day * ctx.dt_yr.max(0.0) * 365.25;
+        let prev_front_au = if ctx.prev_cme_front_au > 0.0 {
+            ctx.prev_cme_front_au
+        } else {
+            (flare.cme_front_radius_au - sim_step_au).max(0.0)
+        };
         if dist_f >= prev_front_au - shock_thickness
             && dist_f <= flare.cme_front_radius_au + shock_thickness * 0.5
         {
@@ -410,17 +414,22 @@ fn extract_central_star_weather(
 fn sync_active_cme_hits_cache(
     star_flare: Option<StellarFlareState>,
     active_cme_hits: &mut (rustc_hash::FxHashSet<Entity>, f32),
-) {
+) -> f32 {
     match star_flare {
         Some(f) if f.cme_active => {
-            if f.cme_front_radius_au + 1e-4 < active_cme_hits.1 {
+            let prev_front = if f.cme_front_radius_au + 1e-4 < active_cme_hits.1 {
                 active_cme_hits.0.clear();
-            }
+                0.0
+            } else {
+                active_cme_hits.1
+            };
             active_cme_hits.1 = f.cme_front_radius_au;
+            prev_front
         }
         _ => {
             active_cme_hits.0.clear();
             active_cme_hits.1 = 0.0;
+            0.0
         }
     }
 }
@@ -540,7 +549,7 @@ pub fn update_planetary_auroral_ovals_system(
     let real_dt_secs = real_time.map_or(0.0, |t| t.delta_secs()).min(0.1);
     let (star_flare, star_mass, star_pos, is_young_protostar, ignition_blast_radius_au) =
         extract_central_star_weather(stars_query.iter().next());
-    sync_active_cme_hits_cache(star_flare, &mut active_cme_hits);
+    let prev_cme_front_au = sync_active_cme_hits_cache(star_flare, &mut active_cme_hits);
 
     let superflare_active = event_mgr.is_some_and(|mgr| {
         mgr.active_events.iter().any(|e| {
@@ -552,6 +561,7 @@ pub fn update_planetary_auroral_ovals_system(
     fill_magnetar_burst_sources(remnants_query.iter(), magnetar_bursts);
     let ctx = SpaceWeatherContext {
         star_flare,
+        prev_cme_front_au,
         star_mass,
         star_pos,
         is_young_protostar,

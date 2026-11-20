@@ -119,19 +119,23 @@ pub struct UiSerializationWriters<'w> {
 fn handle_hover_interaction(
     hovered: bool,
     action: &UiButtonAction,
-    border_color: &mut BorderColor,
+    border_color: &mut Mut<'_, BorderColor>,
     opt_base: Option<&QuickBarButtonBaseColor>,
     tooltip_query: &mut Query<&mut Text, With<HudActionTooltipText>>,
 ) {
-    if hovered {
-        *border_color = BorderColor::all(Color::srgb(0.4, 0.9, 1.0));
-        if let Ok(mut tip) = tooltip_query.single_mut() {
-            tip.0 = action.tooltip_description().to_string();
-        }
+    let target_border = if hovered {
+        BorderColor::all(Color::srgb(0.4, 0.9, 1.0))
     } else if let Some(base) = opt_base {
-        *border_color = BorderColor::all(base.border.with_alpha(0.88));
+        BorderColor::all(base.border.with_alpha(0.88))
     } else {
-        *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
+        BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6))
+    };
+    border_color.set_if_neq(target_border);
+    if hovered && let Ok(mut tip) = tooltip_query.single_mut() {
+        let desc = action.tooltip_description();
+        if tip.as_ref().0 != desc {
+            tip.0 = desc.to_string();
+        }
     }
 }
 
@@ -182,6 +186,10 @@ fn dispatch_pressed_button_action(
     commands: &mut Commands,
     scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     quasi_star_query: &mut Query<&mut BlackHoleStarState>,
+    sat_diff_query: &mut Query<
+        (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
+        Without<PanOrbitCamera>,
+    >,
     lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
     sim_time_years: f64,
@@ -281,6 +289,7 @@ fn dispatch_pressed_button_action(
         action,
         &mut core.player_state,
         selected_query,
+        sat_diff_query,
         camera_query,
         star_mass,
         commands,
@@ -363,6 +372,10 @@ pub fn handle_ui_button_interactions(
     mut ser: UiSerializationWriters,
     mut commands: Commands,
     mut quasi_star_query: Query<&mut BlackHoleStarState>,
+    mut sat_diff_query: Query<
+        (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
+        Without<PanOrbitCamera>,
+    >,
     mut optional: UiOptionalState,
     mut campaign: UiCampaignParams,
 ) {
@@ -375,34 +388,43 @@ pub fn handle_ui_button_interactions(
         let is_hovered = opt_hovered.is_some_and(bevy::picking::hover::Hovered::get);
 
         if pressed {
-            *bg_color = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
-            *border_color = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
+            let target_bg = BackgroundColor(Color::srgba(0.2, 0.5, 0.9, 0.95));
+            let target_border = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
+            if *bg_color != target_bg {
+                *bg_color = target_bg;
+            }
+            if *border_color != target_border {
+                *border_color = target_border;
+            }
             if activated_buttons.is_none() {
                 actions_to_dispatch.push((ent, *action));
             }
         } else {
-            handle_hover_interaction(
-                is_hovered,
-                action,
-                &mut border_color,
-                opt_base,
-                &mut widgets.tooltip_query,
-            );
+            let is_active_selectable = match action {
+                UiButtonAction::SelectInspectorTab(tab) => {
+                    *tab == core.hud_visibility.active_inspector_tab
+                }
+                _ => false,
+            };
+            if is_hovered || !is_active_selectable {
+                handle_hover_interaction(
+                    is_hovered,
+                    action,
+                    &mut border_color,
+                    opt_base,
+                    &mut widgets.tooltip_query,
+                );
+            }
 
-            if !is_hovered {
-                let is_active_selectable = match action {
-                    UiButtonAction::SelectInspectorTab(tab) => {
-                        *tab == core.hud_visibility.active_inspector_tab
-                    }
-                    _ => false,
-                };
-                if !is_active_selectable {
-                    if let Some(base) = opt_base {
-                        *bg_color = BackgroundColor(base.bg);
-                        *border_color = BorderColor::all(base.border.with_alpha(0.88));
-                    } else {
-                        *border_color = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
-                    }
+            if !is_hovered && !is_active_selectable {
+                if let Some(base) = opt_base {
+                    let target_bg = BackgroundColor(base.bg);
+                    let target_border = BorderColor::all(base.border.with_alpha(0.88));
+                    bg_color.set_if_neq(target_bg);
+                    border_color.set_if_neq(target_border);
+                } else {
+                    let target_border = BorderColor::all(Color::srgba(0.3, 0.5, 0.8, 0.6));
+                    border_color.set_if_neq(target_border);
                 }
             }
         }
@@ -453,6 +475,7 @@ pub fn handle_ui_button_interactions(
             &mut commands,
             &mut ser.scenario_events,
             &mut quasi_star_query,
+            &mut sat_diff_query,
             &mut sim.lhb_state,
             sim.theia_state.as_deref_mut(),
             sim.sim_time.elapsed_years,

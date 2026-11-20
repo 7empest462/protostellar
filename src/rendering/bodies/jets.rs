@@ -232,11 +232,19 @@ fn update_jet_child_parts(
                 RelativisticJetPart::SouthJet => dir_south,
             };
 
-            part_trans.rotation = align_to_direction(dir);
-            part_trans.scale = Vec3::new(xz_scale, y_scale, xz_scale);
+            let target_rot = align_to_direction(dir);
+            let target_scale = Vec3::new(xz_scale, y_scale, xz_scale);
+            if part_trans.rotation != target_rot || part_trans.scale != target_scale {
+                part_trans.rotation = target_rot;
+                part_trans.scale = target_scale;
+            }
 
-            if let Some(mut mat) = jet_materials.get_mut(&mat_handle.0) {
-                mat.uniforms = build_jet_uniforms(jet_state, dir, world_pos, elapsed, total_len);
+            let target_uniforms = build_jet_uniforms(jet_state, dir, world_pos, elapsed, total_len);
+            if let Some(mat) = jet_materials.get(&mat_handle.0)
+                && mat.uniforms != target_uniforms
+                && let Some(mut mat_mut) = jet_materials.get_mut(&mat_handle.0)
+            {
+                mat_mut.uniforms = target_uniforms;
             }
         }
     }

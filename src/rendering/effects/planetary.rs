@@ -432,6 +432,20 @@ pub fn resolve_cutaway_strata(
     resolve_cutaway_strata_with_visual_radius(body, rad_val, visual_r, opt_diff)
 }
 
+fn is_undifferentiated_body(
+    body: &CelestialBody,
+    opt_diff: Option<&InternalDifferentiation>,
+) -> bool {
+    if let Some(d) = opt_diff {
+        !d.is_differentiated || d.core_radius_au <= 1e-10
+    } else {
+        matches!(
+            body.body_type,
+            BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal
+        )
+    }
+}
+
 pub fn resolve_cutaway_strata_with_visual_radius(
     body: &CelestialBody,
     rad_val: f64,
@@ -473,6 +487,18 @@ pub fn resolve_cutaway_strata_with_visual_radius(
             outer_core_col: Color::srgba(0.15, 0.88, 0.95, 0.90),
             mantle_col: Color::srgba(0.12, 0.70, 0.85, 0.82),
             crust_col: Color::srgba(0.35, 0.65, 1.0, 0.85),
+        }
+    } else if is_undifferentiated_body(body, opt_diff) {
+        CutawayStrata {
+            inner_core_r: 0.0,
+            core_r: 0.0,
+            mantle_r: visual_r * 0.90,
+            crust_r: visual_r,
+            has_theia_llsvp: false,
+            inner_core_col: Color::srgba(0.45, 0.42, 0.38, 0.0),
+            outer_core_col: Color::srgba(0.45, 0.42, 0.38, 0.0),
+            mantle_col: Color::srgba(0.54, 0.48, 0.42, 0.85),
+            crust_col: Color::srgba(0.38, 0.72, 0.88, 0.85),
         }
     } else {
         let (core_r, mantle_r, has_theia_llsvp) =
@@ -535,22 +561,26 @@ fn draw_cutaway_planar_faces(
                 + ((i + 1) as f32 / steps as f32) * std::f32::consts::PI;
 
             // Inner Core Arc
-            let p1_ic = body_vec
-                + dir * (strata.inner_core_r * theta1.cos())
-                + s_axis * (strata.inner_core_r * theta1.sin());
-            let p2_ic = body_vec
-                + dir * (strata.inner_core_r * theta2.cos())
-                + s_axis * (strata.inner_core_r * theta2.sin());
-            gizmos.line(p1_ic, p2_ic, strata.inner_core_col);
+            if strata.inner_core_r > 1e-5 {
+                let p1_ic = body_vec
+                    + dir * (strata.inner_core_r * theta1.cos())
+                    + s_axis * (strata.inner_core_r * theta1.sin());
+                let p2_ic = body_vec
+                    + dir * (strata.inner_core_r * theta2.cos())
+                    + s_axis * (strata.inner_core_r * theta2.sin());
+                gizmos.line(p1_ic, p2_ic, strata.inner_core_col);
+            }
 
             // Outer Core Arc
-            let p1_oc = body_vec
-                + dir * (strata.core_r * theta1.cos())
-                + s_axis * (strata.core_r * theta1.sin());
-            let p2_oc = body_vec
-                + dir * (strata.core_r * theta2.cos())
-                + s_axis * (strata.core_r * theta2.sin());
-            gizmos.line(p1_oc, p2_oc, strata.outer_core_col);
+            if strata.core_r > 1e-5 {
+                let p1_oc = body_vec
+                    + dir * (strata.core_r * theta1.cos())
+                    + s_axis * (strata.core_r * theta1.sin());
+                let p2_oc = body_vec
+                    + dir * (strata.core_r * theta2.cos())
+                    + s_axis * (strata.core_r * theta2.sin());
+                gizmos.line(p1_oc, p2_oc, strata.outer_core_col);
+            }
 
             // Mantle Arc
             let p1_m = body_vec
@@ -589,18 +619,22 @@ fn draw_cutaway_spheres_and_plumes(
     );
 
     // 1. Incandescent 3D Solid Inner Core Sphere
-    gizmos.sphere(
-        Isometry3d::from_translation(body_vec),
-        strata.inner_core_r,
-        pulsed_inner_col,
-    );
+    if strata.inner_core_r > 1e-5 {
+        gizmos.sphere(
+            Isometry3d::from_translation(body_vec),
+            strata.inner_core_r,
+            pulsed_inner_col,
+        );
+    }
 
     // 2. Liquid Outer Core Concentric Rings
-    gizmos.circle(
-        Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-        strata.core_r,
-        strata.outer_core_col,
-    );
+    if strata.core_r > 1e-5 {
+        gizmos.circle(
+            Isometry3d::new(body_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            strata.core_r,
+            strata.outer_core_col,
+        );
+    }
 
     // 3. Mantle Boundary Circle
     gizmos.circle(
@@ -610,7 +644,7 @@ fn draw_cutaway_spheres_and_plumes(
     );
 
     // 4. Sunken Theia LLSVP Thermochemical Plumes
-    if strata.has_theia_llsvp {
+    if strata.has_theia_llsvp && strata.core_r > 1e-5 {
         let blob_r = (strata.core_r * 0.22).clamp(0.002, 0.8);
         let blob_1 = body_vec + s_tangent_x * (strata.core_r * 1.04);
         let blob_2 = body_vec - s_tangent_x * (strata.core_r * 1.04);
@@ -647,23 +681,27 @@ fn draw_cutaway_callout_leaders(
     let offset_scale = strata.crust_r * 1.35;
 
     // 1. Inner Core Callout
-    let anchor_ic = body_vec + diag_down_left * (offset_scale * 0.85);
-    gizmos.line(body_vec, anchor_ic, strata.inner_core_col);
-    gizmos.circle(
-        Isometry3d::new(anchor_ic, cam_rot),
-        dot_r,
-        strata.inner_core_col,
-    );
+    if strata.inner_core_r > 1e-5 {
+        let anchor_ic = body_vec + diag_down_left * (offset_scale * 0.85);
+        gizmos.line(body_vec, anchor_ic, strata.inner_core_col);
+        gizmos.circle(
+            Isometry3d::new(anchor_ic, cam_rot),
+            dot_r,
+            strata.inner_core_col,
+        );
+    }
 
     // 2. Outer Core Callout
-    let pt_oc = body_vec + s_tangent_x * strata.core_r;
-    let anchor_oc = body_vec + diag_down_right * (offset_scale * 1.05);
-    gizmos.line(pt_oc, anchor_oc, strata.outer_core_col);
-    gizmos.circle(
-        Isometry3d::new(anchor_oc, cam_rot),
-        dot_r,
-        strata.outer_core_col,
-    );
+    if strata.core_r > 1e-5 {
+        let pt_oc = body_vec + s_tangent_x * strata.core_r;
+        let anchor_oc = body_vec + diag_down_right * (offset_scale * 1.05);
+        gizmos.line(pt_oc, anchor_oc, strata.outer_core_col);
+        gizmos.circle(
+            Isometry3d::new(anchor_oc, cam_rot),
+            dot_r,
+            strata.outer_core_col,
+        );
+    }
 
     // 3. Mantle Callout
     let pt_m = body_vec + (s_tangent_x * 0.707 + s_tangent_z * 0.707) * strata.mantle_r;
@@ -678,7 +716,7 @@ fn draw_cutaway_callout_leaders(
     gizmos.circle(Isometry3d::new(anchor_c, cam_rot), dot_r, strata.crust_col);
 
     // 5. Theia LLSVP Callout
-    if strata.has_theia_llsvp {
+    if strata.has_theia_llsvp && strata.core_r > 1e-5 {
         let pt_blob = body_vec + s_tangent_x * (strata.core_r * 1.04);
         let anchor_blob = body_vec + (right * 1.15) * offset_scale;
         let blob_col = Color::srgba(0.85, 0.15, 0.85, 0.95);

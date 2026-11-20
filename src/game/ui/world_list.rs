@@ -163,16 +163,21 @@ where
         let is_star_component = opt_star.is_some();
 
         if is_star_component {
-            central_star = Some(SystemWorld {
+            let entry = SystemWorld {
                 entity: ent,
                 name: body.name.clone(),
                 body_type: body.body_type,
-                is_central_star: true,
+                is_central_star: central_star.is_none(),
                 distance_au: dist,
                 mass_solar: mass.0,
                 radius_au: radius.0,
                 index: 0,
-            });
+            };
+            if central_star.is_none() {
+                central_star = Some(entry);
+            } else {
+                other_worlds.push(entry);
+            }
             continue;
         }
 

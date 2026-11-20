@@ -194,6 +194,13 @@ fn compute_crater_radial_slope(u: f32, radius: f32) -> f32 {
     return slope;
 }
 
+fn safe_tangent_for_center(center: vec3<f32>) -> vec3<f32> {
+    let up_ref = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(center.y) > 0.9);
+    let raw = cross(center, up_ref);
+    let len2 = dot(raw, raw);
+    return select(vec3<f32>(1.0, 0.0, 0.0), raw / sqrt(max(len2, 1e-10)), len2 > 1e-10);
+}
+
 fn apply_gas_giant_impact_basin(
     p_surf: vec3<f32>,
     center: vec3<f32>,
@@ -205,7 +212,7 @@ fn apply_gas_giant_impact_basin(
     in_res: CraterShadingResult,
 ) -> CraterShadingResult {
     var out_res = in_res;
-    let tangent = normalize(cross(center, vec3<f32>(0.0, 1.0, 0.001)));
+    let tangent = safe_tangent_for_center(center);
     let d_east = dot(p_surf - center, tangent);
     let d_north = length((p_surf - center) - tangent * d_east);
     let sheared_dist = sqrt((d_east / 1.7) * (d_east / 1.7) + d_north * d_north);
@@ -250,7 +257,7 @@ fn apply_ice_giant_impact_basin(
     in_res: CraterShadingResult,
 ) -> CraterShadingResult {
     var out_res = in_res;
-    let tangent = normalize(cross(center, vec3<f32>(0.0, 1.0, 0.001)));
+    let tangent = safe_tangent_for_center(center);
     let d_east = dot(p_surf - center, tangent);
     let d_north = length((p_surf - center) - tangent * d_east);
     let sheared_dist = sqrt((d_east / 1.55) * (d_east / 1.55) + d_north * d_north);
@@ -299,8 +306,7 @@ fn apply_icy_world_impact_basin(
     let u = dist / radius;
 
     if (u < 2.3) {
-        let up_ref = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(center.y) > 0.9);
-        let t1 = normalize(cross(up_ref, center));
+        let t1 = -safe_tangent_for_center(center);
         let t2 = cross(center, t1);
         let local_u = dot(p_surf - center, t1);
         let local_v = dot(p_surf - center, t2);
@@ -386,8 +392,7 @@ fn apply_rocky_world_impact_basin(
     let u = dist / radius;
 
     if (u < 2.45) {
-        let up_ref = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(center.y) > 0.9);
-        let t1 = normalize(cross(up_ref, center));
+        let t1 = -safe_tangent_for_center(center);
         let t2 = cross(center, t1);
         let local_u = dot(p_surf - center, t1);
         let local_v = dot(p_surf - center, t2);

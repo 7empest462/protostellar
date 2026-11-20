@@ -298,20 +298,27 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     var world_from_local = get_world_from_local(vertex_in.instance_index);
     let base_world_n = normalize(mesh_normal_local_to_world(local_n, vertex_in.instance_index));
 
-    // --- 1. ROTATIONAL OBLATENESS (Maclaurin Spheroid Squishing for Gas/Ice Giants) ---
+    // --- 1. ROTATIONAL OBLATENESS (True Oblate Spheroid for Gas/Ice Giants) ---
+    // Compresses purely along the spin axis (r_eq = 1.0, r_pol = 1.0 - f) so flattening is
+    // exact (e.g. Saturn's 9.8% polar compression) without artificial equatorial bulging.
     var s_axis = planet.spin_axis.xyz;
     if (length(s_axis) < 0.1) { s_axis = vec3<f32>(0.0, 1.0, 0.0); } else { s_axis = normalize(s_axis); }
-    let sin_lat = dot(base_world_n, s_axis);
+    let lx = normalize(world_from_local[0].xyz);
+    let ly = normalize(world_from_local[1].xyz);
+    let lz = normalize(world_from_local[2].xyz);
+    let s_local_raw = vec3<f32>(dot(s_axis, lx), dot(s_axis, ly), dot(s_axis, lz));
+    let s_local = select(vec3<f32>(0.0, 1.0, 0.0), normalize(s_local_raw), dot(s_local_raw, s_local_raw) > 1e-4);
+
     let is_giant = (planet.planet_type == 1u || planet.planet_type == 2u);
     let has_saturn_rings = planet.ring_shadow_params.w > 0.5 || planet.storm_features.x > 0.001;
     let oblateness_amount = select(0.065, 0.098, has_saturn_rings);
     let oblateness = select(0.0, oblateness_amount, is_giant);
-    let oblate_factor = mix(
-        1.0,
-        1.0 - oblateness * (1.5 * sin_lat * sin_lat - 0.5),
-        surface_mode_blend
-    );
-    displaced_local_pos *= oblate_factor;
+    let eff_oblateness = oblateness * surface_mode_blend;
+    let pol_scale = max(1.0 - eff_oblateness, 0.5);
+    if (eff_oblateness > 1e-4) {
+        let p_axial = dot(displaced_local_pos, s_local);
+        displaced_local_pos -= s_local * (p_axial * eff_oblateness);
+    }
 
     // Haumea: rapid 3.9-hour rotation flattens it into a scalene triaxial ellipsoid
     if (planet.planet_type == 9u && round(planet.color_seed.w) == 4.0) {
@@ -326,13 +333,25 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let tidal_dir = planet.tidal_deformation.xyz;
     var deformed_world_n = base_world_n;
 
+    if (eff_oblateness > 1e-4) {
+        // Exact inverse-transpose ellipsoid normal: scale axial component by 1 / (1 - f)
+        let n_axial = dot(deformed_world_n, s_axis);
+        deformed_world_n = normalize(deformed_world_n + s_axis * (n_axial * (1.0 / pol_scale - 1.0)));
+    }
+
+    if (planet.planet_type == 9u && round(planet.color_seed.w) == 4.0) {
+        let n_local = vec3<f32>(
+            dot(deformed_world_n, lx) / 1.35,
+            dot(deformed_world_n, ly) / 0.72,
+            dot(deformed_world_n, lz) / 0.95,
+        );
+        deformed_world_n = normalize(lx * n_local.x + ly * n_local.y + lz * n_local.z);
+    }
+
     if (roche_stretch > 0.01 && dot(tidal_dir, tidal_dir) > 0.5) {
         let t_dir = normalize(tidal_dir);
 
         // Project world tidal direction into local mesh space using the world_from_local basis
-        let lx = normalize(world_from_local[0].xyz);
-        let ly = normalize(world_from_local[1].xyz);
-        let lz = normalize(world_from_local[2].xyz);
         let t_local = vec3<f32>(dot(t_dir, lx), dot(t_dir, ly), dot(t_dir, lz));
 
         let p_par = dot(displaced_local_pos, t_local);
@@ -352,8 +371,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
         displaced_local_pos = p_perp * b_compress + t_local * (p_par * a_stretch) + l1_nozzle;
 
         // Transform surface normal to match the ellipsoidal teardrop geometry
-        let n_par = dot(base_world_n, t_dir);
-        let n_perp = base_world_n - n_par * t_dir;
+        let n_par = dot(deformed_world_n, t_dir);
+        let n_perp = deformed_world_n - n_par * t_dir;
         let deformed_ellipsoid_n = normalize(n_perp / b_compress + (t_dir * n_par) / a_stretch);
         deformed_world_n = normalize(deformed_ellipsoid_n + t_dir * (roche_stretch * 0.25 * u_l1 * u_l1));
     }
@@ -733,8 +752,10 @@ fn render_stellar_photosphere(
         let polar_cap = smoothstep(0.82, 0.98, pole_align);
         let polar_hotspot = vec3<f32>(2.4, 2.6, 3.8) * polar_cap;
         
-        // Periodic pulse modulation synchronized with rotation
-        let pulse = 0.75 + 0.50 * pow(sin(t * pulse_freq + p_surf.x * 3.14159), 6.0);
+        // Periodic pulse modulation synchronized with rotation (even power without pow NaN on negative base)
+        let s_pulse = sin(t * pulse_freq + p_surf.x * 3.14159);
+        let s_pulse2 = s_pulse * s_pulse;
+        let pulse = 0.75 + 0.50 * (s_pulse2 * s_pulse2 * s_pulse2);
         
         // Relativistic synchrotron auroral rings circling magnetic poles
         let ring_angle = abs(pole_align - 0.75);
@@ -1904,43 +1925,65 @@ fn evaluate_multilayer_clouds_and_shadows(
     // -------------------------------------------------------------------------
     // Project from the surface point `p_tilted` toward `star_tilted` at each cloud deck's altitude.
     // Lower sun angles near the terminator stretch the shadow projection distance across the globe!
-    let sun_obliquity = 1.0 / clamp(ndotl + 0.08, 0.18, 1.0);
-    let star_tangent = (star_tilted - p_tilted * ndotl) * min(sun_obliquity, 3.8);
+    var ground_shadow_mult = 1.0;
+    if (ndotl > -0.05) {
+        let sun_obliquity = 1.0 / clamp(ndotl + 0.08, 0.18, 1.0);
+        let star_tangent = (star_tilted - p_tilted * ndotl) * min(sun_obliquity, 3.8);
 
-    let p_sh_low = normalize(p_tilted + star_tangent * (h_low * 1.40));
-    let p_sh_mid = normalize(p_tilted + star_tangent * (h_mid * 1.50));
-    let p_sh_high = normalize(p_tilted + star_tangent * (h_high * 1.60));
+        let p_sh_low = normalize(p_tilted + star_tangent * (h_low * 1.40));
+        let p_sh_mid = normalize(p_tilted + star_tangent * (h_mid * 1.50));
+        let p_sh_high = normalize(p_tilted + star_tangent * (h_high * 1.60));
 
-    let sh_low_s = sample_multilayer_cloud_decks(p_sh_low, spin_angle, t, seed, is_super_earth);
-    let sh_mid_s = sample_multilayer_cloud_decks(p_sh_mid, spin_angle, t, seed, is_super_earth);
-    let sh_high_s = sample_multilayer_cloud_decks(p_sh_high, spin_angle, t, seed, is_super_earth);
+        let sh_low_s = sample_multilayer_cloud_decks(p_sh_low, spin_angle, t, seed, is_super_earth);
+        let sh_mid_s = sample_multilayer_cloud_decks(p_sh_mid, spin_angle, t, seed, is_super_earth);
+        let sh_high_s = sample_multilayer_cloud_decks(p_sh_high, spin_angle, t, seed, is_super_earth);
 
-    let tau_low = max(sh_low_s.low_cumulus - base_thresh, 0.0) * 2.2;
-    let tau_mid = max(sh_mid_s.mid_frontal - (base_thresh - 0.02), 0.0) * 3.2;
-    let tau_high = max(sh_high_s.high_cirrus - base_thresh, 0.0) * 1.2;
-    let tau_shadow = (tau_low + tau_mid + tau_high) * dens_scale * min(sun_obliquity * 0.65 + 0.35, 1.85);
+        let tau_low = max(sh_low_s.low_cumulus - base_thresh, 0.0) * 2.2;
+        let tau_mid = max(sh_mid_s.mid_frontal - (base_thresh - 0.02), 0.0) * 3.2;
+        let tau_high = max(sh_high_s.high_cirrus - base_thresh, 0.0) * 1.2;
+        let tau_shadow = (tau_low + tau_mid + tau_high) * dens_scale * min(sun_obliquity * 0.65 + 0.35, 1.85);
 
-    // Daylight gate so shadows fade smoothly into the twilight terminator
-    let daylight_shadow_gate = smoothstep(-0.04, 0.14, ndotl);
-    let shadow_transmittance = exp(-tau_shadow * 2.05);
-    // Preserve ambient sky light inside the umbra of the cloud shadow (floor ~ 0.24)
-    let ground_shadow_mult = mix(1.0, mix(0.24, 1.0, shadow_transmittance), daylight_shadow_gate);
+        // Daylight gate so shadows fade smoothly into the twilight terminator
+        let daylight_shadow_gate = smoothstep(-0.04, 0.14, ndotl);
+        let shadow_transmittance = exp(-tau_shadow * 2.05);
+        // Preserve ambient sky light inside the umbra of the cloud shadow (floor ~ 0.24)
+        ground_shadow_mult = mix(1.0, mix(0.24, 1.0, shadow_transmittance), daylight_shadow_gate);
+    }
 
     // -------------------------------------------------------------------------
     // 3D Cloud-Top Self-Shadowing, Silver-Lining Mie Phase & Cumulus Bump Normals
     // -------------------------------------------------------------------------
-    let eps_c = 0.0045;
-    let s_sunward = sample_multilayer_cloud_decks(
-        normalize(p_view_mid + star_tilted * eps_c),
-        spin_angle,
-        t,
-        seed,
-        is_super_earth
-    );
-    // Positive when moving toward the star encounters thicker/higher cloud towers (self-occluded flank)
-    let sun_slope = (s_sunward.tower_height - s_mid.tower_height) / eps_c;
-    let self_shadow = clamp(1.0 - max(sun_slope, 0.0) * 0.14, 0.58, 1.08);
-    let sunlit_ridge = clamp(1.0 + max(-sun_slope, 0.0) * 0.12, 1.0, 1.16);
+    // Fast path: skip the 4 expensive finite-difference cloud deck noise evaluations
+    // on clear-sky pixels (`total_alpha < 0.015`) or deep nightside (`ndotl < -0.15`),
+    // blending smoothly across the threshold with `bump_gate` to prevent any seam.
+    var self_shadow = 0.84;
+    var sunlit_ridge = 1.0;
+    var cloud_normal_world = surface_dir;
+    if (total_alpha >= 0.015 && ndotl >= -0.15) {
+        let eps_c = 0.0045;
+        let bump_gate = smoothstep(0.015, 0.06, total_alpha) * smoothstep(-0.15, -0.02, ndotl);
+        let s_sunward = sample_multilayer_cloud_decks(
+            normalize(p_view_mid + star_tilted * eps_c),
+            spin_angle,
+            t,
+            seed,
+            is_super_earth
+        );
+        // Positive when moving toward the star encounters thicker/higher cloud towers (self-occluded flank)
+        let sun_slope = (s_sunward.tower_height - s_mid.tower_height) / eps_c;
+        let raw_self_shadow = clamp(1.0 - max(sun_slope, 0.0) * 0.14, 0.58, 1.08);
+        let raw_sunlit_ridge = clamp(1.0 + max(-sun_slope, 0.0) * 0.12, 1.0, 1.16);
+        self_shadow = mix(0.84, raw_self_shadow, bump_gate);
+        sunlit_ridge = mix(1.0, raw_sunlit_ridge, bump_gate);
+
+        // 3D Cumulus normal perturbation in world space
+        let sx = sample_multilayer_cloud_decks(normalize(p_view_mid + vec3<f32>(eps_c, 0.0, 0.0)), spin_angle, t, seed, is_super_earth).tower_height;
+        let sy = sample_multilayer_cloud_decks(normalize(p_view_mid + vec3<f32>(0.0, eps_c, 0.0)), spin_angle, t, seed, is_super_earth).tower_height;
+        let sz = sample_multilayer_cloud_decks(normalize(p_view_mid + vec3<f32>(0.0, 0.0, eps_c)), spin_angle, t, seed, is_super_earth).tower_height;
+        let grad_tilted = vec3<f32>(sx - s_mid.tower_height, sy - s_mid.tower_height, sz - s_mid.tower_height) / eps_c;
+        let grad_world = grad_tilted.x * s_tangent_x + grad_tilted.y * s_axis + grad_tilted.z * s_tangent_z;
+        cloud_normal_world = normalize(surface_dir - grad_world * 0.028 * total_alpha * bump_gate);
+    }
 
     // Beer-Powder multiple-scattering boost at cloud edges and thin cirrus
     let powder_effect = 1.0 - 0.42 * exp(-total_alpha * 3.2);
@@ -1960,14 +2003,6 @@ fn evaluate_multilayer_clouds_and_shadows(
     var lit_cloud_col = mix(cloud_base_tint, cloud_base_tint * sunset_coral, twilight_cloud_zone * 0.68);
     lit_cloud_col += vec3<f32>(1.0, 0.95, 0.86) * silver_lining;
     lit_cloud_col = mix(lit_cloud_col, vec3<f32>(0.99, 1.0, 1.0), boil_steam_factor * 0.65);
-
-    // 3D Cumulus normal perturbation in world space
-    let sx = sample_multilayer_cloud_decks(normalize(p_view_mid + vec3<f32>(eps_c, 0.0, 0.0)), spin_angle, t, seed, is_super_earth).tower_height;
-    let sy = sample_multilayer_cloud_decks(normalize(p_view_mid + vec3<f32>(0.0, eps_c, 0.0)), spin_angle, t, seed, is_super_earth).tower_height;
-    let sz = sample_multilayer_cloud_decks(normalize(p_view_mid + vec3<f32>(0.0, 0.0, eps_c)), spin_angle, t, seed, is_super_earth).tower_height;
-    let grad_tilted = vec3<f32>(sx - s_mid.tower_height, sy - s_mid.tower_height, sz - s_mid.tower_height) / eps_c;
-    let grad_world = grad_tilted.x * s_tangent_x + grad_tilted.y * s_axis + grad_tilted.z * s_tangent_z;
-    let cloud_normal_world = normalize(surface_dir - grad_world * 0.028 * total_alpha);
 
     var out_res: MultiLayerCloudResult;
     out_res.total_alpha = total_alpha;
@@ -2328,11 +2363,13 @@ fn fragment(
 ) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
-    let norm = normalize(in.world_normal);
+    let norm_len2 = dot(in.world_normal, in.world_normal);
+    let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.world_normal / sqrt(max(norm_len2, 1e-10)), norm_len2 > 1e-10);
     // On celestial spheres and ellipsoids, world_normal carries full 24-bit precision without
     // the catastrophic float cancellation of subtracting world positions at hundreds of AU.
     let surface_dir = norm;
-    let to_star = normalize(-in.world_position.xyz);
+    let wp_len2 = dot(in.world_position.xyz, in.world_position.xyz);
+    let to_star = select(vec3<f32>(0.0, 1.0, 0.0), -in.world_position.xyz / sqrt(max(wp_len2, 1e-10)), wp_len2 > 1e-10);
     let stellar_insolation = max(dot(norm, to_star), 0.0);
 
     // Normalized 3D physical spin axis in world coordinates
@@ -2377,6 +2414,27 @@ fn fragment(
         star_out.color = render_stellar_photosphere(p_surf, norm, pbr_input.V, t);
     }
     star_out.color = main_pass_post_lighting_processing(pbr_input, star_out.color);
+@if(!PREPASS_PIPELINE && CUTAWAY_ENABLED)
+    if (planet.planet_type != 5u && planet.cutaway_params.x > 0.5) {
+        let cut_res = evaluate_internal_cutaway(
+            p_tilted,
+            -pbr_input.V,
+            s_tangent_x,
+            s_axis,
+            s_tangent_z,
+            planet.cutaway_params.y,
+            planet.cutaway_params.z,
+            planet.cutaway_params.w,
+            planet.time,
+            planet.climate_and_bio.x,
+            planet.planet_type,
+            planet.temperature,
+            planet.cutaway_params.x > 1.5,
+        );
+        if (cut_res.is_cut) {
+            star_out.color = vec4<f32>(cut_res.color + cut_res.emissive, 1.0);
+        }
+    }
     return star_out;
 }
 }
@@ -2557,10 +2615,10 @@ fn fragment(
         let nano_lod = 1.0 - smoothstep(0.015, 0.12, length(fwidth(p_gas * 35.0)));
         let flow_ultra = noise(p_zonal_4 + warp_fine * 2.0) * nano_lod;
 
-        // Zonal frequency: Saturn has finer, denser striations (26 bands); Jupiter has ~15 major belts/zones
+        // Zonal frequency: Saturn has silky, haze-veiled broad/mid bands; Jupiter has ~15 major belts/zones
         let band_freq = select(
             14.0 + min(mass_jup, 6.0) * 1.4,
-            26.0,
+            16.0,
             is_saturn
         );
 
@@ -2568,39 +2626,66 @@ fn fragment(
         let band_pixel_deriv = length(fwidth(g_lat * band_freq));
         let band_lod = 1.0 - smoothstep(0.35, 1.10, band_pixel_deriv);
 
+        // Saturn's thick upper photochemical haze smooths out turbulent meanders compared to Jupiter
+        let warp_scale = select(1.0, 0.26, is_saturn);
+
         // Fluid domain warping of latitude creates dynamic meandering jet streams
-        let warp_lat = g_lat + ((flow_coarse - 0.5) * 0.14 * shear_turb + (flow_mid - 0.5) * 0.05 * shear_turb) * band_lod;
+        let warp_lat = g_lat + ((flow_coarse - 0.5) * 0.14 * shear_turb + (flow_mid - 0.5) * 0.05 * shear_turb) * band_lod * warp_scale;
 
         // Kelvin-Helmholtz shear instabilities along jet boundaries
-        let kh_shear = ((flow_mid - 0.5) * 0.35 * shear_turb + (flow_fine - 0.5) * 0.14 * shear_turb) * band_lod;
+        let kh_shear = ((flow_mid - 0.5) * 0.35 * shear_turb + (flow_fine - 0.5) * 0.14 * shear_turb) * band_lod * warp_scale;
 
         // Equatorial Festoon plumes: dark loops extending from the tropical belt into equatorial zone
         let in_festoon_lat = smoothstep(0.20, 0.06, g_lat) * smoothstep(-0.02, 0.06, g_lat);
         let festoon_flow = sin(p_gas.x * 12.0 + flow_mid * 3.2) * cos(p_gas.z * 12.0);
         let festoon_mask = in_festoon_lat * smoothstep(0.36, 0.72, flow_coarse + festoon_flow * 0.36) * band_lod;
 
-        // Crisp, anti-aliased latitudinal banding (sharper step transitions when close, filtered when distant):
-        let s_prim = sin(warp_lat * band_freq + kh_shear);
-        let b_primary = mix(0.5, smoothstep(-0.48, 0.48, s_prim), band_lod);
+        var raw_bands: f32;
+        if (is_saturn) {
+            // Silky, velvety Cassini Saturn banding: smooth continuous zonal haze gradients,
+            // broad bright creamy Equatorial Zone, and delicate mid-latitude warm ribbons (no harsh zebra steps).
+            let sat_broad = mix(0.5, 0.5 + 0.5 * cos(warp_lat * 11.5 + kh_shear * 0.65), band_lod);
+            let sat_mid = sin(warp_lat * 21.0 + flow_mid * 0.55) * 0.12 * band_lod;
+            let sat_fine = sin(warp_lat * 44.0 + flow_fine * 0.35) * 0.045 * nano_lod * band_lod;
+            let sat_grain = (flow_ultra - 0.5) * 0.035 * nano_lod * band_lod;
 
-        // Mid-frequency harmonic for secondary belts and subtle sub-divisions (NEBn/NEBs, SEBn/SEBs)
-        let b_harmonic = sin(warp_lat * band_freq * 2.0 + flow_mid * 1.4) * 0.22 * band_lod;
+            // Broad luminous creamy Equatorial Zone (|lat| < ~16°)
+            let eq_zone_lift = exp(-pow(g_lat / 0.24, 2.0)) * 0.38;
+            // Subtle warm ochre temperate jet ribbons (~26° and ~41° latitude, iconic in Cassini imagery)
+            let ribbon_26 = exp(-pow((abs(warp_lat) - 0.45) / 0.044, 2.0)) * 0.30 * band_lod;
+            let ribbon_41 = exp(-pow((abs(warp_lat) - 0.72) / 0.038, 2.0)) * 0.24 * band_lod;
+            // Soft bright cream sub-tropical collar just poleward of the equatorial zone
+            let sub_zone = exp(-pow((abs(warp_lat) - 0.34) / 0.065, 2.0)) * 0.16 * band_lod;
 
-        // Anti-aliased micro-striations for close-up fidelity (derivative-filtered)
-        let b_micro = sin(warp_lat * band_freq * 4.2 + flow_fine * 0.8) * 0.09 * nano_lod * band_lod;
+            raw_bands = clamp(
+                0.38 + sat_broad * 0.34 + sat_mid + sat_fine + sat_grain + eq_zone_lift + sub_zone - ribbon_26 - ribbon_41,
+                0.06,
+                1.0
+            );
+        } else {
+            // Crisp, anti-aliased latitudinal banding (sharper step transitions when close, filtered when distant):
+            let s_prim = sin(warp_lat * band_freq + kh_shear);
+            let b_primary = mix(0.5, smoothstep(-0.48, 0.48, s_prim), band_lod);
 
-        // Fine convective eddy billows along shear margins
-        let b_filament = (flow_ultra - 0.5) * 0.10 * nano_lod * band_lod;
+            // Mid-frequency harmonic for secondary belts and subtle sub-divisions (NEBn/NEBs, SEBn/SEBs)
+            let b_harmonic = sin(warp_lat * band_freq * 2.0 + flow_mid * 1.4) * 0.22 * band_lod;
 
-        var raw_bands = clamp(b_primary * 0.62 + 0.19 + b_harmonic + b_micro + b_filament, 0.0, 1.0);
+            // Anti-aliased micro-striations for close-up fidelity (derivative-filtered)
+            let b_micro = sin(warp_lat * band_freq * 4.2 + flow_fine * 0.8) * 0.09 * nano_lod * band_lod;
+
+            // Fine convective eddy billows along shear margins
+            let b_filament = (flow_ultra - 0.5) * 0.10 * nano_lod * band_lod;
+
+            raw_bands = clamp(b_primary * 0.62 + 0.19 + b_harmonic + b_micro + b_filament, 0.0, 1.0);
+        }
 
         // Circumpolar vortex transition:
         // At latitudes > 64° (|g_lat| > 1.12 rad), linear zonal jet streams dissolve into
         // chaotic circumpolar cyclonic swirls and the polar hood, eliminating concentric target rings!
-        let polar_transition = smoothstep(1.05, 1.34, g_abs_lat);
+        let polar_transition = smoothstep(select(1.05, 0.88, is_saturn), 1.34, g_abs_lat);
         if (polar_transition > 0.0) {
             let circumpolar_cyclones = fbm(vec3<f32>(p_gas.x * 8.0, p_gas.y * 4.0, p_gas.z * 8.0) + vec3<f32>(0.0, t * 0.02, 0.0));
-            raw_bands = mix(raw_bands, circumpolar_cyclones, polar_transition * 0.75);
+            raw_bands = mix(raw_bands, circumpolar_cyclones, polar_transition * select(0.75, 0.42, is_saturn));
         }
         let band_composite = raw_bands;
 
@@ -2631,19 +2716,14 @@ fn fragment(
             c_polar      = vec3<f32>(0.26, 0.20, 0.18);
             c_festoon    = vec3<f32>(0.28, 0.14, 0.08);
         } else if (is_saturn) {
-            // Authentic Saturnian Strata (Cassini-calibrated butterscotch, golden-sand & warm ochre)
-            // Ammonia cirrus cloud zones: pale warm ivory cream
-            c_zone       = vec3<f32>(0.96, 0.92, 0.80);
-            // Mid-level cloud deck: rich warm honey butterscotch
-            c_belt_light = vec3<f32>(0.88, 0.78, 0.56);
-            // Chromophore-rich downwelling belts: warm caramel amber-ochre
-            c_belt_dark  = vec3<f32>(0.70, 0.54, 0.34);
-            // Deep sub-cloud thermal rift lanes: roasted chestnut
-            c_rift       = vec3<f32>(0.48, 0.34, 0.18);
-            // North Polar Hood / Hexagon surrounds: warm olive-gold to smoky slate
-            c_polar      = vec3<f32>(0.56, 0.52, 0.38);
-            // Subtle equatorial festoons
-            c_festoon    = vec3<f32>(0.52, 0.46, 0.36);
+            // Authentic Cassini Saturnian Strata (linear-RGB calibrated rich warm butterscotch,
+            // luminous pale butter-cream equatorial zone, honey-gold mid-latitudes & muted olive-sage polar hood)
+            c_zone       = vec3<f32>(0.94, 0.80, 0.36);
+            c_belt_light = vec3<f32>(0.76, 0.60, 0.25);
+            c_belt_dark  = vec3<f32>(0.56, 0.42, 0.17);
+            c_rift       = vec3<f32>(0.42, 0.30, 0.12);
+            c_polar      = vec3<f32>(0.29, 0.36, 0.20);
+            c_festoon    = vec3<f32>(0.64, 0.50, 0.22);
         } else if (is_jupiter) {
             // Authentic Jovian Strata (Juno/Cassini-calibrated warm ivory zones, rich terracotta belts)
             // Crisp warm cream ammonia ice upwelling:
@@ -2716,15 +2796,19 @@ fn fragment(
 
         // Equatorial festoons
         if (festoon_mask > 0.01) {
-            let f_int = select(0.85, 0.35, is_saturn);
+            let f_int = select(0.85, 0.12, is_saturn);
             c3 = mix(c3, c_festoon, festoon_mask * f_int);
         }
 
         // Polar hood transitions and circumpolar vortices
         if (polar_transition > 0.0) {
             let polar_eddy = fbm(p_gas * 10.0 + vec3<f32>(0.0, t * 0.025, 0.0));
-            let polar_pattern = mix(c_polar, c_belt_dark, smoothstep(0.38, 0.72, polar_eddy) * 0.35);
-            c3 = mix(c3, polar_pattern, polar_transition * 0.85);
+            let polar_pattern = mix(
+                c_polar,
+                select(c_belt_dark, vec3<f32>(0.39, 0.43, 0.24), is_saturn),
+                smoothstep(0.38, 0.72, polar_eddy) * select(0.35, 0.24, is_saturn)
+            );
+            c3 = mix(c3, polar_pattern, polar_transition * select(0.85, 0.84, is_saturn));
         }
 
         // Evaluate primary anticyclonic storm (Great Red Spot / Dark Spot) and secondary ovals
@@ -2733,14 +2817,20 @@ fn fragment(
                 p_gas, t, spot_size, spot_lat, spot_lon, vortex_spin, sec_ovals, mass_jup, is_saturn
             );
             if (vortex_res.is_active) {
-                let clear_vortex_col = mix(c_belt_dark * 0.72, vortex_res.color, cloud_vis);
-                c3 = mix(c3, clear_vortex_col, vortex_res.spot_mask * mix(0.65, 0.96, cloud_vis));
-                c3 = mix(c3, c_rift, vortex_res.wake_mask * 0.75 * cloud_vis);
-                // White ovals with dark collar
-                let oval_core = smoothstep(0.35, 0.90, vortex_res.oval_mask) * cloud_vis;
-                let oval_rim = smoothstep(0.05, 0.35, vortex_res.oval_mask) * (1.0 - oval_core);
-                c3 = mix(c3, c_rift, oval_rim * 0.70 * cloud_vis);
-                c3 = mix(c3, vec3<f32>(0.99, 0.98, 0.95), oval_core * 0.95);
+                if (is_saturn) {
+                    // Saturn's storms are softly veiled beneath the golden upper ammonia haze
+                    c3 = mix(c3, vortex_res.color, vortex_res.spot_mask * 0.28 * cloud_vis);
+                    c3 = mix(c3, c_zone, smoothstep(0.25, 0.85, vortex_res.oval_mask) * 0.22 * cloud_vis);
+                } else {
+                    let clear_vortex_col = mix(c_belt_dark * 0.72, vortex_res.color, cloud_vis);
+                    c3 = mix(c3, clear_vortex_col, vortex_res.spot_mask * mix(0.65, 0.96, cloud_vis));
+                    c3 = mix(c3, c_rift, vortex_res.wake_mask * 0.75 * cloud_vis);
+                    // White ovals with dark collar
+                    let oval_core = smoothstep(0.35, 0.90, vortex_res.oval_mask) * cloud_vis;
+                    let oval_rim = smoothstep(0.05, 0.35, vortex_res.oval_mask) * (1.0 - oval_core);
+                    c3 = mix(c3, c_rift, oval_rim * 0.70 * cloud_vis);
+                    c3 = mix(c3, vec3<f32>(0.99, 0.98, 0.95), oval_core * 0.95);
+                }
             }
         }
 
@@ -2748,37 +2838,42 @@ fn fragment(
         if (hex_amp > 0.001) {
             let hex_res = evaluate_polar_hexagon(p_gas, t, hex_amp, hex_k);
             if (hex_res.is_active) {
-                let hex_blend = max(hex_res.inside_mask * 0.88, hex_res.jet_mask * 0.96) * mix(0.35, 1.0, cloud_vis);
-                c3 = mix(c3, mix(c_belt_light, hex_res.color, cloud_vis), hex_blend);
-                if (hex_res.eye_mask > 0.0) {
-                    c3 = mix(c3, vec3<f32>(0.24, 0.12, 0.05), hex_res.eye_mask * 0.95 * mix(0.4, 1.0, cloud_vis));
-                }
+                let hex_blend = max(hex_res.inside_mask * 0.82, hex_res.jet_mask * 0.72) * mix(0.35, 1.0, cloud_vis);
+                c3 = mix(c3, mix(c_polar, hex_res.color, cloud_vis), hex_blend);
             }
         }
 
-        // Strings of Pearls: chains of high-pressure anticyclonic white storm ovals along temperate belts
-        let temperate_band = exp(-pow((g_abs_lat - 0.62) / 0.06, 2.0));
-        let lon_rad = atan2(p_gas.z, p_gas.x);
-        let pearl_phase = sin(lon_rad * 8.0 + t * 0.08);
-        let pearl_rim = temperate_band * smoothstep(0.68, 0.84, pearl_phase) * cloud_vis;
-        let pearl_oval = temperate_band * smoothstep(0.84, 0.98, pearl_phase) * cloud_vis;
-        c3 = mix(c3, c_rift, pearl_rim * 0.40);
-        c3 = mix(c3, vec3<f32>(0.99, 0.98, 0.96), pearl_oval * 0.90);
+        // Strings of Pearls: Jovian chains of high-pressure anticyclonic white storm ovals along temperate belts
+        if (!is_saturn) {
+            let temperate_band = exp(-pow((g_abs_lat - 0.62) / 0.06, 2.0));
+            let lon_rad = atan2(p_gas.z, p_gas.x);
+            let pearl_phase = sin(lon_rad * 8.0 + t * 0.08);
+            let pearl_rim = temperate_band * smoothstep(0.68, 0.84, pearl_phase) * cloud_vis;
+            let pearl_oval = temperate_band * smoothstep(0.84, 0.98, pearl_phase) * cloud_vis;
+            c3 = mix(c3, c_rift, pearl_rim * 0.40);
+            c3 = mix(c3, vec3<f32>(0.99, 0.98, 0.96), pearl_oval * 0.90);
+        }
 
         // 3D Multi-Deck Cloud Stratigraphy Shadows & Normal Relief on Gas Giants:
-        // High-altitude white ammonia zones (band_composite > 0.54) and storm collars stand above
-        // the deeper terracotta/umber belts, casting subtle drop shadows and catching grazing terminator light.
+        // Jupiter's exposed multi-deck clouds show crisp vertical relief; Saturn's thick upper haze is silky smooth.
+        let relief_scale = select(1.0, 0.10, is_saturn);
         let sun_lat_grad = cos(warp_lat * band_freq + kh_shear) * band_freq * star_tilted.y * band_lod;
-        let belt_shadow = clamp(-sun_lat_grad * 0.016, 0.0, 0.22) * (1.0 - smoothstep(0.35, 0.68, band_composite)) * cloud_vis;
-        let zone_sun_ridge = clamp(sun_lat_grad * 0.012, 0.0, 0.14) * smoothstep(0.45, 0.80, band_composite) * cloud_vis;
+        let belt_shadow = clamp(-sun_lat_grad * 0.016, 0.0, 0.22) * (1.0 - smoothstep(0.35, 0.68, band_composite)) * cloud_vis * relief_scale;
+        let zone_sun_ridge = clamp(sun_lat_grad * 0.012, 0.0, 0.14) * smoothstep(0.45, 0.80, band_composite) * cloud_vis * relief_scale;
         c3 = c3 * (1.0 - belt_shadow + zone_sun_ridge);
-        pbr_input.N = normalize(surface_dir - s_axis * (cos(warp_lat * band_freq + kh_shear) * 0.022 * band_lod * mix(0.35, 1.0, cloud_vis)));
+        pbr_input.N = normalize(surface_dir - s_axis * (cos(warp_lat * band_freq + kh_shear) * 0.022 * relief_scale * band_lod * mix(0.35, 1.0, cloud_vis)));
 
-        // Atmospheric Rayleigh/Mie limb brightening (soft luminous haze along the limb)
+        // Atmospheric Rayleigh/Mie limb scattering (warm luminous champagne-cream sunlit limb on Saturn)
         let NdotV = max(dot(norm, pbr_input.V), 0.0);
-        let limb_factor = pow(1.0 - NdotV, 3.8);
-        let limb_glow = mix(c_zone, c_polar, 0.50) * 0.40;
-        c3 = mix(c3, limb_glow, limb_factor * 0.38);
+        let limb_factor = pow(1.0 - NdotV, 3.6);
+        if (is_saturn && !hide_clouds) {
+            let sun_limb_mask = smoothstep(-0.04, 0.48, dot(norm, star_world_norm));
+            let sat_limb_col = mix(vec3<f32>(0.24, 0.26, 0.16), vec3<f32>(1.00, 0.88, 0.48), sun_limb_mask);
+            c3 = mix(c3, sat_limb_col, limb_factor * mix(0.10, 0.30, sun_limb_mask));
+        } else {
+            let limb_glow = mix(c_zone, c_polar, 0.50) * 0.40;
+            c3 = mix(c3, limb_glow, limb_factor * 0.38);
+        }
 
         color = c3;
 
@@ -3982,7 +4077,13 @@ fn fragment(
 
         // Dynamic Surface Heatmap & Stefan-Boltzmann Blackbody Glow
         let is_tidally_locked = planet.tidal_deformation.w >= 1.5;
-        let sun_cos = dot(surface_dir, normalize(planet.star_dir_and_lum.xyz));
+        let star_dir_len2 = dot(planet.star_dir_and_lum.xyz, planet.star_dir_and_lum.xyz);
+        let star_dir_safe = select(
+            vec3<f32>(0.0, 1.0, 0.0),
+            planet.star_dir_and_lum.xyz / sqrt(max(star_dir_len2, 1e-10)),
+            star_dir_len2 > 1e-10
+        );
+        let sun_cos = dot(surface_dir, star_dir_safe);
         let pressure_bar = planet.atmosphere_params.x;
         let atm_insulation = clamp(pressure_bar / 1.0, 0.05, 0.92);
 
@@ -4077,8 +4178,12 @@ fn fragment(
                 select(0.065, 0.098, planet.ring_shadow_params.w > 0.5 || planet.storm_features.x > 0.001),
                 is_giant_sh
             );
-            let oblate_scale_sh = 1.0 - oblateness_sh * (1.5 * sin_lat_sh * sin_lat_sh - 0.5);
-            let p_oblate = p_sun_facing * oblate_scale_sh;
+            // Exact normal-to-surface-point mapping on oblate spheroid (r_eq = 1.0, r_pol = 1.0 - f)
+            let pol_scale_sh = max(1.0 - oblateness_sh, 0.5);
+            let pol_sq_sh = pol_scale_sh * pol_scale_sh;
+            let sin2_sh = sin_lat_sh * sin_lat_sh;
+            let p_oblate = (p_sun_facing - s_axis * (sin_lat_sh * (1.0 - pol_sq_sh)))
+                / sqrt(max(1.0 - sin2_sh * (1.0 - pol_sq_sh), 0.25));
 
             let L_dot_S = dot(star_dir, s_axis);
             let P_dot_S = dot(p_oblate, s_axis);
@@ -4092,17 +4197,18 @@ fn fragment(
                     if (r_int >= r_inner && r_int <= r_outer) {
                         let u = clamp((r_int - r_inner) / max(r_outer - r_inner, 0.001), 0.0, 1.0);
 
-                        // Smooth penumbral ring density profile (C Ring, B Ring, Cassini Division, A Ring, Encke Gap, F Ring)
-                        let c_ring = mix(0.10, 0.34, clamp(u / 0.22, 0.0, 1.0)) * smoothstep(0.0, 0.035, u) * (1.0 - smoothstep(0.195, 0.245, u));
-                        let b_ring = mix(0.78, 0.96, smoothstep(0.22, 0.38, u)) * smoothstep(0.195, 0.245, u) * (1.0 - smoothstep(0.625, 0.665, u));
-                        let cassini_floor = 0.08 * smoothstep(0.625, 0.665, u) * (1.0 - smoothstep(0.705, 0.745, u));
-                        let encke_dip = 1.0 - 0.78 * exp(-pow((u - 0.865) / 0.011, 2.0));
-                        let a_ring = 0.74 * encke_dip * smoothstep(0.705, 0.745, u) * (1.0 - smoothstep(0.935, 0.975, u));
-                        let f_ring = 0.28 * smoothstep(0.935, 0.968, u) * (1.0 - smoothstep(0.968, 1.0, u));
+                        // Crisp banded Cassini ring shadow profile matching planetary_rings.wesl
+                        let fine_sh_mod = 0.90 + 0.10 * sin(u * 150.0);
+                        let c_ring = mix(0.08, 0.24, clamp(u / 0.24, 0.0, 1.0)) * smoothstep(0.0, 0.025, u) * (1.0 - smoothstep(0.225, 0.25, u));
+                        let b_ring = mix(0.76, 0.98, smoothstep(0.24, 0.42, u)) * fine_sh_mod * smoothstep(0.225, 0.25, u) * (1.0 - smoothstep(0.63, 0.648, u));
+                        let cassini_floor = 0.04 * smoothstep(0.63, 0.648, u) * (1.0 - smoothstep(0.705, 0.725, u));
+                        let encke_dip = 1.0 - 0.85 * exp(-pow((u - 0.872) / 0.008, 2.0));
+                        let a_ring = 0.70 * encke_dip * fine_sh_mod * smoothstep(0.705, 0.725, u) * (1.0 - smoothstep(0.925, 0.945, u));
+                        let f_ring = 0.24 * exp(-pow((u - 0.982) / 0.007, 2.0));
                         let ring_density = c_ring + b_ring + cassini_floor + a_ring + f_ring;
 
-                        let edge_feather = smoothstep(r_inner, r_inner + 0.035, r_int) * (1.0 - smoothstep(r_outer - 0.035, r_outer, r_int));
-                        let shadow_atten = clamp(ring_density * opt_depth * edge_feather, 0.0, 0.95);
+                        let edge_feather = smoothstep(r_inner, r_inner + 0.025, r_int) * (1.0 - smoothstep(r_outer - 0.025, r_outer, r_int));
+                        let shadow_atten = clamp(ring_density * opt_depth * edge_feather, 0.0, 0.94);
                         ring_shadow = 1.0 - shadow_atten;
                     }
                 }
@@ -4143,23 +4249,26 @@ fn fragment(
         );
 
         // Soft penumbral & atmospheric twilight terminator wraparound:
-        // Prevents a harsh Lambertian step at NdotL = 0 by wrapping multiple-scattered twilight
-        // and finite solar-disk penumbra smoothly into the civil/nautical twilight zone.
-        let wrap_width = select(0.11, 0.26, has_atmo_wrap);
+        // Prevents a harsh Lambertian step at NdotL = 0 while preserving velvety dark Cassini night-sides on gas giants.
+        let is_gas_giant_lit = planet.planet_type == 1u;
+        let wrap_width = select(0.11, select(0.26, 0.13, is_gas_giant_lit), has_atmo_wrap);
         let wrapped_ndotl = clamp((NdotL + wrap_width) / (1.0 + wrap_width), 0.0, 1.0);
         let terminator_soft_wrap = smoothstep(-wrap_width, wrap_width * 1.15, geom_NdotL)
             * wrapped_ndotl
-            * select(0.14, 0.28, has_atmo_wrap)
+            * select(0.14, select(0.28, 0.11, is_gas_giant_lit), has_atmo_wrap)
             * total_shadow;
 
         // Warm Rayleigh-reddened twilight belt + cool stratospheric scatter along the terminator
-        let twilight_band = exp(-pow((geom_NdotL + 0.02) / select(0.10, 0.16, has_atmo_wrap), 2.0));
-        let twilight_tint = select(
-            vec3<f32>(0.95, 0.88, 0.80),
+        // Gas giants transition smoothly through warm golden-amber aerosol haze without Earth's blue twilight stripe
+        let twilight_band = exp(-pow((geom_NdotL + 0.02) / select(0.10, select(0.16, 0.12, is_gas_giant_lit), has_atmo_wrap), 2.0));
+        let atmo_twilight_tint = select(
             mix(vec3<f32>(1.08, 0.56, 0.30), vec3<f32>(0.48, 0.74, 1.05), smoothstep(0.05, -0.18, geom_NdotL)),
-            has_atmo_wrap
+            mix(vec3<f32>(0.94, 0.74, 0.36), vec3<f32>(0.34, 0.28, 0.18), smoothstep(0.05, -0.14, geom_NdotL)),
+            is_gas_giant_lit
         );
-        let twilight_scatter = base_col * twilight_tint * twilight_band * max(wrapped_ndotl, 0.18) * select(0.08, 0.22, has_atmo_wrap) * total_shadow;
+        let twilight_tint = select(vec3<f32>(0.95, 0.88, 0.80), atmo_twilight_tint, has_atmo_wrap);
+        let twilight_strength = select(0.08, select(0.22, 0.09, is_gas_giant_lit), has_atmo_wrap);
+        let twilight_scatter = base_col * twilight_tint * twilight_band * max(wrapped_ndotl, 0.18) * twilight_strength * total_shadow;
 
         // Measure starlight illuminance factor relative to surface albedo, modulated by shadows
         let raw_starlight = lit_lum / base_lum;
@@ -4220,11 +4329,13 @@ fn fragment(
         );
         let ps_ndotl = clamp(dot(pbr_input.N, planetshine_dir) * 0.65 + 0.35, 0.0, 1.0);
         let normal_relief = clamp(dot(pbr_input.N, geom_N), 0.35, 1.0);
-        let planetshine_tint = vec3<f32>(0.68, 0.82, 1.06);
-        let planetshine_strength = select(0.055, 0.095, has_companion || planet.composition.y > 0.25);
+        let planetshine_tint = select(vec3<f32>(0.68, 0.82, 1.06), vec3<f32>(0.88, 0.78, 0.58), is_gas_giant_lit);
+        let base_ps_strength = select(0.055, 0.095, has_companion || planet.composition.y > 0.25);
+        let planetshine_strength = select(base_ps_strength, 0.018, is_gas_giant_lit);
         let night_planetshine = base_col * planetshine_tint * ps_ndotl * normal_relief * planetshine_strength * night_mask;
-        let night_airglow = select(vec3<f32>(0.0), vec3<f32>(0.22, 0.42, 0.78) * fresnel * 0.045 * night_mask, has_atmo_wrap);
-        let ambient_boost = base_col * (0.042 * normal_relief) + night_planetshine + night_airglow;
+        let night_airglow = select(vec3<f32>(0.0), vec3<f32>(0.22, 0.42, 0.78) * fresnel * 0.045 * night_mask, has_atmo_wrap && !is_gas_giant_lit);
+        let ambient_floor_coeff = select(0.042, 0.014, is_gas_giant_lit);
+        let ambient_boost = base_col * (ambient_floor_coeff * normal_relief) + night_planetshine + night_airglow;
         
         // Phase 2: Dimensionless Spherical Chapman + Multi-Scattering Atmospheric Integrator
         // Operates in exact unit-sphere local coordinates (R_planet = 1.0) around `geom_N`,
@@ -4310,7 +4421,8 @@ fn fragment(
 
                 // Hillaire 2nd/3rd-order isotropic multiple-scattering energy transfer approximation
                 let albedo_ms = vec3<f32>(0.88, 0.90, 0.94);
-                let ms_trans = exp(-(tau_sun * 0.38 + tau_view * 0.45)) * smoothstep(-0.34, 0.14, mu_s);
+                let ms_gate = select(smoothstep(-0.34, 0.14, mu_s), smoothstep(-0.14, 0.16, mu_s), is_gas_giant_lit);
+                let ms_trans = exp(-(tau_sun * 0.38 + tau_view * 0.45)) * ms_gate;
                 let multi_slice = (beta_r * d_r + beta_m * d_m * 0.65) * albedo_ms * p_iso * ms_trans * 0.55;
 
                 in_scatter += single_slice + multi_slice;
@@ -4437,6 +4549,9 @@ fn fragment(
             planet.cutaway_params.w,
             planet.time,
             planet.climate_and_bio.x,
+            planet.planet_type,
+            planet.temperature,
+            planet.cutaway_params.x > 1.5,
         );
         if (cut_res.is_cut) {
             out.color = vec4<f32>(cut_res.color + cut_res.emissive, 1.0);

@@ -25,10 +25,11 @@ pub fn launch_targeted_bombardment(
             c.ice_frac = 0.60;
             c.organics_frac = 0.20;
             c.silicate_frac = 0.20;
+            c.metal_frac = 0.0;
             (
                 0.000_40 * EARTH_MASS_SOLAR,
                 EARTH_RADIUS_AU * 0.05,
-                c,
+                c.normalized(),
                 BodyType::Comet,
                 format!("Guided-Comet -> {target_name}"),
             )
@@ -37,11 +38,12 @@ pub fn launch_targeted_bombardment(
             let mut c = Composition::carbonaceous();
             c.organics_frac = 0.35;
             c.ice_frac = 0.25;
-            c.silicate_frac = 0.40;
+            c.silicate_frac = 0.35;
+            c.metal_frac = 0.05;
             (
                 0.000_35 * EARTH_MASS_SOLAR,
                 EARTH_RADIUS_AU * 0.06,
-                c,
+                c.normalized(),
                 BodyType::Asteroid,
                 format!("Chondrite -> {target_name}"),
             )
@@ -51,10 +53,12 @@ pub fn launch_targeted_bombardment(
             c.ice_frac = 0.50;
             c.organics_frac = 0.30;
             c.gas_frac = 0.10;
+            c.silicate_frac = 0.10;
+            c.metal_frac = 0.0;
             (
                 0.000_25 * EARTH_MASS_SOLAR,
                 EARTH_RADIUS_AU * 0.04,
-                c,
+                c.normalized(),
                 BodyType::Comet,
                 format!("Volatile-Salvo -> {target_name}"),
             )
@@ -63,10 +67,12 @@ pub fn launch_targeted_bombardment(
             let mut c = Composition::metal_rich();
             c.metal_frac = 0.75;
             c.silicate_frac = 0.25;
+            c.ice_frac = 0.0;
+            c.organics_frac = 0.0;
             (
                 0.000_80 * EARTH_MASS_SOLAR,
                 EARTH_RADIUS_AU * 0.07,
-                c,
+                c.normalized(),
                 BodyType::Asteroid,
                 format!("Core-Impactor -> {target_name}"),
             )

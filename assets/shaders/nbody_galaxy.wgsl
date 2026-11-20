@@ -121,7 +121,7 @@ fn main(
     let v_mag = max(length(vel), 1e-3);
     let max_dt = clamp(0.03 * v_mag / a_mag, 1e-4, 0.05);
     let raw_n_steps = u32(ceil(abs(uniforms.dt) / max_dt));
-    let n_steps = clamp(raw_n_steps, 1u, 1024u);
+    let n_steps = clamp(raw_n_steps, 1u, 32u);
     let sub_dt = uniforms.dt / f32(n_steps);
     let half_dt = 0.5 * sub_dt;
     
@@ -142,9 +142,9 @@ fn main(
         pos = pos + vel * half_dt;
     }
 
-    // Galactic escape velocity limiter to prevent numerical outliers
+    // Galactic escape velocity limiter matched to CPU galaxy speed limit (60,000 AU/yr)
     let speed = length(vel);
-    let max_galaxy_speed = 40000.0;
+    let max_galaxy_speed = 60000.0;
     if (speed > max_galaxy_speed) {
         vel = vel * (max_galaxy_speed / speed);
     }

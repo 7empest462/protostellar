@@ -268,3 +268,187 @@ fn test_grazing_bounce_preserves_momentum_and_weighted_com() {
         "Mass-weighted separation must push bodies cleanly outside contact"
     );
 }
+
+#[test]
+fn test_gas_giant_roche_disruption_decoupled_from_visual_radius() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::accretion::collisions::process_accretion_and_collisions;
+    use protostellar::simulation::accretion::events::{
+        AccretionMergeEvent, CollisionBounceEvent, MoonFormationEvent, RocheDisruptionEvent,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .insert_resource(SimTime {
+            current_dt_yr: 0.001,
+            ..Default::default()
+        })
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<DiskParameters>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<MoonFormationEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .add_message::<RocheDisruptionEvent>()
+        .add_systems(Update, process_accretion_and_collisions);
+
+    app.world_mut().spawn((
+        SimPosition(DVec3::ZERO),
+        SimVelocity(DVec3::ZERO),
+        SimAcceleration(DVec3::ZERO),
+        Mass(1.0),
+        Radius(SOLAR_RADIUS_AU),
+        CentralStar,
+    ));
+
+    let saturn_m = 95.0 * EARTH_MASS_SOLAR;
+    let saturn_r = 0.000_389;
+    let saturn_pos = DVec3::new(9.5, 0.0, 0.0);
+    let saturn_vel = DVec3::new(0.0, 0.0, (G_ASTRO / 9.5).sqrt());
+
+    let saturn = app
+        .world_mut()
+        .spawn((
+            SimPosition(saturn_pos),
+            SimVelocity(saturn_vel),
+            SimAcceleration(DVec3::ZERO),
+            Mass(saturn_m),
+            Radius(saturn_r),
+            Temperature(134.0),
+            Composition::solar_gas(),
+            CelestialBody {
+                name: "Proto-Saturn".to_string(),
+                body_type: BodyType::GasGiant,
+            },
+            SpinState::default(),
+        ))
+        .id();
+
+    // Comet passing tangent inside fluid Roche limit (0.00060 AU < d_roche ~ 0.00086 AU),
+    // but well inside Saturn's inflated visual radius (~0.008 AU).
+    let d = 0.00060;
+    let v_circ_s = (G_ASTRO * saturn_m / d).sqrt();
+    let comet = app
+        .world_mut()
+        .spawn((
+            SimPosition(saturn_pos + DVec3::new(d, 0.0, 0.0)),
+            SimVelocity(saturn_vel + DVec3::new(0.0, 0.0, v_circ_s)),
+            SimAcceleration(DVec3::ZERO),
+            Mass(0.0001 * EARTH_MASS_SOLAR),
+            Radius(0.000_005),
+            Temperature(90.0),
+            Composition::icy(),
+            CelestialBody {
+                name: "Icy Grazed Comet".to_string(),
+                body_type: BodyType::Comet,
+            },
+            SpinState::default(),
+        ))
+        .id();
+
+    app.update();
+
+    let roche_events = app.world().resource::<Messages<RocheDisruptionEvent>>();
+    assert_eq!(
+        roche_events.len(),
+        1,
+        "Comet within Saturn fluid Roche limit must trigger Roche disruption rather than premature visual merger"
+    );
+    assert!(app.world().get_entity(comet).is_err());
+    let ring = app
+        .world()
+        .get::<PlanetaryRingSystem>(saturn)
+        .expect("Disrupted comet must form planetary rings on giant");
+    assert!(
+        (ring.ice_fraction - 0.55).abs() < 0.01,
+        "Ring ice_fraction should match comet Composition::icy() (0.55), got {}",
+        ring.ice_fraction
+    );
+}
+
+#[test]
+fn test_star_collision_excludes_basins_and_emits_joule_energy() {
+    use bevy::math::DVec3;
+    use bevy::prelude::*;
+    use protostellar::simulation::accretion::collisions::process_accretion_and_collisions;
+    use protostellar::simulation::accretion::events::{
+        AccretionMergeEvent, CollisionBounceEvent, MoonFormationEvent, RocheDisruptionEvent,
+    };
+    use protostellar::simulation::components::*;
+    use protostellar::simulation::resources::*;
+    use protostellar::utils::constants::*;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<DiskParameters>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<MoonFormationEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .add_message::<RocheDisruptionEvent>()
+        .add_systems(Update, process_accretion_and_collisions);
+
+    let star = app
+        .world_mut()
+        .spawn((
+            SimPosition(DVec3::ZERO),
+            SimVelocity(DVec3::ZERO),
+            SimAcceleration(DVec3::ZERO),
+            Mass(1.0),
+            Radius(SOLAR_RADIUS_AU),
+            Temperature(5778.0),
+            Composition::solar_gas(),
+            CelestialBody {
+                name: "The Sun".to_string(),
+                body_type: BodyType::YellowDwarf,
+            },
+            CentralStar,
+            SpinState::default(),
+        ))
+        .id();
+
+    app.world_mut().spawn((
+        SimPosition(DVec3::new(SOLAR_RADIUS_AU * 0.5, 0.0, 0.0)),
+        SimVelocity(DVec3::new(-5.0, 0.0, 0.0)),
+        SimAcceleration(DVec3::ZERO),
+        Mass(0.001 * EARTH_MASS_SOLAR),
+        Radius(EARTH_RADIUS_AU * 0.1),
+        Temperature(200.0),
+        Composition::icy(),
+        CelestialBody {
+            name: "Sungrazer".to_string(),
+            body_type: BodyType::Comet,
+        },
+        SpinState::default(),
+    ));
+
+    app.update();
+
+    let w = app.world();
+    assert!(
+        w.get::<PlanetaryBasins>(star).is_none(),
+        "Star swallowing comet must NOT attach PlanetaryBasins"
+    );
+    assert!(
+        w.get::<VolatileInventory>(star).is_none(),
+        "Star swallowing comet must NOT attach VolatileInventory"
+    );
+    let merges = w.resource::<Messages<AccretionMergeEvent>>();
+    let ev = merges
+        .iter_current_update_messages()
+        .next()
+        .expect("Stellar swallow must emit AccretionMergeEvent");
+    assert!(
+        ev.energy_released > 1.0e25,
+        "AccretionMergeEvent::energy_released must be in Joules (got {:.3e})",
+        ev.energy_released
+    );
+}

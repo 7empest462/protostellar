@@ -18,9 +18,9 @@ struct BlackHoleDiskUniforms {
     schwa_radius: f32,     // Schwarzschild event horizon radius (normalized, ~0.055)
     time: f32,
     disk_color: vec4<f32>, // Base emission tint
-    spin_axis: vec4<f32>,  // xyz: unit spin axis in local space, w: BH mass
+    spin_axis: vec4<f32>,  // xyz: unit spin axis in local space, w: dimensionless Kerr spin a_*
     cam_dir_local: vec4<f32>, // xyz: unit camera direction in local space, w: cos(inclination)
-    cam_up_local: vec4<f32>,  // xyz: true screen-up vector in local BH space, w: unused
+    cam_up_local: vec4<f32>,  // xyz: true screen-up vector in local BH space, w: accretion_rate multiplier
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0)
@@ -87,7 +87,7 @@ fn sample_accretion_disk(
     // A. Flux profile: plunge-region stress + outer fade
     let stress_factor = smoothstep(r_shadow * 0.94, r_inner * 1.30, r);
     let outer_fade = 1.0 - smoothstep(r_outer * 0.65, r_outer, r);
-    var disk_flux = pow(r_norm, -2.5) * stress_factor * outer_fade;
+    var disk_flux = pow(max(r_norm, 1e-4), -2.5) * stress_factor * outer_fade;
 
     // Peak flux normalization for chromatic mapping
     let t_val = clamp((disk_flux / 0.8) * 1.4, 0.0, 1.0);
@@ -109,7 +109,7 @@ fn sample_accretion_disk(
     let fine_rings = 0.85 + 0.15 * sin(ring_freq) + 0.05 * sin(ring_freq * 2.3);
 
     // Differential Keplerian spiral shear & turbulent MRI wisps using polar mapping
-    let omega = pow(r_norm, -1.5) * 1.2;
+    let omega = pow(max(r_norm, 1e-4), -1.5) * 1.2;
     let shear_angle = phi - omega * time;
     let u_coord = log(r_norm) * 1.8;
     let v_coord = shear_angle / (2.0 * 3.14159265);
@@ -188,7 +188,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     var lensed_emission = vec3<f32>(0.0);
     var lensed_alpha = 0.0;
 
-    let arch_weight = pow(sin_i, 1.25);
+    let arch_weight = pow(max(sin_i, 1e-4), 1.25);
     // Gate arches to strictly the upper (v > 0) and lower (v < 0) visual field,
     // smoothly tapering near the equator so the lateral disk is never distorted
     let v_gate = smoothstep(0.015, 0.075, abs(v));
@@ -203,7 +203,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 
         if (b <= b_max) {
             let t_arch = clamp((b - r_shadow) / max(b_max - r_shadow, 0.001), 0.0, 1.0);
-            let r_lensed = r_inner + pow(t_arch, 0.85) * (r_outer - r_inner);
+            let r_lensed = r_inner + pow(max(t_arch, 1e-4), 0.85) * (r_outer - r_inner);
             let z_rear = -sqrt(max(r_lensed * r_lensed - u * u, 0.001));
             let phi_lensed = atan2(z_rear, u);
 
@@ -211,7 +211,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
             let sample = sample_accretion_disk(r_lensed, phi_lensed, r_inner, r_outer, r_shadow, sin_i, disk.time);
 
             lensed_emission = sample.emission * outer_fade;
-            lensed_alpha    = sample.alpha    * outer_fade;
+            lensed_alpha    = clamp(sample.alpha * outer_fade, 0.0, 1.0);
         }
     }
 

@@ -298,16 +298,25 @@ fn update_existing_magnetospheres(
 
     for (root_entity, mut root_trans, root, opt_children) in root_query.iter_mut() {
         if let Some(&params) = candidate_map.get(&root.target_entity) {
-            root_trans.translation = params.world_pos;
+            if root_trans.translation != params.world_pos {
+                root_trans.translation = params.world_pos;
+            }
             updated_entities.insert(root.target_entity);
 
             if let Some(children) = opt_children {
                 for child in children.iter() {
                     if let Ok((mut part_trans, mat_handle)) = part_query.get_mut(child) {
-                        part_trans.rotation = params.rotation;
-                        part_trans.scale = params.scale;
-                        if let Some(mut mat) = materials.get_mut(&mat_handle.0) {
-                            mat.emissive = params.emissive_color;
+                        if part_trans.rotation != params.rotation
+                            || part_trans.scale != params.scale
+                        {
+                            part_trans.rotation = params.rotation;
+                            part_trans.scale = params.scale;
+                        }
+                        if let Some(mat) = materials.get(&mat_handle.0)
+                            && mat.emissive != params.emissive_color
+                            && let Some(mut mat_mut) = materials.get_mut(&mat_handle.0)
+                        {
+                            mat_mut.emissive = params.emissive_color;
                         }
                     }
                 }

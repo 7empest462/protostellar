@@ -74,6 +74,7 @@ pub fn spawn_remnant_from_explosion(
     let mut filaments = Vec::with_capacity(36);
 
     let count = match exp.explosion_type {
+        SupernovaType::QuasarBlowout => 56,
         SupernovaType::Hypernova => 42,
         SupernovaType::TypeII => 36,
         SupernovaType::TypeIa => 28,
@@ -113,6 +114,7 @@ pub fn spawn_remnant_from_explosion(
 
     let max_age = if is_gmc {
         match exp.explosion_type {
+            SupernovaType::QuasarBlowout => 4000.0,
             SupernovaType::Hypernova => 2500.0,
             SupernovaType::TypeII => 2000.0,
             SupernovaType::TypeIa => 1600.0,
@@ -120,6 +122,7 @@ pub fn spawn_remnant_from_explosion(
         }
     } else {
         match exp.explosion_type {
+            SupernovaType::QuasarBlowout => 250_000.0,
             SupernovaType::Hypernova => 150_000.0,
             SupernovaType::TypeII => 100_000.0,
             SupernovaType::TypeIa => 80_000.0,
@@ -129,6 +132,7 @@ pub fn spawn_remnant_from_explosion(
 
     let expansion_rate = if is_gmc {
         match exp.explosion_type {
+            SupernovaType::QuasarBlowout => 0.04,
             SupernovaType::Hypernova => 0.02,
             SupernovaType::TypeII => 0.015,
             SupernovaType::TypeIa => 0.01,
@@ -136,6 +140,7 @@ pub fn spawn_remnant_from_explosion(
         }
     } else {
         match exp.explosion_type {
+            SupernovaType::QuasarBlowout => 0.22,
             SupernovaType::Hypernova => 0.15,
             SupernovaType::TypeII => 0.10,
             SupernovaType::TypeIa => 0.08,
@@ -242,6 +247,7 @@ pub fn draw_persistent_supernova_remnants(
 
         // 1. Forward Shock Boundary Rings (Multi-planar circles)
         let rim_col = match rem.remnant_type {
+            SupernovaType::QuasarBlowout => Color::srgba(1.0, 0.30, 0.55, op * 0.65),
             SupernovaType::Hypernova => Color::srgba(0.85, 0.40, 1.0, op * 0.55),
             SupernovaType::TypeII => Color::srgba(0.35, 0.90, 0.95, op * 0.60),
             SupernovaType::TypeIa => Color::srgba(1.0, 0.92, 0.75, op * 0.50),

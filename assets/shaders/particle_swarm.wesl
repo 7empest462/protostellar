@@ -23,9 +23,14 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     var out: VertexOutput;
     let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
+@if(VERTEX_POSITIONS)
+    let local_pos = vertex.position;
+@else
+    let local_pos = vec3<f32>(0.0, -5000.0, 0.0);
+
     let world_center = mesh_functions::mesh_position_local_to_world(
         world_from_local,
-        vec4<f32>(vertex.position, 1.0),
+        vec4<f32>(local_pos, 1.0),
     ).xyz;
 
     let cam_right = normalize(view.world_from_view[0].xyz);

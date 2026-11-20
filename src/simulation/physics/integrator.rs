@@ -49,6 +49,16 @@ pub struct PhysicsBodyEntry {
     pub role_flags: u8,
 }
 
+/// Shared predicate selecting bodies that participate as significant N-body gravitational sources
+/// across both CPU near-field evaluation and GPU `gmc_far_field` extraction.
+#[inline]
+pub fn is_massive_gravity_source(mass_solar: f64, body_type: BodyType, is_central: bool) -> bool {
+    mass_solar > EARTH_MASS_SOLAR * 0.1
+        || is_central
+        || body_type.is_star_or_remnant()
+        || body_type.is_planet()
+}
+
 pub fn is_body_bound_to_star(
     pos: DVec3,
     vel: DVec3,
@@ -64,11 +74,7 @@ pub fn is_body_bound_to_star(
     if r < 1e-5 || r > 50_000.0 {
         return false;
     }
-    let eff_body_mass = if body_mass < star_mass * 0.5 {
-        body_mass.max(0.0)
-    } else {
-        0.0
-    };
+    let eff_body_mass = body_mass.max(0.0);
     let mu = G_ASTRO * (star_mass + eff_body_mass);
     let specific_energy = 0.5 * vel.length_squared() - mu / r;
     if specific_energy >= -1e-9 {
@@ -123,11 +129,7 @@ fn kepler_drift_body(
     }
     let r_rel = *pos - star_pos;
     let r = r_rel.length();
-    let eff_body_mass = if body_mass < star_mass * 0.5 {
-        body_mass.max(0.0)
-    } else {
-        0.0
-    };
+    let eff_body_mass = body_mass.max(0.0);
     let mu = G_ASTRO * (star_mass + eff_body_mass);
     let v_sq = vel.length_squared();
     let specific_energy = 0.5 * v_sq - mu / r;
@@ -239,10 +241,15 @@ pub fn advance_symplectic_leapfrog_drift(
         star_mass,
         snapshot_buffer,
         is_galaxy_collision,
+        false,
         None,
     );
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Leapfrog drift requires companion separation and scenario flags"
+)]
 pub fn advance_symplectic_leapfrog_drift_with_companion(
     body_data: &mut [PhysicsBodyEntry],
     sub_dt: f64,
@@ -250,23 +257,94 @@ pub fn advance_symplectic_leapfrog_drift_with_companion(
     star_mass: f64,
     snapshot_buffer: &mut Vec<(Entity, DVec3, DVec3, f64, f64)>,
     is_galaxy_collision: bool,
+    is_gmc_cluster: bool,
     inner_companion_radius: Option<f64>,
 ) {
+    let has_satellites = body_data.iter().any(|b| b.satellite.is_some());
+    if has_satellites {
+        // 1. Capture pre-drift parent states so satellite plane normals & relative velocities
+        //    are measured BEFORE the parent planet drifts forward over sub_dt.
+        snapshot_buffer.clear();
+        snapshot_buffer.extend(
+            body_data
+                .iter()
+                .filter(|b| b.satellite.is_none())
+                .map(|b| (b.entity, b.pos, b.vel, b.mass, b.radius)),
+        );
+        snapshot_buffer.sort_unstable_by_key(|&(e, ..)| e);
+
+        for body in body_data.iter_mut() {
+            if let Some(ref mut sat) = body.satellite {
+                if let Ok(parent_idx) =
+                    snapshot_buffer.binary_search_by_key(&sat.parent, |&(e, ..)| e)
+                {
+                    let Some(&(_, pre_p_pos, pre_p_vel, parent_mass, parent_radius)) =
+                        snapshot_buffer.get(parent_idx)
+                    else {
+                        continue;
+                    };
+                    let r_orbit = sat.semi_major_axis_au.max(1e-5);
+                    if r_orbit < parent_radius * 1.05 {
+                        // Loop 2 drifts every detached (satellite.is_none()) body once this substep.
+                        body.satellite = None;
+                    } else {
+                        let omega_moon = if sat.orbital_period_years > 1e-8 {
+                            2.0 * std::f64::consts::PI / sat.orbital_period_years
+                        } else {
+                            (G_ASTRO * (parent_mass + body.mass.max(0.0))
+                                / (r_orbit * r_orbit * r_orbit))
+                                .sqrt()
+                        };
+                        let d_theta = omega_moon * sub_dt;
+                        let v_orb_mag = omega_moon * r_orbit;
+                        sat.true_anomaly =
+                            (sat.true_anomaly + d_theta).rem_euclid(2.0 * std::f64::consts::PI);
+
+                        // Advance in pre-drift parent-relative frame using conserved h_hat = (r x v).normalize()
+                        // so 3D orbital inclination never decays at ascending/descending nodes.
+                        let rel_pos = body.pos - pre_p_pos;
+                        let rel_vel = body.vel - pre_p_vel;
+                        let h_vec = rel_pos.cross(rel_vel);
+                        if rel_pos.length_squared() > 1e-12 && h_vec.length_squared() > 1e-18 {
+                            let h_hat = h_vec.normalize();
+                            let r_hat = rel_pos.normalize();
+                            let t_hat = h_hat.cross(r_hat).normalize_or_zero();
+                            let (s, c) = d_theta.sin_cos();
+                            let r_new_hat = (r_hat * c + t_hat * s).normalize();
+                            let t_new_hat = h_hat.cross(r_new_hat).normalize_or_zero();
+                            body.pos = r_new_hat * r_orbit;
+                            body.vel = t_new_hat * v_orb_mag;
+                        } else {
+                            let (sin_a, cos_a) = sat.true_anomaly.sin_cos();
+                            body.pos = DVec3::new(r_orbit * cos_a, 0.0, r_orbit * sin_a);
+                            body.vel = DVec3::new(-v_orb_mag * sin_a, 0.0, v_orb_mag * cos_a);
+                        }
+                    }
+                } else {
+                    // Missing parent: detach and let Loop 2 perform the single drift step.
+                    body.satellite = None;
+                }
+            }
+        }
+    }
+
     for body in body_data.iter_mut() {
         if body.satellite.is_none() {
             if body.is_central_star && !is_galaxy_collision {
                 body.pos = DVec3::ZERO;
                 body.vel = DVec3::ZERO;
                 body.acc = DVec3::ZERO;
-            } else if should_use_kepler_splitting(
-                body.pos,
-                body.vel,
-                body.mass,
-                body.body_type,
-                star_pos,
-                star_mass,
-                inner_companion_radius,
-            ) {
+            } else if !is_gmc_cluster
+                && should_use_kepler_splitting(
+                    body.pos,
+                    body.vel,
+                    body.mass,
+                    body.body_type,
+                    star_pos,
+                    star_mass,
+                    inner_companion_radius,
+                )
+            {
                 kepler_drift_body(
                     &mut body.pos,
                     &mut body.vel,
@@ -281,11 +359,12 @@ pub fn advance_symplectic_leapfrog_drift_with_companion(
         }
     }
 
-    let has_satellites = body_data.iter().any(|b| b.satellite.is_some());
     if !has_satellites {
         return;
     }
 
+    // 2. Capture post-drift parent positions/velocities & re-anchor satellites.
+    //    `snapshot_buffer` retains post-drift parent velocities for `sync_satellite_velocities_to_parents`.
     snapshot_buffer.clear();
     snapshot_buffer.extend(
         body_data
@@ -296,48 +375,40 @@ pub fn advance_symplectic_leapfrog_drift_with_companion(
     snapshot_buffer.sort_unstable_by_key(|&(e, ..)| e);
 
     for body in body_data.iter_mut() {
-        if let Some(ref mut sat) = body.satellite {
-            if let Ok(parent_idx) = snapshot_buffer.binary_search_by_key(&sat.parent, |&(e, ..)| e)
-            {
-                let Some(&(_, parent_pos, parent_vel, parent_mass, parent_radius)) =
-                    snapshot_buffer.get(parent_idx)
-                else {
-                    continue;
-                };
-                let r_orbit = sat.semi_major_axis_au.max(1e-5);
-                if r_orbit < parent_radius * 1.05 {
-                    body.satellite = None;
-                    body.pos += body.vel * sub_dt;
-                } else {
-                    let rel_before = body.pos - parent_pos;
-                    let r_before = rel_before.length();
-                    let sin_inc_y = if r_before > 1e-6 {
-                        (rel_before.y / r_before).clamp(-0.5, 0.5)
-                    } else {
-                        0.0
-                    };
-                    let omega_moon = if sat.orbital_period_years > 1e-8 {
-                        2.0 * std::f64::consts::PI / sat.orbital_period_years
-                    } else {
-                        (G_ASTRO * parent_mass / (r_orbit * r_orbit * r_orbit)).sqrt()
-                    };
+        if let Some(sat) = body.satellite
+            && let Ok(parent_idx) = snapshot_buffer.binary_search_by_key(&sat.parent, |&(e, ..)| e)
+            && let Some(&(_, post_p_pos, post_p_vel, ..)) = snapshot_buffer.get(parent_idx)
+        {
+            body.pos += post_p_pos;
+            body.vel += post_p_vel;
+        }
+    }
+}
 
-                    sat.true_anomaly = (sat.true_anomaly + omega_moon * sub_dt)
-                        .rem_euclid(2.0 * std::f64::consts::PI);
-                    let cos_a = sat.true_anomaly.cos();
-                    let sin_a = sat.true_anomaly.sin();
-                    let v_orb_mag = omega_moon * r_orbit;
-                    let y_pos = r_orbit * sin_inc_y * sin_a;
-                    let y_vel = v_orb_mag * sin_inc_y * cos_a;
+/// Keeps bound satellite world velocities locked to their parent's second half-kick delta.
+pub fn sync_satellite_velocities_to_parents(
+    body_data: &mut [PhysicsBodyEntry],
+    snapshot_buffer: &mut [(Entity, DVec3, DVec3, f64, f64)],
+) {
+    if snapshot_buffer.is_empty() || !body_data.iter().any(|b| b.satellite.is_some()) {
+        return;
+    }
 
-                    body.pos = parent_pos + DVec3::new(r_orbit * cos_a, y_pos, r_orbit * sin_a);
-                    body.vel =
-                        parent_vel + DVec3::new(-v_orb_mag * sin_a, y_vel, v_orb_mag * cos_a);
-                }
-            } else {
-                body.satellite = None;
-                body.pos += body.vel * sub_dt;
-            }
+    for b in body_data.iter() {
+        if b.satellite.is_none()
+            && let Ok(idx) = snapshot_buffer.binary_search_by_key(&b.entity, |&(e, ..)| e)
+            && let Some(slot) = snapshot_buffer.get_mut(idx)
+        {
+            slot.2 = b.vel - slot.2;
+        }
+    }
+
+    for b in body_data.iter_mut() {
+        if let Some(sat) = b.satellite
+            && let Ok(idx) = snapshot_buffer.binary_search_by_key(&sat.parent, |&(e, ..)| e)
+            && let Some(&(_, _, delta_v, ..)) = snapshot_buffer.get(idx)
+        {
+            b.vel += delta_v;
         }
     }
 }
@@ -359,18 +430,13 @@ pub fn apply_pert_kick(
 
     let r_rel = body.pos - star_pos;
     let r = r_rel.length().max(0.0005);
-    let eff_body_mass = if body.mass < star_mass * 0.5 {
-        body.mass.max(0.0)
-    } else {
-        0.0
-    };
+    let eff_body_mass = body.mass.max(0.0);
     let mu = G_ASTRO * (star_mass + eff_body_mass);
     let v_k = (mu / r).sqrt();
     let t_orbit = 2.0 * std::f64::consts::PI * r / v_k.max(1e-6);
     let eff_dt = half_dt.min(t_orbit * 0.05);
     let kick = body.acc * eff_dt;
     let kick_mag = kick.length();
-    let pre_kick_speed = body.vel.length();
 
     let is_major_planet = matches!(
         body.body_type,
@@ -391,28 +457,6 @@ pub fn apply_pert_kick(
         body.vel += kick * (max_kick / kick_mag);
     } else {
         body.vel += kick;
-    }
-
-    let max_bound_factor = if is_major_planet && star_mass < 15.0 {
-        Some(0.9995)
-    } else if star_mass > 100_000.0 {
-        Some(0.99995)
-    } else if is_bound && star_mass >= 15.0 {
-        Some(0.9998)
-    } else {
-        None
-    };
-    if let Some(factor) = max_bound_factor {
-        let v_esc = (2.0 * mu / r).sqrt();
-        let max_bound_speed = factor * v_esc;
-        let post_kick_speed = body.vel.length();
-        if post_kick_speed > max_bound_speed
-            && post_kick_speed > pre_kick_speed
-            && max_bound_speed > 0.0
-        {
-            let clamped_speed = max_bound_speed.max(pre_kick_speed);
-            body.vel *= clamped_speed / post_kick_speed;
-        }
     }
 }
 
@@ -451,25 +495,32 @@ pub fn apply_velocity_kick_and_limits_with_companion(
     is_galaxy_collision: bool,
     inner_companion_radius: Option<f64>,
 ) {
+    let has_massive_gmc_anchor =
+        is_gmc_cluster && (star_mass > 50.0 || body_data.iter().any(|b| b.mass > 50.0));
     for body in body_data.iter_mut() {
         if body.is_central_star && !is_galaxy_collision {
             body.pos = DVec3::ZERO;
             body.vel = DVec3::ZERO;
             body.acc = DVec3::ZERO;
         } else {
-            let use_kepler = should_use_kepler_splitting(
-                body.pos,
-                body.vel,
-                body.mass,
-                body.body_type,
-                star_pos,
-                star_mass,
-                inner_companion_radius,
-            );
+            let use_kepler = !is_gmc_cluster
+                && should_use_kepler_splitting(
+                    body.pos,
+                    body.vel,
+                    body.mass,
+                    body.body_type,
+                    star_pos,
+                    star_mass,
+                    inner_companion_radius,
+                );
             apply_pert_kick(body, sub_dt * 0.5, star_pos, star_mass, use_kepler);
 
             if !body.pos.is_finite() || !body.vel.is_finite() {
-                let safe_r = if is_little_red_dot { 120.0 } else { 1.0 };
+                let safe_r = if is_little_red_dot || star_mass > 100_000.0 {
+                    120.0
+                } else {
+                    1.0
+                };
                 let v_k = (G_ASTRO * star_mass / safe_r).sqrt();
                 body.pos = DVec3::new(safe_r, 0.0, 0.0);
                 body.vel = DVec3::new(0.0, 0.0, v_k);
@@ -478,16 +529,21 @@ pub fn apply_velocity_kick_and_limits_with_companion(
 
             let speed = body.vel.length();
             if is_gmc_cluster {
-                let max_gmc_speed = if star_mass > 50.0 { 1000.0 } else { 8.0 }; // relax limit once SMBH forms
+                let max_gmc_speed = if has_massive_gmc_anchor { 1000.0 } else { 8.0 }; // relax limit once SMBH forms
                 if speed > max_gmc_speed {
                     body.vel *= max_gmc_speed / speed;
                 }
-                // Cloud boundary tethering: prevent stars from flying out to millions of AU where floating point distortion occurs
+                // Cloud boundary tethering: prevent stars from flying out beyond the expanded GMC envelope while preserving tangential angular momentum
                 let r = body.pos.length();
-                if r > 240.0 {
-                    let inward = -body.pos.normalize();
-                    body.vel = inward * body.vel.length().clamp(1.5, 4.0);
-                    body.pos = body.pos.normalize() * 240.0;
+                let max_gmc_radius =
+                    crate::simulation::scenarios::molecular_cloud::GMC_CORE_RADIUS_AU + 50.0;
+                if r > max_gmc_radius && r.is_finite() {
+                    let outward = body.pos / r;
+                    let v_rad = body.vel.dot(outward);
+                    if v_rad > 0.0 {
+                        body.vel -= outward * (v_rad * 1.5);
+                    }
+                    body.pos = outward * max_gmc_radius;
                 }
             } else {
                 let universal_c_limit = SPEED_OF_LIGHT_AU_YR * 0.999;
@@ -498,7 +554,7 @@ pub fn apply_velocity_kick_and_limits_with_companion(
                     if speed > max_galaxy_speed {
                         body.vel *= max_galaxy_speed / speed;
                     }
-                } else if !is_little_red_dot {
+                } else if !(is_little_red_dot || star_mass > 100.0 || body.body_type.is_remnant()) {
                     let max_planetary_speed = 3500.0;
                     if speed > max_planetary_speed {
                         body.vel *= max_planetary_speed / speed;

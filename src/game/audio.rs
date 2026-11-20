@@ -42,7 +42,7 @@ impl CosmicAudioMode {
 }
 
 /// Live telemetry & synthesizer state for cosmic sonification and the Inspector oscilloscope.
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, PartialEq)]
 pub struct CosmicAudioState {
     pub enabled: bool,
     pub master_volume: f32,
@@ -89,6 +89,7 @@ pub struct CosmicAudioHandles {
     pub chirp_cue: Option<Handle<AudioSource>>,
     pub pulsar_cue: Option<Handle<AudioSource>>,
     pub ui_click_cue: Option<Handle<AudioSource>>,
+    pub blowout_cue: Option<Handle<AudioSource>>,
 }
 
 /// Marker component attached to the active looping ambient sonification player.
@@ -104,6 +105,7 @@ pub struct CosmicAudioEventReaders<'w, 's> {
     pub cme: Option<MessageReader<'w, 's, CmeShockwaveEvent>>,
     pub pulsar_glitch: Option<MessageReader<'w, 's, PulsarGlitchEvent>>,
     pub starquake: Option<MessageReader<'w, 's, MagnetarStarquakeEvent>>,
+    pub supernova_pool: Option<Res<'w, crate::rendering::effects::supernova::SupernovaDebrisPool>>,
 }
 
 fn alloc_pcm_wav_with_header(sample_rate: u32, channels: u16, frame_count: usize) -> Vec<u8> {
@@ -248,6 +250,56 @@ pub fn build_ui_click_wav(sample_rate: u32) -> Vec<u8> {
         let sample =
             quantize_pcm_sample((phase.sin() * 0.72 + (phase * 1.5).sin() * 0.28) * env * 0.40);
         samples.push((sample, sample));
+    }
+    synthesize_pcm_wav_stereo(sample_rate, &samples)
+}
+
+/// Synthesizes a 2.4-second stereo seismic sub-bass & broadband plasma detonation boom
+/// for the Little Red Dot Quasar Blowout.
+pub fn build_quasar_blowout_wav(sample_rate: u32) -> Vec<u8> {
+    if sample_rate == 0 {
+        return synthesize_pcm_wav_stereo(sample_rate, &[]);
+    }
+    let duration_secs = 2.4_f32;
+    let total_samples = ((sample_rate as f32) * duration_secs) as usize;
+    let mut samples = Vec::with_capacity(total_samples);
+    let dt = 1.0 / (sample_rate as f32);
+    let tau = std::f32::consts::TAU;
+    let mut sub_phase = 0.0_f32;
+    let mut crack_phase = 0.0_f32;
+    let mut rng_state: u32 = 0x51A7_E91D;
+    let mut lp_noise = 0.0_f32;
+
+    for i in 0..total_samples {
+        let u = (i as f32) / (total_samples.max(1) as f32);
+        // Deterministic LCG white noise filtered into a roaring plasma blast rumble
+        rng_state = rng_state
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
+        let white = ((rng_state >> 9) as f32 / ((1u32 << 23) as f32)) * 2.0 - 1.0;
+        let alpha = (0.04 + 0.14 * (-u * 3.2).exp()).clamp(0.02, 0.25);
+        lp_noise += (white - lp_noise) * alpha;
+
+        // Deep seismic drop (72 Hz -> 22 Hz) with a secondary breakout punch around u = 0.18
+        let sub_freq = 22.0 + 50.0 * (-u * 4.5).exp();
+        sub_phase += tau * sub_freq * dt;
+        let crack_freq = 190.0 + 420.0 * (-u * 7.5).exp();
+        crack_phase += tau * crack_freq * dt;
+
+        let attack = (u * 35.0).min(1.0);
+        let boom_env = attack * (-u * 2.3).exp();
+        let shock_punch = (-(u - 0.18).powi(2) / 0.004).exp() * 0.65;
+        let sub_wave = (sub_phase.sin() * 0.72 + (sub_phase * 0.5).sin() * 0.28)
+            * (boom_env + shock_punch * 0.5);
+        let crackle = crack_phase.sin() * (-u * 8.0).exp() * 0.28;
+        let roar = lp_noise * (boom_env * 0.85 + shock_punch * 0.55);
+
+        let left = (sub_wave * 0.62 + roar * 0.52 + crackle).clamp(-1.0, 1.0) * 0.72;
+        let right = (sub_wave * 0.62 + (roar * 0.92 + white * 0.06 * boom_env) * 0.52
+            - crackle * 0.8)
+            .clamp(-1.0, 1.0)
+            * 0.72;
+        samples.push((quantize_pcm_sample(left), quantize_pcm_sample(right)));
     }
     synthesize_pcm_wav_stereo(sample_rate, &samples)
 }
@@ -502,11 +554,15 @@ pub fn setup_cosmic_audio_assets(
     let ui_click_handle = assets.add(AudioSource {
         bytes: Arc::from(build_ui_click_wav(sample_rate).into_boxed_slice()),
     });
+    let blowout_handle = assets.add(AudioSource {
+        bytes: Arc::from(build_quasar_blowout_wav(sample_rate).into_boxed_slice()),
+    });
 
     handles.ambient_loop = Some(ambient_handle.clone());
     handles.chirp_cue = Some(chirp_handle);
     handles.pulsar_cue = Some(pulsar_handle);
     handles.ui_click_cue = Some(ui_click_handle);
+    handles.blowout_cue = Some(blowout_handle);
 
     let mut ambient_settings = PlaybackSettings::LOOP.with_volume(Volume::Linear(0.14));
     ambient_settings.muted = audio_state.as_deref().is_none_or(|state| !state.enabled);
@@ -570,10 +626,11 @@ fn handle_audio_mute_toggle(
         &input.editable_query,
     );
     if !text_focused
-        && input
-            .keyboard
-            .as_ref()
-            .is_some_and(|kb| kb.just_pressed(KeyCode::KeyM))
+        && input.keyboard.as_ref().is_some_and(|kb| {
+            let is_shift = kb.pressed(KeyCode::ShiftLeft) || kb.pressed(KeyCode::ShiftRight);
+            let is_alt = kb.pressed(KeyCode::AltLeft) || kb.pressed(KeyCode::AltRight);
+            !is_shift && !is_alt && kb.just_pressed(KeyCode::KeyM)
+        })
     {
         toggle_cosmic_audio_mute(audio_state, toast.as_deref_mut());
     }
@@ -602,14 +659,20 @@ fn apply_audio_sink_state(
 ) {
     for mut sink in sink_query.iter_mut() {
         if audio_state.enabled {
-            sink.unmute();
+            if sink.is_muted() {
+                sink.unmute();
+            }
             let target_speed = (audio_state.carrier_freq_hz / 55.0).clamp(0.5, 3.0);
-            sink.set_speed(target_speed);
+            if (sink.speed() - target_speed).abs() > 1e-4 {
+                sink.set_speed(target_speed);
+            }
             let linear_vol = (audio_state.master_volume
                 * (0.30 + 0.55 * audio_state.strain_or_flux + 0.25 * audio_state.proximity_boost))
                 .clamp(0.0, 1.0);
-            sink.set_volume(Volume::Linear(linear_vol));
-        } else {
+            if (sink.volume().to_linear() - linear_vol).abs() > 1e-4 {
+                sink.set_volume(Volume::Linear(linear_vol));
+            }
+        } else if !sink.is_muted() {
             sink.mute();
         }
     }
@@ -622,7 +685,27 @@ fn dispatch_cosmic_audio_cues(
     events: &mut CosmicAudioEventReaders,
     visual_time: f32,
     last_cue_time: &mut f32,
+    played_blowouts: &mut rustc_hash::FxHashSet<Entity>,
 ) {
+    let mut has_new_blowout = false;
+    if let Some(ref pool) = events.supernova_pool {
+        played_blowouts.retain(|e| {
+            pool.explosions.iter().any(|exp| {
+                exp.star_entity == *e
+                    && exp.explosion_type
+                        == crate::rendering::effects::supernova::SupernovaType::QuasarBlowout
+            })
+        });
+        for exp in &pool.explosions {
+            if exp.explosion_type
+                == crate::rendering::effects::supernova::SupernovaType::QuasarBlowout
+                && played_blowouts.insert(exp.star_entity)
+            {
+                has_new_blowout = true;
+            }
+        }
+    }
+
     let has_chirp_event = events
         .gw_merger
         .as_mut()
@@ -653,7 +736,19 @@ fn dispatch_cosmic_audio_cues(
             .as_mut()
             .is_some_and(|r| r.read().next().is_some());
 
-    if !audio_state.enabled || (visual_time - *last_cue_time).abs() < 0.35 {
+    if !audio_state.enabled {
+        return;
+    }
+    if has_new_blowout && let Some(ref cue) = handles.blowout_cue {
+        let vol = (audio_state.master_volume * 0.95).clamp(0.0, 1.0);
+        commands.spawn((
+            AudioPlayer::new(cue.clone()),
+            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(vol)),
+        ));
+        *last_cue_time = visual_time;
+        return;
+    }
+    if (visual_time - *last_cue_time).abs() < 0.35 {
         return;
     }
     let cue_opt = if has_chirp_event {
@@ -674,6 +769,52 @@ fn dispatch_cosmic_audio_cues(
     }
 }
 
+fn compute_ambient_snapshot(
+    prox: ProximityAudioCue,
+    visual_time: f32,
+    master_volume: f32,
+    enabled: bool,
+) -> CosmicAudioState {
+    let carrier = (55.0 + prox.pitch_shift_hz).clamp(32.0, 140.0);
+    let mod_hz = 0.45 + prox.proximity_boost * 1.45;
+    let intensity = (0.20 + prox.proximity_boost * 0.65).clamp(0.20, 0.90);
+    let status_line = if prox.proximity_boost > 0.15 {
+        match prox.nearest_kind {
+            Some(BodyType::BlackHole | BodyType::QuasiStar) => {
+                format!(
+                    "Photon ring proximity ({:.0}%)",
+                    prox.proximity_boost * 100.0
+                )
+            }
+            Some(BodyType::Magnetar | BodyType::Pulsar | BodyType::NeutronStar) => {
+                format!(
+                    "Compact remnant proximity ({:.0}%)",
+                    prox.proximity_boost * 100.0
+                )
+            }
+            _ => format!(
+                "Solar corona proximity ({:.0}%)",
+                prox.proximity_boost * 100.0
+            ),
+        }
+    } else {
+        "Quiet interstellar continuum".to_string()
+    };
+
+    CosmicAudioState {
+        enabled,
+        master_volume,
+        mode: CosmicAudioMode::DeepSpaceAmbient,
+        carrier_freq_hz: carrier,
+        modulation_hz: mod_hz,
+        strain_or_flux: intensity,
+        proximity_boost: prox.proximity_boost,
+        stereo_pan: prox.stereo_pan,
+        waveform_bars: compute_waveform_bars(carrier, mod_hz, intensity, visual_time, enabled),
+        status_line,
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Audio controller integrates keyboard input, telemetry queries, camera proximity, and sink modulation"
@@ -690,15 +831,30 @@ pub fn update_cosmic_audio_system(
     mut sink_query: Query<&mut AudioSink, With<CosmicAmbientPlayer>>,
     mut events: CosmicAudioEventReaders,
     mut last_cue_time: Local<f32>,
+    mut played_blowouts: Local<rustc_hash::FxHashSet<Entity>>,
 ) {
     handle_audio_mute_toggle(&mut audio_state, &mut toast, &input);
 
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
     let enabled = audio_state.enabled;
     let master_volume = audio_state.master_volume;
+
+    if !enabled {
+        if audio_state.status_line != "Muted [M]"
+            || audio_state.waveform_bars != [0; 16]
+            || audio_state.strain_or_flux != 0.0
+        {
+            audio_state.status_line = "Muted [M]".to_string();
+            audio_state.waveform_bars = [0; 16];
+            audio_state.strain_or_flux = 0.0;
+        }
+        apply_audio_sink_state(&audio_state, &mut sink_query);
+        return;
+    }
+
     let (cam_basis, prox) = sample_camera_proximity(&scene);
 
-    if let Some(sel) = player_state.as_deref().and_then(|ps| ps.selected_entity) {
+    let next = if let Some(sel) = player_state.as_deref().and_then(|ps| ps.selected_entity) {
         if let Ok((body, opt_tf, opt_rel, opt_glitch, opt_stress, opt_aurora)) =
             scene.selected_query.get(sel)
         {
@@ -731,42 +887,16 @@ pub fn update_cosmic_audio_system(
                 visual_time,
                 enabled,
             );
-            *audio_state = next;
+            next
+        } else {
+            compute_ambient_snapshot(prox, visual_time, master_volume, enabled)
         }
     } else {
-        let carrier = (55.0 + prox.pitch_shift_hz).clamp(32.0, 140.0);
-        let mod_hz = 0.45 + prox.proximity_boost * 1.45;
-        let intensity = (0.20 + prox.proximity_boost * 0.65).clamp(0.20, 0.90);
-        audio_state.mode = CosmicAudioMode::DeepSpaceAmbient;
-        audio_state.carrier_freq_hz = carrier;
-        audio_state.modulation_hz = mod_hz;
-        audio_state.strain_or_flux = intensity;
-        audio_state.proximity_boost = prox.proximity_boost;
-        audio_state.stereo_pan = prox.stereo_pan;
-        audio_state.waveform_bars =
-            compute_waveform_bars(carrier, mod_hz, intensity, visual_time, enabled);
-        audio_state.status_line = if prox.proximity_boost > 0.15 {
-            match prox.nearest_kind {
-                Some(BodyType::BlackHole | BodyType::QuasiStar) => {
-                    format!(
-                        "Photon ring proximity ({:.0}%)",
-                        prox.proximity_boost * 100.0
-                    )
-                }
-                Some(BodyType::Magnetar | BodyType::Pulsar | BodyType::NeutronStar) => {
-                    format!(
-                        "Compact remnant proximity ({:.0}%)",
-                        prox.proximity_boost * 100.0
-                    )
-                }
-                _ => format!(
-                    "Solar corona proximity ({:.0}%)",
-                    prox.proximity_boost * 100.0
-                ),
-            }
-        } else {
-            "Quiet interstellar continuum".to_string()
-        };
+        compute_ambient_snapshot(prox, visual_time, master_volume, enabled)
+    };
+
+    if *audio_state != next {
+        *audio_state = next;
     }
 
     apply_audio_sink_state(&audio_state, &mut sink_query);
@@ -777,208 +907,6 @@ pub fn update_cosmic_audio_system(
         &mut events,
         visual_time,
         &mut last_cue_time,
+        &mut played_blowouts,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_synthesize_pcm_wav_mono_valid_riff_header_and_payload() {
-        let samples = [0_i16, 1000, -1000, 12_345, -12_345];
-        let wav = synthesize_pcm_wav_mono(22_050, &samples);
-        assert_eq!(wav.len(), 44 + samples.len() * 2);
-        assert_eq!(wav.get(0..4), Some(b"RIFF".as_slice()));
-        assert_eq!(wav.get(8..16), Some(b"WAVEfmt ".as_slice()));
-        assert_eq!(wav.get(22..24), Some([1_u8, 0].as_slice()));
-        assert_eq!(wav.get(36..40), Some(b"data".as_slice()));
-
-        let ambient = build_ambient_drone_wav(22_050);
-        assert!(ambient.len() > 88_000);
-        assert_eq!(ambient.get(22..24), Some([2_u8, 0].as_slice()));
-        let chirp = build_gw_chirp_wav(22_050);
-        assert!(chirp.len() > 20_000);
-        assert_eq!(chirp.get(22..24), Some([2_u8, 0].as_slice()));
-        let pulse = build_pulsar_pulse_wav(22_050);
-        assert!(pulse.len() > 10_000);
-        assert_eq!(pulse.get(22..24), Some([2_u8, 0].as_slice()));
-        let ui_click = build_ui_click_wav(22_050);
-        assert_eq!(
-            ui_click.len(),
-            44 + ((22_050_f32 * 0.028).round() as usize) * 4
-        );
-        assert_eq!(ui_click.get(0..4), Some(b"RIFF".as_slice()));
-        assert_eq!(ui_click.get(22..24), Some([2_u8, 0].as_slice()));
-    }
-
-    #[test]
-    fn test_synthesize_pcm_wav_stereo_and_camera_proximity_scaling() {
-        let frames = [(120_i16, -120_i16), (500, -500), (2000, -2000)];
-        let wav = synthesize_pcm_wav_stereo(22_050, &frames);
-        assert_eq!(wav.len(), 44 + frames.len() * 4);
-        assert_eq!(wav.get(0..4), Some(b"RIFF".as_slice()));
-        assert_eq!(wav.get(22..24), Some([2_u8, 0].as_slice()));
-
-        let far = compute_camera_proximity_cue(
-            Vec3::new(0.0, 0.0, 25.0),
-            Vec3::X,
-            &[(Vec3::ZERO, 0.1, BodyType::MainSequenceStar)],
-        );
-        assert_eq!(far.proximity_boost, 0.0);
-
-        let near_star = compute_camera_proximity_cue(
-            Vec3::new(-0.8, 0.0, 0.0),
-            Vec3::X,
-            &[(Vec3::ZERO, 0.1, BodyType::MainSequenceStar)],
-        );
-        assert!(near_star.proximity_boost > 0.7);
-        assert!(near_star.pitch_shift_hz > 15.0);
-        assert!(near_star.stereo_pan > 0.9);
-
-        let near_bh = compute_camera_proximity_cue(
-            Vec3::new(0.6, 0.0, 0.0),
-            Vec3::X,
-            &[(Vec3::ZERO, 0.1, BodyType::BlackHole)],
-        );
-        assert!(near_bh.proximity_boost > 0.7);
-        assert!(near_bh.pitch_shift_hz < -5.0);
-        assert!(near_bh.stereo_pan < -0.9);
-    }
-
-    #[test]
-    fn test_compute_body_sonification_snapshot_modes_and_mute() {
-        let bh = CelestialBody {
-            body_type: BodyType::BlackHole,
-            name: "Cygnus X-1".to_string(),
-        };
-        let rel = RelativisticState {
-            gw_frequency_hz: 120.0,
-            gw_strain: 1.5e-21,
-            gw_luminosity_watts: 1.0e44,
-            is_coalescing: true,
-            ..Default::default()
-        };
-        let gw_snap =
-            compute_body_sonification_snapshot(&bh, Some(&rel), None, None, None, 1.25, true);
-        assert_eq!(gw_snap.mode, CosmicAudioMode::GravitationalWaveChirp);
-        assert!(gw_snap.carrier_freq_hz >= 200.0);
-        assert!(gw_snap.waveform_bars.iter().any(|&b| b > 0));
-
-        let muted_snap =
-            compute_body_sonification_snapshot(&bh, Some(&rel), None, None, None, 1.25, false);
-        assert!(!muted_snap.enabled);
-        assert_eq!(muted_snap.waveform_bars, [0; 16]);
-    }
-
-    #[test]
-    fn test_cosmic_audio_defaults_muted_and_toggle_helper() {
-        let mut audio = CosmicAudioState::default();
-        assert!(
-            !audio.enabled,
-            "Cosmic sonification audio must be muted by default"
-        );
-        assert_eq!(audio.waveform_bars, [0; 16]);
-
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.init_resource::<Assets<AudioSource>>();
-        app.init_resource::<CosmicAudioHandles>();
-        app.init_resource::<CosmicAudioState>();
-        app.add_systems(Startup, setup_cosmic_audio_assets);
-        app.update();
-
-        let mut settings_query = app
-            .world_mut()
-            .query_filtered::<&PlaybackSettings, With<CosmicAmbientPlayer>>();
-        let settings = settings_query
-            .single(app.world())
-            .expect("CosmicAmbientPlayer must spawn on Startup");
-        assert!(
-            settings.muted,
-            "CosmicAmbientPlayer PlaybackSettings must start muted by default"
-        );
-        assert!(
-            app.world()
-                .resource::<CosmicAudioHandles>()
-                .ui_click_cue
-                .is_some(),
-            "setup_cosmic_audio_assets must populate ui_click_cue"
-        );
-
-        let mut toast = NotificationToast::default();
-        toggle_cosmic_audio_mute(&mut audio, Some(&mut toast));
-        assert!(audio.enabled, "Toggle must unmute audio when pressed");
-        assert!(toast.message.contains("Unmuted"));
-
-        audio.waveform_bars = [5; 16];
-        toggle_cosmic_audio_mute(&mut audio, Some(&mut toast));
-        assert!(!audio.enabled, "Second toggle must re-mute audio");
-        assert_eq!(audio.waveform_bars, [0; 16]);
-        assert!(toast.message.contains("Muted"));
-    }
-
-    fn fire_cme_at(app: &mut App, t: f32) -> usize {
-        app.world_mut().resource_mut::<SimTime>().visual_time_secs = t;
-        app.world_mut()
-            .resource_mut::<Messages<CmeShockwaveEvent>>()
-            .write(CmeShockwaveEvent {
-                target: Entity::PLACEHOLDER,
-                orbital_radius_au: 1.0,
-                density_multiplier: 3.0,
-                flare_intensity: 0.9,
-            });
-        app.update();
-        app.world_mut()
-            .query_filtered::<Entity, (With<AudioPlayer>, Without<CosmicAmbientPlayer>)>()
-            .iter(app.world())
-            .count()
-    }
-
-    #[test]
-    fn test_audio_cue_dispatch_cooldown_and_text_focus_mute_guard() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .init_resource::<Assets<AudioSource>>()
-            .init_resource::<CosmicAudioHandles>()
-            .init_resource::<CosmicAudioState>()
-            .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<bevy::input_focus::InputFocus>()
-            .init_resource::<SimTime>()
-            .add_message::<CmeShockwaveEvent>()
-            .add_systems(Startup, setup_cosmic_audio_assets)
-            .add_systems(Update, update_cosmic_audio_system);
-
-        // 1. KeyM while text input is focused must NOT unmute; muted CME must not spawn cues
-        let text_ent = app
-            .world_mut()
-            .spawn(bevy::text::EditableText::default())
-            .id();
-        app.world_mut()
-            .resource_mut::<bevy::input_focus::InputFocus>()
-            .set(text_ent, bevy::input_focus::FocusCause::Navigated);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyM);
-        app.update();
-        assert!(!app.world().resource::<CosmicAudioState>().enabled);
-        assert_eq!(fire_cme_at(&mut app, 1.0), 0);
-
-        // 2. Unfocus text and press KeyM -> unmutes; CME >= 0.35s spawns DESPAWN cue
-        app.world_mut()
-            .resource_mut::<bevy::input_focus::InputFocus>()
-            .clear();
-        let mut kb = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-        kb.reset_all();
-        kb.press(KeyCode::KeyM);
-        assert_eq!(fire_cme_at(&mut app, 1.0), 1);
-        assert!(app.world().resource::<CosmicAudioState>().enabled);
-
-        // 3. Within 0.35s cooldown (1.15s) throttles; after cooldown (1.50s) spawns next cue
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .reset_all();
-        assert_eq!(fire_cme_at(&mut app, 1.15), 1);
-        assert_eq!(fire_cme_at(&mut app, 1.50), 2);
-    }
 }

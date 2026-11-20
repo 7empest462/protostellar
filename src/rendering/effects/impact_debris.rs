@@ -595,8 +595,15 @@ pub fn update_impact_ejecta(
     mut bombard_reader: MessageReader<BombardmentEvent>,
     bodies_query: Query<BodyQueryItem>,
     _star_query: Query<(&SimPosition, &Mass), With<CentralStar>>,
+    reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    mut last_gen: Local<u64>,
     mut triggered_basins: Local<Vec<(Entity, Vec3)>>,
 ) {
+    let current_gen = reload_gen.as_deref().map_or(0, |g| g.0);
+    if current_gen != *last_gen {
+        *last_gen = current_gen;
+        triggered_basins.clear();
+    }
     if time_warp
         .as_ref()
         .is_some_and(|w| w.is_paused && !w.step_once)
