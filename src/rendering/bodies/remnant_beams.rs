@@ -202,7 +202,7 @@ fn resolve_beam_host_visual_radius(
     if let Some(tf) = opt_transform {
         let sx = tf.scale.x;
         let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && physical_radius_au < 0.25;
-        if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
+        if sx.is_finite() && sx > 1e-10 && !is_unsynced_default {
             return sx;
         }
     }
@@ -210,11 +210,16 @@ fn resolve_beam_host_visual_radius(
 }
 
 /// Synchronizes 3D volumetric laser beam columns for active Quasars / Black Hole Stars.
-#[allow(clippy::type_complexity, reason = "Quasar Beam Sync")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "Quasar Beam Sync"
+)]
 pub fn sync_quasar_beams(
     mut commands: Commands,
     visual_assets: Option<Res<VisualAssets>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     quasi_query: Query<
         (
@@ -265,17 +270,18 @@ pub fn sync_quasar_beams(
         }
         active_targets.push(target_entity);
 
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let origin = opt_origin.as_deref().copied().unwrap_or_default();
+        let world_pos = origin.to_render(pos.0);
         let root_rot = resolve_beam_spin_axis_rotation(opt_spin);
         let jet_len = light_dist;
         let current_visual_radius =
             resolve_beam_host_visual_radius(opt_tf, radius.0, body.body_type, &config);
-        let pole_start = (current_visual_radius * 0.90).max(0.002);
+        let pole_start = (current_visual_radius * 0.90).max(1e-9);
         let beam_len = (jet_len - pole_start).max(0.1);
         let beam_center = pole_start + beam_len * 0.5;
-        let core_r = (current_visual_radius * 0.12).clamp(0.002, 0.04);
-        let sheath_r = (current_visual_radius * 0.28).clamp(0.005, 0.09);
-        let lobe_r = (current_visual_radius * 0.85).clamp(0.02, 0.35);
+        let core_r = (current_visual_radius * 0.12).clamp(1e-9, 0.04);
+        let sheath_r = (current_visual_radius * 0.28).clamp(1e-9, 0.09);
+        let lobe_r = (current_visual_radius * 0.85).clamp(1e-8, 0.35);
 
         if let Some((_, _, mut root_trans, opt_children)) = root_query
             .iter_mut()
@@ -333,12 +339,17 @@ pub enum PulsarBeamPart {
 }
 
 /// Synchronizes 3D volumetric relativistic lighthouse beams for active Pulsars.
-#[allow(clippy::type_complexity, reason = "Pulsar Beam Sync")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "Pulsar Beam Sync"
+)]
 pub fn sync_pulsar_beams(
     mut commands: Commands,
     sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     pulsar_query: Query<
         (
@@ -374,7 +385,8 @@ pub fn sync_pulsar_beams(
         }
         active_targets.push(target_entity);
 
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let origin = opt_origin.as_deref().copied().unwrap_or_default();
+        let world_pos = origin.to_render(pos.0);
         let axis_rot = resolve_beam_spin_axis_rotation(opt_spin);
         let spin_rate = opt_spin.map_or(24.0, |s| {
             (24.0 / (s.rotation_period_hours.abs().max(0.001) as f32)).clamp(2.0, 60.0)
@@ -383,7 +395,7 @@ pub fn sync_pulsar_beams(
             axis_rot * Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.38);
         let current_visual_radius =
             resolve_beam_host_visual_radius(opt_tf, radius.0, body.body_type, &config);
-        let pole_start = (current_visual_radius * 0.92).max(0.0005);
+        let pole_start = (current_visual_radius * 0.92).max(1e-9);
 
         if let Some((_, _, mut root_trans, opt_children)) = root_query
             .iter_mut()
@@ -477,12 +489,17 @@ pub enum MagnetarStructurePart {
 }
 
 /// Synchronizes 3D volumetric magnetic field loops and incandescent equatorial ring for active Magnetars.
-#[allow(clippy::type_complexity, reason = "Magnetar Structure Sync")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "Magnetar Structure Sync"
+)]
 pub fn sync_magnetar_structures(
     mut commands: Commands,
     sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
     _config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     magnetar_query: Query<
         (
@@ -521,7 +538,8 @@ pub fn sync_magnetar_structures(
         }
         active_targets.push(target_entity);
 
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let origin = opt_origin.as_deref().copied().unwrap_or_default();
+        let world_pos = origin.to_render(pos.0);
         let axis_rot = resolve_beam_spin_axis_rotation(opt_spin);
         let mag_rot =
             axis_rot * Quat::from_rotation_y(elapsed * spin_rate) * Quat::from_rotation_x(0.26);

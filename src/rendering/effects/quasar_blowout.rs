@@ -62,7 +62,11 @@ impl BlowoutShellKind {
         }
     }
 
-    fn build_uniforms(self, exp: &SupernovaExplosionInstance) -> SupernovaUniforms {
+    fn build_uniforms(
+        self,
+        exp: &SupernovaExplosionInstance,
+        render_center: Vec3,
+    ) -> SupernovaUniforms {
         SupernovaUniforms {
             params: Vec4::new(
                 exp.timer,
@@ -76,7 +80,12 @@ impl BlowoutShellKind {
                 exp.ejecta_mass_solar,
                 1.0,
             ),
-            center_and_asphericity: Vec4::new(exp.center.x, exp.center.y, exp.center.z, 0.75),
+            center_and_asphericity: Vec4::new(
+                render_center.x,
+                render_center.y,
+                render_center.z,
+                0.75,
+            ),
             core_color: Vec4::new(1.65, 0.98, 0.35, 1.0),
             mantle_color: Vec4::new(0.22, 0.98, 1.25, 0.92),
             envelope_color: Vec4::new(1.30, 0.18, 0.08, 0.95),
@@ -115,6 +124,7 @@ fn spawn_blowout_shards(
     assets: &VisualAssets,
     std_materials: &mut Assets<StandardMaterial>,
     exp: &SupernovaExplosionInstance,
+    render_center: Vec3,
 ) {
     // 4 shared HDR emissive materials across all 48 3D plasma fireball chunks.
     // Note: Bevy `unlit: true` outputs `base_color` directly into the HDR bloom target,
@@ -174,7 +184,7 @@ fn spawn_blowout_shards(
             0.72 + seed * 0.65
         };
         let base_radius = 0.22 + seed * 0.42;
-        let start_pos = exp.center + dir * exp.initial_radius_au;
+        let start_pos = render_center + dir * exp.initial_radius_au;
 
         commands.spawn((
             QuasarBlowoutShard {
@@ -197,6 +207,7 @@ fn update_blowout_light(
     light: &mut PointLight,
     tf: &mut Transform,
     exp: &SupernovaExplosionInstance,
+    render_center: Vec3,
 ) {
     let p = (exp.timer / exp.max_timer.max(0.1)).clamp(0.0, 1.0);
     let fade = (1.0 - p).powf(1.65);
@@ -208,8 +219,8 @@ fn update_blowout_light(
     } else {
         Color::srgb(0.92, 0.25, 0.45)
     };
-    if tf.translation != exp.center {
-        tf.translation = exp.center;
+    if tf.translation != render_center {
+        tf.translation = render_center;
     }
     if (light.intensity - target_intensity).abs() > 1e5 {
         light.intensity = target_intensity;
@@ -223,6 +234,7 @@ fn update_single_shard_transform(
     shard: &QuasarBlowoutShard,
     tf: &mut Transform,
     exp: &SupernovaExplosionInstance,
+    render_center: Vec3,
 ) {
     let p = (exp.timer / exp.max_timer.max(0.1)).clamp(0.0, 1.0);
     let radial_dist = exp.initial_radius_au
@@ -233,7 +245,7 @@ fn update_single_shard_transform(
         (shard.swirl_seed * 1.3 + exp.timer * 1.4).cos() * swirl_amp * 0.6,
         (shard.swirl_seed * 0.7 + exp.timer * 2.1).cos() * swirl_amp,
     );
-    let target_pos = exp.center + shard.dir * radial_dist + swirl;
+    let target_pos = render_center + shard.dir * radial_dist + swirl;
     let growth = 1.0 + (radial_dist / 40.0).min(3.2);
     let shrink = (1.0 - p).powf(0.85).max(0.01);
     let r_t = shard.base_radius * growth * shrink;
@@ -279,6 +291,7 @@ pub fn sync_quasar_blowout_visuals(
         (Entity, &QuasarBlowoutLight, &mut PointLight, &mut Transform),
         (Without<QuasarBlowoutLayer>, Without<QuasarBlowoutShard>),
     >,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let (Some(assets), Some(sn_mats), Some(std_mats)) = (
         visual_assets,
@@ -287,6 +300,7 @@ pub fn sync_quasar_blowout_visuals(
     ) else {
         return;
     };
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
 
     let active_blowouts: FxHashMap<Entity, &SupernovaExplosionInstance> = pool
         .explosions
@@ -305,14 +319,15 @@ pub fn sync_quasar_blowout_visuals(
             continue;
         };
         existing_layers.insert((layer.star_entity, layer.kind));
+        let center = origin.shift_vec3(exp.center);
         let target_scale = layer.kind.target_scale(exp);
-        if tf.translation != exp.center {
-            tf.translation = exp.center;
+        if tf.translation != center {
+            tf.translation = center;
         }
         if tf.scale != target_scale {
             tf.scale = target_scale;
         }
-        let next_u = layer.kind.build_uniforms(exp);
+        let next_u = layer.kind.build_uniforms(exp, center);
         if let Some(mat) = sn_mats.get(&mat_handle.0)
             && mat.uniforms != next_u
             && let Some(mut mat_mut) = sn_mats.get_mut(&mat_handle.0)
@@ -331,7 +346,8 @@ pub fn sync_quasar_blowout_visuals(
             continue;
         };
         stars_with_shards.insert(shard.star_entity);
-        update_single_shard_transform(shard, &mut tf, exp);
+        let center = origin.shift_vec3(exp.center);
+        update_single_shard_transform(shard, &mut tf, exp, center);
     }
 
     // 3. Update or despawn dynamic flash PointLights
@@ -344,28 +360,30 @@ pub fn sync_quasar_blowout_visuals(
             continue;
         };
         stars_with_lights.insert(qlight.star_entity);
-        update_blowout_light(&mut light, &mut tf, exp);
+        let center = origin.shift_vec3(exp.center);
+        update_blowout_light(&mut light, &mut tf, exp, center);
     }
 
     // 4. Spawn any missing blowout shells, shards, and flash lights for newly detonated quasars
     for (&star_entity, &exp) in &active_blowouts {
+        let center = origin.shift_vec3(exp.center);
         for kind in BlowoutShellKind::ALL {
             if !existing_layers.contains(&(star_entity, kind)) {
                 let mat_handle = sn_mats.add(SupernovaMaterial {
-                    uniforms: kind.build_uniforms(exp),
+                    uniforms: kind.build_uniforms(exp, center),
                 });
                 commands.spawn((
                     QuasarBlowoutLayer { star_entity, kind },
                     Mesh3d(assets.star_mesh.clone()),
                     MeshMaterial3d(mat_handle),
-                    Transform::from_translation(exp.center).with_scale(kind.target_scale(exp)),
+                    Transform::from_translation(center).with_scale(kind.target_scale(exp)),
                     NotShadowCaster,
                     NotShadowReceiver,
                 ));
             }
         }
         if !stars_with_shards.contains(&star_entity) {
-            spawn_blowout_shards(&mut commands, &assets, std_mats, exp);
+            spawn_blowout_shards(&mut commands, &assets, std_mats, exp, center);
         }
         if !stars_with_lights.contains(&star_entity) {
             commands.spawn((
@@ -377,7 +395,7 @@ pub fn sync_quasar_blowout_visuals(
                     shadow_maps_enabled: false,
                     ..default()
                 },
-                Transform::from_translation(exp.center),
+                Transform::from_translation(center),
             ));
         }
     }

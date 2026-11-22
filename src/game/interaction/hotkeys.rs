@@ -54,7 +54,7 @@ fn handle_escape_priority_stack(
     hazards: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
     scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     hr_diagram: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
-    visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    mut visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
     saves: Option<&mut crate::game::ui::SavesPanelState>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
@@ -69,6 +69,18 @@ fn handle_escape_priority_stack(
     if surface_mode_exited {
         toast.message = "🛰️ Returned to 3D Orbital Camera View [Esc]".to_string();
         toast.timer = 2.5;
+        return;
+    }
+
+    // Priority 1.5: If Cinema Mode (clean full-screen HUD) is active, restore HUD before modals/deselect
+    if let Some(vis) = visibility.as_deref_mut()
+        && vis.is_full_screen_clean
+    {
+        crate::game::ui::interactions::time_and_panels::toggle_cinema_mode(
+            vis,
+            player_state,
+            toast,
+        );
         return;
     }
 
@@ -156,6 +168,17 @@ pub fn handle_viewport_and_tool_hotkeys(
         toast,
     );
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    let is_alt = keyboard.pressed(KeyCode::AltLeft) || keyboard.pressed(KeyCode::AltRight);
+    if ((keyboard.just_pressed(KeyCode::Backquote) && !is_shift)
+        || (is_alt && !is_shift && keyboard.just_pressed(KeyCode::KeyH)))
+        && let Some(vis) = opt_visibility.as_deref_mut()
+    {
+        crate::game::ui::interactions::time_and_panels::toggle_cinema_mode(
+            vis,
+            player_state,
+            toast,
+        );
+    }
     if keyboard.just_pressed(KeyCode::Comma) {
         config.size_exaggeration = (config.size_exaggeration * 0.7).max(0.1);
         info!("🔬 Size Scale: {:.2}×", config.size_exaggeration);
@@ -379,10 +402,10 @@ fn handle_shift_tool_hotkeys(
     mut opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
     mut opt_campaign_panel: Option<&mut crate::game::ui::types::CampaignPanelState>,
     mut opt_hazards_panel: Option<&mut crate::game::ui::hazards_panel::HazardsPanelState>,
-    mut opt_hazard_mgr: Option<&mut crate::simulation::events::CosmicEventManager>,
-    mut opt_lagrange: Option<&mut crate::simulation::resources::LagrangeOverlayConfig>,
+    opt_hazard_mgr: Option<&mut crate::simulation::events::CosmicEventManager>,
+    opt_lagrange: Option<&mut crate::simulation::resources::LagrangeOverlayConfig>,
     mut opt_hr_state: Option<&mut crate::game::ui::types::HrDiagramPanelState>,
-    mut opt_hz: Option<&mut crate::simulation::resources::HabitableZoneConfig>,
+    opt_hz: Option<&mut crate::simulation::resources::HabitableZoneConfig>,
     mut opt_trophies: Option<&mut crate::game::ui::types::TrophiesPanelState>,
     mut opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
     mut opt_saves: Option<&mut crate::game::ui::SavesPanelState>,
@@ -463,25 +486,6 @@ fn handle_shift_tool_hotkeys(
             };
             toast.timer = 2.5;
         }
-    } else if keyboard.just_pressed(KeyCode::KeyC) {
-        if let Some(ref mut hazard_mgr) = opt_hazard_mgr {
-            hazard_mgr.tonemapping_mode = hazard_mgr.tonemapping_mode.cycle();
-            toast.message = format!(
-                "🎨 Post-Processing Tonemap: {}",
-                hazard_mgr.tonemapping_mode.label()
-            );
-            toast.timer = 3.0;
-        }
-    } else if keyboard.just_pressed(KeyCode::KeyL) {
-        if let Some(ref mut lagrange) = opt_lagrange {
-            lagrange.show_lagrange_points = !lagrange.show_lagrange_points;
-            toast.message = if lagrange.show_lagrange_points {
-                "🪐 Lagrange Points (L1-L5) & Hill Sphere: ENABLED [Shift-L]".to_string()
-            } else {
-                "🪐 Lagrange Points: DISABLED [Shift-L]".to_string()
-            };
-            toast.timer = 2.5;
-        }
     } else if keyboard.just_pressed(KeyCode::KeyR) {
         if let Some(ref mut hr) = opt_hr_state {
             hr.is_open = !hr.is_open;
@@ -496,7 +500,7 @@ fn handle_shift_tool_hotkeys(
                     opt_hazards_panel,
                     opt_scrubber,
                     Some(hr),
-                    opt_visibility,
+                    opt_visibility.as_deref_mut(),
                     opt_saves,
                 );
             }
@@ -507,14 +511,63 @@ fn handle_shift_tool_hotkeys(
             };
             toast.timer = 2.5;
         }
+    } else {
+        handle_shift_overlay_and_feed_hotkeys(
+            keyboard,
+            opt_hazard_mgr,
+            opt_lagrange,
+            opt_hz,
+            opt_visibility,
+            toast,
+        );
+    }
+}
+
+fn handle_shift_overlay_and_feed_hotkeys(
+    keyboard: &ButtonInput<KeyCode>,
+    opt_hazard_mgr: Option<&mut crate::simulation::events::CosmicEventManager>,
+    opt_lagrange: Option<&mut crate::simulation::resources::LagrangeOverlayConfig>,
+    opt_hz: Option<&mut crate::simulation::resources::HabitableZoneConfig>,
+    opt_visibility: Option<&mut crate::game::ui::types::HudVisibilityState>,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        if let Some(hazard_mgr) = opt_hazard_mgr {
+            hazard_mgr.tonemapping_mode = hazard_mgr.tonemapping_mode.cycle();
+            toast.message = format!(
+                "🎨 Post-Processing Tonemap: {}",
+                hazard_mgr.tonemapping_mode.label()
+            );
+            toast.timer = 3.0;
+        }
+    } else if keyboard.just_pressed(KeyCode::KeyL) {
+        if let Some(lagrange) = opt_lagrange {
+            lagrange.show_lagrange_points = !lagrange.show_lagrange_points;
+            toast.message = if lagrange.show_lagrange_points {
+                "🪐 Lagrange Points (L1-L5) & Hill Sphere: ENABLED [Shift-L]".to_string()
+            } else {
+                "🪐 Lagrange Points: DISABLED [Shift-L]".to_string()
+            };
+            toast.timer = 2.5;
+        }
     } else if keyboard.just_pressed(KeyCode::KeyZ)
-        && let Some(ref mut hz) = opt_hz
+        && let Some(hz) = opt_hz
     {
         hz.is_enabled = !hz.is_enabled;
         toast.message = if hz.is_enabled {
             "🌱 Circumstellar Habitable Zone & Frost Line: ENABLED [Shift-Z]".to_string()
         } else {
             "🌱 Habitable Zone: DISABLED [Shift-Z]".to_string()
+        };
+        toast.timer = 2.5;
+    } else if keyboard.just_pressed(KeyCode::KeyE)
+        && let Some(vis) = opt_visibility
+    {
+        vis.event_feed_minimized = !vis.event_feed_minimized;
+        toast.message = if vis.event_feed_minimized {
+            "📡 Cosmic Event Feed Minimized [Shift-E]".to_string()
+        } else {
+            "📡 Cosmic Event Feed Opened [Shift-E]".to_string()
         };
         toast.timer = 2.5;
     }

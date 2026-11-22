@@ -52,7 +52,7 @@ fn focus_camera_on_target(
     min_orbit_r: f32,
 ) {
     let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-    let frame_r = if radius <= 1e-6 {
+    let frame_r = if radius <= 1e-11 {
         let visual_r = config.calc_visual_radius_for_type(radius, body_type);
         0.015f32.max(config.calc_camera_framing_radius(visual_r))
     } else {
@@ -68,7 +68,7 @@ fn focus_camera_on_target(
             config,
         )
     };
-    cam.initiate_target_transition(entity, target_vec, frame_r);
+    cam.initiate_target_transition_au(entity, pos, frame_r);
 }
 
 #[allow(clippy::too_many_arguments, reason = "UI body selection helper")]
@@ -258,6 +258,47 @@ fn select_star_target(
     }
 }
 
+fn select_entity_from_query(
+    entity: Entity,
+    selected_query: &SelectedWorldQuery,
+    player_state: &mut PlayerInteractionState,
+    camera_query: &mut Query<&mut PanOrbitCamera>,
+    config: &SimulationConfig,
+    toast: &mut NotificationToast,
+) -> bool {
+    let Ok(item) = selected_query.get(entity) else {
+        return false;
+    };
+    let body_name = item.6.name.clone();
+    let body_type = item.6.body_type;
+    let radius = item.2.0;
+    let pos = item.3.0;
+    let mass = item.1.0;
+    let comp = *item.5;
+    let is_star = item.7.is_some() || body_type.is_star_or_remnant();
+    let dist = if pos.is_finite() { pos.length() } else { 0.0 };
+    let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
+
+    select_and_toast_body(
+        entity,
+        &body_name,
+        body_type,
+        radius,
+        pos,
+        mass,
+        &comp,
+        is_star,
+        dist,
+        player_state,
+        camera_query,
+        config,
+        toast,
+        star_pos,
+        min_orbit_r,
+    );
+    true
+}
+
 pub fn handle_selection_action(
     action: &UiButtonAction,
     player_state: &mut PlayerInteractionState,
@@ -268,37 +309,34 @@ pub fn handle_selection_action(
     quick_bar_state: &mut QuickBarState,
 ) -> bool {
     match action {
-        UiButtonAction::SelectEntity(target_ent) => {
-            let entity = *target_ent;
-            if let Ok(item) = selected_query.get(entity) {
-                let body_name = item.6.name.clone();
-                let body_type = item.6.body_type;
-                let radius = item.2.0;
-                let pos = item.3.0;
-                let mass = item.1.0;
-                let comp = *item.5;
-                let is_star = item.7.is_some() || body_type.is_star_or_remnant();
-                let dist = if pos.is_finite() { pos.length() } else { 0.0 };
-                let (star_pos, min_orbit_r) = compute_selected_query_min_orbit(selected_query);
-
-                select_and_toast_body(
+        UiButtonAction::JumpToEvent(opt_ent) => {
+            let jumped = opt_ent.is_some_and(|entity| {
+                select_entity_from_query(
                     entity,
-                    &body_name,
-                    body_type,
-                    radius,
-                    pos,
-                    mass,
-                    &comp,
-                    is_star,
-                    dist,
+                    selected_query,
                     player_state,
                     camera_query,
                     config,
                     toast,
-                    star_pos,
-                    min_orbit_r,
-                );
+                )
+            });
+            if !jumped {
+                select_star_target(selected_query, player_state, camera_query, config, toast);
+                toast.message =
+                    "📡 Event body absorbed or dissipated — framing central system".to_string();
+                toast.timer = 3.5;
             }
+            true
+        }
+        UiButtonAction::SelectEntity(target_ent) => {
+            select_entity_from_query(
+                *target_ent,
+                selected_query,
+                player_state,
+                camera_query,
+                config,
+                toast,
+            );
             true
         }
         UiButtonAction::SelectStar => {
@@ -450,6 +488,34 @@ fn handle_quick_bar_action(
                 "🌱 Hiding Protoplanetary Embryos".to_string()
             };
             toast.timer = 3.0;
+            true
+        }
+        UiButtonAction::ToggleQuickBarFilter => {
+            quick_bar_state.show_filter = !quick_bar_state.show_filter;
+            toast.message = if quick_bar_state.show_filter {
+                "🔍 Body search filter shown".to_string()
+            } else {
+                "🔍 Body search filter hidden".to_string()
+            };
+            toast.timer = 2.0;
+            true
+        }
+        UiButtonAction::ToggleQuickBarWrap => {
+            quick_bar_state.wrap_rows = !quick_bar_state.wrap_rows;
+            toast.message = if quick_bar_state.wrap_rows {
+                "⊞ Body Bar: Multi-row wrap enabled".to_string()
+            } else {
+                "▬ Body Bar: Compact single-row strip".to_string()
+            };
+            toast.timer = 2.5;
+            true
+        }
+        UiButtonAction::ScrollQuickBarLeft => {
+            quick_bar_state.pending_scroll_delta_x -= 220.0;
+            true
+        }
+        UiButtonAction::ScrollQuickBarRight => {
+            quick_bar_state.pending_scroll_delta_x += 220.0;
             true
         }
         _ => false,

@@ -279,24 +279,69 @@ fn test_mass_dependent_render_radius_scaling() {
         "TRAPPIST-1 star must be larger than its planets"
     );
 
-    // Star-to-planet ratio should be at least 2.5× for visual dominance
+    // Star-to-planet ratios preserve exact 1:1 physical proportionality (>2.5× visual dominance)
     assert!(
-        v_sun / v_jupiter > 2.5,
-        "Sun:Jupiter ratio should be >2.5× (got {:.2}×)",
+        (v_sun / v_jupiter - (sun_r / jupiter_r) as f32).abs() < 0.05 && v_sun / v_jupiter > 2.5,
+        "Sun:Jupiter ratio must match true 1:1 physical ratio (got {:.2}×)",
         v_sun / v_jupiter
     );
     assert!(
-        v_trappist_star / v_trappist_e > 2.5,
-        "TRAPPIST-1 star:planet ratio should be >2.5× (got {:.2}×)",
+        (v_trappist_star / v_trappist_e - (trappist1_star_r / trappist1e_r) as f32).abs() < 0.05
+            && v_trappist_star / v_trappist_e > 2.5,
+        "TRAPPIST-1 star:planet ratio must match true 1:1 physical ratio (got {:.2}×)",
         v_trappist_star / v_trappist_e
     );
 
-    // Minimum visual radius floor
+    // True 1:1 scale for compact and minor bodies without artificial inflation floors
     let tiny_body = config.calc_visual_radius(1e-8);
     assert!(
-        tiny_body >= config.min_body_visual_radius,
-        "Tiny bodies must respect min_body_visual_radius floor"
+        (tiny_body - 1e-8).abs() < 1e-12 && tiny_body >= 1e-9,
+        "Tiny bodies must render at true 1:1 physical radius without artificial inflation (got {tiny_body})"
     );
+}
+
+#[test]
+fn test_true_1_to_1_zoom_invariant_physical_proportions_across_all_scales() {
+    use protostellar::rendering::bodies::transforms::compute_realistic_visual_radius;
+    use protostellar::simulation::resources::SimulationConfig;
+
+    let mut config = SimulationConfig::default();
+    let bodies = [
+        ("Sun", 0.00465_f64, BodyType::YellowDwarf, 0.0_f32),
+        ("Jupiter", 0.000_477_f64, BodyType::GasGiant, 5.2_f32),
+        (
+            "Earth",
+            0.000_042_6_f64,
+            BodyType::TerrestrialPlanet,
+            1.0_f32,
+        ),
+        ("Moon", 0.000_011_6_f64, BodyType::Moon, 1.00257_f32),
+        (
+            "Pluto",
+            0.000_007_94_f64,
+            BodyType::TerrestrialPlanet,
+            39.5_f32,
+        ),
+        ("Comet 67P", 1.34e-8_f64, BodyType::Comet, 3.46_f32),
+        ("Neutron Star", 6.68e-8_f64, BodyType::NeutronStar, 0.0_f32),
+    ];
+
+    for exag in [1.0_f32, 2.5_f32] {
+        config.size_exaggeration = exag;
+        for &(name, phys_r, body_type, r_orb) in &bodies {
+            let expected = (phys_r as f32) * exag;
+            for cam_dist in [0.0001_f32, 0.01, 1.0, 100.0] {
+                let vis_r = compute_realistic_visual_radius(
+                    phys_r, body_type, r_orb, 0.38, cam_dist, &config,
+                );
+                let rel_err = ((vis_r - expected) / expected).abs();
+                assert!(
+                    rel_err < 1e-5,
+                    "{name} at cam_dist={cam_dist} AU and exag={exag} must render at exact physical scale {expected}, got {vis_r}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -6,7 +6,10 @@ use crate::game::ui::NotificationToast;
 use crate::simulation::components::*;
 use crate::simulation::resources::{PlayerInteractionState, SimulationConfig};
 
+mod meshes;
 pub mod navigation;
+
+use meshes::spawn_probe_mesh_hierarchy;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProbeType {
@@ -120,11 +123,14 @@ fn attach_missing_probe_meshes(
     probes: Query<(Entity, &SpaceProbe, &SimPosition, Has<Transform>), Without<ProbeMeshAttached>>,
     mut opt_meshes: Option<ResMut<Assets<Mesh>>>,
     mut opt_materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut opt_tech_mats: Option<ResMut<Assets<crate::rendering::effects::MegastructureMaterial>>>,
     config: Option<Res<crate::simulation::resources::SimulationConfig>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let (Some(meshes), Some(materials)) = (&mut opt_meshes, &mut opt_materials) else {
         return;
     };
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let min_vis_r = config
         .as_ref()
         .map_or(0.00035, |c| c.min_body_visual_radius * 0.45);
@@ -133,7 +139,8 @@ fn attach_missing_probe_meshes(
         if let Ok(mut cmd) = commands.get_entity(ent) {
             if !has_tf {
                 cmd.try_insert((
-                    Transform::from_translation(pos.0.as_vec3()).with_scale(Vec3::splat(min_vis_r)),
+                    Transform::from_translation(origin.to_render(pos.0))
+                        .with_scale(Vec3::splat(min_vis_r)),
                     GlobalTransform::default(),
                     Visibility::default(),
                     InheritedVisibility::default(),
@@ -143,7 +150,14 @@ fn attach_missing_probe_meshes(
             }
             cmd.try_insert(ProbeMeshAttached);
         }
-        spawn_probe_mesh_hierarchy(&mut commands, ent, is_orbiter, meshes, materials);
+        spawn_probe_mesh_hierarchy(
+            &mut commands,
+            ent,
+            is_orbiter,
+            meshes,
+            materials,
+            opt_tech_mats.as_deref_mut(),
+        );
     }
 }
 
@@ -156,38 +170,47 @@ pub fn sync_probe_transforms(
     )>,
     targets: Query<(Option<&Transform>, Option<&Radius>, &CelestialBody), Without<SpaceProbe>>,
     config: Option<Res<crate::simulation::resources::SimulationConfig>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let transit_vis_r = config
         .as_ref()
         .map_or(0.00008, |c| c.min_body_visual_radius * 0.08);
 
     for (mut transform, pos, probe, opt_computer) in probes.iter_mut() {
-        transform.translation = pos.0.as_vec3();
+        transform.translation = origin.to_render(pos.0);
+
+        let resolve_target_vis_rad = || {
+            opt_computer
+                .and_then(|comp| targets.get(comp.target_entity).ok())
+                .and_then(|(opt_t, opt_r, body)| {
+                    let r = opt_r.map_or(0.001, |rad| rad.0);
+                    opt_t
+                        .map(|t| t.scale.x)
+                        .filter(|&s| {
+                            s.is_finite() && s > 1e-10 && !((s - 1.0).abs() < 1e-6 && r < 0.25)
+                        })
+                        .or_else(|| {
+                            config
+                                .as_ref()
+                                .map(|c| c.calc_visual_radius_for_type(r, body.body_type))
+                        })
+                })
+                .unwrap_or(0.001)
+        };
 
         let scale = match probe.status {
             ProbeStatus::Transit => transit_vis_r,
-            ProbeStatus::InOrbit => transit_vis_r * 0.65,
+            ProbeStatus::InOrbit => {
+                let target_vis_rad = resolve_target_vis_rad();
+                (target_vis_rad * 0.08).clamp(1e-8, transit_vis_r * 0.65)
+            }
             ProbeStatus::Landed => {
-                let target_vis_rad = opt_computer
-                    .and_then(|comp| targets.get(comp.target_entity).ok())
-                    .and_then(|(opt_t, opt_r, body)| {
-                        let r = opt_r.map_or(0.001, |rad| rad.0);
-                        opt_t
-                            .map(|t| t.scale.x)
-                            .filter(|&s| {
-                                s.is_finite() && s > 1e-6 && !((s - 1.0).abs() < 1e-6 && r < 0.25)
-                            })
-                            .or_else(|| {
-                                config
-                                    .as_ref()
-                                    .map(|c| c.calc_visual_radius_for_type(r, body.body_type))
-                            })
-                    })
-                    .unwrap_or(0.001);
+                let target_vis_rad = resolve_target_vis_rad();
 
                 // When landed on a planetary body, shrink from exaggerated transit icon scale
                 // to a realistic planetary surface rover scale (~0.0006 * host visual radius)
-                (target_vis_rad * 0.0006).clamp(1e-7, 0.00004)
+                (target_vis_rad * 0.0006).clamp(1e-9, 0.00004)
             }
         };
 
@@ -210,7 +233,9 @@ fn process_launch_requests(
     mut toast: Option<ResMut<NotificationToast>>,
     mut opt_meshes: Option<ResMut<Assets<Mesh>>>,
     mut opt_materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut opt_tech_mats: Option<ResMut<Assets<crate::rendering::effects::MegastructureMaterial>>>,
     config: Option<Res<SimulationConfig>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     for (req_ent, req) in requests.iter() {
         if let Ok(mut cmd) = commands.get_entity(req_ent) {
@@ -252,9 +277,7 @@ fn process_launch_requests(
         });
 
         let dist_to_target = to_target.length();
-        let spawn_offset = (origin_vis_rad * 1.25)
-            .min(dist_to_target * 0.20)
-            .max(0.0008);
+        let spawn_offset = (origin_vis_rad * 1.25).min(dist_to_target * 0.20).max(1e-6);
         let start_pos = origin_pos + dir * spawn_offset;
         let initial_boost = (dist_to_target * 5.0).clamp(0.8, 4.0);
         let base_vel = if dist_to_target < 0.05 {
@@ -300,7 +323,14 @@ fn process_launch_requests(
                 name: full_name.clone(),
             },
             (
-                Transform::from_translation(start_pos.as_vec3()).with_scale(Vec3::splat(min_vis_r)),
+                Transform::from_translation(
+                    opt_origin
+                        .as_deref()
+                        .copied()
+                        .unwrap_or_default()
+                        .to_render(start_pos),
+                )
+                .with_scale(Vec3::splat(min_vis_r)),
                 GlobalTransform::default(),
                 Visibility::default(),
                 InheritedVisibility::default(),
@@ -312,7 +342,14 @@ fn process_launch_requests(
         let probe_entity = commands.spawn(probe_bundle).id();
 
         if let (Some(meshes), Some(materials)) = (&mut opt_meshes, &mut opt_materials) {
-            spawn_probe_mesh_hierarchy(&mut commands, probe_entity, is_orbiter, meshes, materials);
+            spawn_probe_mesh_hierarchy(
+                &mut commands,
+                probe_entity,
+                is_orbiter,
+                meshes,
+                materials,
+                opt_tech_mats.as_deref_mut(),
+            );
             commands.entity(probe_entity).try_insert(ProbeMeshAttached);
         }
 
@@ -350,7 +387,9 @@ pub fn draw_probe_navigation_gizmos(
     >,
     sim_time: Option<Res<crate::simulation::resources::SimTime>>,
     config: Option<Res<SimulationConfig>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let (cam_pos, is_surface_cam) =
         camera_query
             .iter()
@@ -365,7 +404,7 @@ pub fn draw_probe_navigation_gizmos(
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
 
     for (probe_ent, pos, probe, computer) in probes.iter() {
-        let probe_vec = pos.0.as_vec3();
+        let probe_vec = origin.to_render(pos.0);
         let cam_dist = cam_pos.map_or(20.0, |cp| cp.distance(probe_vec));
         let is_selected = player_state
             .as_ref()
@@ -385,7 +424,7 @@ pub fn draw_probe_navigation_gizmos(
         };
 
         let pulse = (visual_time * 4.0).sin() * 0.15 + 1.0;
-        let min_beacon = if cam_dist < 0.05 { 0.00015 } else { 0.012 };
+        let min_beacon = if cam_dist < 0.05 { 1e-6 } else { 0.012 };
         let beacon_r = (cam_dist * 0.022 * pulse).clamp(min_beacon, 2.5);
 
         let to_cam = cam_pos.map_or(Vec3::Y, |cp| (cp - probe_vec).normalize_or_zero());
@@ -410,7 +449,7 @@ pub fn draw_probe_navigation_gizmos(
         if let Ok((target_pos, opt_rad, target_body, opt_spin, opt_transform)) =
             targets.get(computer.target_entity)
         {
-            let target_vec = target_pos.0.as_vec3();
+            let target_vec = origin.to_render(target_pos.0);
             let line_color = match probe.status {
                 ProbeStatus::Transit => main_color,
                 ProbeStatus::InOrbit => Color::srgba(0.3, 1.0, 0.5, 0.6),
@@ -422,7 +461,7 @@ pub fn draw_probe_navigation_gizmos(
                 let rad = opt_rad.map_or(0.001, |r| r.0);
                 let vis_rad = opt_transform
                     .map(|t| t.scale.x)
-                    .filter(|&s| s > 1e-6)
+                    .filter(|&s| s > 1e-10)
                     .unwrap_or_else(|| {
                         config.as_ref().map_or(rad as f32, |c| {
                             c.calc_visual_radius_for_type(rad, target_body.body_type)
@@ -543,7 +582,7 @@ fn draw_rover_surface_trail_gizmos(
             gizmos.line(p0, p1, Color::srgba(1.0, 0.82, 0.25, 0.88));
             gizmos.sphere(
                 Isometry3d::from_translation(p0),
-                (beacon_r * 0.10).max(0.0004),
+                (beacon_r * 0.10).max(vis_rad * 0.015),
                 Color::srgba(0.3, 1.0, 0.75, 0.75),
             );
         }
@@ -629,140 +668,6 @@ fn find_launch_origin(
         origin_rad,
         origin_body_type,
     )
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Mesh generation requires asset mutators and command queues"
-)]
-fn spawn_probe_mesh_hierarchy(
-    commands: &mut Commands,
-    probe_entity: Entity,
-    is_orbiter: bool,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) {
-    let (base_color, emissive) = if is_orbiter {
-        (
-            Color::srgb(0.2, 0.9, 1.0),
-            LinearRgba::new(0.5, 4.0, 12.0, 1.0),
-        )
-    } else {
-        (
-            Color::srgb(1.0, 0.75, 0.2),
-            LinearRgba::new(10.0, 5.0, 0.5, 1.0),
-        )
-    };
-    let mat_metal = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.85, 0.9),
-        metallic: 0.8,
-        perceptual_roughness: 0.2,
-        ..default()
-    });
-
-    let mat_panel = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.1, 0.15, 0.3),
-        metallic: 0.9,
-        perceptual_roughness: 0.2,
-        ..default()
-    });
-
-    let mat_glow = materials.add(StandardMaterial {
-        base_color,
-        emissive,
-        unlit: true,
-        ..default()
-    });
-
-    if let Ok(mut entity_cmds) = commands.get_entity(probe_entity) {
-        entity_cmds.with_children(|parent| {
-            if is_orbiter {
-                // Orbiter: cylinder body, cone nose, solar panels
-                let body_mesh = meshes.add(Cylinder::new(0.4, 2.0));
-                let nose_mesh = meshes.add(Cone {
-                    radius: 0.4,
-                    height: 1.0,
-                });
-                let panel_mesh = meshes.add(Cuboid::new(4.0, 0.05, 0.8));
-                let engine_mesh = meshes.add(Cone {
-                    radius: 0.25,
-                    height: 0.6,
-                });
-
-                // Main body
-                parent.spawn((
-                    Mesh3d(body_mesh.clone()),
-                    MeshMaterial3d(mat_metal.clone()),
-                    Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                    Visibility::default(),
-                ));
-                // Nose
-                parent.spawn((
-                    Mesh3d(nose_mesh),
-                    MeshMaterial3d(mat_metal.clone()),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, -1.5))
-                        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-                    Visibility::default(),
-                ));
-                // Engine
-                parent.spawn((
-                    Mesh3d(engine_mesh),
-                    MeshMaterial3d(mat_glow.clone()),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, 1.3))
-                        .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                    Visibility::default(),
-                ));
-                // Solar Panels
-                parent.spawn((
-                    Mesh3d(panel_mesh),
-                    MeshMaterial3d(mat_panel.clone()),
-                    Transform::default(),
-                    Visibility::default(),
-                ));
-            } else {
-                // Rover: box body, small camera mast, wheels
-                let body_mesh = meshes.add(Cuboid::new(1.2, 0.6, 1.8));
-                let mast_mesh = meshes.add(Cylinder::new(0.05, 0.8));
-                let wheel_mesh = meshes.add(Cylinder::new(0.3, 0.2));
-                let camera_mesh = meshes.add(Cuboid::new(0.2, 0.15, 0.2));
-
-                // Body
-                parent.spawn((
-                    Mesh3d(body_mesh),
-                    MeshMaterial3d(mat_metal.clone()),
-                    Transform::from_translation(Vec3::new(0.0, 0.3, 0.0)),
-                    Visibility::default(),
-                ));
-                // Mast
-                parent.spawn((
-                    Mesh3d(mast_mesh),
-                    MeshMaterial3d(mat_metal.clone()),
-                    Transform::from_translation(Vec3::new(0.4, 1.0, -0.6)),
-                    Visibility::default(),
-                ));
-                // Camera
-                parent.spawn((
-                    Mesh3d(camera_mesh),
-                    MeshMaterial3d(mat_glow.clone()),
-                    Transform::from_translation(Vec3::new(0.4, 1.4, -0.6)),
-                    Visibility::default(),
-                ));
-                // Wheels
-                let wheel_rot = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
-                for &x in &[-0.7, 0.7] {
-                    for &z in &[-0.7, 0.0, 0.7] {
-                        parent.spawn((
-                            Mesh3d(wheel_mesh.clone()),
-                            MeshMaterial3d(mat_panel.clone()),
-                            Transform::from_translation(Vec3::new(x, 0.3, z))
-                                .with_rotation(wheel_rot),
-                            Visibility::default(),
-                        ));
-                    }
-                }
-            }
-        });
-    }
 }
 
 type TargetData<'a> = (

@@ -16,19 +16,47 @@ use bevy::ui_widgets::{
     SliderValue, TextInput, TrackClick, ValueChange, slider_self_update,
 };
 
+/// Holds the optional bundled geometric sci-fi HUD font handle (`assets/fonts/ChakraPetch-Medium.ttf`).
+#[derive(Resource, Debug, Clone)]
+pub struct BundledHudFont {
+    pub handle: Handle<Font>,
+    pub upgraded_existing: bool,
+}
+
 /// Returns the universal HUD `FontSource::List` ensuring full fallback coverage across
-/// Monospace, System UI, Mathematical symbols, and Emojis without missing-glyph tofu boxes (`▯`).
+/// geometric sans, monospace, system UI, mathematical symbols, and emojis without missing-glyph boxes (`▯`).
 pub fn hud_font_source() -> FontSource {
     FontSource::List(vec![
         FontSource::families(
-            "Menlo, Monaco, Consolas, 'SF Pro Text', 'SF Pro', 'Segoe UI', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif",
+            "'Chakra Petch', 'Space Grotesk', 'Avenir Next', 'SF Pro Text', 'Menlo', 'Monaco', 'Consolas', 'Segoe UI', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif",
         ),
+        FontSource::sans_serif(),
         FontSource::monospace(),
         FontSource::system_ui(),
-        FontSource::sans_serif(),
         FontSource::emoji(),
         FontSource::math(),
     ])
+}
+
+/// Returns `FontSource` prepending a loaded bundled HUD font handle ahead of [`hud_font_source`]
+/// when available, preserving emoji and mathematical symbol fallbacks.
+pub fn hud_font_source_with_bundled(bundled: Option<Handle<Font>>) -> FontSource {
+    if let Some(handle) = bundled {
+        FontSource::List(vec![FontSource::Handle(handle), hud_font_source()])
+    } else {
+        hud_font_source()
+    }
+}
+
+/// Loads `fonts/ChakraPetch-Medium.ttf` via Bevy's `AssetServer` when asset loading is active.
+pub fn setup_bundled_hud_font(mut commands: Commands, asset_server: Option<Res<AssetServer>>) {
+    if let Some(server) = asset_server {
+        let handle = server.load("fonts/ChakraPetch-Medium.ttf");
+        commands.insert_resource(BundledHudFont {
+            handle,
+            upgraded_existing: false,
+        });
+    }
 }
 
 /// Helper creating a standard `TextFont` with the universal HUD font fallback list and given pixel size.
@@ -40,15 +68,63 @@ pub fn hud_text_font(font_size_px: f32) -> TextFont {
     }
 }
 
-/// Upgrades all HUD text nodes created with Bevy's default font handle to `hud_font_source()`,
-/// guaranteeing scientific subscript (`H₂O`), superscript (`W/m²`), astronomical (`M☉`, `M⊕`),
-/// Greek (`θ`, `Γ`), and Unicode symbol (`±`, `📊`, `🔍`) rendering.
-pub fn upgrade_hud_default_fonts(mut query: Query<&mut TextFont, Added<TextFont>>) {
+/// Upgrades all HUD text nodes created with Bevy's default font handle to the bundled HUD font
+/// (once loaded) or [`hud_font_source`], preserving any explicit custom fonts.
+pub fn upgrade_hud_default_fonts(
+    mut query: Query<&mut TextFont, Added<TextFont>>,
+    bundled: Option<Res<BundledHudFont>>,
+    fonts: Option<Res<Assets<Font>>>,
+) {
+    if query.is_empty() {
+        return;
+    }
+    let loaded_handle = fonts.as_ref().and_then(|font_assets| {
+        bundled
+            .as_ref()
+            .and_then(|b| font_assets.get(&b.handle).map(|_| b.handle.clone()))
+    });
+    let base = hud_font_source();
+    let target = hud_font_source_with_bundled(loaded_handle.clone());
+
     for mut font in query.iter_mut() {
-        if matches!(font.font, FontSource::Handle(ref h) if *h == Handle::default()) {
-            font.font = hud_font_source();
+        let is_default_handle =
+            matches!(font.font, FontSource::Handle(ref h) if *h == Handle::default());
+        let is_base_upgrade = loaded_handle.is_some() && font.font == base;
+        if is_default_handle || is_base_upgrade {
+            font.font = target.clone();
         }
     }
+}
+
+/// One-shot pass upgrading existing default HUD `TextFont`s once the bundled font asset finishes loading.
+pub fn apply_bundled_hud_font_when_loaded(
+    mut bundled: Option<ResMut<BundledHudFont>>,
+    fonts: Option<Res<Assets<Font>>>,
+    mut all_fonts: Query<&mut TextFont>,
+) {
+    let Some(ref mut bundled_res) = bundled else {
+        return;
+    };
+    if bundled_res.upgraded_existing {
+        return;
+    }
+    let Some(font_assets) = fonts.as_deref() else {
+        return;
+    };
+    if font_assets.get(&bundled_res.handle).is_none() {
+        return;
+    }
+
+    let base = hud_font_source();
+    let target = hud_font_source_with_bundled(Some(bundled_res.handle.clone()));
+    for mut font in all_fonts.iter_mut() {
+        let is_default_handle =
+            matches!(font.font, FontSource::Handle(ref h) if *h == Handle::default());
+        if is_default_handle || font.font == base {
+            font.font = target.clone();
+        }
+    }
+    bundled_res.upgraded_existing = true;
 }
 
 /// Helper function to check if any editable text input currently holds UI keyboard focus.
@@ -120,7 +196,7 @@ pub enum HudSliderKind {
     BuilderOrbitAu,
     /// Planet builder orbital eccentricity (0.00 to 1.30).
     BuilderEccentricity,
-    /// Inspector target body log10 mass in Earth masses (-4.0 to 5.5).
+    /// Inspector target body log10 mass in Earth masses (-4.0 to 8.0, up to ~300 M☉).
     InspectorLogMassEarth,
     /// Inspector target body orbital radius in AU (0.05 to 60.0).
     InspectorOrbitAu,
@@ -145,7 +221,8 @@ impl HudSliderKind {
             Self::BuilderLogMassEarth => 5.0,
             Self::BuilderOrbitAu => 50.0,
             Self::BuilderEccentricity => 1.30,
-            Self::InspectorLogMassEarth | Self::EpochAgeGyr => 5.5,
+            Self::InspectorLogMassEarth => 8.0,
+            Self::EpochAgeGyr => 5.5,
             Self::InspectorOrbitAu => 60.0,
             Self::InspectorAxialTiltDeg => 180.0,
         }
@@ -185,7 +262,11 @@ impl HudSliderKind {
                     format!("{mass_m_earth:.1} M⊕ (10^{val:.2})")
                 } else {
                     let m_sun = mass_m_earth / 332_946.0;
-                    format!("{m_sun:.3} M☉ (10^{val:.2})")
+                    if m_sun >= 10.0 {
+                        format!("{m_sun:.1} M☉ (10^{val:.2})")
+                    } else {
+                        format!("{m_sun:.3} M☉ (10^{val:.2})")
+                    }
                 }
             }
             Self::BuilderOrbitAu => format!("{val:.2} AU"),
@@ -445,10 +526,12 @@ impl Plugin for ModernHudWidgetsPlugin {
             .add_observer(on_hud_button_activate)
             .add_observer(slider_self_update)
             .add_observer(on_hud_slider_value_change)
+            .add_systems(Startup, setup_bundled_hud_font)
             .add_systems(PostStartup, upgrade_hud_default_fonts)
             .add_systems(
                 Update,
                 (
+                    apply_bundled_hud_font_when_loaded,
                     upgrade_hud_default_fonts,
                     (
                         crate::game::ui::widget_sync::apply_hud_slider_changes,

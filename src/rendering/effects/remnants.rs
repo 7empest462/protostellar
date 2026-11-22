@@ -236,6 +236,7 @@ pub fn draw_persistent_supernova_remnants(
     gizmos: &mut Gizmos,
     pool: &PersistentRemnantPool,
     visual_time: f32,
+    origin: crate::rendering::origin::RenderOrigin,
 ) {
     for rem in &pool.remnants {
         let op = rem.opacity;
@@ -244,6 +245,7 @@ pub fn draw_persistent_supernova_remnants(
         }
 
         let r = rem.current_radius_au;
+        let center = origin.shift_vec3(rem.center);
 
         // 1. Forward Shock Boundary Rings (Multi-planar circles)
         let rim_col = match rem.remnant_type {
@@ -255,18 +257,12 @@ pub fn draw_persistent_supernova_remnants(
         };
 
         gizmos.circle(
-            Isometry3d::new(
-                rem.center,
-                Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-            ),
+            Isometry3d::new(center, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
             r,
             rim_col,
         );
         gizmos.circle(
-            Isometry3d::new(
-                rem.center,
-                Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-            ),
+            Isometry3d::new(center, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
             r * 0.98,
             Color::srgba(
                 rim_col.to_srgba().red,
@@ -285,17 +281,17 @@ pub fn draw_persistent_supernova_remnants(
 
             // Polar synchrotron wind torus
             gizmos.circle(
-                Isometry3d::new(rem.center, Quat::from_rotation_x(0.35)),
+                Isometry3d::new(center, Quat::from_rotation_x(0.35)),
                 pwn_r,
                 pwn_col,
             );
             gizmos.circle(
-                Isometry3d::new(rem.center, Quat::from_rotation_y(0.78)),
+                Isometry3d::new(center, Quat::from_rotation_y(0.78)),
                 pwn_r * 0.85,
                 Color::srgba(0.65, 0.35, 1.0, op * 0.55),
             );
             gizmos.sphere(
-                Isometry3d::from_translation(rem.center),
+                Isometry3d::from_translation(center),
                 pwn_r * 0.40,
                 Color::srgba(0.90, 0.95, 1.0, op * 0.30),
             );
@@ -309,7 +305,7 @@ pub fn draw_persistent_supernova_remnants(
 
             gizmos.circle(
                 Isometry3d::new(
-                    rem.center + lobe_offset,
+                    center + lobe_offset,
                     Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
                 ),
                 lobe_r * 0.75,
@@ -317,7 +313,7 @@ pub fn draw_persistent_supernova_remnants(
             );
             gizmos.circle(
                 Isometry3d::new(
-                    rem.center - lobe_offset,
+                    center - lobe_offset,
                     Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
                 ),
                 lobe_r * 0.75,

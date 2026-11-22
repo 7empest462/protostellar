@@ -57,6 +57,7 @@ pub fn setup_space_environment(
         MeshMaterial3d(skybox_material),
         Transform::from_translation(Vec3::ZERO),
         CelestialSkybox,
+        bevy::light::NotShadowCaster,
     ));
 
     info!("🌌 setup_space_environment: Procedural Celestial Skybox spawned (1,000,000 AU)");
@@ -147,6 +148,7 @@ pub fn update_skybox_uniforms(
     time: Res<Time>,
     time_warp: Option<Res<TimeWarp>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     scenario_state: Option<Res<ActiveScenarioState>>,
     mut materials: ResMut<Assets<SkyboxMaterial>>,
     skybox_query: Query<&MeshMaterial3d<SkyboxMaterial>, With<CelestialSkybox>>,
@@ -194,12 +196,14 @@ pub fn update_skybox_uniforms(
     let mut lens_params = Vec4::ZERO;
 
     // Select the relativistic lens with the largest angular Einstein radius from the camera's viewpoint
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let mut best_theta_e = 0.0_f32;
     for (star_pos, _star_mass, star_radius, star_body, opt_bhs, _opt_central) in star_query.iter() {
+        let shifted_star_pos = SimPosition(star_pos.0 - origin.0);
         if let Some((pos_mass, params)) = compute_skybox_lensing_uniforms(
             camera_pos,
             &config,
-            star_pos,
+            &shifted_star_pos,
             star_radius,
             star_body,
             opt_bhs,

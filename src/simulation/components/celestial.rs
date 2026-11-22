@@ -203,6 +203,15 @@ impl BodyType {
         self.is_star_or_remnant() && !self.is_remnant()
     }
 
+    /// Returns true if this body is a post-main-sequence red giant, carbon star, supergiant, or yellow hypergiant.
+    #[must_use]
+    pub fn is_evolved_giant(&self) -> bool {
+        matches!(
+            self,
+            Self::RedGiant | Self::RedSupergiant | Self::YellowHypergiant | Self::CarbonStar
+        )
+    }
+
     /// Returns true if this body is a theoretical or hypothetical star.
     pub fn is_hypothetical(&self) -> bool {
         matches!(

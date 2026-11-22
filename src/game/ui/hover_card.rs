@@ -369,6 +369,7 @@ fn sync_hover_card_text(
 }
 
 #[allow(
+    clippy::too_many_arguments,
     clippy::type_complexity,
     reason = "Hover card UI update requires window, camera, target components, and node queries"
 )]
@@ -376,6 +377,7 @@ pub fn update_hover_card_ui(
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<PanOrbitCamera>>,
     player_state: Res<PlayerInteractionState>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut card_query: Query<(&mut Node, Option<&ComputedNode>), With<HoverCardRoot>>,
     mut text_query: Query<(&HoverCardField, &mut Text)>,
     bodies_query: Query<(
@@ -437,7 +439,8 @@ pub fn update_hover_card_ui(
         return;
     };
 
-    let world_center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let world_center = origin.to_render(pos.0);
     let Some(screen_pos) = resolve_hover_screen_pos(camera_comp, cam_gt, world_center, window)
     else {
         hide_hover_card(&mut card_node);

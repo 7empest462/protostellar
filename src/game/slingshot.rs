@@ -56,16 +56,19 @@ fn compute_cursor_plane_coords(
     window: &Window,
     camera: &Camera,
     camera_transform: &GlobalTransform,
+    origin: crate::rendering::origin::RenderOrigin,
 ) -> Option<DVec3> {
     let cursor_pos = window.cursor_position()?;
     let ray = camera
         .viewport_to_world(camera_transform, cursor_pos)
         .ok()?;
     if ray.direction.y.abs() > 1e-5 {
-        let t = -ray.origin.y / ray.direction.y;
+        let plane_y = (-origin.0.y) as f32;
+        let t = (plane_y - ray.origin.y) / ray.direction.y;
         if t > 0.0 {
             let hit = ray.origin + *ray.direction * t;
-            Some(DVec3::new(f64::from(hit.x), 0.0, f64::from(hit.z)))
+            let hit_sim = origin.to_sim(hit);
+            Some(DVec3::new(hit_sim.x, 0.0, hit_sim.z))
         } else {
             None
         }
@@ -253,7 +256,8 @@ pub fn handle_slingshot_input(
         Query<(&SimPosition, &SimVelocity), With<CentralStar>>,
         SlingshotBodiesQuery,
     )>,
-    (focus, editable_query): (
+    (opt_origin, focus, editable_query): (
+        Option<Res<crate::rendering::origin::RenderOrigin>>,
         Option<Res<bevy::input_focus::InputFocus>>,
         Query<(), With<bevy::text::EditableText>>,
     ),
@@ -262,6 +266,7 @@ pub fn handle_slingshot_input(
         return;
     }
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     handle_slingshot_hotkeys(
         &keyboard,
         &mut slingshot_state,
@@ -290,7 +295,7 @@ pub fn handle_slingshot_input(
         )
     });
 
-    let hit_plane_coords = compute_cursor_plane_coords(window, camera, camera_transform);
+    let hit_plane_coords = compute_cursor_plane_coords(window, camera, camera_transform, origin);
     let (star_pos, star_vel) = star_and_bodies
         .p0()
         .iter()
@@ -309,7 +314,7 @@ pub fn handle_slingshot_input(
         for (ent, pos, rad, _, _body, _, opt_tf) in bodies_query.iter() {
             // Target existing bodies using scaled visual surface radius
             let vis_r = opt_tf.map_or(rad.0 as f32 * 1.5, |tf| tf.scale.x * 1.25);
-            let hit_radius = f64::from(vis_r).clamp(0.02, 0.35);
+            let hit_radius = f64::from(vis_r).clamp(1e-6, 0.35);
             let d = (pos.0 - plane_pt).length();
             if d < hit_radius && d < min_dist {
                 min_dist = d;

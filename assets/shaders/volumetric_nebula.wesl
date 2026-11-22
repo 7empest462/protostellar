@@ -127,37 +127,43 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     var transmittance = 1.0;
     var accumulated_color = vec3<f32>(0.0);
 
+    let cloud_center = 0.5 * (neb.box_min + neb.box_max);
+
     for (var s = 0u; s < steps; s = s + 1u) {
         if (transmittance < 0.01) {
             break; // Optical depth saturation early exit
         }
 
         let sample_pos = ray_origin + ray_dir * current_t;
-        let r_core = length(sample_pos);
+        let local_pos = sample_pos - cloud_center;
+        let r_core = length(local_pos);
 
         // Ambient dense cold molecular cloud core profile (dense Plummer sphere)
         let core_profile = 1.0 / pow(1.0 + (r_core / 460.0) * (r_core / 460.0), 1.25);
-
-        // Lin-Shu logarithmic spiral galaxy density wave profile (matched to 2200 AU domain)
-        let r_cyl = max(length(sample_pos.xz), 0.1);
-        let phi = atan2(sample_pos.z + 1e-5, sample_pos.x + 1e-5);
-        let pattern_angle = 0.00028 * neb.elapsed_years;
-        let r_norm_spiral = max(r_cyl / 110.0, 0.20);
-        let xi = 4.0 * (phi - pattern_angle) - 7.2 * log(r_norm_spiral);
-        let spiral_modulation = 0.5 + 0.5 * cos(xi);
-        let z_disk = exp(-abs(sample_pos.y) / 60.0);
-
-        // Galactic nucleus bulge smoothly transitions into sweeping spiral arms
-        let bulge_profile = exp(-r_core / 85.0) * 1.65;
-        let arm_weight = smoothstep(35.0, 120.0, r_cyl);
-        let arm_profile = exp(-r_cyl / 520.0) * z_disk * (0.06 + 2.60 * pow(max(spiral_modulation, 0.0), 2.3));
-        let spiral_composite = mix(bulge_profile, arm_profile, arm_weight);
 
         // Smooth evolution over cosmic time from turbulent collapse into rotating spiral galaxy,
         // with a spherical boundary fade so density vanishes cleanly before the 1100 AU cube faces.
         let t_spiral = clamp((neb.elapsed_years - 600.0) / 1400.0, 0.0, 1.0);
         let boundary_fade = 1.0 - smoothstep(760.0, 1040.0, r_core);
-        let eff_profile = mix(core_profile, spiral_composite, t_spiral) * boundary_fade;
+        var spiral_modulation = 0.0;
+        var eff_profile = core_profile * boundary_fade;
+        if (t_spiral > 0.001) {
+            // Lin-Shu logarithmic spiral galaxy density wave profile (matched to 2200 AU domain)
+            let r_cyl = max(length(local_pos.xz), 0.1);
+            let phi = atan2(local_pos.z + 1e-5, local_pos.x + 1e-5);
+            let pattern_angle = 0.00028 * neb.elapsed_years;
+            let r_norm_spiral = max(r_cyl / 110.0, 0.20);
+            let xi = 4.0 * (phi - pattern_angle) - 7.2 * log(r_norm_spiral);
+            spiral_modulation = 0.5 + 0.5 * cos(xi);
+            let z_disk = exp(-abs(local_pos.y) / 60.0);
+
+            // Galactic nucleus bulge smoothly transitions into sweeping spiral arms
+            let bulge_profile = exp(-r_core / 85.0) * 1.65;
+            let arm_weight = smoothstep(35.0, 120.0, r_cyl);
+            let arm_profile = exp(-r_cyl / 520.0) * z_disk * (0.06 + 2.60 * pow(max(spiral_modulation, 0.0), 2.3));
+            let spiral_composite = mix(bulge_profile, arm_profile, arm_weight);
+            eff_profile = mix(core_profile, spiral_composite, t_spiral) * boundary_fade;
+        }
 
         // Live 96^3 GPU Eulerian fluid density & shock-heat sampling (zero CPU readback).
         // `vol_sample.a` is 1.0 once the live GPU compute pack pass populates the 3D volume,
@@ -178,7 +184,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
         // Early exit optimization for empty space (skip procedural fbm3 when both fields are vacant)
         if (eff_profile > 0.015 || live_rho > 0.02) {
-            fbm_turb = fbm3(sample_pos * 0.0045);
+            fbm_turb = fbm3(local_pos * 0.0045);
             let proc_density = eff_profile * (0.35 + 0.90 * fbm_turb);
             let live_density = live_rho * (0.68 + 0.55 * fbm_turb);
             density = mix(proc_density, live_density, live_active * 0.88);
@@ -189,40 +195,42 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         var in_scatter = vec3<f32>(0.0);
         var min_cavity_factor = 1.0;
 
-        for (var i = 0u; i < neb.num_stars; i = i + 1u) {
-            let star_data = neb.star_positions_and_cavities[i];
-            let star_pos = star_data.xyz;
-            let cav_radius = star_data.w;
-            let star_color = neb.star_colors_and_lum[i].rgb;
-            let star_lum = neb.star_colors_and_lum[i].w;
+        if (density > 1e-4 || live_shock_heat > 1e-4) {
+            for (var i = 0u; i < neb.num_stars; i = i + 1u) {
+                let star_data = neb.star_positions_and_cavities[i];
+                let star_pos = star_data.xyz;
+                let cav_radius = star_data.w;
+                let star_color = neb.star_colors_and_lum[i].rgb;
+                let star_lum = neb.star_colors_and_lum[i].w;
 
-            let light_vec = star_pos - sample_pos;
-            let light_dist = max(length(light_vec), 1.0);
+                let light_vec = star_pos - sample_pos;
+                let light_dist = max(length(light_vec), 1.0);
 
-            if (cav_radius > 0.5) {
-                // Carve cavity: track strongest clearing across all stellar bubbles
-                let cavity_factor = smoothstep(cav_radius * 0.45, cav_radius, light_dist);
-                min_cavity_factor = min(min_cavity_factor, cavity_factor);
+                if (cav_radius > 0.5) {
+                    // Carve cavity: track strongest clearing across all stellar bubbles
+                    let cavity_factor = smoothstep(cav_radius * 0.45, cav_radius, light_dist);
+                    min_cavity_factor = min(min_cavity_factor, cavity_factor);
 
-                // Ionization shock front glow: H-alpha (656 nm, crimson) and [O III] (501 nm, teal)
-                let edge_dist = abs(light_dist - cav_radius);
-                if (edge_dist < 25.0) {
-                    let front_intensity = (1.0 - edge_dist / 25.0) * clamp(star_lum * 0.15, 0.1, 1.8);
-                    let h_alpha = vec3<f32>(1.0, 0.15, 0.35); // Crimson / magenta ionization
-                    let o_iii = vec3<f32>(0.1, 0.85, 0.9);    // Forbidden teal [O III] line
-                    // Reuse the previously calculated fbm_turb instead of computing an entirely new fbm3 inside an O(N) loop
-                    cavity_glow = cavity_glow + mix(h_alpha, o_iii, fract(fbm_turb * 3.7)) * front_intensity;
+                    // Ionization shock front glow: H-alpha (656 nm, crimson) and [O III] (501 nm, teal)
+                    let edge_dist = abs(light_dist - cav_radius);
+                    if (edge_dist < 25.0) {
+                        let front_intensity = (1.0 - edge_dist / 25.0) * clamp(star_lum * 0.15, 0.1, 1.8);
+                        let h_alpha = vec3<f32>(1.0, 0.15, 0.35); // Crimson / magenta ionization
+                        let o_iii = vec3<f32>(0.1, 0.85, 0.9);    // Forbidden teal [O III] line
+                        // Reuse the previously calculated fbm_turb instead of computing an entirely new fbm3 inside an O(N) loop
+                        cavity_glow = cavity_glow + mix(h_alpha, o_iii, fract(fbm_turb * 3.7)) * front_intensity;
+                    }
                 }
-            }
-            
-            // Protostellar starlight in-scattering
-            let light_dir = light_vec / light_dist;
-            let cos_theta = dot(ray_dir, light_dir);
-            let phase = henyey_greenstein(cos_theta, neb.phase_g);
 
-            let eff_lum = clamp(star_lum, 0.1, 20.0);
-            let illuminance = (star_color * eff_lum * 1.8) / (light_dist * light_dist + 80.0);
-            in_scatter = in_scatter + illuminance * phase;
+                // Protostellar starlight in-scattering
+                let light_dir = light_vec / light_dist;
+                let cos_theta = dot(ray_dir, light_dir);
+                let phase = henyey_greenstein(cos_theta, neb.phase_g);
+
+                let eff_lum = clamp(star_lum, 0.1, 20.0);
+                let illuminance = (star_color * eff_lum * 1.8) / (light_dist * light_dist + 80.0);
+                in_scatter = in_scatter + illuminance * phase;
+            }
         }
 
         // Keep a residual ionized-gas floor so overlapping HII bubbles don't erase the cloud

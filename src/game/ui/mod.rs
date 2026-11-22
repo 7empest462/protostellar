@@ -5,12 +5,15 @@ pub mod builder_spawner;
 pub mod builder_state;
 pub mod buttons;
 pub mod campaign_panel;
+pub mod crisis_banner;
 pub mod cutaway_hud;
 pub mod epoch_scrubber;
+pub mod event_feed;
 pub mod hazards_panel;
 pub mod hover_card;
 pub mod hr_diagram_panel;
 pub mod inspector_panel;
+pub mod inspector_telemetry;
 pub mod interactions;
 pub mod modal_manager;
 pub mod navigation_panel;
@@ -34,16 +37,24 @@ pub mod world_list;
 
 pub use widget_sync::{HoverReticleBracket, SurfaceCompassNeedle};
 pub use widgets::{
-    ActivatedHudButtons, HudSlider, HudSliderFill, HudSliderKind, HudSliderReadout, HudSliderThumb,
-    HudTextInput, HudTextInputKind, HudTextInputWrapper, ModernHudWidgetsPlugin,
-    PendingSliderChanges, SaveSlotUiState, hud_font_source, is_text_input_focused,
+    ActivatedHudButtons, BundledHudFont, HudSlider, HudSliderFill, HudSliderKind, HudSliderReadout,
+    HudSliderThumb, HudTextInput, HudTextInputKind, HudTextInputWrapper, ModernHudWidgetsPlugin,
+    PendingSliderChanges, SaveSlotUiState, hud_font_source, hud_font_source_with_bundled,
+    is_text_input_focused,
 };
 
 pub use builder_panel::spawn_planet_builder_panel;
 pub use campaign_panel::{spawn_campaign_panels, update_campaign_ui};
+pub use crisis_banner::{
+    CrisisBannerContainer, spawn_crisis_alert_banner, update_crisis_alert_banner_ui,
+};
 pub use cutaway_hud::{spawn_cutaway_hud, update_cutaway_hud_ui};
 pub use epoch_scrubber::{
     handle_epoch_scrubber_action, spawn_epoch_scrubber_panel, update_epoch_scrubber_ui,
+};
+pub use event_feed::{
+    EventFeedListContainer, detect_biosphere_emergence_events, format_event_timestamp_yr,
+    log_crisis_and_civilization_events, spawn_event_feed_panel, update_cosmic_event_feed_ui,
 };
 pub use hazards_panel::{
     HazardsPanelElement, HazardsPanelState, spawn_hazards_panel, update_hazards_ui,
@@ -76,12 +87,12 @@ pub use types::{
     HudDynamicText, HudHeaderStatsText, HudInspectorText, HudPanelElement, HudTextQueries,
     HudTimeWarpText, HudToastContainer, HudToastText, HudVisibilityState, InspectorExoticHeader,
     InspectorSection, NotificationToast, PlanetBuilderInfoText, PlanetBuilderPanel,
-    PlanetBuilderState, QuickBarButtonBaseColor, QuickBarState, QuickBodySelectorBar,
-    ScrollableInspector, SystemWorld, TelemetryExportStatusText, TelemetryGraphBodyTitleText,
-    TelemetryGraphPanel, TelemetryGraphReadoutText, TelemetryGraphSparklineText,
-    TelemetryMetricButton, TelemetryPanelState, UiButtonAction, collect_sorted_system_worlds,
-    create_button, create_compact_button, create_compact_selectable_button,
-    is_canonical_major_planet, is_embryo_body, is_major_body,
+    PlanetBuilderState, QuickBarButtonBaseColor, QuickBarScrollViewport, QuickBarState,
+    QuickBodySelectorBar, ScrollableInspector, SystemWorld, TelemetryExportStatusText,
+    TelemetryGraphBodyTitleText, TelemetryGraphPanel, TelemetryGraphReadoutText,
+    TelemetryGraphSparklineText, TelemetryMetricButton, TelemetryPanelState, UiButtonAction,
+    collect_sorted_system_worlds, create_button, create_compact_button,
+    create_compact_selectable_button, is_canonical_major_planet, is_embryo_body, is_major_body,
 };
 pub use update::{handle_cosmic_event_toasts, handle_roche_disruption_toasts, update_hud};
 pub use visibility::{update_hud_visibility, update_scenario_contextual_ui};

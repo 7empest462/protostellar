@@ -64,11 +64,18 @@ impl Plugin for GamePlugin {
                     ui::tech_tree_panel::update_tech_tree_panel,
                     update_campaign_ui,
                     update_hazards_ui,
+                    update_crisis_alert_banner_ui,
                     update_epoch_scrubber_ui,
                     update_hr_diagram_ui,
                     update_saves_panel,
                     handle_roche_disruption_toasts,
                     handle_cosmic_event_toasts,
+                    ui::event_feed::detect_biosphere_emergence_events,
+                    ui::event_feed::log_crisis_and_civilization_events,
+                    ui::event_feed::update_cosmic_event_feed_ui
+                        .after(handle_cosmic_event_toasts)
+                        .after(ui::event_feed::detect_biosphere_emergence_events)
+                        .after(ui::event_feed::log_crisis_and_civilization_events),
                     update_cosmic_audio_system,
                 )
                     .after(handle_ui_button_interactions),

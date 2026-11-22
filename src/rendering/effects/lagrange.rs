@@ -185,6 +185,7 @@ pub fn draw_lagrange_points_gizmos(
     mut gizmos: Gizmos,
     lagrange_config: Res<LagrangeOverlayConfig>,
     player_state: Res<PlayerInteractionState>,
+    camera_query: Query<&crate::rendering::camera::PanOrbitCamera>,
     star_query: Query<
         (Entity, &SimPosition, &SimVelocity, &Mass, &CelestialBody),
         With<CentralStar>,
@@ -200,21 +201,24 @@ pub fn draw_lagrange_points_gizmos(
         ),
         Without<CentralStar>,
     >,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let is_hill_overlay = player_state.overlay_mode == DiagnosticOverlayMode::HillSpheresAndGaps;
     if (!lagrange_config.show_lagrange_points && !is_hill_overlay)
         || player_state.overlay_mode == DiagnosticOverlayMode::Hidden
         || player_state.orbit_mode == OrbitVisualizationMode::Off
+        || camera_query.iter().any(|c| c.surface_horizon_mode)
     {
         return;
     }
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let opt_star = star_query.iter().next();
     let Some((star_ent, s_pos, s_vel, s_mass, _)) = opt_star else {
         return;
     };
 
-    let star_vec = Vec3::new(s_pos.x as f32, s_pos.y as f32, s_pos.z as f32);
+    let star_vec = origin.to_render(s_pos.0);
     let star_v_vec = Vec3::new(s_vel.x as f32, s_vel.y as f32, s_vel.z as f32);
 
     // Determine target secondary body: selected body if applicable, else primary planet
@@ -232,14 +236,14 @@ pub fn draw_lagrange_points_gizmos(
         return;
     };
 
-    let sec_vec = Vec3::new(b_pos.x as f32, b_pos.y as f32, b_pos.z as f32);
+    let sec_vec = origin.to_render(b_pos.0);
     let sec_v_vec = Vec3::new(b_vel.x as f32, b_vel.y as f32, b_vel.z as f32);
 
     // Resolve primary (if body has a parent planet, e.g. Moon orbiting Earth, use parent)
     let (prim_pos, prim_vel, prim_mass) = if let Some(sat) = opt_satellite {
         if let Ok((_, p_pos, p_vel, p_mass, ..)) = bodies_query.get(sat.parent) {
             (
-                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                origin.to_render(p_pos.0),
                 Vec3::new(p_vel.x as f32, p_vel.y as f32, p_vel.z as f32),
                 p_mass.0,
             )

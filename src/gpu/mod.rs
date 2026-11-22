@@ -2,6 +2,7 @@
 
 pub mod buffers;
 pub mod compute_node;
+pub mod disk_nucleation;
 pub mod gmc_collapse;
 pub mod gmc_far_field;
 pub mod gmc_fluid;
@@ -29,6 +30,7 @@ impl Plugin for GpuSimPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             ParticleRenderPlugin,
+            disk_nucleation::DiskNucleationPlugin,
             gmc_fluid::GmcFluidPlugin,
             gmc_far_field::GmcFarFieldPlugin,
         ));

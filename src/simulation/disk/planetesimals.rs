@@ -240,13 +240,17 @@ pub fn auto_spawn_planetesimals(
     mut commands: Commands,
     sim_time: Res<SimTime>,
     time_warp: Res<TimeWarp>,
-    _config: Res<SimulationConfig>,
+    config: Res<SimulationConfig>,
     disk_params: Res<DiskParameters>,
     mut spawner: ResMut<PlanetesimalSpawner>,
     scenario_state: Option<Res<ActiveScenarioState>>,
     body_count: Query<Entity, With<CelestialBody>>,
 ) {
-    if time_warp.is_paused && !time_warp.step_once {
+    if (time_warp.is_paused && !time_warp.step_once)
+        || (config.enable_gpu_compute
+            && config.gpu_compute_active
+            && config.active_particles > 1_000)
+    {
         return;
     }
 

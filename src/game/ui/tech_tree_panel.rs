@@ -2,8 +2,10 @@
 
 use super::types::*;
 use super::update::{set_display_if_changed, set_text_if_changed};
+use crate::simulation::campaign::CampaignState;
 use crate::simulation::economy::{
-    ALL_TECH_NODES, ScienceData, TechNode, TechnologyCategory, UnlockedTechs,
+    ALL_TECH_NODES, GameMode, ProgressionRank, ProgressionState, ScienceData, TechNode,
+    TechnologyCategory, UnlockedTechs,
 };
 use bevy::prelude::*;
 
@@ -14,6 +16,10 @@ pub struct TechTreeSummaryPointsText;
 /// Marker for the lifetime cumulative science summary line.
 #[derive(Component)]
 pub struct TechTreeSummaryLifetimeText;
+
+/// Marker for the active Sandbox / Progression rank & mode status line.
+#[derive(Component)]
+pub struct TechTreeModeRankText;
 
 /// Spawns the full Tech Tree panel container hierarchy.
 pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
@@ -102,11 +108,45 @@ pub fn spawn_tech_tree_panel(root: &mut ChildSpawnerCommands) {
                 ));
             });
 
+        // 2b. Progression Mode Toggle & Mastery Rank Banner
+        panel
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                    margin: UiRect::bottom(Val::Px(8.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.08, 0.18, 0.75)),
+                BorderColor::all(Color::srgba(0.45, 0.70, 1.0, 0.40)),
+            ))
+            .with_children(|mode_row| {
+                mode_row.spawn((
+                    Text::new("Rank: I. Primordial Observer | Sandbox"),
+                    TextFont {
+                        font_size: FontSize::Px(10.0),
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.85, 0.45)),
+                    TechTreeModeRankText,
+                ));
+                crate::game::ui::types::create_compact_button(
+                    mode_row,
+                    UiButtonAction::ToggleGameMode,
+                    "⇄ Mode",
+                    Color::srgba(0.10, 0.18, 0.34, 0.90),
+                    Color::srgb(0.45, 0.88, 1.0),
+                );
+            });
+
         // 3. Scrollable Tech Tree Content Container
         panel.spawn((
             Node {
                 flex_direction: FlexDirection::Column,
-                overflow: Overflow::clip_y(),
+                overflow: Overflow::scroll_y(),
                 row_gap: Val::Px(8.0),
                 ..default()
             },
@@ -257,6 +297,11 @@ fn rebuild_content_tree(
             "☀️ MEGASTRUCTURES & ASTROPHYSICS",
             Color::srgb(1.0, 0.80, 0.35),
         ),
+        (
+            TechnologyCategory::PlanetaryDefense,
+            "🛡️ PLANETARY DEFENSE & CIVILIZATIONS",
+            Color::srgb(0.55, 0.88, 1.0),
+        ),
     ];
 
     for (cat, cat_title, cat_color) in categories {
@@ -304,12 +349,15 @@ pub fn update_tech_tree_panel(
     panel_state: Res<TechTreePanelState>,
     science_data: Res<ScienceData>,
     unlocked_techs: Res<UnlockedTechs>,
+    opt_progression: Option<Res<ProgressionState>>,
+    opt_campaign: Option<Res<CampaignState>>,
     mut container_query: Query<(&mut Node, &TechTreePanelElement)>,
     mut points_text_query: Query<
         &mut Text,
         (
             With<TechTreeSummaryPointsText>,
             Without<TechTreeSummaryLifetimeText>,
+            Without<TechTreeModeRankText>,
         ),
     >,
     mut lifetime_text_query: Query<
@@ -317,13 +365,29 @@ pub fn update_tech_tree_panel(
         (
             With<TechTreeSummaryLifetimeText>,
             Without<TechTreeSummaryPointsText>,
+            Without<TechTreeModeRankText>,
+        ),
+    >,
+    mut mode_rank_text_query: Query<
+        &mut Text,
+        (
+            With<TechTreeModeRankText>,
+            Without<TechTreeSummaryPointsText>,
+            Without<TechTreeSummaryLifetimeText>,
         ),
     >,
     content_query: Query<(Entity, &TechTreePanelElement), Without<Text>>,
     mut commands: Commands,
     mut last_tree_sig: Local<Option<(u32, u32)>>,
 ) {
-    if !panel_state.is_changed() && !science_data.is_changed() && !unlocked_techs.is_changed() {
+    let prog_changed = opt_progression
+        .as_ref()
+        .is_some_and(DetectChanges::is_changed);
+    if !panel_state.is_changed()
+        && !science_data.is_changed()
+        && !unlocked_techs.is_changed()
+        && !prog_changed
+    {
         return;
     }
 
@@ -356,6 +420,20 @@ pub fn update_tech_tree_panel(
             &mut text,
             format!("Lifetime: {:.0}", science_data.lifetime_points),
         );
+    }
+    if let Ok(mut text) = mode_rank_text_query.single_mut() {
+        let unlocked_n = unlocked_techs.unlocked.len();
+        let missions_n = opt_campaign
+            .as_deref()
+            .map_or(0, |c| c.completed_missions.len());
+        let (mode_lbl, rank) = opt_progression.as_deref().map_or(
+            (
+                GameMode::Sandbox.short_label(),
+                ProgressionRank::PrimordialObserver,
+            ),
+            |p| (p.mode.short_label(), p.compute_rank(unlocked_n, missions_n)),
+        );
+        set_text_if_changed(&mut text, format!("{mode_lbl} | Rank: {}", rank.title()));
     }
 
     let sig = compute_tech_tree_signature(&unlocked_techs, science_data.points);

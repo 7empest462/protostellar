@@ -25,11 +25,18 @@ pub struct SurfaceCompassNeedle;
 fn apply_mass_slider_to_body(
     commands: &mut Commands,
     entity: Entity,
-    mass: &mut Mass,
-    radius_opt: Option<&mut Radius>,
-    body_opt: Option<&mut CelestialBody>,
-    comp_opt: Option<&Composition>,
-    diff_opt: Option<&mut InternalDifferentiation>,
+    (mass, radius_opt, body_opt, comp_opt, diff_opt): (
+        &mut Mass,
+        Option<&mut Radius>,
+        Option<&mut CelestialBody>,
+        Option<&Composition>,
+        Option<&mut InternalDifferentiation>,
+    ),
+    (temp_opt, lum_opt, evo_opt): (
+        Option<&mut Temperature>,
+        Option<&mut Luminosity>,
+        Option<&mut StellarEvolutionState>,
+    ),
     log_mass_earth: f32,
 ) {
     let mass_earth = 10.0_f64.powf(f64::from(log_mass_earth));
@@ -39,76 +46,89 @@ fn apply_mass_slider_to_body(
     let was_star_or_remnant = body_opt
         .as_deref()
         .is_some_and(|b| b.body_type.is_star_or_remnant());
-    let mut new_type_opt = None;
-
-    if let Some(body) = body_opt {
-        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
-            let new_bt = classify_body_by_mass_and_comp(mass.0, &comp, was_star_or_remnant);
-            body.body_type = new_bt;
-            new_type_opt = Some(new_bt);
-        } else {
-            new_type_opt = Some(body.body_type);
-        }
-    }
-
-    let eff_type = new_type_opt.unwrap_or(BodyType::TerrestrialPlanet);
     let mut new_radius = radius_opt.as_deref().map_or(EARTH_RADIUS_AU, |r| r.0);
 
-    if let Some(radius) = radius_opt {
-        if eff_type == BodyType::BlackHole {
-            radius.0 = (1.974e-8 * mass.0).max(1e-7);
-        } else if eff_type == BodyType::BrownDwarf {
-            radius.0 = 0.11 * SOLAR_RADIUS_AU;
-        } else if eff_type.is_star_or_remnant() {
-            if !eff_type.is_remnant() && !eff_type.is_hypothetical() {
-                radius.0 = SOLAR_RADIUS_AU * mass.0.max(0.08).powf(0.8);
-            }
-        } else {
-            let avg_density = comp.average_density();
-            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * std::f64::consts::PI))
-                .cbrt()
-                .max(EARTH_RADIUS_AU * 0.1);
+    if was_star_or_remnant && let Some(body) = body_opt {
+        let old_type = body.body_type;
+        let mut rad_reborrow = radius_opt;
+        crate::simulation::thermodynamics::sync_stellar_classification_after_mass_edit(
+            mass.0,
+            old_type,
+            &comp,
+            body,
+            rad_reborrow.as_deref_mut(),
+            temp_opt,
+            lum_opt,
+            evo_opt,
+        );
+        if let Some(r) = rad_reborrow {
+            new_radius = r.0;
         }
-        new_radius = radius.0;
-    }
-
-    if !was_star_or_remnant
-        && eff_type.is_star_or_remnant()
-        && let Ok(mut cmd) = commands.get_entity(entity)
-    {
-        let is_bd = eff_type == BodyType::BrownDwarf;
-        let lum = if is_bd {
-            1e-4 * (mass.0 / 0.05).clamp(0.1, 2.0)
-        } else {
-            mass.0.max(0.01).powf(3.5)
-        };
-        let surf_temp_k = if is_bd {
-            1400.0
-        } else if mass.0 >= 2.0 {
-            12_000.0
-        } else if mass.0 >= 0.8 {
-            5778.0
-        } else {
-            3200.0
-        };
-        cmd.remove::<(PlanetaryClimate, BiosphereState)>().insert((
-            Luminosity(lum),
-            Temperature(surf_temp_k),
-            IgnitionState {
-                core_temperature: if is_bd { 2.5e6 } else { 1.5e7 },
-                fusion_fraction: if is_bd { 0.05 } else { 1.0 },
-                is_ignited: !is_bd,
-                shockwave_radius: 0.0,
-            },
-            StellarEvolutionState {
-                phase: if is_bd {
-                    StellarEvolutionPhase::ProtostarContraction
-                } else {
-                    StellarEvolutionPhase::MainSequence
+    } else {
+        let mut eff_type = BodyType::TerrestrialPlanet;
+        if let Some(body) = body_opt {
+            if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
+                eff_type = classify_body_by_mass_and_comp(mass.0, &comp, false);
+                body.body_type = eff_type;
+            } else {
+                eff_type = body.body_type;
+            }
+        }
+        if let Some(radius) = radius_opt {
+            if eff_type == BodyType::BlackHole {
+                radius.0 = (1.974e-8 * mass.0).max(1e-7);
+            } else if eff_type == BodyType::BrownDwarf {
+                radius.0 = 0.11 * SOLAR_RADIUS_AU;
+            } else if eff_type.is_star_or_remnant() {
+                if !eff_type.is_remnant() && !eff_type.is_hypothetical() {
+                    radius.0 = SOLAR_RADIUS_AU * mass.0.max(0.08).powf(0.8);
+                }
+            } else {
+                let avg_density = comp.average_density();
+                radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * std::f64::consts::PI))
+                    .cbrt()
+                    .max(EARTH_RADIUS_AU * 0.1);
+            }
+            new_radius = radius.0;
+        }
+        if !was_star_or_remnant
+            && eff_type.is_star_or_remnant()
+            && let Ok(mut cmd) = commands.get_entity(entity)
+        {
+            let is_bd = eff_type == BodyType::BrownDwarf;
+            let lum = if is_bd {
+                1e-4 * (mass.0 / 0.05).clamp(0.1, 2.0)
+            } else {
+                mass.0.max(0.01).powf(3.5)
+            };
+            let surf_temp_k = if is_bd {
+                1400.0
+            } else if mass.0 >= 2.0 {
+                12_000.0
+            } else if mass.0 >= 0.8 {
+                5778.0
+            } else {
+                3200.0
+            };
+            cmd.remove::<(PlanetaryClimate, BiosphereState)>().insert((
+                Luminosity(lum),
+                Temperature(surf_temp_k),
+                IgnitionState {
+                    core_temperature: if is_bd { 2.5e6 } else { 1.5e7 },
+                    fusion_fraction: if is_bd { 0.05 } else { 1.0 },
+                    is_ignited: !is_bd,
+                    shockwave_radius: 0.0,
                 },
-                ..default()
-            },
-        ));
+                StellarEvolutionState {
+                    phase: if is_bd {
+                        StellarEvolutionPhase::ProtostarContraction
+                    } else {
+                        StellarEvolutionPhase::MainSequence
+                    },
+                    ..default()
+                },
+            ));
+        }
     }
 
     if let Some(diff) = diff_opt {
@@ -289,7 +309,8 @@ type SliderTargetBodyQuery<'w, 's> = Query<
             Option<&'static mut VolatileInventory>,
             Option<&'static mut PlanetaryClimate>,
             Option<&'static CentralStar>,
-            Option<&'static Luminosity>,
+            Option<&'static mut Luminosity>,
+            Option<&'static mut StellarEvolutionState>,
         ),
     ),
 >;
@@ -399,7 +420,7 @@ pub fn apply_hud_slider_changes(
             },
             |t| {
                 crate::simulation::thermodynamics::stellar_irradiance_from_mass_or_opt(
-                    t.2.4.map(|l| l.0),
+                    t.2.4.as_ref().map(|l| l.0),
                     t.2.0.as_ref().map(|tp| tp.0),
                     t.0.1.as_ref().map(|r| r.0),
                     t.0.0.0,
@@ -429,17 +450,25 @@ pub fn apply_hud_slider_changes(
                 if let Some(selected) = player_state.as_ref().and_then(|p| p.selected_entity)
                     && let Ok((
                         (mut mass, mut radius_opt, mut body_opt, comp_opt, mut diff_opt),
-                        ..,
+                        _,
+                        (mut temp_opt, _, _, _, mut lum_opt, mut evo_opt),
                     )) = target_body_query.get_mut(selected)
                 {
                     apply_mass_slider_to_body(
                         &mut commands,
                         selected,
-                        &mut mass,
-                        radius_opt.as_deref_mut(),
-                        body_opt.as_deref_mut(),
-                        comp_opt,
-                        diff_opt.as_deref_mut(),
+                        (
+                            &mut mass,
+                            radius_opt.as_deref_mut(),
+                            body_opt.as_deref_mut(),
+                            comp_opt,
+                            diff_opt.as_deref_mut(),
+                        ),
+                        (
+                            temp_opt.as_deref_mut(),
+                            lum_opt.as_deref_mut(),
+                            evo_opt.as_deref_mut(),
+                        ),
                         val,
                     );
                 }

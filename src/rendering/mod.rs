@@ -2,10 +2,12 @@
 
 pub mod bodies;
 pub mod camera;
+pub(crate) mod camera_controls;
 pub(crate) mod camera_picking;
 pub mod effects;
 pub mod gas_clouds;
 pub mod materials;
+pub mod origin;
 pub mod particle_swarm;
 pub mod post_processing;
 pub mod shaders;
@@ -22,6 +24,7 @@ use crate::rendering::camera::*;
 use crate::rendering::effects::*;
 use crate::rendering::gas_clouds::*;
 use crate::rendering::materials::*;
+use crate::rendering::origin::*;
 use crate::rendering::particle_swarm::*;
 use crate::rendering::post_processing::*;
 use crate::rendering::skybox::*;
@@ -46,8 +49,11 @@ impl Plugin for RenderingPlugin {
             .init_resource::<PersistentRemnantPool>()
             .init_resource::<KilonovaPool>()
             .init_resource::<TidalDisruptionPool>()
+            .init_resource::<RenderOrigin>()
             .init_resource::<surface_terrain::SurfaceTerrainState>()
-            .init_resource::<surface_camera::SurfaceAtmosphereMedia>()
+            .add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
+                RenderOrigin,
+            >::default())
             .add_plugins((
                 shaders::ProtostellarShadersPlugin,
                 GasCloudPlugin,
@@ -66,6 +72,10 @@ impl Plugin for RenderingPlugin {
                 PostProcessingPlugin,
             ))
             .add_plugins(MaterialPlugin::<particle_swarm::ParticleSwarmMaterial>::default())
+            .add_plugins((
+                MaterialPlugin::<MegastructureMaterial>::default(),
+                MaterialPlugin::<PlanetaryShieldMaterial>::default(),
+            ))
             .add_systems(
                 Startup,
                 (
@@ -78,18 +88,21 @@ impl Plugin for RenderingPlugin {
             .add_systems(
                 Update,
                 (
-                    sync_celestial_transforms
+                    update_render_origin
                         .after(crate::simulation::physics::update_simulation_visual_time)
                         .after(crate::simulation::physics::step_physics_simulation)
                         .after(crate::simulation::thermodynamics::update_thermodynamics)
                         .after(crate::simulation::geology::sync_geological_evolution_system)
+                        .before(sync_celestial_transforms),
+                    sync_celestial_transforms
+                        .after(update_render_origin)
                         .before(crate::simulation::probes::navigation::probe_navigation_system),
                     sync_selected_body_mesh_lod.after(sync_celestial_transforms),
                     update_pan_orbit_camera
                         .after(sync_celestial_transforms)
                         .after(crate::simulation::probes::sync_probe_transforms),
                     surface_camera::update_surface_horizon_camera.after(update_pan_orbit_camera),
-                    spawn_missing_visuals,
+                    spawn_missing_visuals.after(update_render_origin),
                     sync_camera_adaptive_body_scales
                         .after(surface_camera::update_surface_horizon_camera)
                         .after(spawn_missing_visuals),
@@ -98,6 +111,11 @@ impl Plugin for RenderingPlugin {
                     (sync_skybox_to_camera, update_skybox_uniforms)
                         .after(surface_camera::update_surface_horizon_camera),
                     sync_planetary_atmospheres.after(sync_camera_adaptive_body_scales),
+                ),
+            )
+            .add_systems(
+                Update,
+                (
                     sync_circumstellar_environments.after(sync_camera_adaptive_body_scales),
                     sync_planetary_rings.after(sync_camera_adaptive_body_scales),
                     sync_black_hole_accretion_disks.after(sync_camera_adaptive_body_scales),
@@ -127,6 +145,7 @@ impl Plugin for RenderingPlugin {
                     crate::rendering::effects::draw_impact_ejecta_system
                         .after(update_pan_orbit_camera),
                     draw_dyson_swarms.after(update_pan_orbit_camera),
+                    draw_crisis_defense_gizmos.after(update_pan_orbit_camera),
                     crate::simulation::probes::draw_probe_navigation_gizmos
                         .after(surface_camera::update_surface_horizon_camera),
                     surface_camera::draw_surface_horizon_environment_gizmos
@@ -153,8 +172,17 @@ impl Plugin for RenderingPlugin {
                     update_persistent_remnants.after(update_supernova_explosions),
                     update_kilonova_effects
                         .after(crate::simulation::physics::step_physics_simulation),
+                    sync_kilonova_visuals.after(update_kilonova_effects),
+                    sync_tde_visuals.after(update_tidal_disruption_streams),
                     update_megastructure_construction
                         .after(crate::simulation::physics::step_physics_simulation),
+                    sync_dyson_swarm_visuals.after(update_megastructure_construction),
+                    sync_shkadov_stellar_engine_visuals.after(sync_dyson_swarm_visuals),
+                    sync_civilization_visuals
+                        .after(sync_camera_adaptive_body_scales)
+                        .after(crate::simulation::biology::evolve_civilizations_system),
+                    sync_impact_plume_visuals
+                        .after(crate::rendering::effects::update_impact_ejecta),
                 ),
             );
     }

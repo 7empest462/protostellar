@@ -1,3 +1,4 @@
+pub mod civilizations;
 pub mod dark_matter;
 pub mod habitable_zone;
 pub mod impact_debris;
@@ -13,20 +14,29 @@ pub mod roche_stream;
 pub mod shockwaves;
 pub mod supernova;
 pub mod tde;
+pub mod tech_materials;
+pub mod tech_meshes;
 pub mod tools;
 pub mod volcanism;
 
+pub use civilizations::*;
 pub use dark_matter::draw_dark_matter_halos;
-pub use habitable_zone::{
-    compute_effective_luminosity, draw_circumstellar_habitable_zone_and_frost_lines,
-    draw_habitable_zone_gizmos,
-};
+pub use habitable_zone::*;
 pub use impact_debris::*;
-pub use lagrange::{
-    LagrangeSystemCoordinates, compute_cr3bp_lagrange_points, draw_lagrange_points_gizmos,
-    render_lagrange_points_and_hill_sphere,
-};
+pub use kilonova::*;
+pub use lagrange::*;
+pub use megastructures::*;
+pub use orbits::*;
+pub use planetary::*;
+pub use quasar_blowout::*;
+pub use relativistic::*;
+pub use remnants::*;
 pub use roche_stream::*;
+pub use shockwaves::*;
+pub use supernova::*;
+pub use tde::*;
+pub use tech_materials::*;
+pub use tools::*;
 pub use volcanism::*;
 
 use bevy::math::DVec3;
@@ -36,42 +46,6 @@ use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::utils::constants::EARTH_MASS_SOLAR;
 use crate::utils::math::*;
-
-pub use kilonova::{
-    KilonovaInstance, KilonovaPool, draw_kilonova_effects, update_kilonova_effects,
-};
-pub use megastructures::{DysonSwarm, draw_dyson_swarms, update_megastructure_construction};
-pub use orbits::{
-    OrbitRenderStyle, draw_ambient_and_trailing_orbit_ribbon, draw_conic_apsides_and_nodes,
-    draw_hyperbolic_trajectory,
-};
-pub use planetary::{
-    draw_body_selection_and_beacons, draw_cometary_escape_tails, draw_diagnostic_overlays,
-    draw_distant_optical_glint, draw_hover_targeting_reticle, draw_internal_planetary_cutaway,
-    draw_planetary_magnetospheres, draw_volcanic_and_cryo_plumes, resolve_cutaway_strata,
-    resolve_cutaway_strata_with_visual_radius,
-};
-pub use quasar_blowout::*;
-pub use relativistic::{
-    draw_black_hole_spacetime_curvature, draw_ignition_shockwave, draw_kerr_ergosphere,
-    draw_magnetar_reconnection_gizmos, draw_neutron_star_gizmos, draw_pulsar_lighthouse_gizmos,
-    draw_quasar_relativistic_jets, draw_quasi_star_photosphere_and_magnetosphere,
-    draw_standard_black_hole_jets, draw_stellar_evolution_nebula, draw_white_dwarf_gizmos,
-};
-pub use remnants::{
-    PersistentRemnantPool, PersistentSupernovaRemnant, RemnantFilament,
-    draw_persistent_supernova_remnants, spawn_remnant_from_explosion, update_persistent_remnants,
-};
-pub use shockwaves::{
-    draw_au_guide_rings, draw_impact_shockwaves, draw_roche_debris_streamers,
-    update_impact_shockwaves, update_roche_debris_streams,
-};
-pub use supernova::*;
-pub use tde::{draw_tidal_disruption_streams, update_tidal_disruption_streams};
-pub use tools::{
-    draw_bombardment_projectiles_gizmo, draw_planet_builder_preview, draw_slingshot_preview,
-    draw_tractor_beam_gizmo, draw_trajectory_prediction_gizmos,
-};
 
 fn draw_star_effects(
     gizmos: &mut Gizmos,
@@ -182,14 +156,14 @@ fn draw_body_orbit(
 ) {
     let cam_pos = params.cam_tf.map(|t| t.translation);
     let primary_occluder = Some((params.star_vec, params.star_vis_r));
-    let (rel_pos, rel_vel, primary_mass, anchor_vec, is_satellite) =
+    let (rel_pos, rel_vel, primary_mass, anchor_rel_au, is_satellite) =
         if let Some(sat) = opt_satellite {
             if let Ok((p_pos, p_vel, p_mass)) = parent_query.get(sat.parent) {
                 (
                     pos.0 - p_pos.0,
                     vel.0 - p_vel.0,
                     p_mass.0,
-                    Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+                    p_pos.0 - params.origin.0,
                     true,
                 )
             } else {
@@ -197,7 +171,7 @@ fn draw_body_orbit(
                     pos.0 - params.star_pos_dvec,
                     vel.0 - params.star_vel_dvec,
                     params.star_mass_val,
-                    params.star_vec,
+                    params.star_pos_dvec - params.origin.0,
                     false,
                 )
             }
@@ -206,7 +180,7 @@ fn draw_body_orbit(
                 pos.0 - params.star_pos_dvec,
                 vel.0 - params.star_vel_dvec,
                 params.star_mass_val,
-                params.star_vec,
+                params.star_pos_dvec - params.origin.0,
                 false,
             )
         };
@@ -231,7 +205,7 @@ fn draw_body_orbit(
             draw_ambient_and_trailing_orbit_ribbon(
                 gizmos,
                 &elements,
-                anchor_vec,
+                anchor_rel_au,
                 OrbitRenderStyle {
                     base_rgba,
                     is_selected,
@@ -246,7 +220,7 @@ fn draw_body_orbit(
                 draw_conic_apsides_and_nodes(
                     gizmos,
                     &elements,
-                    anchor_vec,
+                    anchor_rel_au,
                     cam_pos,
                     primary_occluder,
                 );
@@ -255,7 +229,7 @@ fn draw_body_orbit(
             draw_hyperbolic_trajectory(
                 gizmos,
                 &elements,
-                anchor_vec,
+                anchor_rel_au,
                 base_rgba,
                 cam_pos,
                 primary_occluder,
@@ -265,6 +239,7 @@ fn draw_body_orbit(
 }
 
 struct BodyEffectParams {
+    origin: crate::rendering::origin::RenderOrigin,
     star_vec: Vec3,
     star_pos_dvec: DVec3,
     star_vel_dvec: DVec3,
@@ -360,6 +335,7 @@ fn compute_satellite_glint_resolution_fade(
     cam_dist: f32,
     opt_satellite: Option<&SatelliteOf>,
     parent_query: &Query<(&SimPosition, &SimVelocity, &Mass)>,
+    origin: crate::rendering::origin::RenderOrigin,
 ) -> f32 {
     let Some(sat) = opt_satellite else {
         return 1.0;
@@ -367,7 +343,7 @@ fn compute_satellite_glint_resolution_fade(
     let Ok((p_pos, _, _)) = parent_query.get(sat.parent) else {
         return 1.0;
     };
-    let parent_vec = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let parent_vec = origin.to_render(p_pos.0);
     let angular_sep = parent_vec.distance(body_vec) / cam_dist.max(0.001);
     let t = ((angular_sep - 0.0035) / 0.0085).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -458,6 +434,7 @@ fn draw_body_orbit_and_overlays(
             cam_dist,
             opt_satellite,
             parent_query,
+            params.origin,
         );
         if sat_fade > 0.01 {
             let (photo_col, weight) =
@@ -541,7 +518,7 @@ fn draw_single_body_gizmos(
             | BodyType::GasGiant
             | BodyType::IceGiant
     );
-    let body_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+    let body_vec = params.origin.to_render(pos.0);
     let r_orb = (body_vec - params.star_vec).length();
     let cam_dist = params
         .cam_tf
@@ -637,22 +614,28 @@ fn draw_cataclysm_and_environment_effects(
     shockwave_pool: &ImpactShockwavePool,
     debris_pool: &RocheDebrisPool,
     supernova_pool: Option<&SupernovaDebrisPool>,
-    star_vec: Vec3,
-    cam_pos: Option<Vec3>,
-    occluders: (Option<(Vec3, f32)>, Option<(Vec3, f32)>),
+    params: &BodyEffectParams,
 ) {
     if player_state.overlay_mode != DiagnosticOverlayMode::Hidden {
-        draw_impact_shockwaves(gizmos, shockwave_pool);
-        draw_roche_debris_streamers(gizmos, debris_pool);
+        draw_impact_shockwaves(gizmos, shockwave_pool, params.origin);
+        draw_roche_debris_streamers(gizmos, debris_pool, params.origin);
     }
     if let Some(pool) = supernova_pool {
-        draw_supernova_explosions(gizmos, pool);
+        draw_supernova_explosions(gizmos, pool, params.origin);
     }
     // AU distance guides look like planetary orbits — hide them with orbit trails.
     if player_state.orbit_mode != OrbitVisualizationMode::Off
         && player_state.overlay_mode != DiagnosticOverlayMode::Hidden
     {
-        draw_au_guide_rings(gizmos, star_vec, cam_pos, occluders);
+        draw_au_guide_rings(
+            gizmos,
+            params.star_vec,
+            params.cam_tf.map(|t| t.translation),
+            (
+                params.selected_occluder,
+                Some((params.star_vec, params.star_vis_r)),
+            ),
+        );
     }
 }
 
@@ -757,37 +740,43 @@ pub fn draw_orbital_effects_and_gizmos(
     debris_pool: Res<RocheDebrisPool>,
     supernova_pool: Option<Res<SupernovaDebrisPool>>,
     sim_time: Option<Res<SimTime>>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<
+        (
+            &Transform,
+            Option<&crate::rendering::camera::PanOrbitCamera>,
+        ),
+        With<Camera3d>,
+    >,
     star_query: CentralStarQuery<'_, '_>,
     bodies_query: CelestialBodiesQuery<'_, '_>,
     parent_query: Query<(&SimPosition, &SimVelocity, &Mass)>,
     opt_builder: Option<Res<crate::game::ui::PlanetBuilderState>>,
     opt_slingshot: Option<Res<crate::simulation::resources::SlingshotState>>,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let cam_entry = camera_query.iter().next();
     let has_supernova = supernova_pool
         .as_deref()
         .is_some_and(|p| !p.explosions.is_empty());
-    if should_skip_orbital_gizmos(&player_state, has_supernova) {
+    if should_skip_orbital_gizmos(&player_state, has_supernova)
+        || cam_entry.is_some_and(|(_, c)| c.is_some_and(|cam| cam.surface_horizon_mode))
+    {
         return;
     }
     let opt_star = star_query.iter().next();
     let (star_pos_dvec, star_vel_dvec, star_mass_val, star_vec) =
         if let Some((s_pos, s_vel, s_mass, ..)) = opt_star {
-            (
-                s_pos.0,
-                s_vel.0,
-                s_mass.0,
-                Vec3::new(s_pos.x as f32, s_pos.y as f32, s_pos.z as f32),
-            )
+            (s_pos.0, s_vel.0, s_mass.0, origin.to_render(s_pos.0))
         } else {
-            (DVec3::ZERO, DVec3::ZERO, 1.0, Vec3::ZERO)
+            (DVec3::ZERO, DVec3::ZERO, 1.0, origin.to_render(DVec3::ZERO))
         };
 
     let (elapsed, elapsed_years) = sim_time
         .as_deref()
         .map_or((0.0, 0.0), |st| (st.visual_time_secs, st.elapsed_years));
-    let cam_tf = camera_query.iter().next().copied();
+    let cam_tf = cam_entry.map(|(t, _)| *t);
     let cam_pos = cam_tf.map(|t| t.translation);
     let star_vis_r = opt_star.map_or(0.05, |(_, _, _, s_rad, _, s_body, ..)| {
         let cam_dist = cam_pos.map_or(25.0, |cp| cp.distance(star_vec));
@@ -803,7 +792,7 @@ pub fn draw_orbital_effects_and_gizmos(
     let selected_occluder = player_state.selected_entity.and_then(|sel| {
         bodies_query.get(sel).ok().map(
             |(_, pos, _, _, _, body, _, _, opt_rad, _, _, _, opt_tf, ..)| {
-                let bv = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+                let bv = origin.to_render(pos.0);
                 let cd = cam_pos.map_or(25.0, |cp| cp.distance(bv));
                 let vr = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
                     opt_tf,
@@ -836,18 +825,8 @@ pub fn draw_orbital_effects_and_gizmos(
         );
     }
 
-    draw_cataclysm_and_environment_effects(
-        &mut gizmos,
-        &player_state,
-        &shockwave_pool,
-        &debris_pool,
-        supernova_pool.as_deref(),
-        star_vec,
-        cam_pos,
-        (selected_occluder, Some((star_vec, star_vis_r))),
-    );
-
     let params = BodyEffectParams {
+        origin,
         star_vec,
         star_pos_dvec,
         star_vel_dvec,
@@ -858,6 +837,15 @@ pub fn draw_orbital_effects_and_gizmos(
         elapsed_years,
         cam_tf,
     };
+
+    draw_cataclysm_and_environment_effects(
+        &mut gizmos,
+        &player_state,
+        &shockwave_pool,
+        &debris_pool,
+        supernova_pool.as_deref(),
+        &params,
+    );
 
     draw_celestial_bodies_batch(
         &mut gizmos,
@@ -908,14 +896,14 @@ fn draw_interactive_tool_gizmos(
     }
 
     if player_state.active_tool == PlayerTool::GravitationalTractor {
-        draw_tractor_beam_gizmo(gizmos, player_state);
+        draw_tractor_beam_gizmo(gizmos, player_state, params.origin);
     }
 
     if let Some(builder) = opt_builder {
         draw_planet_builder_preview(
             gizmos,
             builder,
-            params.star_vec,
+            params.star_pos_dvec - params.origin.0,
             params.star_mass_val,
             params.elapsed,
         );
@@ -925,11 +913,14 @@ fn draw_interactive_tool_gizmos(
         draw_slingshot_preview(
             gizmos,
             slingshot,
-            params.star_vec,
-            params.star_vel_dvec,
-            params.star_mass_val,
+            SlingshotStarState {
+                pos: params.star_pos_dvec,
+                vel: params.star_vel_dvec,
+                mass: params.star_mass_val,
+            },
             slingshot_target_state,
             params.elapsed,
+            params.origin,
         );
     }
 
@@ -944,6 +935,7 @@ fn draw_interactive_tool_gizmos(
                 Some((params.star_vec, params.star_vis_r)),
             ),
             params.elapsed,
+            params.origin,
         );
     }
 }
@@ -957,18 +949,27 @@ pub fn draw_bombardment_gizmos(
     targets_query: Query<(&SimPosition, &Radius)>,
     sim_time: Option<Res<SimTime>>,
     player_state: Res<PlayerInteractionState>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
         return;
     }
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
-    draw_bombardment_projectiles_gizmo(&mut gizmos, &projectiles_query, &targets_query, elapsed);
+    draw_bombardment_projectiles_gizmo(
+        &mut gizmos,
+        &projectiles_query,
+        &targets_query,
+        elapsed,
+        origin,
+    );
 }
 
 pub fn draw_persistent_remnants_gizmos(
     mut gizmos: Gizmos,
     remnant_pool: Option<Res<PersistentRemnantPool>>,
     sim_time: Option<Res<SimTime>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let Some(pool) = remnant_pool else {
         return;
@@ -976,8 +977,9 @@ pub fn draw_persistent_remnants_gizmos(
     if pool.remnants.is_empty() {
         return;
     }
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
-    draw_persistent_supernova_remnants(&mut gizmos, &pool, visual_time);
+    draw_persistent_supernova_remnants(&mut gizmos, &pool, visual_time, origin);
 }
 
 pub fn draw_kilonova_gizmos(mut gizmos: Gizmos, kilonova_pool: Option<Res<KilonovaPool>>) {

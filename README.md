@@ -1,6 +1,6 @@
 # PROTOSTELLAR 🪐✨
 
-**Protostellar** is a high-performance, visually stunning Solar System and Exoplanet Formation Simulator built in Rust using [Bevy 0.20.1](https://bevyengine.org/) and `wgpu 30`. It combines rigorous astrophysical equations of motion with real-time procedural GPU shaders (15 WESL material pipelines + 5 raw `wgpu` compute/instanced WGSL pipelines), allowing you to witness 100,000+ particles organically coalesce into stars, rocky worlds, ringed gas giants, relativistic remnants, and intricate moon systems over millions of simulated years.
+**Protostellar** is a high-performance, visually stunning Solar System and Exoplanet Formation Simulator built in Rust using [Bevy 0.20.1](https://bevyengine.org/) and `wgpu 30`. It combines rigorous astrophysical equations of motion with real-time procedural GPU shaders (17 WESL material pipelines + 6 raw `wgpu` compute/instanced WGSL pipelines) and a double-precision (`f64`) floating render origin for **True 1:1 physical proportions** across all zoom levels, allowing you to witness 100,000+ particles organically coalesce into stars, rocky worlds, ringed gas giants, relativistic remnants, living biospheres, and spacefaring civilizations over millions of simulated years.
 
 ---
 
@@ -44,7 +44,7 @@
 3. [🌌 Sandbox Scenario Library](#-sandbox-scenario-library)
 4. [⌨️ Master Controls & Shortcuts Reference Card](#️-master-controls--shortcuts-reference-card)
 5. [🏗️ Project Architecture](#️-project-architecture)
-6. [🧪 Automated Test Suite (515 Tests)](#-automated-test-suite-515-tests)
+6. [🧪 Automated Test Suite (767 Tests)](#-automated-test-suite-767-tests)
 7. [⚡ Getting Started](#-getting-started)
 8. [📜 License](#-license)
 
@@ -114,6 +114,26 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 - **Exotic World Archetypes**: Specialized internal strata for Gas Giants (dense rocky/icy core, metallic liquid hydrogen geodynamo mantle, molecular hydrogen/helium envelope), Ice Giants (ionic water-ammonia-methane slush ocean), and Central Stars (thermonuclear fusion core at $15.7\text{ MK}$, radiative diffusion zone, and convective envelope).
 - **Holographic 3D Billboard Callout Leaders**: 3D leader lines project into open space identifying layer boundaries, temperatures, and physical thicknesses.
 
+### 11. True 1:1 Physical Scale & Double-Precision Floating Origin (`RenderOrigin`)
+- **Zoom-Invariant Realistic Proportions**: Every star, planet, moon, dwarf planet, comet, asteroid, and compact remnant renders linearly at its exact physical radius in AU (`1.00x (True 1:1)` default) without zoom-based inflation, power-law distortion, or artificial floors.
+- **Double-Precision (`f64`) Floating Render Origin**: `RenderOrigin(DVec3)` dynamically centers the active body near `Vec3::ZERO` in render space across bodies, orbits, GPU particle swarms, nebulae, megastructures, and surface terrain—eliminating `f32` cancellation jitter even on Earth–Moon close-ups, Pluto (`39.5 AU`), or Planet Nine (`380 AU`).
+- **Dynamic Precision Near-Plane**: Automatically adapts camera near-clipping (`1e-10..0.001 AU` orbital, `1e-11..1e-5 AU` surface) and evaluates conic orbit curves in `f64` for rock-solid close-up framing.
+
+### 12. "Black Marble" Night Lights, Orbital Biosignatures & Universal Civilizations
+- **NASA "Black Marble" City Networks**: Multi-scale coastal & lowland metropolitan cores, spiderweb highway/rail filaments, offshore fishing fleets & shipping lanes, sodium-amber (`2200 K`) → warm-white → LED/cyan Kardashev color progression, and realistic **cloud attenuation + warm diffuse cloud underglow** when clouds drift over cities.
+- **Pressurized Domed Colonies on Any World**: Establish civilizations on **any** solid planet or moon—habitable worlds (Earth) receive open-biosphere civilizations, while arid, airless, or icy worlds (Mars, Moon, Europa, exoplanets) automatically establish pressurized domed colonies without overwriting their native terrain.
+- **Orbital Biosignatures & Living-World Phenomena**:
+  - **Oceanic Phytoplankton Blooms** (day side): Swirling turquoise/emerald chlorophyll ribbons along continental shelves and upwelling eddies, pigment-matched to the world's flora class.
+  - **Coastal Marine Bioluminescence ("Milky Seas")** (night side): Subtle electric-cyan dinoflagellate glow hugging warm coastlines at night.
+  - **Emerald `557.7 nm` Oxygen Airglow Limb**: Razor-thin atomic oxygen night-side airglow ring hovering along the horizon of oxygen-bearing worlds.
+  - **Cultivated Agricultural Lowlands** (close-up day side) and **Night-Side Convective Storm Sheet-Lightning** inside dense cloud decks.
+
+### 13. Interactive Crisis Events, 12-Node Tech Tree, Proportional Megastructures & Soundscape
+- **Living Civilizations & Great Filter Crises**: Civilizations evolve across Kardashev tiers, found autonomous off-world colonies, and face interactive cosmic crises (Planet-Killer Asteroid Swarms, Gamma-Ray Bursts, Solar Superflares) with alert banners (`crisis_banner.rs`), event feeds (`[Shift + E]`), and active countermeasures (Kinetic Deflectors, Shield Overdrive, Climate Stabilizers).
+- **12-Node Technology Tree & Progression Mode**: Unlock astrophysics, terraforming, and megastructure tiers via Science Data (`[Shift + T]`), or toggle freely in Sandbox Mode.
+- **Proportional 3D Metallic Megastructures**: Custom PBR Cook-Torrance GGX shader (`megastructure.wesl`) and geodesic hexagonal shield shader (`planetary_shield.wesl`) driving host-hugging **Orbital Habitat Rings** (`1.22..1.30 × R`), free-flying JWST-style hexagonal **Orbital Solar Mirrors** (`1.54 × R`), **Planetary Shields** (`1.12 × R`), **Dyson Swarms**, and **Shkadov Stellar Engines**. Both the Orbital Ring and Solar Mirrors remain visible arching overhead when exploring in **Surface View (`[Shift + V]`)**!
+- **GPU Disk Nucleation & Procedural Soundscape**: Real-time GPU protoplanetary disk nucleation compute pass (`particle_nucleate.wgsl`) and procedural multi-track cosmic & surface ambience audio (`src/game/audio/`, toggle **`[M]`**).
+
 ## 🎮 Flight Manual & How to Access Everything In-Game
 
 ### Camera & Viewport Controls
@@ -123,7 +143,7 @@ Protostellar has evolved far beyond an N-body gravity toy into a comprehensive a
 - **Select Celestial Body**: **`Left Click`** any star, planet, moon, or asteroid directly in 3D, or click its button in the top Quick Bar.
 - **Cycle Focus Targets**: Press **`Tab`** to cycle forward through all system worlds ordered by distance from the star; press **`Shift + Tab`** to cycle backward.
 - **Reset View**: Press **`Escape`** to deselect your current target, or press **`R`** to center the camera on the primary star.
-- **Exaggerate Sizes**: Press **`.`** (period) to increase visual size exaggeration ($1.4\times$ per tap up to $20\times$), or press **`,`** (comma) to normalize body scales ($0.7\times$ per tap down to $0.1\times$).
+- **Exaggerate Sizes**: Starts at **`1.00x (True 1:1)`** realistic physical scale. Press **`.`** (period) to increase visual size exaggeration ($1.4\times$ per tap up to $100\times$), or press **`,`** (comma) to reduce back down to `1.00x (True 1:1)` (or down to $0.1\times$).
 
 ---
 
@@ -197,10 +217,16 @@ Explore and survey your exoplanets by launching autonomous orbital and surface s
 - **To use**: Select any planet, open the Inspector (**`[I]`**), and click **`[Launch Probe]`**.
 
 ### Exoplanet Civilizations, Spectral Flora & Megastructures
-Watch primitive biospheres adapt to their host star's spectrum and transition into advanced spacefaring empires:
-- **Habitability & Spectral Flora Adaptation**: Worlds in the habitable zone with liquid oceans evolve photosynthetic flora tuned to their star's spectrum—emerald chlorophyll under Solar G-stars, deep crimson-burgundy NIR anthocyanins on M-dwarf worlds (`TRAPPIST-1`), amber-gold carotenoids on K-dwarf/circumbinary worlds (`Kepler-16`), and bioluminescent twilight/nightside canopies.
-- **Dyson Swarms**: Once a civilization reaches a Type-II Kardashev threshold (a high technosignature), it constructs a massive Dyson Swarm around its host star that intercepts stellar radiation and measurably cools outer planets.
-- **To use**: Select a habitable planet, open the Inspector (**`[I]`**), and click **`[Seed Life]`** or **`[Adv. Civ]`**, or wait millions of years for natural evolution.
+Watch primitive biospheres adapt to their host star's spectrum and transition into advanced spacefaring empires—or establish and customize a civilization on **any** planet or moon:
+- **Habitability, Biosignatures & Spectral Flora**: Habitable worlds with liquid oceans display photosynthetic continents, day-side **oceanic phytoplankton blooms**, night-side **coastal marine bioluminescence**, close-up **agricultural lowlands**, and a delicate emerald **`557.7 nm` oxygen airglow limb**. Flora adapts to host-star spectrum (`SolarChlorophyll`, `RedDwarfCrimson`, `OrangeDwarfCarotenoid`, `HighUvIndigo`).
+- **Universal Civilization & Biosphere Setup**: Select **any** planet or moon (Earth, Mars, the Moon, Europa, exoplanets) and open the Inspector's **Geo & Bio** tab:
+  - **`[Life [E]]`**: Terraforms and seeds liquid oceans, atmosphere, and a photosynthetic biosphere.
+  - **`[Adv. Civ]`**: Establishes a civilization (open-biosphere on habitable worlds, or a **Pressurized Domed Colony** on dry/airless/icy worlds like Mars or the Moon) and steps up through Kardashev eras (`K0.7` → `K1.0` → `K1.5+` → `K2.0`).
+  - **`[🛸 Ring]` / `[🪞 Mirrors]` / `[🛡️ Shield]`**: Directly toggle the proportional **Orbital Habitat Ring**, free-flying JWST-style **Orbital Solar Mirrors**, and **Planetary Shield** on the selected world.
+  - **`[🌿 Flora/Glow]`**: Cycle photosynthetic flora pigment classes and nocturnal bioluminescence intensity.
+  - **`[✖ Clear Civ]`**: Cleanly remove civilization state, city lights, and megastructures from the selected world.
+- **Overhead Megastructures in Surface View**: Enter **Surface View (`[Shift + V]`)** on a civilized planet and look up to see its Orbital Habitat Ring and Solar Mirrors gliding across the sky overhead, alongside any stellar Dyson Swarm around the host star.
+- **Dyson Swarms & Shkadov Engines**: Type-II civilizations construct proportional Dyson Swarms and Shkadov Stellar Engines around their host star.
 
 ### Supernova Core-Collapse, Matter Ejection & Remnant Formation
 Witness the violent death of massive stars and the birth of exotic compact remnants through real-time 3D explosive hydrodynamic visuals:
@@ -624,10 +650,10 @@ Protostellar is designed around Bevy's data-driven **Entity Component System (EC
 protostellar/
 ├── assets/
 │   └── shaders/
-│       ├── planet.wesl           # WESL PBR crusts, spectral flora, bioluminescence, ring shadows & eclipses
+│       ├── planet.wesl           # WESL PBR crusts, Black Marble city webs, biosignatures, clouds & eclipses
 │       ├── atmosphere.wesl       # Multi-layer Rayleigh/Mie atmospheric scattering & Chapman twilight shell
 │       ├── supernova.wesl        # Ray-marched volumetric supernova fireball, shock fronts & ionization shells
-│       ├── skybox.wesl           # Milky Way & Cosmic Web procedural skybox with gravitational lensing
+│       ├── skybox.wesl           # Seamless Milky Way & Cosmic Web procedural skybox with gravitational lensing
 │       ├── black_hole_disk.wesl  # Relativistic MHD accretion disk with Doppler beaming & Kerr photon ring
 │       ├── relativistic_jet.wesl # Relativistic polar jet beaming, Doppler flaring & shock knots
 │       ├── circumstellar.wesl    # LBV Homunculus, WR pinwheels, Boson/Quark star halos & Pop-III bubbles
@@ -636,6 +662,8 @@ protostellar/
 │       ├── planetary_rings.wesl  # Optical depth, Cassini divisions & micro-ringlets shader
 │       ├── comet_tail.wesl       # Anti-solar ion & curved dust tail shader
 │       ├── roche_stream.wesl     # 3D curved Roche-lobe overflow & TDE plasma stream shader
+│       ├── megastructure.wesl    # Procedural Cook-Torrance GGX metallic Dyson/Habitat/Mirror/Probe shader
+│       ├── planetary_shield.wesl # Geodesic hexagonal Fresnel planetary defense shield shader
 │       ├── post_processing.wesl  # ACES/AgX tonemapping, relativistic lensing & hazard flash pass
 │       ├── sci_fi_panel.wesl     # Chamfered SDF glassmorphic HUD UI material shader
 │       ├── soft_particle.wesl    # Soft billboarded particle falloff material shader
@@ -643,23 +671,26 @@ protostellar/
 │       ├── gmc_fluid.wgsl        # Raw wgpu 30 Eulerian 3D GMC hydrodynamics compute shader
 │       ├── gmc_far_field.wgsl    # Raw wgpu 30 tile-shared far-field gravity compute shader
 │       ├── particle_orbit.wgsl   # Raw wgpu 30 compute shader for 100k protoplanetary particles
+│       ├── particle_nucleate.wgsl# Raw wgpu 30 protoplanetary disk nucleation compute shader
 │       └── particle_render.wgsl  # Raw wgpu 30 instanced particle swarm render shader
 ├── src/
-│   ├── gpu/                      # WebGPU compute nodes (SPH gas, N-body galaxy, GMC far-field, collapse)
+│   ├── gpu/                      # WebGPU compute nodes (SPH gas, disk nucleation, N-body galaxy, GMC far-field)
 │   ├── simulation/
 │   │   ├── accretion/            # Collision regimes, Theia giant impact, impact melt basins
 │   │   ├── atmosphere_escape/    # Hydrodynamic EUV escape & cometary ion tails
-│   │   ├── biology/              # Habitability tracking, spectral flora adaptation & technosignature evolution
+│   │   ├── biology/              # Habitability, spectral flora, living civilizations & domed colonies
 │   │   ├── components/           # ECS definitions (Mass, Position, Climate, BiosphereState, SpinState, etc.)
 │   │   ├── disk/                 # Protoplanetary disk structure, gas drag, pebble drift
+│   │   ├── economy/              # 12-node Tech Tree, Science Data harvesting, Progression Mode & Ranks
+│   │   ├── events/               # Interactive Great Filter crises, impactor swarms & defense countermeasures
 │   │   ├── geology/              # Deep-time epochs, continental drift, Great Oxidation Event
 │   │   ├── kozai_lidov/          # Hierarchical triple resonance & secular orbital tilt exchange
 │   │   ├── physics/              # Modular symplectic leapfrog N-body integrator & forces
 │   │   ├── predictor.rs          # Real-time Keplerian trajectory predictor & encounter forecaster
-│   │   ├── probes/               # Autonomous Orbiters, geodesic surface Rovers, 3D trails & Raman assays
+│   │   ├── probes/               # Autonomous Orbiters, geodesic surface Rovers, 3D meshes & Raman assays
 │   │   ├── relativity/           # 1PN precession, GW Peters orbital decay, relativistic jets & TDEs
 │   │   ├── scenarios/            # 16 scenario presets (Solar, Genesis, TRAPPIST, Kepler-16, Sag A*, Galaxy, etc.)
-│   │   ├── serialization.rs      # System JSON save/load serializer
+│   │   ├── serialization/        # System JSON save/load serializer & round-trip state restoration
 │   │   ├── space_weather/        # CMEs, stellar flares, magnetospheric stand-off & auroral ovals
 │   │   ├── telemetry.rs          # Symplectic energy auditing, metrics history & CSV export
 │   │   ├── terraforming/         # Targeted bombardment spawner & dynamic climate modification
@@ -667,25 +698,33 @@ protostellar/
 │   │   └── tides/                # Viscoelastic tidal heating, volcanism & spin-orbit locking
 │   ├── rendering/
 │   │   ├── bodies/               # Meshes, atmospheres, relativistic jets, ring systems & shader uniform sync
-│   │   ├── effects/              # Supernovae, Kilonovae, SNR nebulae, Dyson swarms, dark matter halos & conics
+│   │   ├── effects/              # Supernovae, Kilonovae, megastructures, civilization defenses & conics
+│   │   ├── origin.rs             # Double-precision (f64) floating render origin (RenderOrigin)
 │   │   ├── materials.rs          # Custom Bevy PBR & volumetric shader materials
-│   │   └── camera.rs             # Pan-orbit camera, zoom, target tracking
+│   │   ├── camera.rs             # Pan-orbit camera, f64 focus tracking & logarithmic zoom
+│   │   └── camera_controls.rs    # Keyboard flight, mouse orbit/pan/zoom & trackpad pinch handlers
 │   ├── game/
-│   │   ├── ui/                   # Full HUD suite: Inspector, Builder, Scrubber, Telemetry, Trophies, Quick Bar
-│   │   ├── interaction.rs        # Keyboard shortcuts, selection, live editing
+│   │   ├── audio/                # Procedural multi-track cosmic & surface wind/ocean soundscape
+│   │   ├── ui/                   # Full HUD suite: Inspector, Tech Tree, Crisis Banner, Event Feed, Telemetry
+│   │   ├── interaction/          # Keyboard shortcuts, selection, live editing
 │   │   ├── slingshot.rs          # Interactive orbital slingshot launcher
 │   │   └── time_control.rs       # Time warp, pause, speed stepping
-│   └── utils/                    # Astronomical constants, Kepler solvers, state vector conversion
+│   └── utils/                    # Astronomical constants, Kepler solvers, DVec3 conic evaluators
 └── tests/
-    ├── simulation_tests.rs       # Master integration test harness
-    └── simulation_tests/         # 55 specialized test suites covering 515 automated tests
+    ├── simulation_tests.rs       # Master integration test harness (708 tests)
+    ├── e2e_gmc_tests.rs          # End-to-end GMC fluid & promotion tests (50 tests)
+    ├── challenge_m1_tests.rs     # M1 challenge physics & orbital verification (9 tests)
+    └── simulation_tests/         # 86 specialized test suites covering 767 total automated tests
 ```
 
 ---
 
-## 🧪 Automated Test Suite (515 Tests)
+## 🧪 Automated Test Suite (767 Tests)
 
-Protostellar enforces rigorous physical validity through **515 comprehensive integration tests** across 55 specialized test suites:
+Protostellar enforces rigorous physical and visual validity through **767 comprehensive integration tests** (`708` in `simulation_tests`, `50` in `e2e_gmc_tests`, and `9` in `challenge_m1_tests`):
+
+- **True 1:1 Scale, Floating Origin & Proportional Megastructures**: Verifies zoom-invariant linear physical radii across stars, planets, moons, comets, and remnants; `RenderOrigin` centering and Earth–Moon separation precision; host-hugging planetary megastructures, free-flying JWST mirrors, and Surface View overhead visibility.
+- **Universal Civilizations, Crises, 12-Node Tech Tree & "Black Marble" Shaders**: Verifies open-biosphere vs. pressurized domed colony bootstrapping (Earth, Mars, Moon), explicit Ring/Mirror/Shield toggles, Great Filter crisis lifecycles, save/load round-trips, and Naga WESL validation of Black Marble city webs, cloud underglow, phytoplankton blooms, and `557.7 nm` airglow.
 
 - **Cross-Scenario Smoke & Regression Guardrails**: Automated dynamic dispatch and step validation across all 15 sandbox scenario presets, confirming clean entity cleanup between scenarios, finite coordinates without NaNs, and orbital bound retention under 50x–100x warp speeds.
 

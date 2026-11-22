@@ -112,6 +112,18 @@ pub fn update_merged_body_name(
         return;
     }
     if updated_type.is_star_or_remnant() && !updated_type.is_remnant() {
+        if updated_type.is_evolved_giant() {
+            if updated_type == BodyType::RedSupergiant && !name.contains("Supergiant") {
+                *name = "The Star (Red Supergiant)".to_string();
+            } else if matches!(
+                updated_type,
+                BodyType::Hypergiant | BodyType::YellowHypergiant
+            ) && !name.contains("Hypergiant")
+            {
+                *name = "The Star (Luminous Yellow Hypergiant)".to_string();
+            }
+            return;
+        }
         let (_, label) = crate::simulation::components::celestial::classify_stellar_type_and_label(
             total_mass,
             &crate::simulation::components::Composition::solar_gas(),

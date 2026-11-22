@@ -18,7 +18,10 @@ pub use billboards::{
     update_gpu_billboard_mesh_selective, update_gpu_billboard_mesh_with_normals,
 };
 pub use material::{ParticleSwarmMaterial, ParticleSwarmUniforms};
-pub use promotions::{check_clump_promotions, replenish_cleared_particles, spawn_promoted_bodies};
+pub use promotions::{
+    check_clump_promotions, determine_promoted_body_type_and_name, replenish_cleared_particles,
+    spawn_promoted_bodies, spawn_promoted_body,
+};
 pub use setup::{create_soft_particle_texture, reseed_particle_swarm, setup_particle_swarm};
 pub use simulation::{
     ParticleIntegrationParams, apply_particle_accretion_to_bodies, build_spatial_hash_bins,
@@ -60,14 +63,14 @@ fn sync_swarm_mesh_handle_for_gpu_pulling(
     gpu_active: bool,
     data: &mut ParticleSwarmData,
     empty_mesh: Option<&ParticleSwarmEmptyMesh>,
-    mesh_query: &mut Query<&mut Mesh3d, With<ParticleSwarmMesh>>,
+    mesh_query: &mut Query<(&mut Mesh3d, &mut Transform), With<ParticleSwarmMesh>>,
 ) {
     let target = if gpu_active && let Some(empty) = empty_mesh {
         &empty.0
     } else {
         &data.mesh_handle
     };
-    for mut mesh3d in mesh_query.iter_mut() {
+    for (mut mesh3d, _) in mesh_query.iter_mut() {
         if mesh3d.0 != *target {
             mesh3d.0 = target.clone();
             if !gpu_active {
@@ -107,34 +110,6 @@ fn flush_dirty_mesh_if_paused(
     {
         update_gpu_billboard_mesh(data, disk_params, meshes);
         data.is_dirty = false;
-    }
-}
-
-type StarAnchorTuple<'a> = (
-    &'a SimPosition,
-    &'a Mass,
-    &'a IgnitionState,
-    Option<&'a BlackHoleStarState>,
-    &'a CelestialBody,
-);
-
-fn resolve_anchor_star<'a>(
-    star_query: &'a Query<
-        (
-            &SimPosition,
-            &Mass,
-            &IgnitionState,
-            Option<&BlackHoleStarState>,
-            &CelestialBody,
-        ),
-        With<CentralStar>,
-    >,
-    defaults: &'a (SimPosition, Mass, IgnitionState, CelestialBody),
-) -> StarAnchorTuple<'a> {
-    if let Some((p, m, ign, bhs, body)) = star_query.iter().next() {
-        (p, m, ign, bhs, body)
-    } else {
-        (&defaults.0, &defaults.1, &defaults.2, None, &defaults.3)
     }
 }
 
@@ -245,6 +220,86 @@ fn step_protoplanetary_disk_mechanics(
     had_accretions || had_promotions || config.active_particles != prev_active
 }
 
+fn collect_sorted_massive_bodies(
+    massive_query: &Query<
+        (
+            Entity,
+            &SimPosition,
+            &mut Mass,
+            &mut Radius,
+            &mut Composition,
+            &mut CelestialBody,
+            Option<&mut VolatileInventory>,
+        ),
+        Without<CentralStar>,
+    >,
+) -> Vec<(Entity, DVec3, f64, BodyType)> {
+    let mut massive_bodies: Vec<(Entity, DVec3, f64, BodyType)> = massive_query
+        .iter()
+        .map(|(e, p, m, _, _, body, _)| (e, p.0, m.0, body.body_type))
+        .collect();
+    massive_bodies.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    massive_bodies
+}
+
+fn build_particle_integration_params<'a>(
+    star: (
+        &SimPosition,
+        &Mass,
+        &IgnitionState,
+        Option<&BlackHoleStarState>,
+        &CelestialBody,
+    ),
+    sim: (
+        &SimulationConfig,
+        &PlayerInteractionState,
+        &TimeWarp,
+        Option<&crate::game::phases::LateHeavyBombardmentState>,
+    ),
+    disk_params: &'a DiskParameters,
+    massive_bodies: &'a [(Entity, DVec3, f64, BodyType)],
+    (base_mass, gpu_active): (f32, bool),
+) -> ParticleIntegrationParams<'a> {
+    let (star_pos, star_mass, ignition, opt_bhs, star_body) = star;
+    let (config, player_state, time_warp, lhb_state) = sim;
+    let quasar_blown_out =
+        opt_bhs.is_some_and(|s| s.is_blown_out) || star_body.body_type == BodyType::BlackHole;
+    let speed_mult = time_warp.multiplier as f32;
+    let (lhb_active, lhb_resonance) =
+        lhb_state.map_or((false, false), |lhb| (lhb.is_active, lhb.resonance_crossed));
+    ParticleIntegrationParams {
+        star_pos_f32: [star_pos.x as f32, star_pos.y as f32, star_pos.z as f32],
+        star_m: star_mass.0 as f32,
+        g_const: G_ASTRO as f32,
+        shockwave_r: ignition.shockwave_radius as f32,
+        enable_gas_drag: config.enable_gas_drag,
+        gas_scale: config.gas_density_scale,
+        star_is_ignited: ignition.is_ignited,
+        quasar_blown_out,
+        tractor_pos_mass: compute_tractor_pos_mass(player_state),
+        speed_mult,
+        visual_flow_dt: compute_visual_flow_dt(speed_mult),
+        gpu_active,
+        lhb_active,
+        lhb_resonance,
+        disk_params,
+        massive_bodies,
+        base_mass,
+    }
+}
+
+fn sync_swarm_render_origin(
+    opt_origin: Option<&crate::rendering::origin::RenderOrigin>,
+    swarm_mesh_query: &mut Query<(&mut Mesh3d, &mut Transform), With<ParticleSwarmMesh>>,
+) {
+    let target_t = -opt_origin.copied().unwrap_or_default().0.as_vec3();
+    for (_mesh, mut tf) in swarm_mesh_query.iter_mut() {
+        if tf.translation != target_t {
+            tf.translation = target_t;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, reason = "Particle swarm ECS queries")]
 pub fn update_particle_swarm(
     mut commands: Commands,
@@ -277,13 +332,18 @@ pub fn update_particle_swarm(
     >,
     lhb_state: Option<Res<crate::game::phases::LateHeavyBombardmentState>>,
     mut swarm: Option<ResMut<ParticleSwarmData>>,
-    empty_mesh: Option<Res<ParticleSwarmEmptyMesh>>,
+    (empty_mesh, opt_origin): (
+        Option<Res<ParticleSwarmEmptyMesh>>,
+        Option<Res<crate::rendering::origin::RenderOrigin>>,
+    ),
     mut meshes: ResMut<Assets<Mesh>>,
     mut opt_swarm_materials: Option<ResMut<Assets<ParticleSwarmMaterial>>>,
     swarm_mat_query: Query<&MeshMaterial3d<ParticleSwarmMaterial>, With<ParticleSwarmMesh>>,
-    mut swarm_mesh_query: Query<&mut Mesh3d, With<ParticleSwarmMesh>>,
+    mut swarm_mesh_query: Query<(&mut Mesh3d, &mut Transform), With<ParticleSwarmMesh>>,
     mut last_size_state: Local<(usize, f32, f64, bool, usize, u32)>,
 ) {
+    sync_swarm_render_origin(opt_origin.as_deref(), &mut swarm_mesh_query);
+
     sync_swarm_material_render_scale(
         config.particle_render_scale,
         &mut opt_swarm_materials,
@@ -324,44 +384,33 @@ pub fn update_particle_swarm(
         return;
     }
 
-    let defaults = default_central_star_fallback(disk_params.central_star_mass);
-    let (star_pos, star_mass, ignition, opt_bhs, star_body) =
-        resolve_anchor_star(&star_query, &defaults);
+    if gpu_active && data.pending_gpu_accretions.is_empty() {
+        data.is_dirty = false;
+        return;
+    }
 
-    let mut massive_bodies: Vec<(Entity, DVec3, f64, BodyType)> = massive_query
-        .iter()
-        .map(|(e, p, m, _, _, body, _)| (e, p.0, m.0, body.body_type))
-        .collect();
-    massive_bodies.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
-
-    let quasar_blown_out =
-        opt_bhs.is_some_and(|s| s.is_blown_out) || star_body.body_type == BodyType::BlackHole;
-    let tractor_pos_mass = compute_tractor_pos_mass(&player_state);
-    let speed_mult = time_warp.multiplier as f32;
-    let visual_flow_dt = compute_visual_flow_dt(speed_mult);
-    let (lhb_active, lhb_resonance) = lhb_state
-        .as_ref()
-        .map_or((false, false), |lhb| (lhb.is_active, lhb.resonance_crossed));
-
-    let params = ParticleIntegrationParams {
-        star_pos_f32: [star_pos.x as f32, star_pos.y as f32, star_pos.z as f32],
-        star_m: star_mass.0 as f32,
-        g_const: G_ASTRO as f32,
-        shockwave_r: ignition.shockwave_radius as f32,
-        enable_gas_drag: config.enable_gas_drag,
-        gas_scale: config.gas_density_scale,
-        star_is_ignited: ignition.is_ignited,
-        quasar_blown_out,
-        tractor_pos_mass,
-        speed_mult,
-        visual_flow_dt,
-        gpu_active,
-        lhb_active,
-        lhb_resonance,
-        disk_params: &disk_params,
-        massive_bodies: &massive_bodies,
-        base_mass: data.base_mass,
+    let fallback = if star_query.is_empty() {
+        Some(default_central_star_fallback(disk_params.central_star_mass))
+    } else {
+        None
     };
+    let star_ref = if let Some(s) = star_query.iter().next() {
+        s
+    } else if let Some(ref d) = fallback {
+        (&d.0, &d.1, &d.2, None, &d.3)
+    } else {
+        return;
+    };
+
+    let massive_bodies = collect_sorted_massive_bodies(&massive_query);
+    let speed_mult = time_warp.multiplier as f32;
+    let params = build_particle_integration_params(
+        star_ref,
+        (&config, &player_state, &time_warp, lhb_state.as_deref()),
+        &disk_params,
+        &massive_bodies,
+        (data.base_mass, gpu_active),
+    );
 
     let masses_changed = step_protoplanetary_disk_mechanics(
         &mut commands,

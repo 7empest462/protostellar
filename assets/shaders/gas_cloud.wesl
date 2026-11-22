@@ -7,8 +7,10 @@ import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
 
 
 struct GasUniforms {
-    time_data: vec4<f32>,   // x: time, y: inner_r, z: outer_r, w: gas_scale
-    star_params: vec4<f32>, // x: radius, y: temp, z: lum, w: shockwave_r
+    time_data: vec4<f32>,     // x: time, y: inner_r, z: outer_r, w: gas_scale
+    star_params: vec4<f32>,   // x: radius, y: temp, z: lum, w: shockwave_r
+    camera_params: vec4<f32>, // xyz: camera world pos (AU), w: close-up zoom contrast fade [0.18..1.0]
+    disk_center: vec4<f32>,   // xyz: render-origin shifted disk center (AU), w: reserved
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(101)
@@ -53,7 +55,7 @@ fn fragment(
 ) -> FragmentOutput {
     var out: FragmentOutput;
 
-    let pos_world = in.world_position.xyz;
+    let pos_world = in.world_position.xyz - gas.disk_center.xyz;
     let r_cyl = length(pos_world.xz);
 
     let inner_r = gas.time_data.y;
@@ -207,11 +209,14 @@ fn fragment(
     let y_dist = abs(pos_world.y);
     let vertical_falloff = exp(-0.5 * pow(y_dist / h_scale, 2.0));
 
-    // 7. Dynamic Alpha & Luminous Visibility
+    // 7. Dynamic Alpha, Close-Up Planet Contrast Fade & Near-Camera Plane Softness
     let base_density = (wisps * 0.55 + 0.25) * radial_mask * gap_clearance * inner_clear_factor * gas_density_scale * vertical_falloff;
     let alpha_mul = select(0.18, 0.26, is_massive);
     let alpha_cap = select(0.26, 0.38, is_massive);
-    let alpha = clamp(base_density * alpha_mul, 0.0, alpha_cap);
+    let zoom_contrast = clamp(gas.camera_params.w, 0.12, 1.0);
+    let cam_dist = length(pos_world - gas.camera_params.xyz);
+    let near_cam_softness = smoothstep(0.08, select(1.8, 10.0, is_massive), cam_dist);
+    let alpha = clamp(base_density * alpha_mul * zoom_contrast * near_cam_softness, 0.0, alpha_cap);
 
     if (alpha < 0.003) {
         discard;

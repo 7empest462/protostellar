@@ -1,3 +1,4 @@
+use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::simulation::components::BodyType;
@@ -35,12 +36,12 @@ pub fn sphere_occlusion_fade(
     let Some(cp) = cam_pos else {
         return 1.0;
     };
-    if occluder_r <= 1e-6 {
+    if occluder_r <= 1e-10 {
         return 1.0;
     }
     let cam_to_pt = point - cp;
     let pt_dist = cam_to_pt.length();
-    if pt_dist <= 1e-6 {
+    if pt_dist <= 1e-10 {
         return 1.0;
     }
     let ray_dir = cam_to_pt / pt_dist;
@@ -52,7 +53,7 @@ pub fn sphere_occlusion_fade(
     let miss_dist = (cam_to_occ - ray_dir * proj).length();
     let inner = occluder_r * 0.94;
     let outer = occluder_r * 1.04;
-    let t = ((miss_dist - inner) / (outer - inner).max(1e-6)).clamp(0.0, 1.0);
+    let t = ((miss_dist - inner) / (outer - inner).max(1e-10)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -151,18 +152,18 @@ fn compute_segment_visibility_fade(
     cam_pos: Option<Vec3>,
     primary_occluder: Option<(Vec3, f32)>,
 ) -> f32 {
-    let body_clear = if visual_rad > 1e-6 {
+    let body_clear = if visual_rad > 1e-10 {
         let dist_to_body = seg_mid.distance(body_world);
         let inner = visual_rad * 1.08;
         let outer = visual_rad * 1.85;
-        let t = ((dist_to_body - inner) / (outer - inner).max(1e-6)).clamp(0.0, 1.0);
+        let t = ((dist_to_body - inner) / (outer - inner).max(1e-10)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     } else {
         1.0
     };
 
     let close_cam_fade = if let Some(cp) = cam_pos {
-        if visual_rad > 1e-6 {
+        if visual_rad > 1e-10 {
             let cam_to_body = cp.distance(body_world);
             ((cam_to_body / visual_rad - 1.8) / 5.5).clamp(0.22, 1.0)
         } else {
@@ -197,7 +198,7 @@ fn true_anomaly_from_uniform_eccentric_sample(frac: f64, e: f64) -> f64 {
 pub fn draw_ambient_and_trailing_orbit_ribbon(
     gizmos: &mut Gizmos,
     elements: &OrbitalElements,
-    anchor_vec: Vec3,
+    anchor_rel_au: DVec3,
     style: OrbitRenderStyle,
 ) {
     if elements.semi_major_axis <= 0.0 || elements.eccentricity >= 1.0 {
@@ -208,8 +209,10 @@ pub fn draw_ambient_and_trailing_orbit_ribbon(
     };
 
     let nu_0 = elements.true_anomaly;
-    let body_world =
-        position_at_true_anomaly_with_p(elements, p, nu_0).map_or(anchor_vec, |pt| pt + anchor_vec);
+    let body_world = position_at_true_anomaly_dvec_with_p(elements, p, nu_0).map_or_else(
+        || anchor_rel_au.as_vec3(),
+        |pt| (anchor_rel_au + pt).as_vec3(),
+    );
 
     let ambient_alpha = if style.is_selected { 0.34 } else { 0.14 };
     let samples = if style.minor_body_lod {
@@ -224,8 +227,8 @@ pub fn draw_ambient_and_trailing_orbit_ribbon(
             i as f64 * inv_orbit_samples,
             elements.eccentricity,
         );
-        if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
-            let world_pt = pt + anchor_vec;
+        if let Some(pt) = position_at_true_anomaly_dvec_with_p(elements, p, nu) {
+            let world_pt = (anchor_rel_au + pt).as_vec3();
             if let Some(prev) = prev_orbit_pt {
                 let seg_mid = prev.midpoint(world_pt);
                 let fade = compute_segment_visibility_fade(
@@ -255,14 +258,14 @@ pub fn draw_ambient_and_trailing_orbit_ribbon(
         return;
     }
 
-    draw_orbit_motion_ribbons(gizmos, elements, p, anchor_vec, body_world, nu_0, style);
+    draw_orbit_motion_ribbons(gizmos, elements, p, anchor_rel_au, body_world, nu_0, style);
 }
 
 fn draw_orbit_motion_ribbons(
     gizmos: &mut Gizmos,
     elements: &OrbitalElements,
     p: f64,
-    anchor_vec: Vec3,
+    anchor_rel_au: DVec3,
     body_world: Vec3,
     nu_0: f64,
     style: OrbitRenderStyle,
@@ -280,9 +283,9 @@ fn draw_orbit_motion_ribbons(
     for i in 0..=ELLIPTIC_RIBBON_SAMPLES {
         let t = i as f64 * inv_ribbon_samples;
         let nu = nu_0 - t * arc_rad;
-        if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
+        if let Some(pt) = position_at_true_anomaly_dvec_with_p(elements, p, nu) {
             let a2 = (1.0 - t as f32).max(0.0);
-            let p2_world = pt + anchor_vec;
+            let p2_world = (anchor_rel_au + pt).as_vec3();
             if let Some((p1_world, a1)) = prev_ribbon {
                 let seg_mid = p1_world.midpoint(p2_world);
                 let fade = compute_segment_visibility_fade(
@@ -325,9 +328,9 @@ fn draw_orbit_motion_ribbons(
     for i in 0..=LEADING_RIBBON_SAMPLES {
         let t = i as f64 * inv_lead_samples;
         let nu = nu_0 + t * lead_arc_rad;
-        if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
+        if let Some(pt) = position_at_true_anomaly_dvec_with_p(elements, p, nu) {
             let a2 = (1.0 - t as f32).max(0.0);
-            let p2_world = pt + anchor_vec;
+            let p2_world = (anchor_rel_au + pt).as_vec3();
             if let Some((p1_world, a1)) = prev_lead {
                 let seg_mid = p1_world.midpoint(p2_world);
                 let fade = compute_segment_visibility_fade(
@@ -360,16 +363,17 @@ fn draw_orbit_motion_ribbons(
 pub fn draw_conic_apsides_and_nodes(
     gizmos: &mut Gizmos,
     elements: &OrbitalElements,
-    anchor_vec: Vec3,
+    anchor_rel_au: DVec3,
     cam_pos: Option<Vec3>,
     primary_occluder: Option<(Vec3, f32)>,
 ) {
-    let (opt_peri, opt_apo) = apsides_positions(elements);
-    let marker_size = (elements.semi_major_axis as f32 * 0.015).clamp(0.00012, 0.28);
+    let anchor_vec = anchor_rel_au.as_vec3();
+    let (opt_peri, opt_apo) = apsides_positions_dvec(elements);
+    let marker_size = (elements.semi_major_axis as f32 * 0.015).clamp(1e-6, 0.28);
     let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
 
     if let Some(peri) = opt_peri {
-        let q_pt = peri + anchor_vec;
+        let q_pt = (anchor_rel_au + peri).as_vec3();
         let occ = primary_occluder.map_or(1.0, |(c, r)| sphere_occlusion_fade(q_pt, cam_pos, c, r));
         if occ > 0.05 {
             let q_col = Color::srgba(0.25, 0.96, 0.58, 0.85 * occ);
@@ -399,7 +403,7 @@ pub fn draw_conic_apsides_and_nodes(
     }
 
     if let Some(apo) = opt_apo {
-        let q_pt = apo + anchor_vec;
+        let q_pt = (anchor_rel_au + apo).as_vec3();
         let occ = primary_occluder.map_or(1.0, |(c, r)| sphere_occlusion_fade(q_pt, cam_pos, c, r));
         if occ > 0.05 {
             let q_col = Color::srgba(1.0, 0.58, 0.20, 0.82 * occ);
@@ -428,7 +432,7 @@ pub fn draw_conic_apsides_and_nodes(
         }
 
         if let Some(peri) = opt_peri {
-            let p_pt = peri + anchor_vec;
+            let p_pt = (anchor_rel_au + peri).as_vec3();
             let steps = 48;
             for s in (0..steps).step_by(2) {
                 let t1 = s as f32 / steps as f32;
@@ -449,9 +453,9 @@ pub fn draw_conic_apsides_and_nodes(
     }
 
     if elements.inclination.abs() > 0.02 {
-        let (opt_asc, opt_desc) = nodal_positions(elements);
+        let (opt_asc, opt_desc) = nodal_positions_dvec(elements);
         for node in [opt_asc, opt_desc].into_iter().flatten() {
-            let pt = node + anchor_vec;
+            let pt = (anchor_rel_au + node).as_vec3();
             let occ =
                 primary_occluder.map_or(1.0, |(c, r)| sphere_occlusion_fade(pt, cam_pos, c, r));
             if occ > 0.05 {
@@ -473,7 +477,7 @@ pub fn draw_conic_apsides_and_nodes(
 pub fn draw_hyperbolic_trajectory(
     gizmos: &mut Gizmos,
     elements: &OrbitalElements,
-    anchor_vec: Vec3,
+    anchor_rel_au: DVec3,
     base_rgba: Srgba,
     cam_pos: Option<Vec3>,
     primary_occluder: Option<(Vec3, f32)>,
@@ -490,8 +494,8 @@ pub fn draw_hyperbolic_trajectory(
         for i in 0..=HYP_SAMPLES {
             let frac = i as f64 * inv_hyp;
             let nu = -nu_max + frac * 2.0 * nu_max;
-            if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
-                let world_pt = pt + anchor_vec;
+            if let Some(pt) = position_at_true_anomaly_dvec_with_p(elements, p, nu) {
+                let world_pt = (anchor_rel_au + pt).as_vec3();
                 if let Some(prev) = prev_hyp {
                     let mid = prev.midpoint(world_pt);
                     let occ = primary_occluder
@@ -521,9 +525,9 @@ pub fn draw_hyperbolic_trajectory(
             for i in 0..=HYP_RIBBON_SAMPLES {
                 let t = i as f64 * inv_rib;
                 let nu = start_nu + t * (end_nu - start_nu);
-                if let Some(pt) = position_at_true_anomaly_with_p(elements, p, nu) {
+                if let Some(pt) = position_at_true_anomaly_dvec_with_p(elements, p, nu) {
                     let a2 = (1.0 - t as f32).max(0.0);
-                    let p2_world = pt + anchor_vec;
+                    let p2_world = (anchor_rel_au + pt).as_vec3();
                     if let Some((p1_world, a1)) = prev_rib {
                         let mid = p1_world.midpoint(p2_world);
                         let occ = primary_occluder
@@ -542,11 +546,11 @@ pub fn draw_hyperbolic_trajectory(
         }
     }
 
-    let (opt_peri, _) = apsides_positions(elements);
+    let (opt_peri, _) = apsides_positions_dvec(elements);
     if let Some(peri) = opt_peri {
-        let q_pt = peri + anchor_vec;
+        let q_pt = (anchor_rel_au + peri).as_vec3();
         let q_col = Color::srgba(1.0, 0.30, 0.50, 0.90);
-        let m_size = (0.04 + elements.periapsis as f32 * 0.015).clamp(0.04, 0.35);
+        let m_size = (elements.periapsis as f32 * 0.015).clamp(1e-5, 0.35);
         gizmos
             .circle(
                 Isometry3d::new(q_pt, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),

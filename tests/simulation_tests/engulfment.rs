@@ -45,13 +45,13 @@ fn test_planet_entering_star_photosphere_is_devoured_by_accretion() {
         ))
         .id();
 
-    // Planet spawned at 0.020 AU (inside the Sun's visual photosphere of 0.025 AU, but outside physical 0.00465 AU)
+    // Planet spawned at 0.0040 AU (inside the Sun's true 1:1 photosphere of 0.00465 AU)
     let planet_mass = 1.0 * EARTH_MASS_SOLAR;
     let planet_rad = EARTH_RADIUS_AU;
     let planet_ent = app
         .world_mut()
         .spawn((
-            SimPosition(DVec3::new(0.020, 0.0, 0.0)),
+            SimPosition(DVec3::new(0.0040, 0.0, 0.0)),
             SimVelocity(DVec3::new(0.0, 0.0, 0.0)),
             SimAcceleration(DVec3::ZERO),
             Mass(planet_mass),
@@ -124,7 +124,7 @@ fn test_planets_passing_halfway_through_each_other_trigger_collision_damage_and_
     let p2 = app
         .world_mut()
         .spawn((
-            SimPosition(DVec3::new(1.0020, 0.0, 0.0)),
+            SimPosition(DVec3::new(1.0 + EARTH_RADIUS_AU * 0.85, 0.0, 0.0)),
             SimVelocity(DVec3::new(0.0, 0.0, std::f64::consts::TAU)),
             SimAcceleration(DVec3::ZERO),
             Mass(0.8 * EARTH_MASS_SOLAR),

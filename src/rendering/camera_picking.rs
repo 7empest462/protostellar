@@ -145,9 +145,10 @@ pub(crate) fn handle_camera_target_picking(
     camera_comp: &Camera,
     global_transform: &GlobalTransform,
     targets_query: &CameraTargetsQuery,
-    player_state: &mut PlayerInteractionState,
+    player_state: &mut ResMut<PlayerInteractionState>,
     camera: &mut PanOrbitCamera,
     config: &SimulationConfig,
+    origin: &crate::rendering::origin::RenderOrigin,
     ui_interaction_query: &UiInteractionStateQuery,
     ui_nodes_query: &UiPickingNodesQuery,
     mouse_buttons: &ButtonInput<MouseButton>,
@@ -157,16 +158,22 @@ pub(crate) fn handle_camera_target_picking(
 ) {
     if player_state.just_selected_via_ui {
         player_state.just_selected_via_ui = false;
-        player_state.hovered_entity = None;
+        if player_state.hovered_entity.is_some() {
+            player_state.hovered_entity = None;
+        }
         return;
     }
 
-    if mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Middle) {
+    if (mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Middle))
+        && player_state.hovered_entity.is_some()
+    {
         player_state.hovered_entity = None;
     }
 
     let Some(cursor_pos) = window.cursor_position() else {
-        player_state.hovered_entity = None;
+        if player_state.hovered_entity.is_some() {
+            player_state.hovered_entity = None;
+        }
         return;
     };
 
@@ -177,7 +184,9 @@ pub(crate) fn handle_camera_target_picking(
         ui_nodes_query,
         opt_visibility,
     ) {
-        player_state.hovered_entity = None;
+        if player_state.hovered_entity.is_some() {
+            player_state.hovered_entity = None;
+        }
         return;
     }
 
@@ -187,7 +196,8 @@ pub(crate) fn handle_camera_target_picking(
     if let Ok(ray) = camera_comp.viewport_to_world(global_transform, cursor_pos) {
         let show_atmospheres = player_state.show_atmospheres();
         for (entity, pos, rad, body, mass, opt_t, opt_comp, opt_diff) in targets_query.iter() {
-            let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let center = origin.to_render(pos.0);
+            let sim_center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
             let (vis_r, _) = resolve_camera_body_radii(
                 opt_t,
                 rad.0,
@@ -196,11 +206,11 @@ pub(crate) fn handle_camera_target_picking(
                 opt_comp,
                 opt_diff,
                 show_atmospheres,
-                (center - star_pos).length(),
+                (sim_center - star_pos).length(),
                 min_orbit_r,
                 config,
             );
-            let hit_radius = (vis_r * 4.0).clamp(0.015, 3.0);
+            let hit_radius = (vis_r * 2.5).clamp(1e-8, 3.0);
             let to_center = center - ray.origin;
             let proj = to_center.dot(*ray.direction);
             if proj > 0.0 {
@@ -217,7 +227,7 @@ pub(crate) fn handle_camera_target_picking(
     if best_target.is_none() {
         let mut min_screen_dist = 42.0f32;
         for (entity, pos, _rad, _body, _mass, _opt_t, _, _) in targets_query.iter() {
-            let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let center = origin.to_render(pos.0);
             if let Ok(screen_pos) = camera_comp.world_to_viewport(global_transform, center) {
                 let dist = cursor_pos.distance(screen_pos);
                 if dist < min_screen_dist {
@@ -228,7 +238,9 @@ pub(crate) fn handle_camera_target_picking(
         }
     }
 
-    player_state.hovered_entity = best_target;
+    if player_state.hovered_entity != best_target {
+        player_state.hovered_entity = best_target;
+    }
 
     if !mouse_buttons.just_pressed(MouseButton::Left)
         || player_state.active_tool != PlayerTool::Inspect
@@ -237,13 +249,15 @@ pub(crate) fn handle_camera_target_picking(
     }
 
     if let Some(hit_entity) = best_target.or(player_state.hovered_entity) {
-        player_state.selected_entity = Some(hit_entity);
+        if player_state.selected_entity != Some(hit_entity) {
+            player_state.selected_entity = Some(hit_entity);
+        }
         if camera.target_entity != Some(hit_entity) {
             if let Ok((_, pos, radius, body, mass, _opt_t, opt_comp, opt_diff)) =
                 targets_query.get(hit_entity)
             {
                 let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-                let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
+                let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-11 {
                     let visual_radius =
                         config.calc_visual_radius_for_type(radius.0, body.body_type);
                     0.015f32.max(config.calc_camera_framing_radius(visual_radius))
@@ -260,7 +274,7 @@ pub(crate) fn handle_camera_target_picking(
                         config,
                     )
                 };
-                camera.initiate_target_transition(hit_entity, target_vec, frame_radius);
+                camera.initiate_target_transition_au(hit_entity, pos.0, frame_radius);
             } else {
                 camera.target_entity = Some(hit_entity);
             }

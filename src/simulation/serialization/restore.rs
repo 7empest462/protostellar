@@ -254,6 +254,9 @@ fn insert_extra_body_components(cmd: &mut EntityCommands, save: &CelestialBodySa
     if save.is_hazard_comet {
         cmd.insert(crate::simulation::events::HazardComet);
     }
+    if let Some(civ) = save.civilization {
+        cmd.insert(civ);
+    }
 }
 
 pub(super) fn despawn_active_bodies(
@@ -319,6 +322,52 @@ pub(super) fn restore_simulation_resources(
         lhb.time_active_years = save_data.event_flags.lhb_time_active_years;
         lhb.manual_trigger_requested = save_data.event_flags.lhb_manual_trigger_requested;
         lhb.scattered_bodies.clear();
+    }
+}
+
+pub(super) fn restore_progression_and_events(
+    save_data: &SystemSaveData,
+    reset_res: &mut crate::simulation::scenarios::ScenarioResetResources,
+) {
+    if let Some(ref saved) = save_data.progression {
+        if let Some(ref mut science) = reset_res.science {
+            **science = saved.science_data.clone();
+        }
+        if let Some(ref mut techs) = reset_res.techs {
+            techs.unlocked.clear();
+            for id in &saved.unlocked_techs {
+                techs.unlocked.insert(*id);
+            }
+        }
+        if let Some(ref mut mgr) = reset_res.event_mgr {
+            mgr.auto_hazards_enabled = saved.auto_hazards_enabled;
+            mgr.total_hazards_survived = saved.total_hazards_survived;
+        }
+        if let Some(ref mut prog) = reset_res.pools.8 {
+            prog.mode = saved.mode;
+            prog.crises_averted = saved.crises_averted;
+            prog.crises_mitigated = saved.crises_mitigated;
+            prog.crises_catastrophic = saved.crises_catastrophic;
+            prog.stellar_engine_active = saved.stellar_engine_active;
+        }
+    }
+
+    if let Some(ref mut prog) = reset_res.pools.8 {
+        let mut highest_k = 0.0f32;
+        let mut civ_count = 0u32;
+        let mut colony_count = 0u32;
+        for body in &save_data.bodies {
+            if let Some(ref civ) = body.civilization {
+                civ_count += 1;
+                highest_k = highest_k.max(civ.kardashev_level);
+                if civ.is_colony {
+                    colony_count += 1;
+                }
+            }
+        }
+        prog.highest_kardashev = highest_k;
+        prog.active_civilization_count = civ_count;
+        prog.colony_world_count = colony_count;
     }
 }
 
@@ -492,6 +541,15 @@ fn insert_linked_hazards_and_fields(
         );
         if let Ok(mut cmd) = commands.get_entity(ent) {
             cmd.insert(kozai);
+        }
+    }
+
+    if let Some(mut impactor) = body_save.crisis_impactor.clone() {
+        impactor.target_entity = (!impactor.target_name.is_empty())
+            .then(|| name_to_entity.get(&impactor.target_name).copied())
+            .flatten();
+        if let Ok(mut cmd) = commands.get_entity(ent) {
+            cmd.insert(impactor);
         }
     }
 }

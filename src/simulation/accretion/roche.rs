@@ -313,6 +313,7 @@ pub fn process_roche_lobe_overflow(
     config: Res<SimulationConfig>,
     mut supernova_events: Option<ResMut<Messages<crate::simulation::components::SupernovaEvent>>>,
     mut active_donors: Local<rustc_hash::FxHashSet<Entity>>,
+    mut star_entities_buf: Local<Vec<Entity>>,
 ) {
     if !config.enable_accretion {
         return;
@@ -320,14 +321,13 @@ pub fn process_roche_lobe_overflow(
     let is_paused = time_warp
         .as_ref()
         .is_some_and(|tw| tw.is_paused && !tw.step_once);
-    let dt_yr = if is_paused {
-        0.0
-    } else {
-        sim_time
-            .as_ref()
-            .map_or(config.base_dt_yr, |st| st.current_dt_yr)
-            .max(0.0)
-    };
+    if is_paused {
+        return;
+    }
+    let dt_yr = sim_time
+        .as_ref()
+        .map_or(config.base_dt_yr, |st| st.current_dt_yr)
+        .max(0.0);
 
     active_donors.clear();
     let mut previously_overflowing: smallvec::SmallVec<[Entity; 8]> = smallvec::SmallVec::new();
@@ -337,18 +337,20 @@ pub fn process_roche_lobe_overflow(
         }
     }
 
-    let star_entities: smallvec::SmallVec<[Entity; 16]> = star_query
-        .iter()
-        .filter(|(_, _, _, _, _, body, ..)| body.body_type.is_star_or_remnant())
-        .map(|(ent, ..)| ent)
-        .collect();
+    star_entities_buf.clear();
+    star_entities_buf.extend(
+        star_query
+            .iter()
+            .filter(|(_, _, _, _, _, body, ..)| body.body_type.is_star_or_remnant())
+            .map(|(ent, ..)| ent),
+    );
 
-    for i in 0..star_entities.len() {
-        let Some(&e1) = star_entities.get(i) else {
+    for i in 0..star_entities_buf.len() {
+        let Some(&e1) = star_entities_buf.get(i) else {
             continue;
         };
-        for j in (i + 1)..star_entities.len() {
-            let Some(&e2) = star_entities.get(j) else {
+        for j in (i + 1)..star_entities_buf.len() {
+            let Some(&e2) = star_entities_buf.get(j) else {
                 continue;
             };
             let Ok(

@@ -269,29 +269,42 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     let halo_glow = exp(-abs_b / 0.45) * 0.16;
     let disk_profile = thin_disk + thick_disk + halo_glow;
 
-    // 2. Galactic Bulge & Sagittarius/Scutum Star Clouds (Sagittarius A* direction: g near (1.0, 0.0, 0.0))
-    let sgr_a_dist = length(g - vec3<f32>(1.0, 0.0, 0.0));
-    let bulge_core = exp(-sgr_a_dist * sgr_a_dist * 18.0) * 1.85;
-    let bulge_halo = exp(-sgr_a_dist * sgr_a_dist * 4.5) * 0.75;
-    let cloud_granulation = 0.78 + 0.44 * fbm3(g * 22.0 + vec3<f32>(2.4, -1.1, 0.8), 4);
-    let bulge_total = (bulge_core + bulge_halo) * cloud_granulation;
+    // 2-3. Spiral Arms, Dark Rift & Emission Nebulae vanish steeply away from the galactic plane
+    var spiral_star_clouds = vec3<f32>(0.0);
+    var dust_optical_depth = 0.0;
+    var h_alpha_color = vec3<f32>(0.0);
+    var o_iii_color = vec3<f32>(0.0);
+    let mw_equator_mask = exp(-abs_b / 0.05);
 
-    // Longitudinal Spiral Arm Star Clouds (Scutum-Centaurus, Carina-Sagittarius, Cygnus-Orion)
-    let arm_cloud_noise = smoothstep(0.42, 0.82, fbm3(g * 11.5 + vec3<f32>(-1.7, 3.2, 2.5), 4));
-    let carina_cygnus_weight = smoothstep(0.35, 0.95, abs(g.z)) * exp(-abs_b / 0.055);
-    let spiral_star_clouds = vec3<f32>(0.76, 0.88, 1.18) * (arm_cloud_noise * carina_cygnus_weight * 0.52);
+    if (abs_b < 0.42) {
+        let plane_fade = smoothstep(0.42, 0.24, abs_b);
 
-    // 3. The Great Rift, Coalsack Nebula & Multi-Scale Dark Molecular Absorption Filaments
-    // Obscures the galactic plane with realistic fractal dust lanes & Bok globules
-    let dust_coord = g * 14.0 + vec3<f32>(1.2, -0.4, 3.7);
-    let dust_noise = fbm3(dust_coord, 5);
-    let dust_fine = fbm3(dust_coord * 3.8, 3);
-    let bok_filaments = smoothstep(0.62, 0.86, fbm3(dust_coord * 8.5, 3)) * 0.55;
-    let coalsack_dist2 = dot(g - vec3<f32>(0.52, -0.02, -0.85), g - vec3<f32>(0.52, -0.02, -0.85));
-    let coalsack_pocket = exp(-coalsack_dist2 * 140.0) * 1.15;
-    let dust_density = clamp(dust_noise * 1.6 + dust_fine * 0.45 + bok_filaments + coalsack_pocket - 0.45, 0.0, 2.8);
-    let dust_optical_depth = dust_density * exp(-abs_b / 0.065) * 2.8;
-    let dust_transmission = exp(-dust_optical_depth);
+        // Longitudinal Spiral Arm Star Clouds (Scutum-Centaurus, Carina-Sagittarius, Cygnus-Orion)
+        let arm_cloud_noise = smoothstep(0.42, 0.82, fbm3(g * 11.5 + vec3<f32>(-1.7, 3.2, 2.5), 4));
+        let carina_cygnus_weight = smoothstep(0.35, 0.95, abs(g.z)) * exp(-abs_b / 0.055) * plane_fade;
+        spiral_star_clouds = vec3<f32>(0.76, 0.88, 1.18) * (arm_cloud_noise * carina_cygnus_weight * 0.52);
+
+        // The Great Rift, Coalsack Nebula & Multi-Scale Dark Molecular Absorption Filaments
+        // Obscures the galactic plane with realistic fractal dust lanes & Bok globules
+        let dust_coord = g * 14.0 + vec3<f32>(1.2, -0.4, 3.7);
+        let dust_noise = fbm3(dust_coord, 5);
+        let dust_fine = fbm3(dust_coord * 3.8, 3);
+        let bok_filaments = smoothstep(0.62, 0.86, fbm3(dust_coord * 8.5, 3)) * 0.55;
+        let coalsack_dist2 = dot(g - vec3<f32>(0.52, -0.02, -0.85), g - vec3<f32>(0.52, -0.02, -0.85));
+        let coalsack_pocket = exp(-coalsack_dist2 * 140.0) * 1.15;
+        let dust_density = clamp(dust_noise * 1.6 + dust_fine * 0.45 + bok_filaments + coalsack_pocket - 0.45, 0.0, 2.8);
+        dust_optical_depth = dust_density * exp(-abs_b / 0.065) * 2.8 * plane_fade;
+        let dust_transmission = exp(-dust_optical_depth);
+
+        // H-Alpha Emission & O-III Reflection Nebulae
+        let neb_coord = g * 7.5 + vec3<f32>(5.4, 2.1, -1.8);
+        let h_alpha_mask = smoothstep(0.55, 0.85, fbm3(neb_coord, 4)) * exp(-abs_b / 0.09) * plane_fade;
+        h_alpha_color = vec3<f32>(1.0, 0.18, 0.52) * h_alpha_mask * 1.4 * dust_transmission;
+
+        let o_iii_mask = smoothstep(0.60, 0.90, fbm3(neb_coord * 1.6 + vec3<f32>(2.0, -1.5, 0.8), 3)) * exp(-abs_b / 0.08) * plane_fade;
+        o_iii_color = vec3<f32>(0.15, 0.85, 0.80) * o_iii_mask * 0.9 * dust_transmission;
+    }
+
     // Wavelength-dependent interstellar dust reddening along dark lane fringes
     let dust_reddening = vec3<f32>(
         exp(-dust_optical_depth * 0.72),
@@ -299,19 +312,22 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
         exp(-dust_optical_depth * 1.28)
     );
 
-    // Bulge warm golden-amber Pop-II starlight attenuated and reddened by the Great Rift
-    let bulge_color = vec3<f32>(1.04, 0.86, 0.64) * bulge_total * mix(vec3<f32>(1.0), dust_reddening, 0.65);
+    // 4. Galactic Bulge & Sagittarius/Scutum Star Clouds (radial around Sagittarius A* at g = (1, 0, 0))
+    // Evaluated with a smooth spherical falloff so the bulge blends naturally into deep space with no latitude seam.
+    let sgr_a_vec = g - vec3<f32>(1.0, 0.0, 0.0);
+    let sgr_a_dist2 = dot(sgr_a_vec, sgr_a_vec);
+    var bulge_color = vec3<f32>(0.0);
+    if (sgr_a_dist2 < 1.6) {
+        let bulge_core = exp(-sgr_a_dist2 * 18.0) * 1.85;
+        let bulge_halo = exp(-sgr_a_dist2 * 4.5) * 0.75;
+        let bulge_envelope = (bulge_core + bulge_halo) * smoothstep(1.6, 0.9, sgr_a_dist2);
+        let cloud_granulation = 0.78 + 0.44 * fbm3(g * 22.0 + vec3<f32>(2.4, -1.1, 0.8), 4);
+        let bulge_total = bulge_envelope * cloud_granulation;
+        bulge_color = vec3<f32>(1.04, 0.86, 0.64) * bulge_total * mix(vec3<f32>(1.0), dust_reddening, 0.65);
+    }
 
     // Warm-to-cool interstellar starlight wash + spiral arm star clouds
     let disk_starlight = (vec3<f32>(0.88, 0.92, 1.05) * disk_profile + spiral_star_clouds) * dust_reddening;
-
-    // 4. H-Alpha Emission & O-III Reflection Nebulae
-    let neb_coord = g * 7.5 + vec3<f32>(5.4, 2.1, -1.8);
-    let h_alpha_mask = smoothstep(0.55, 0.85, fbm3(neb_coord, 4)) * exp(-abs_b / 0.09);
-    let h_alpha_color = vec3<f32>(1.0, 0.18, 0.52) * h_alpha_mask * 1.4 * dust_transmission;
-
-    let o_iii_mask = smoothstep(0.60, 0.90, fbm3(neb_coord * 1.6 + vec3<f32>(2.0, -1.5, 0.8), 3)) * exp(-abs_b / 0.08);
-    let o_iii_color = vec3<f32>(0.15, 0.85, 0.80) * o_iii_mask * 0.9 * dust_transmission;
 
     // 5. Multi-Spectral Procedural Starfield (Spherically Isotropic, Refined Density & High Chromatic Variety)
     var star_light = vec3<f32>(0.0);
@@ -343,18 +359,21 @@ fn render_milky_way(dir: vec3<f32>, time: f32) -> vec3<f32> {
     );
 
     // Layer 3: Faint Milky Way Stardust (Strictly confined to the galactic disk dust lane)
-    let mw_equator_mask = exp(-abs_b / 0.05); // Only along the Milky Way band!
-    let l3 = render_star_layer(
-        dir,
-        64.0,
-        vec3<f32>(541.3, 887.1, 239.5),
-        0.920,
-        0.00050,
-        0.00050,
-        0.0,
-        time,
-        0.0,
-    ) * (mw_equator_mask * 0.35); // Soft, subtle stardust wash
+    var l3 = vec3<f32>(0.0);
+    if (abs_b < 0.28) {
+        let stardust_fade = smoothstep(0.28, 0.20, abs_b);
+        l3 = render_star_layer(
+            dir,
+            64.0,
+            vec3<f32>(541.3, 887.1, 239.5),
+            0.920,
+            0.00050,
+            0.00050,
+            0.0,
+            time,
+            0.0,
+        ) * (mw_equator_mask * stardust_fade * 0.35); // Soft, subtle stardust wash
+    }
 
     let hipparcos_landmarks = render_hipparcos_landmark_catalog(dir, time, skybox.params.w);
     star_light += (l1 + l2 + l3 + hipparcos_landmarks) * skybox.tuning.x;

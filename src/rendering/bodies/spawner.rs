@@ -299,6 +299,7 @@ fn spawn_planet_visual(
 pub fn spawn_missing_visuals(
     mut commands: Commands,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     visual_assets: Res<VisualAssets>,
     mut materials: ResMut<Assets<PlanetMaterial>>,
     unspawned_query: Query<
@@ -337,7 +338,8 @@ pub fn spawn_missing_visuals(
             )
         };
 
-        let trans = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let origin = opt_origin.as_deref().copied().unwrap_or_default();
+        let trans = origin.to_render(pos.0);
         let Ok(mut entity_cmd) = commands.get_entity(entity) else {
             continue;
         };

@@ -590,23 +590,28 @@ fn apply_celestial_blast(
 }
 
 /// Renders prompt core fireball, expanding filamentary ejecta clumps, and supersonic shock boundaries.
-pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool) {
+pub fn draw_supernova_explosions(
+    gizmos: &mut Gizmos,
+    pool: &SupernovaDebrisPool,
+    origin: crate::rendering::origin::RenderOrigin,
+) {
     for exp in &pool.explosions {
         let p = (exp.timer / exp.max_timer).clamp(0.0, 1.0);
         let alpha = (1.0 - p).clamp(0.0, 1.0);
         let is_quasar_blowout = exp.explosion_type == SupernovaType::QuasarBlowout;
+        let center = origin.shift_vec3(exp.center);
 
         // 1. Prompt Core Detonation Flash (Shock Breakout Fireball)
         // QuasarBlowout renders real 3D multi-shell volumetric WGSL meshes + HDR shards instead of wireframe cages.
         if !is_quasar_blowout && exp.flash_intensity > 0.01 {
             let flash_r = (exp.timer * 4.5).min(2.5);
             gizmos.sphere(
-                Isometry3d::from_translation(exp.center),
+                Isometry3d::from_translation(center),
                 flash_r,
                 Color::srgba(1.0, 1.0, 1.0, exp.flash_intensity * 0.95),
             );
             gizmos.sphere(
-                Isometry3d::from_translation(exp.center),
+                Isometry3d::from_translation(center),
                 flash_r * 1.8,
                 Color::srgba(0.5, 0.85, 1.0, exp.flash_intensity * 0.60),
             );
@@ -623,18 +628,12 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
             };
 
             gizmos.circle(
-                Isometry3d::new(
-                    exp.center,
-                    Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-                ),
+                Isometry3d::new(center, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
                 exp.current_radius_au,
                 shock_col,
             );
             gizmos.circle(
-                Isometry3d::new(
-                    exp.center,
-                    Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-                ),
+                Isometry3d::new(center, Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
                 exp.current_radius_au * 0.95,
                 Color::srgba(
                     shock_col.to_srgba().red,
@@ -647,6 +646,7 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
 
         // 3. 3D Filamentary Matter Ejecta Knots and Streamers
         for frag in &exp.fragments {
+            let frag_pos = origin.shift_vec3(frag.pos);
             let knot_col = match frag.layer {
                 EjectaLayer::RelativisticJetBreakout => Color::srgba(0.65, 0.35, 1.0, alpha * 0.95),
                 EjectaLayer::CoreNickelIron => Color::srgba(1.0, 0.75, 0.20, alpha * 0.90),
@@ -656,16 +656,14 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
 
             if !is_quasar_blowout {
                 // Glowing ejecta knot
-                gizmos.sphere(Isometry3d::from_translation(frag.pos), frag.scale, knot_col);
+                gizmos.sphere(Isometry3d::from_translation(frag_pos), frag.scale, knot_col);
             }
 
             // Streamer trail connecting ejecta knot back toward center (Rayleigh-Taylor finger)
             let streak_mult = if is_quasar_blowout { 12.0 } else { 6.0 };
-            let tail_len = (frag.pos - exp.center)
-                .length()
-                .min(frag.scale * streak_mult);
-            let trail_dir = (exp.center - frag.pos).normalize_or_zero();
-            let trail_end = frag.pos + trail_dir * tail_len;
+            let tail_len = (frag_pos - center).length().min(frag.scale * streak_mult);
+            let trail_dir = (center - frag_pos).normalize_or_zero();
+            let trail_end = frag_pos + trail_dir * tail_len;
 
             let trail_col = Color::srgba(
                 knot_col.to_srgba().red,
@@ -673,7 +671,7 @@ pub fn draw_supernova_explosions(gizmos: &mut Gizmos, pool: &SupernovaDebrisPool
                 knot_col.to_srgba().blue,
                 alpha * if is_quasar_blowout { 0.62 } else { 0.40 },
             );
-            gizmos.line(frag.pos, trail_end, trail_col);
+            gizmos.line(frag_pos, trail_end, trail_col);
         }
     }
 }
@@ -684,7 +682,10 @@ pub struct SupernovaVisualShell {
     pub star_entity: Entity,
 }
 
-fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaUniforms, f32) {
+fn supernova_explosion_uniforms(
+    exp: &SupernovaExplosionInstance,
+    render_center: Vec3,
+) -> (SupernovaUniforms, f32) {
     let asphericity = match exp.explosion_type {
         SupernovaType::QuasarBlowout => 0.65,
         SupernovaType::Hypernova => 0.45,
@@ -726,7 +727,12 @@ fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaU
             exp.blast_speed_au_s,
         ),
         core_params: Vec4::new(exp.flash_intensity, type_id, exp.ejecta_mass_solar, 1.0),
-        center_and_asphericity: Vec4::new(exp.center.x, exp.center.y, exp.center.z, asphericity),
+        center_and_asphericity: Vec4::new(
+            render_center.x,
+            render_center.y,
+            render_center.z,
+            asphericity,
+        ),
         core_color,
         mantle_color,
         envelope_color,
@@ -737,7 +743,10 @@ fn supernova_explosion_uniforms(exp: &SupernovaExplosionInstance) -> (SupernovaU
     (uniforms, scale_r)
 }
 
-fn persistent_remnant_uniforms(rem: &PersistentSupernovaRemnant) -> (SupernovaUniforms, f32) {
+fn persistent_remnant_uniforms(
+    rem: &PersistentSupernovaRemnant,
+    render_center: Vec3,
+) -> (SupernovaUniforms, f32) {
     let asphericity = match rem.remnant_type {
         SupernovaType::QuasarBlowout => 0.65,
         SupernovaType::Hypernova => 0.45,
@@ -768,7 +777,12 @@ fn persistent_remnant_uniforms(rem: &PersistentSupernovaRemnant) -> (SupernovaUn
             rem.expansion_rate_au_yr,
         ),
         core_params: Vec4::new(0.0, type_id, 2.0, rem.opacity),
-        center_and_asphericity: Vec4::new(rem.center.x, rem.center.y, rem.center.z, asphericity),
+        center_and_asphericity: Vec4::new(
+            render_center.x,
+            render_center.y,
+            render_center.z,
+            asphericity,
+        ),
         core_color,
         mantle_color: Vec4::new(0.15, 0.95, 0.85, 0.85),
         envelope_color: Vec4::new(0.95, 0.25, 0.30, 0.80),
@@ -839,10 +853,12 @@ pub fn sync_supernova_visuals(
         &mut Transform,
         &MeshMaterial3d<SupernovaMaterial>,
     )>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let (Some(assets), Some(mut materials)) = (visual_assets, sn_materials) else {
         return;
     };
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
 
     let mut existing_shells: rustc_hash::FxHashMap<
         Entity,
@@ -857,14 +873,15 @@ pub fn sync_supernova_visuals(
 
     for exp in &pool.explosions {
         active_stars.insert(exp.star_entity);
-        let (uniforms, scale_r) = supernova_explosion_uniforms(exp);
+        let center = origin.shift_vec3(exp.center);
+        let (uniforms, scale_r) = supernova_explosion_uniforms(exp, center);
         upsert_supernova_visual_shell(
             &mut commands,
             &assets,
             &mut materials,
             &mut existing_shells,
             exp.star_entity,
-            exp.center,
+            center,
             scale_r,
             uniforms,
         );
@@ -876,14 +893,15 @@ pub fn sync_supernova_visuals(
                 continue;
             }
             active_stars.insert(rem.star_entity);
-            let (uniforms, scale_r) = persistent_remnant_uniforms(rem);
+            let center = origin.shift_vec3(rem.center);
+            let (uniforms, scale_r) = persistent_remnant_uniforms(rem, center);
             upsert_supernova_visual_shell(
                 &mut commands,
                 &assets,
                 &mut materials,
                 &mut existing_shells,
                 rem.star_entity,
-                rem.center,
+                center,
                 scale_r,
                 uniforms,
             );

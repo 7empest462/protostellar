@@ -38,9 +38,9 @@ fn test_tech_tree_prerequisites_and_unlocking() {
     };
     let mut techs = UnlockedTechs::default();
 
-    // Verify all 9 nodes exist and are well-formed
+    // Verify all 12 nodes exist and are well-formed
     let nodes = UnlockedTechs::all_nodes();
-    assert_eq!(nodes.len(), 9);
+    assert_eq!(nodes.len(), 12);
     for node in nodes {
         assert_ne!(node.name, "");
         assert_ne!(node.description, "");

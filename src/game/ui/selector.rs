@@ -63,6 +63,38 @@ fn format_super_jupiter_button_label(name: &str) -> String {
     "🪐 Super-Jup".to_string()
 }
 
+fn strip_trailing_classification_tag(name: &str) -> &str {
+    let trimmed = name.trim();
+    if trimmed.ends_with(')')
+        && let Some(idx) = trimmed.rfind(" (")
+    {
+        return trimmed.get(..idx).map_or(trimmed, str::trim);
+    }
+    trimmed
+}
+
+fn format_the_star_label(name: &str) -> Option<&'static str> {
+    const STAR_TAGS: &[(&str, &str)] = &[
+        ("black dwarf", "🌑 Black Dwarf"),
+        ("white dwarf", "⚪ White Dwarf"),
+        ("planetary nebula", "💨 Nebula Core"),
+        ("carbon star", "🔴 Carbon Star"),
+        ("agb", "🔥 AGB Giant"),
+        ("red supergiant", "🔴 Supergiant"),
+        ("red giant", "🔴 Red Giant"),
+        ("hypergiant", "💥 Hypergiant"),
+        ("yellow dwarf", "☀️ Yellow Dwarf"),
+        ("blue supergiant", "🔵 Supergiant"),
+        ("pulsar", "⚡ Pulsar"),
+        ("magnetar", "🧲 Magnetar"),
+        ("black hole", "🕳️ Black Hole"),
+    ];
+    STAR_TAGS
+        .iter()
+        .find(|(k, _)| contains_ignore_ascii_case(name, k))
+        .map(|(_, label)| *label)
+}
+
 pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> String {
     if body_type == BodyType::Moon || contains_ignore_ascii_case(name, "(moon)") {
         return format_moon_button_label(name);
@@ -163,23 +195,45 @@ pub fn body_to_button_label(name: &str, body_type: BodyType, is_star: bool) -> S
         "✨ Protostar".to_string()
     } else if contains_ignore_ascii_case(name, "host star") {
         "Host Star".to_string()
+    } else if starts_with_ignore_ascii_case(name, "the star")
+        && let Some(short) = format_the_star_label(name)
+    {
+        short.to_string()
+    } else if let Some(planet_short) = [
+        ("planet (terrestrial", "Terrestrial"),
+        ("planet (super-earth", "Super-Earth"),
+        ("planet (gas giant", "Gas Giant"),
+        ("planet (ice giant", "Ice Giant"),
+    ]
+    .iter()
+    .find(|(pfx, _)| starts_with_ignore_ascii_case(name, pfx))
+    .map(|(_, s)| *s)
+    {
+        planet_short.to_string()
+    } else if starts_with_ignore_ascii_case(name, "planet-") {
+        let stripped = strip_trailing_classification_tag(name);
+        let rest = strip_prefix_ignore_ascii_case(stripped, "planet-").unwrap_or(stripped);
+        let short = format!("Pl-{rest}");
+        if short.chars().count() > 14 {
+            let p: String = short.chars().take(13).collect();
+            format!("{p}…")
+        } else {
+            short
+        }
     } else if starts_with_ignore_ascii_case(name, "asteroid-") {
         strip_prefix_ignore_ascii_case(name, "asteroid-")
             .map_or_else(|| name.to_string(), |s| format!("Ast-{s}"))
     } else if starts_with_ignore_ascii_case(name, "dust-") {
         strip_prefix_ignore_ascii_case(name, "dust-")
             .map_or_else(|| name.to_string(), |s| format!("Dust-{s}"))
-    } else if let Some(prefix) = name.get(..12) {
-        if name.len() > 14 {
+    } else {
+        let clean = strip_trailing_classification_tag(name);
+        if clean.chars().count() > 14 {
+            let prefix: String = clean.chars().take(12).collect();
             format!("{prefix}…")
         } else {
-            name.to_string()
+            clean.to_string()
         }
-    } else if name.chars().count() > 14 {
-        let prefix: String = name.chars().take(12).collect();
-        format!("{prefix}…")
-    } else {
-        name.to_string()
     }
 }
 
@@ -391,9 +445,9 @@ fn populate_expanded_quick_bar(
     );
 
     let sort_label = if quick_bar_state.sort_by_mass {
-        "⚖️ Sort: Mass"
+        "⚖️ Mass"
     } else {
-        "📏 Sort: Dist"
+        "📏 Dist"
     };
     create_compact_button(
         btn_row,
@@ -401,6 +455,25 @@ fn populate_expanded_quick_bar(
         sort_label,
         Color::srgba(0.12, 0.16, 0.22, 0.85),
         Color::srgb(0.5, 0.7, 1.0),
+    );
+    create_compact_button(
+        btn_row,
+        UiButtonAction::ToggleQuickBarFilter,
+        "🔍",
+        Color::srgba(0.08, 0.16, 0.28, 0.85),
+        Color::srgb(0.35, 0.85, 1.0),
+    );
+    let wrap_label = if quick_bar_state.wrap_rows {
+        "▬"
+    } else {
+        "⊞"
+    };
+    create_compact_button(
+        btn_row,
+        UiButtonAction::ToggleQuickBarWrap,
+        wrap_label,
+        Color::srgba(0.10, 0.14, 0.24, 0.85),
+        Color::srgb(0.45, 0.75, 1.0),
     );
 
     populate_major_worlds(btn_row, major_worlds, selected_entity);
@@ -698,6 +771,7 @@ type QuickBarCacheState = (
     bool,
     bool,
     bool,
+    bool,
     Vec<BeltZone>,
     String,
 );
@@ -722,13 +796,16 @@ pub fn update_quick_bar_highlights(
     let sel = player_state.selected_entity;
     for (action, base, mut bg, mut border) in btn_query.iter_mut() {
         if let UiButtonAction::SelectEntity(ent) = action {
-            if Some(*ent) == sel {
-                *bg = BackgroundColor(Color::srgba(0.20, 0.45, 0.85, 0.95));
-                *border = BorderColor::all(Color::srgb(1.0, 1.0, 1.0));
+            let (next_bg, next_border) = if Some(*ent) == sel {
+                (
+                    BackgroundColor(Color::srgba(0.20, 0.45, 0.85, 0.95)),
+                    BorderColor::all(Color::srgb(1.0, 1.0, 1.0)),
+                )
             } else {
-                *bg = BackgroundColor(base.bg);
-                *border = BorderColor::all(base.border);
-            }
+                (BackgroundColor(base.bg), BorderColor::all(base.border))
+            };
+            bg.set_if_neq(next_bg);
+            border.set_if_neq(next_border);
         }
     }
 }
@@ -868,6 +945,7 @@ pub fn update_quick_body_selector_bar(
         quick_bar_state.is_minimized,
         quick_bar_state.show_embryos,
         quick_bar_state.show_minor_bodies,
+        quick_bar_state.wrap_rows,
         quick_bar_state
             .expanded_belts
             .iter()

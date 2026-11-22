@@ -244,6 +244,7 @@ pub type CometTailRootQuery<'w, 's> = Query<'w, 's, CometTailRootQueryItem<'stat
 
 fn collect_active_comets(
     comet_query: &CometSourceQuery,
+    origin: &crate::rendering::origin::RenderOrigin,
     star_pos: Vec3,
     config: &SimulationConfig,
 ) -> HashMap<Entity, ActiveCometCandidate> {
@@ -262,7 +263,7 @@ fn collect_active_comets(
             continue;
         }
 
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let world_pos = origin.to_render(pos.0);
         let world_vel = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
         let r_orbit = (world_pos - star_pos).length();
 
@@ -283,7 +284,7 @@ fn collect_active_comets(
                 .and_then(|tf| {
                     let sx = tf.scale.x;
                     let is_unsynced = (sx - 1.0).abs() < 1e-6 && radius.0 < 0.25;
-                    if sx.is_finite() && sx > 1e-6 && !is_unsynced {
+                    if sx.is_finite() && sx > 1e-10 && !is_unsynced {
                         Some(sx)
                     } else {
                         None
@@ -480,11 +481,13 @@ fn spawn_missing_comet_tails(
 
 /// Synchronizes 3D volumetric GPU cometary coma and dual-tail meshes and materials.
 /// Strictly filters for active comets and icy minor bodies; planets and moons are never given comet tails.
+#[allow(clippy::too_many_arguments, reason = "Comet tail synchronization")]
 pub fn sync_cometary_tails(
     mut commands: Commands,
     sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut comet_materials: ResMut<Assets<CometTailMaterial>>,
     comet_query: CometSourceQuery,
     stars_query: Query<(&SimPosition, &CelestialBody)>,
@@ -496,14 +499,13 @@ pub fn sync_cometary_tails(
         return;
     };
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let star_pos = stars_query
         .iter()
         .find(|(_, b)| b.body_type.is_star_or_remnant())
-        .map_or(Vec3::ZERO, |(pos, _)| {
-            Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32)
-        });
+        .map_or(Vec3::ZERO, |(pos, _)| origin.to_render(pos.0));
 
-    let active_comet_map = collect_active_comets(&comet_query, star_pos, &config);
+    let active_comet_map = collect_active_comets(&comet_query, &origin, star_pos, &config);
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
     let updated_entities = update_existing_comet_tails(

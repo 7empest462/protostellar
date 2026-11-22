@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 
 use super::types::*;
-use crate::simulation::events::CosmicEventType;
+use crate::simulation::events::{CosmicEventType, CrisisCountermeasureKind};
 
 /// Resource tracking visibility of the Cosmic Hazards panel.
 #[derive(Resource, Default)]
@@ -17,7 +17,7 @@ pub enum HazardsPanelElement {
     ModalContainer,
 }
 
-const HAZARDS: [(CosmicEventType, &str, &str, Color, Color); 4] = [
+const HAZARDS: [(CosmicEventType, &str, &str, Color, Color); 6] = [
     (
         CosmicEventType::RogueStarIncursion,
         "☄️ Rogue Star Incursion",
@@ -46,7 +46,141 @@ const HAZARDS: [(CosmicEventType, &str, &str, Color, Color); 4] = [
         Color::srgba(0.28, 0.18, 0.02, 0.90),
         Color::srgb(1.00, 0.85, 0.35),
     ),
+    (
+        CosmicEventType::PlanetKillerSwarm,
+        "🪨 Planet-Killer Asteroid Swarm",
+        "4 hypervelocity impactors target your top world; deflect via Kinetic Grid or Tractor.",
+        Color::srgba(0.30, 0.06, 0.06, 0.90),
+        Color::srgb(1.00, 0.40, 0.35),
+    ),
+    (
+        CosmicEventType::GreatFilterCrisis,
+        "🌡️ Planetary Great Filter Crisis",
+        "Industrial thermal runaway challenges rising civilizations; deploy Climate Stabilizers.",
+        Color::srgba(0.24, 0.10, 0.02, 0.90),
+        Color::srgb(1.00, 0.58, 0.25),
+    ),
 ];
+
+fn spawn_hazards_cards_list(modal: &mut ChildSpawnerCommands) {
+    modal
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            overflow: Overflow::scroll_y(),
+            max_height: Val::Vh(42.0),
+            row_gap: Val::Px(6.0),
+            ..default()
+        })
+        .with_children(|list| {
+            for (hazard_type, title, desc, bg, border) in HAZARDS {
+                list.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+                    BorderColor::all(border),
+                ))
+                .with_children(|card| {
+                    card.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        flex_grow: 1.0,
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    })
+                    .with_children(|text_col| {
+                        text_col.spawn((
+                            Text::new(title),
+                            TextFont {
+                                font_size: FontSize::Px(11.5),
+                                ..default()
+                            },
+                            TextColor(border),
+                        ));
+                        text_col.spawn((
+                            Text::new(desc),
+                            TextFont {
+                                font_size: FontSize::Px(9.5),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.70, 0.78, 0.88)),
+                        ));
+                    });
+
+                    create_compact_button(
+                        card,
+                        UiButtonAction::TriggerCosmicHazard(hazard_type),
+                        "🚀 Trigger",
+                        bg,
+                        border,
+                    );
+                });
+            }
+        });
+}
+
+fn spawn_hazards_defense_footer(modal: &mut ChildSpawnerCommands) {
+    modal
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(4.0),
+            column_gap: Val::Px(4.0),
+            padding: UiRect::top(Val::Px(6.0)),
+            border: UiRect::top(Val::Px(1.0)),
+            ..default()
+        })
+        .with_children(|footer| {
+            create_compact_button(
+                footer,
+                UiButtonAction::DeployPlanetaryDefense(
+                    CrisisCountermeasureKind::LaunchKineticDeflector,
+                ),
+                "🚀 Deflect",
+                Color::srgba(0.06, 0.20, 0.30, 0.90),
+                Color::srgb(0.35, 0.95, 0.75),
+            );
+            create_compact_button(
+                footer,
+                UiButtonAction::DeployPlanetaryDefense(
+                    CrisisCountermeasureKind::ActivateShieldOverdrive,
+                ),
+                "🛡️ Shield",
+                Color::srgba(0.06, 0.16, 0.32, 0.90),
+                Color::srgb(0.35, 0.80, 1.0),
+            );
+            create_compact_button(
+                footer,
+                UiButtonAction::DeployPlanetaryDefense(
+                    CrisisCountermeasureKind::DeployClimateStabilizer,
+                ),
+                "❄️ Stabilize",
+                Color::srgba(0.08, 0.22, 0.22, 0.90),
+                Color::srgb(0.55, 0.95, 1.0),
+            );
+            create_compact_button(
+                footer,
+                UiButtonAction::ToggleAutoHazards,
+                "🎲 Auto-Hazards",
+                Color::srgba(0.08, 0.16, 0.12, 0.85),
+                Color::srgb(0.40, 0.95, 0.65),
+            );
+            create_compact_button(
+                footer,
+                UiButtonAction::CycleTonemappingMode,
+                "🎨 Tonemap [S-C]",
+                Color::srgba(0.12, 0.08, 0.22, 0.85),
+                Color::srgb(0.85, 0.50, 1.00),
+            );
+        });
+}
 
 /// Spawns the Cosmic Hazards control modal.
 pub fn spawn_hazards_panel(root: &mut ChildSpawnerCommands) {
@@ -71,7 +205,6 @@ pub fn spawn_hazards_panel(root: &mut ChildSpawnerCommands) {
         HazardsPanelElement::ModalContainer,
     ))
     .with_children(|modal| {
-        // 1. Header Bar
         modal
             .spawn(Node {
                 flex_direction: FlexDirection::Row,
@@ -101,7 +234,6 @@ pub fn spawn_hazards_panel(root: &mut ChildSpawnerCommands) {
                 );
             });
 
-        // 2. Subtitle
         modal.spawn((
             Text::new("Trigger astrophysical events to test planetary magnetospheres, atmospheres, and biosafety."),
             TextFont {
@@ -111,84 +243,8 @@ pub fn spawn_hazards_panel(root: &mut ChildSpawnerCommands) {
             TextColor(Color::srgb(0.75, 0.82, 0.92)),
         ));
 
-        // 3. Hazard Cards
-        for (hazard_type, title, desc, bg, border) in HAZARDS {
-            modal
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        justify_content: JustifyContent::SpaceBetween,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::all(Val::Px(8.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        column_gap: Val::Px(8.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
-                    BorderColor::all(border),
-                ))
-                .with_children(|card| {
-                    card.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        flex_grow: 1.0,
-                        row_gap: Val::Px(2.0),
-                        ..default()
-                    })
-                    .with_children(|text_col| {
-                        text_col.spawn((
-                            Text::new(title),
-                            TextFont {
-                                font_size: FontSize::Px(12.0),
-                                ..default()
-                            },
-                            TextColor(border),
-                        ));
-                        text_col.spawn((
-                            Text::new(desc),
-                            TextFont {
-                                font_size: FontSize::Px(9.5),
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.70, 0.78, 0.88)),
-                        ));
-                    });
-
-                    create_compact_button(
-                        card,
-                        UiButtonAction::TriggerCosmicHazard(hazard_type),
-                        "🚀 Trigger",
-                        bg,
-                        border,
-                    );
-                });
-        }
-
-        // 4. Global Sensory & Tonemapping Settings Bar
-        modal
-            .spawn(Node {
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                padding: UiRect::top(Val::Px(6.0)),
-                border: UiRect::top(Val::Px(1.0)),
-                ..default()
-            })
-            .with_children(|footer| {
-                create_compact_button(
-                    footer,
-                    UiButtonAction::ToggleAutoHazards,
-                    "🎲 Auto-Hazards: Toggle",
-                    Color::srgba(0.08, 0.16, 0.12, 0.85),
-                    Color::srgb(0.40, 0.95, 0.65),
-                );
-                create_compact_button(
-                    footer,
-                    UiButtonAction::CycleTonemappingMode,
-                    "🎨 Tonemap Curve [Shift-C]",
-                    Color::srgba(0.12, 0.08, 0.22, 0.85),
-                    Color::srgb(0.85, 0.50, 1.00),
-                );
-            });
+        spawn_hazards_cards_list(modal);
+        spawn_hazards_defense_footer(modal);
     });
 }
 
@@ -202,11 +258,14 @@ pub fn update_hazards_ui(
         return;
     }
 
+    let target_display = if panel.is_open {
+        Display::Flex
+    } else {
+        Display::None
+    };
     for mut node in query.iter_mut() {
-        node.display = if panel.is_open {
-            Display::Flex
-        } else {
-            Display::None
-        };
+        if node.display != target_display {
+            node.display = target_display;
+        }
     }
 }

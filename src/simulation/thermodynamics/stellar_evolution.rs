@@ -28,8 +28,14 @@ pub fn step_stellar_evolution_cycle(
 ) {
     evo.phase_timer_years += dt_yr;
 
-    // Degenerate black holes never re-enter stellar nucleosynthesis branches
-    if body.body_type == BodyType::BlackHole || evo.phase == StellarEvolutionPhase::BlackHoleRemnant
+    // Degenerate remnants and active ejection shells never re-enter main-sequence nucleosynthesis
+    if body.body_type.is_remnant()
+        || evo.phase.is_remnant()
+        || matches!(
+            evo.phase,
+            StellarEvolutionPhase::PlanetaryNebulaEjection
+                | StellarEvolutionPhase::SupernovaExplosion
+        )
     {
         step_stellar_remnant_evolution(mass, radius, temp, lum, body, evo, dt_yr);
         return;
@@ -108,6 +114,8 @@ fn step_main_sequence_evolution(
     // Re-classify accreting main-sequence or sub-stellar stars across spectral tiers
     if !body.name.starts_with("The Sun")
         && !body.name.contains("Genesis")
+        && !body.body_type.is_evolved_giant()
+        && !body.body_type.is_remnant()
         && !matches!(
             body.body_type,
             BodyType::DarkStar
@@ -265,9 +273,12 @@ fn step_agb_evolution(
 
     if evo.phase_timer_years > 2500.0 {
         evo.phase = StellarEvolutionPhase::PlanetaryNebulaEjection;
+        body.body_type = BodyType::WhiteDwarf;
         if !is_gmc {
-            body.name = "The Star (Planetary Nebula Ejection)".to_string();
+            body.name = "The Star (Planetary Nebula Core)".to_string();
         }
+        radius.0 = 0.04 * SOLAR_RADIUS_AU;
+        temp.0 = 65_000.0;
         evo.nebula_expansion_radius_au = if is_gmc { 0.5 } else { 1.6 };
         evo.nebula_opacity = 1.0;
         evo.phase_timer_years = 0.0;
@@ -461,6 +472,10 @@ fn step_stellar_remnant_evolution(
 
             evo.nebula_expansion_radius_au += expand_rate_au_per_yr * dt_yr as f32;
             evo.nebula_opacity = (1.0 - (evo.nebula_expansion_radius_au / 80.0)).clamp(0.0, 1.0);
+
+            let k_core = (1.0 - (-0.25 * dt_yr).exp()).clamp(0.0, 1.0);
+            radius.0 += (0.05 * SOLAR_RADIUS_AU - radius.0) * k_core;
+            temp.0 += (65_000.0 - temp.0) * k_core;
 
             let remaining_yr =
                 f64::from((80.0 - prev_r).max(0.0)) / f64::from(expand_rate_au_per_yr);

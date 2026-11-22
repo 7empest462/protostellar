@@ -77,6 +77,47 @@ pub struct GpuSimExtractedParams {
     pub disk_mass: f32,
     pub elapsed_years: f64,
     pub reload_generation: u64,
+    pub snow_line_au: f32,
+    pub total_ecs_bodies: u32,
+    pub quasar_blown_out: bool,
+}
+
+#[allow(
+    clippy::type_complexity,
+    reason = "Matches extracted Bevy Query filter for massive bodies"
+)]
+fn pack_top_massive_bodies(
+    massive_query: &Query<
+        (Entity, &SimPosition, &Mass, &CelestialBody),
+        (
+            Without<CentralStar>,
+            Without<crate::simulation::probes::SpaceProbe>,
+        ),
+    >,
+    scratch: &mut Vec<(Entity, Vec3, f64)>,
+) -> ([MassiveBodyGpu; 32], u32, u32) {
+    let mut massive_bodies = [MassiveBodyGpu::default(); 32];
+    scratch.clear();
+    scratch.extend(massive_query.iter().map(|(ent, pos, mass, _body)| {
+        (
+            ent,
+            Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32),
+            mass.0,
+        )
+    }));
+    let total_ecs_bodies = scratch.len() as u32;
+    scratch.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+
+    let mut num_bodies = 0usize;
+    for &(_ent, pos, mass) in scratch.iter().take(32) {
+        if let Some(target) = massive_bodies.get_mut(num_bodies) {
+            *target = MassiveBodyGpu {
+                pos_mass: [pos.x, pos.y, pos.z, mass as f32],
+            };
+            num_bodies += 1;
+        }
+    }
+    (massive_bodies, num_bodies as u32, total_ecs_bodies)
 }
 
 /// Extracts state from the Main App into the Render Sub-App.
@@ -101,6 +142,8 @@ pub fn extract_gpu_sim_data(
                 &Temperature,
                 &Luminosity,
                 &IgnitionState,
+                Option<&BlackHoleStarState>,
+                &CelestialBody,
             ),
             With<CentralStar>,
         >,
@@ -117,71 +160,48 @@ pub fn extract_gpu_sim_data(
     swarm_vis_query: Extract<
         Query<&Visibility, With<crate::rendering::particle_swarm::ParticleSwarmMesh>>,
     >,
+    cam_query: Extract<Query<&crate::rendering::camera::PanOrbitCamera>>,
     scenario_state: Extract<Option<Res<crate::simulation::scenarios::ActiveScenarioState>>>,
     reload_gen: Extract<Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>>,
+    mut massive_scratch: Local<Vec<(Entity, Vec3, f64)>>,
 ) {
     let reload_generation = reload_gen.as_ref().map_or(0, |g| g.0);
-    let is_swarm_visible = swarm_vis_query
-        .iter()
-        .next()
-        .is_none_or(|v| *v != Visibility::Hidden);
-    if let Some(scenario_state) = scenario_state.as_ref()
-        && scenario_state.current_preset
-            == crate::simulation::scenarios::ScenarioPreset::GalacticCollision
-    {
+    let in_surface_mode = cam_query.iter().any(|c| c.surface_horizon_mode);
+    let is_swarm_visible = !in_surface_mode
+        && swarm_vis_query
+            .iter()
+            .next()
+            .is_none_or(|v| *v != Visibility::Hidden);
+    if scenario_state.as_ref().is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::GalacticCollision
+    }) {
         commands.insert_resource(GpuSimExtractedParams {
             is_paused: time_warp.is_paused,
             step_once: time_warp.step_once,
-            enable_gpu_compute: false, // DISABLE PREVIOUS COMPUTE NODE
+            enable_gpu_compute: false,
             is_swarm_visible: false,
             particle_render_scale: config.particle_render_scale,
-            dt: 0.0,
-            star_pos: [0.0; 3],
-            star_mass: 0.0,
-            gas_scale: 0.0,
-            inner_radius: 0.0,
-            outer_radius: 0.0,
-            enable_gas_drag: 0,
-            ref_temp_1au: 0.0,
-            shockwave_radius: 0.0,
-            softening_sq: 0.0,
-            num_massive_bodies: 0,
-            tractor_pos_mass: [0.0; 4],
-            massive_bodies: [MassiveBodyGpu::default(); 32],
-            count: 0,
-            active_particles: 0,
-            disk_mass: 0.0,
-            elapsed_years: 0.0,
             reload_generation,
+            snow_line_au: 2.7,
+            ..default()
         });
         return;
     }
     let mut star_pos = [0.0f32; 3];
     let mut star_mass = disk_params.central_star_mass as f32;
     let mut shockwave_radius = 0.0f32;
-    let mut massive_bodies = [MassiveBodyGpu::default(); 32];
-    let mut num_bodies = 0usize;
+    let mut quasar_blown_out = false;
 
-    if let Ok((pos, mass, _rad, _temp, _lum, ignition)) = star_query.single() {
+    if let Ok((pos, mass, _rad, _temp, _lum, ignition, opt_bhs, star_body)) = star_query.single() {
         star_pos = [pos.x as f32, pos.y as f32, pos.z as f32];
         star_mass = mass.0 as f32;
         shockwave_radius = ignition.shockwave_radius as f32;
+        quasar_blown_out =
+            opt_bhs.is_some_and(|s| s.is_blown_out) || star_body.body_type == BodyType::BlackHole;
     }
 
-    let mut sorted_bodies: Vec<(Entity, &SimPosition, &Mass)> = massive_query
-        .iter()
-        .map(|(ent, pos, mass, _body)| (ent, pos, mass))
-        .collect();
-    sorted_bodies.sort_by(|a, b| b.2.0.total_cmp(&a.2.0).then_with(|| a.0.cmp(&b.0)));
-
-    for (_ent, pos, mass) in sorted_bodies.into_iter().take(32) {
-        if let Some(target) = massive_bodies.get_mut(num_bodies) {
-            *target = MassiveBodyGpu {
-                pos_mass: [pos.x as f32, pos.y as f32, pos.z as f32, mass.0 as f32],
-            };
-            num_bodies += 1;
-        }
-    }
+    let (massive_bodies, num_massive_bodies, total_ecs_bodies) =
+        pack_top_massive_bodies(&massive_query, &mut massive_scratch);
 
     let tractor_pos_mass = if player_state.active_tool == PlayerTool::GravitationalTractor {
         if let (Some(pos), mass) = (player_state.tractor_position, player_state.tractor_mass) {
@@ -216,7 +236,7 @@ pub fn extract_gpu_sim_data(
         ref_temp_1au: disk_params.reference_temp_1au as f32,
         shockwave_radius,
         softening_sq: (config.softening_au * config.softening_au) as f32,
-        num_massive_bodies: num_bodies as u32,
+        num_massive_bodies,
         tractor_pos_mass,
         massive_bodies,
         count: config.target_particle_count as u32,
@@ -224,6 +244,9 @@ pub fn extract_gpu_sim_data(
         disk_mass: disk_params.disk_mass as f32,
         elapsed_years: sim_time.elapsed_years,
         reload_generation,
+        snow_line_au: disk_params.snow_line_au as f32,
+        total_ecs_bodies,
+        quasar_blown_out,
     });
 }
 
@@ -384,7 +407,7 @@ pub fn setup_gpu_simulation(
         shockwave_radius: 0.0,
         softening_sq: 0.008 * 0.008,
         num_massive_bodies: 1,
-        _pad: 0.0,
+        snow_line_au: default_params.snow_line_au as f32,
         tractor_pos_mass: [0.0, 0.0, 0.0, 0.0],
         massive_bodies: [MassiveBodyGpu::default(); 32],
     };
@@ -523,6 +546,7 @@ fn check_and_reseed_scenario(
             disk_mass,
             inner_radius_au: f64::from(params.inner_radius),
             outer_radius_au: f64::from(params.outer_radius),
+            snow_line_au: f64::from(params.snow_line_au),
             reference_temp_1au: f64::from(params.ref_temp_1au),
             ..default()
         };
@@ -790,7 +814,7 @@ pub fn step_gpu_simulation_render_world(
         shockwave_radius: params.shockwave_radius,
         softening_sq: params.softening_sq,
         num_massive_bodies: params.num_massive_bodies,
-        _pad: 0.0,
+        snow_line_au: params.snow_line_au,
         tractor_pos_mass: params.tractor_pos_mass,
         massive_bodies: params.massive_bodies,
     };

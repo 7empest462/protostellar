@@ -195,6 +195,10 @@ type Phase5BodyComponentsQuery<'w, 's> = Query<
             Option<&'static crate::simulation::events::RogueInterloper>,
             Option<&'static crate::simulation::events::HazardComet>,
         ),
+        (
+            Option<&'static crate::simulation::biology::CivilizationState>,
+            Option<&'static crate::simulation::events::CrisisImpactor>,
+        ),
     ),
 >;
 
@@ -228,6 +232,16 @@ pub struct Phase5SerializeQueries<'w, 's> {
         &'static crate::simulation::neutron_stars::AlfvenBlastWave,
         Without<CelestialBody>,
     >,
+    #[allow(
+        clippy::type_complexity,
+        reason = "Optional progression, economy, and cosmic event resources saved if present"
+    )]
+    pub progression: (
+        Option<Res<'w, crate::simulation::economy::ProgressionState>>,
+        Option<Res<'w, crate::simulation::economy::ScienceData>>,
+        Option<Res<'w, crate::simulation::economy::UnlockedTechs>>,
+        Option<Res<'w, crate::simulation::events::CosmicEventManager>>,
+    ),
 }
 
 fn attach_phase5_body_components(
@@ -236,11 +250,12 @@ fn attach_phase5_body_components(
     entity_to_name: &FxHashMap<Entity, String>,
     extra_q: &Phase5BodyComponentsQuery,
 ) {
-    let Ok((group_a, group_b)) = extra_q.get(ent) else {
+    let Ok((group_a, group_b, group_c)) = extra_q.get(ent) else {
         return;
     };
     let (opt_gmc, opt_disk, opt_jet, opt_dyson, opt_roche, opt_lhb, opt_bomb) = group_a;
     let (opt_alfven, opt_tail, opt_hab, opt_aurora_exc, opt_clock, opt_rogue, opt_hazard) = group_b;
+    let (opt_civ, opt_impactor) = group_c;
 
     save.is_gmc_promoted_system = opt_gmc.is_some();
     save.circumstellar_disk = opt_disk.copied();
@@ -303,6 +318,17 @@ fn attach_phase5_body_components(
     save.stellar_activity_clock = opt_clock.copied();
     save.rogue_interloper = opt_rogue.copied();
     save.is_hazard_comet = opt_hazard.is_some();
+    save.civilization = opt_civ.copied();
+    save.crisis_impactor = opt_impactor.map(|imp| {
+        let mut saved = imp.clone();
+        if saved.target_name.is_empty()
+            && let Some(target_ent) = saved.target_entity
+            && let Some(name) = entity_to_name.get(&target_ent)
+        {
+            saved.target_name.clone_from(name);
+        }
+        saved
+    });
 }
 
 fn collect_entity_name_map(bodies_query: &BodySerializeQuery) -> FxHashMap<Entity, String> {
@@ -505,7 +531,35 @@ pub fn build_system_save_data(
         scenario_preset: scenario_state.map(|s| s.current_preset),
         probes,
         alfven_waves,
+        progression: None,
     }
+}
+
+fn build_progression_save(queries: &Phase5SerializeQueries) -> Option<types::ProgressionSave> {
+    let (opt_prog, opt_science, opt_techs, opt_mgr) = &queries.progression;
+    if opt_prog.is_none() && opt_science.is_none() && opt_techs.is_none() && opt_mgr.is_none() {
+        return None;
+    }
+    let prog = opt_prog.as_deref().cloned().unwrap_or_default();
+    let science_data = opt_science.as_deref().cloned().unwrap_or_default();
+    let unlocked_techs = opt_techs
+        .as_deref()
+        .map_or_else(Vec::new, |t| t.unlocked.iter().copied().collect());
+    let (auto_hazards_enabled, total_hazards_survived) =
+        opt_mgr.as_deref().map_or((true, 0), |m| {
+            (m.auto_hazards_enabled, m.total_hazards_survived)
+        });
+    Some(types::ProgressionSave {
+        mode: prog.mode,
+        science_data,
+        unlocked_techs,
+        crises_averted: prog.crises_averted,
+        crises_mitigated: prog.crises_mitigated,
+        crises_catastrophic: prog.crises_catastrophic,
+        stellar_engine_active: prog.stellar_engine_active,
+        auto_hazards_enabled,
+        total_hazards_survived,
+    })
 }
 
 /// System that listens for `SaveSystemEvent` and writes the solar system snapshot to disk.
@@ -534,7 +588,7 @@ pub fn handle_save_system_events(
         let probes = collect_probes_save(&phase5_queries.probes);
         let alfven_waves =
             collect_standalone_alfven_save(&entity_to_name, &phase5_queries.alfven_waves);
-        let save_data = build_system_save_data(
+        let mut save_data = build_system_save_data(
             &sim_time,
             &time_warp,
             &disk_params,
@@ -546,6 +600,7 @@ pub fn handle_save_system_events(
             probes,
             alfven_waves,
         );
+        save_data.progression = build_progression_save(&phase5_queries);
 
         match save_system_to_file(&save_data, &path) {
             Ok(()) => {
@@ -632,6 +687,7 @@ pub fn handle_load_system_events(
         &mut reset_res.theia_state,
         &mut lhb_state,
     );
+    restore_progression_and_events(&save_data, &mut reset_res);
 
     // 3. Spawn bodies, resolve entity links, and restore probes/waves
     let links = spawn_and_link_saved_bodies(&mut commands, &save_data);
@@ -711,7 +767,7 @@ pub fn handle_clipboard_seed_export_events(
         let probes = collect_probes_save(&phase5_queries.probes);
         let alfven_waves =
             collect_standalone_alfven_save(&entity_to_name, &phase5_queries.alfven_waves);
-        let save_data = build_system_save_data(
+        let mut save_data = build_system_save_data(
             &sim_time,
             &time_warp,
             &disk_params,
@@ -723,6 +779,7 @@ pub fn handle_clipboard_seed_export_events(
             probes,
             alfven_waves,
         );
+        save_data.progression = build_progression_save(&phase5_queries);
 
         match encode_system_seed_json(&save_data) {
             Ok(seed) => {
@@ -826,6 +883,7 @@ pub fn handle_clipboard_seed_import_events(
         &mut reset_res.theia_state,
         &mut lhb_state,
     );
+    restore_progression_and_events(&save_data, &mut reset_res);
     let links = spawn_and_link_saved_bodies(&mut commands, &save_data);
     spawn_saved_probes_and_waves(
         &mut commands,

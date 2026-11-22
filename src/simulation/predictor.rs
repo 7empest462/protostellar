@@ -590,6 +590,7 @@ fn refine_closest_approach_time(
 pub struct PredictorCache {
     initialized: bool,
     was_paused: bool,
+    throttle_accum: f32,
     last_step_count: u64,
     last_selected: Option<Entity>,
     last_slingshot_active: bool,
@@ -756,6 +757,7 @@ pub fn update_trajectory_predictor(
     slingshot_state: Res<SlingshotState>,
     time_warp: Option<Res<TimeWarp>>,
     sim_time: Option<Res<SimTime>>,
+    time: Option<Res<Time>>,
     star_query: Query<(&SimPosition, &SimVelocity, &Mass), With<CentralStar>>,
     bodies_query: PredictorBodyQuery,
     mut target_candidates: Local<Vec<TargetCandidate>>,
@@ -774,15 +776,14 @@ pub fn update_trajectory_predictor(
     let is_paused = time_warp
         .as_deref()
         .is_some_and(|tw| tw.is_paused && !tw.step_once);
+    let dt = time.as_deref().map_or(0.0, Time::delta_secs);
     let step_count = sim_time.as_deref().map_or(0, |s| s.step_count);
     let bodies_sig = if is_paused {
         compute_predictor_bodies_sig(&bodies_query)
     } else {
         0
     };
-    let inputs_unchanged = cache.initialized
-        && cache.was_paused
-        && cache.last_step_count == step_count
+    let static_inputs_unchanged = cache.initialized
         && cache.last_selected == player_state.selected_entity
         && cache.last_slingshot_active == slingshot_state.is_active
         && cache.last_slingshot_target == slingshot_state.target_entity
@@ -791,13 +792,23 @@ pub fn update_trajectory_predictor(
         && cache.last_drag_current == slingshot_state.drag_current
         && (cache.last_velocity_scale - slingshot_state.velocity_scale).abs() < 1e-12
         && (cache.last_horizon - predictor_state.forecast_horizon_yr).abs() < 1e-12
-        && (cache.last_star_mass - star_mass.0).abs() < 1e-12
+        && (cache.last_star_mass - star_mass.0).abs() < 1e-12;
+    let paused_unchanged = static_inputs_unchanged
+        && cache.was_paused
+        && cache.last_step_count == step_count
         && cache.last_star_pos == star_pos.0
         && cache.last_star_vel == star_vel.0
         && cache.last_bodies_sig == bodies_sig;
-    if is_paused && inputs_unchanged {
+    if is_paused && paused_unchanged {
         return;
     }
+    if !is_paused && dt > 0.0 && static_inputs_unchanged && !cache.was_paused {
+        cache.throttle_accum += dt;
+        if cache.throttle_accum < 0.125 {
+            return;
+        }
+    }
+    cache.throttle_accum = 0.0;
 
     let selected_source = resolve_predictor_source(
         &player_state,

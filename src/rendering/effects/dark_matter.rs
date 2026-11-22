@@ -37,6 +37,7 @@ fn collect_halos(
     scenario_state: Option<&ActiveScenarioState>,
     is_galaxy_collision: bool,
     massive_query: &Query<(&SimPosition, &SimVelocity, &Mass, &CelestialBody)>,
+    origin: crate::rendering::origin::RenderOrigin,
 ) -> Vec<DarkMatterHalo> {
     let mut halos = Vec::with_capacity(4);
     let is_gmc =
@@ -44,7 +45,7 @@ fn collect_halos(
 
     for (pos, vel, mass, body) in massive_query.iter() {
         if body.body_type == BodyType::BlackHole && mass.0 >= 50_000.0 {
-            let center = Vec3::new(pos.0.x as f32, pos.0.y as f32, pos.0.z as f32);
+            let center = origin.to_render(pos.0);
             let velocity = Vec3::new(vel.0.x as f32, vel.0.y as f32, vel.0.z as f32);
             let is_andromeda = mass.0 > 50_000_000.0 || body.name.contains("Andromeda");
             let is_merged = body.name.contains("Merged") || body.name.contains("Milkomeda");
@@ -117,11 +118,11 @@ fn collect_halos(
         }
         let (center, velocity) = if total_m > 1.0 {
             (
-                (weighted_pos / total_m).as_vec3(),
+                origin.to_render(weighted_pos / total_m),
                 (weighted_vel / total_m).as_vec3(),
             )
         } else {
-            (Vec3::ZERO, Vec3::ZERO)
+            (origin.to_render(bevy::math::DVec3::ZERO), Vec3::ZERO)
         };
         let rs = GMC_NFW_SCALE_RADIUS_AU as f32;
         halos.push(DarkMatterHalo {
@@ -446,13 +447,24 @@ pub fn draw_dark_matter_halos(
     disk_params: Res<DiskParameters>,
     player_state: Res<PlayerInteractionState>,
     massive_query: Query<(&SimPosition, &SimVelocity, &Mass, &CelestialBody)>,
-    cam_query: Query<&Transform, With<Camera3d>>,
+    cam_query: Query<
+        (
+            &Transform,
+            Option<&crate::rendering::camera::PanOrbitCamera>,
+        ),
+        With<Camera3d>,
+    >,
     sim_time: Option<Res<SimTime>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
-    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden {
+    let cam_entry = cam_query.iter().next();
+    if player_state.overlay_mode == DiagnosticOverlayMode::Hidden
+        || cam_entry.is_some_and(|(_, c)| c.is_some_and(|cam| cam.surface_horizon_mode))
+    {
         return;
     }
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let is_galaxy_collision = scenario_state
         .as_deref()
         .is_some_and(|s| s.current_preset == ScenarioPreset::GalacticCollision)
@@ -468,12 +480,13 @@ pub fn draw_dark_matter_halos(
         scenario_state.as_deref(),
         is_galaxy_collision,
         &massive_query,
+        origin,
     );
     if halos.is_empty() {
         return;
     }
 
-    let cam_pos = cam_query.iter().next().map(|t| t.translation);
+    let cam_pos = cam_entry.map(|(t, _)| t.translation);
     let visual_time = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
     for (i, halo) in halos.iter().enumerate() {

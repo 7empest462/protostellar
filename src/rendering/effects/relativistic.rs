@@ -261,7 +261,7 @@ fn draw_quasar_beam_filaments_and_lobes(
 
         gizmos.line(base, tip, Color::WHITE);
 
-        let core_r = (visual_radius * 0.12).clamp(0.002, 0.04);
+        let core_r = (visual_radius * 0.12).clamp(1e-9, 0.04);
         for k in 0..8 {
             let theta = (k as f32) * (std::f32::consts::PI / 4.0);
             let offset = Vec3::new(theta.cos() * core_r, 0.0, theta.sin() * core_r);
@@ -272,7 +272,7 @@ fn draw_quasar_beam_filaments_and_lobes(
             );
         }
 
-        let sheath_r = (visual_radius * 0.28).clamp(0.005, 0.09);
+        let sheath_r = (visual_radius * 0.28).clamp(1e-9, 0.09);
         for k in 0..12 {
             let theta = (k as f32) * (std::f32::consts::PI / 6.0);
             let base_offset = Vec3::new(
@@ -292,7 +292,7 @@ fn draw_quasar_beam_filaments_and_lobes(
         let helix_len = jet_len.min(400.0);
         let n_segments = 100;
         let dz = (helix_len - pole_start).max(1.0) / (n_segments as f32);
-        let helix_r0 = (visual_radius * 0.22).clamp(0.003, 0.08);
+        let helix_r0 = (visual_radius * 0.22).clamp(1e-9, 0.08);
         for s in 0..n_segments {
             let z1 = pole_start + (s as f32) * dz;
             let z2 = pole_start + ((s + 1) as f32) * dz;
@@ -316,7 +316,7 @@ fn draw_quasar_beam_filaments_and_lobes(
         let mut step = 15.0f32;
         while kd < jet_len && kd < 5000.0 {
             let knot_pos = star_vec + dir * kd;
-            let knot_r = (visual_radius * 0.25).clamp(0.004, 0.08) + kd * 0.0003;
+            let knot_r = (visual_radius * 0.25).clamp(1e-9, 0.08) + kd * 0.0003;
             gizmos.circle(
                 Isometry3d::new(knot_pos, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
                 knot_r,
@@ -331,7 +331,7 @@ fn draw_quasar_beam_filaments_and_lobes(
             step *= 1.35;
         }
 
-        let lobe_r = (visual_radius * 0.85).clamp(0.02, 0.35);
+        let lobe_r = (visual_radius * 0.85).clamp(1e-8, 0.35);
         gizmos.sphere(
             Isometry3d::from_translation(tip),
             lobe_r,
@@ -431,7 +431,7 @@ pub fn draw_quasar_relativistic_jets(
     if is_blown_out && light_dist > 0.5 {
         let jet_len = light_dist;
         let current_visual_radius = config.calc_visual_radius_for_type(star_radius, body_type);
-        let pole_start = (current_visual_radius * 0.90).max(0.002);
+        let pole_start = (current_visual_radius * 0.90).max(1e-9);
 
         draw_quasar_beam_filaments_and_lobes(
             gizmos,
@@ -442,7 +442,7 @@ pub fn draw_quasar_relativistic_jets(
             elapsed,
         );
 
-        let isco_r = (current_visual_radius * 1.50).max(0.02);
+        let isco_r = (current_visual_radius * 1.50).max(1e-8);
         draw_quasar_isco_particles(gizmos, star_vec, isco_r, elapsed);
     }
 }

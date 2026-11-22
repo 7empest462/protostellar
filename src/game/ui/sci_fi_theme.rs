@@ -122,6 +122,8 @@ pub fn inject_sci_fi_panel_frames(
                         | HudPanelElement::PlanetBuilderPill
                         | HudPanelElement::TelemetryPanelPill
                         | HudPanelElement::HrDiagramPanelPill
+                        | HudPanelElement::EventFeedPill
+                        | HudPanelElement::CinemaRestorePill
                 )
             );
 

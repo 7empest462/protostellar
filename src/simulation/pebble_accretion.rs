@@ -622,7 +622,11 @@ pub fn spawn_streaming_instability_minor_bodies(
     scenario_state: Option<Res<ActiveScenarioState>>,
     body_count: Query<Entity, With<CelestialBody>>,
 ) {
-    if time_warp.is_paused && !time_warp.step_once {
+    if (time_warp.is_paused && !time_warp.step_once)
+        || (config.enable_gpu_compute
+            && config.gpu_compute_active
+            && config.active_particles > 1_000)
+    {
         return;
     }
 

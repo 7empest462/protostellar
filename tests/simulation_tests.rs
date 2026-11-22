@@ -124,6 +124,8 @@ mod stage2_hardening;
 mod stage2_shaders;
 #[path = "simulation_tests/stage3_gpu_shaders.rs"]
 mod stage3_gpu_shaders;
+#[path = "simulation_tests/star_aging_and_engulfment.rs"]
+mod star_aging_and_engulfment;
 #[path = "simulation_tests/storms.rs"]
 mod storms;
 #[path = "simulation_tests/supernova_enrichment.rs"]
@@ -146,6 +148,20 @@ mod thermodynamics_climate;
 mod tides;
 #[path = "simulation_tests/time_warp.rs"]
 mod time_warp;
+#[path = "simulation_tests/track1_visual_spectacle.rs"]
+mod track1_visual_spectacle;
+#[path = "simulation_tests/track2_gpu_nucleation.rs"]
+mod track2_gpu_nucleation;
+#[path = "simulation_tests/track3_hud_ux_and_events.rs"]
+mod track3_hud_ux_and_events;
+#[path = "simulation_tests/track4_soundscape_expansion.rs"]
+mod track4_soundscape_expansion;
+#[path = "simulation_tests/track5_surface_mode.rs"]
+mod track5_surface_mode;
+#[path = "simulation_tests/track6_crises_and_civilizations.rs"]
+mod track6_crises_and_civilizations;
+#[path = "simulation_tests/track6_progression_and_civs.rs"]
+mod track6_progression_and_civs;
 #[path = "simulation_tests/ui.rs"]
 mod ui;
 #[path = "simulation_tests/ui_contextual.rs"]

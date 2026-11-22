@@ -568,6 +568,9 @@ fn test_gmc_embryo_bombardment_launch_and_impact_delivery() {
             &mut query,
             &player,
             &mut commands,
+            None,
+            None,
+            None,
             100.0,
             &mut toast,
         );

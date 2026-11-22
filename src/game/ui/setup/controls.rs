@@ -407,7 +407,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
         ));
     });
 
-    // Fullscreen badge
+    // Cinema Mode badge
     col.spawn((
         HudButton,
         UiButtonAction::ToggleFullScreenHud,
@@ -424,7 +424,7 @@ fn spawn_core_view_badges(col: &mut ChildSpawnerCommands) {
     ))
     .with_children(|badge| {
         badge.spawn((
-            Text::new("⛶ Fullscreen"),
+            Text::new("🎬 Cinema [`]"),
             TextFont {
                 font_size: FontSize::Px(10.5),
                 ..default()
@@ -586,11 +586,42 @@ pub(crate) fn spawn_simulation_metrics_column(right_row: &mut ChildSpawnerComman
                 ..default()
             })
             .with_children(|top_pills| {
+                spawn_cinema_mode_pill(top_pills);
                 spawn_audio_mute_badge(top_pills);
                 spawn_top_right_pill(top_pills);
             });
             spawn_simulation_metrics_card(col);
         });
+}
+
+fn spawn_cinema_mode_pill(col: &mut ChildSpawnerCommands) {
+    col.spawn((
+        HudButton,
+        UiButtonAction::ToggleFullScreenHud,
+        Node {
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(2.5)),
+            margin: UiRect::all(Val::Px(1.5)),
+            display: Display::Flex,
+            border: UiRect::all(Val::Px(1.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.85)),
+        BorderColor::all(Color::srgba(0.28, 0.55, 0.85, 0.6)),
+    ))
+    .with_children(|pill| {
+        pill.spawn((
+            Text::new("🎬 Cinema [`]"),
+            TextFont {
+                font_size: FontSize::Px(10.5),
+                ..default()
+            },
+            TextColor(Color::srgb(0.5, 0.85, 1.0)),
+            HudDynamicText::FullScreenBadge,
+            Pickable::IGNORE,
+        ));
+    });
 }
 
 fn spawn_audio_mute_badge(col: &mut ChildSpawnerCommands) {

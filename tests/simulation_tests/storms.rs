@@ -291,7 +291,7 @@ fn test_tidal_deformation_and_camera_adaptive_visual_radius() {
         u_moon.w
     );
 
-    // 3. Camera-adaptive visual radius shrinks smoothly on close-up and obeys 4.5% orbital cap
+    // 3. True 1:1 visual radius is strictly zoom-invariant across close-up and distant views
     let config = SimulationConfig::default();
     let r_far = compute_realistic_visual_radius(
         0.000_042_6,
@@ -314,8 +314,8 @@ fn test_tidal_deformation_and_camera_adaptive_visual_radius() {
         "Distant visual radius ({r_far}) must never exceed 4.5% of orbital distance (0.029 AU)"
     );
     assert!(
-        r_close < r_far,
-        "Close-up visual radius ({r_close}) must shrink toward physical scale compared to distant ({r_far})"
+        (r_close - r_far).abs() < 1e-9 && (r_close - 0.000_042_6).abs() < 1e-9,
+        "Visual radius must remain strictly zoom-invariant at true 1:1 physical scale ({r_close} vs {r_far})"
     );
 
     // 4. Earth-to-Moon relative size hierarchy must stay constant (~3.8x) whether viewing Earth,
@@ -538,8 +538,8 @@ fn test_synced_visual_radius_close_camera_framing_and_cutaway_consistency() {
         &config,
     );
     assert!(
-        (unsynced - 0.00018).abs() < 1e-5,
-        "Unsynced Transform::IDENTITY must fall back to computed close-up radius (~0.00018), got {unsynced}"
+        (unsynced - earth_phys as f32).abs() < 1e-7,
+        "Unsynced Transform::IDENTITY must fall back to true 1:1 physical radius ({earth_phys}), got {unsynced}"
     );
 
     let synced_tf = Transform::from_scale(Vec3::splat(0.00024));
@@ -564,8 +564,8 @@ fn test_synced_visual_radius_close_camera_framing_and_cutaway_consistency() {
         &config,
     );
     assert!(
-        (close_frame - 0.00018 * 3.6).abs() < 1e-4,
-        "Close-up camera framing for Earth ({close_frame}) must converge to ~3.6x close visual radius"
+        (close_frame - (earth_phys as f32) * 3.5).abs() < 1e-6,
+        "Close-up camera framing for Earth ({close_frame}) must converge to 3.5x true physical radius"
     );
 
     let earth_body = CelestialBody {

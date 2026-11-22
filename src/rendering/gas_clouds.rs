@@ -6,16 +6,21 @@ use bevy::prelude::*;
 use bevy::render::render_resource::*;
 use bevy_shader::ShaderRef;
 
+use crate::rendering::camera::PanOrbitCamera;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 
-/// Uniform parameters passed to the nebular gas cloud shader.
+/// Uniform parameters passed to the nebular gas cloud shader (64 bytes, 16-byte aligned).
 #[derive(Clone, Default, ShaderType, Debug, PartialEq)]
 pub struct GasUniforms {
     /// x: time, y: inner_radius, z: outer_radius, w: gas_density_scale
     pub time_data: Vec4,
     /// x: star_radius, y: star_temp, z: star_lum, w: shockwave_radius
     pub star_params: Vec4,
+    /// xyz: camera simulation position (AU), w: close-up zoom contrast fade (`0.18..=1.0`)
+    pub camera_params: Vec4,
+    /// xyz: render-origin shifted disk center (AU), w: reserved
+    pub disk_center: Vec4,
 }
 
 /// Custom Material Extension for the gaseous component of the protoplanetary nebula.
@@ -41,6 +46,10 @@ pub struct GasCloudDisk;
 /// `1` = inner vertical pair, `2` = outer vertical strata).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GasCloudLayerLod(pub u8);
+
+/// Vertical simulation-space offset (`AU`) for each stratified gas disk layer.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct GasCloudBaseY(pub f32);
 
 /// Minimum gas density scale below which all gas disk layers are hidden to eliminate transparent fill-rate.
 pub const GAS_CLOUD_CULL_DENSITY_THRESHOLD: f32 = 0.005;
@@ -80,6 +89,32 @@ pub fn compute_gas_cloud_max_lod_tier(
     }
 }
 
+/// Computes a smooth close-up contrast fade factor (`0.18..=1.0`) for background gas disk layers
+/// so zooming tight onto a planet (e.g. Saturn or Earth inside a young protoplanetary disk) keeps
+/// rings and deep-space contrast crisp instead of washing them out behind a bright beige veil.
+#[must_use]
+pub fn compute_gas_closeup_contrast_fade(
+    orbit_radius_au: Option<f32>,
+    focus_helio_dist_au: Option<f32>,
+    disk_outer_au: f32,
+) -> f32 {
+    let Some(zoom_r) = orbit_radius_au else {
+        return 1.0;
+    };
+    let outer = disk_outer_au.max(1.0);
+    let focus_dist = focus_helio_dist_au.unwrap_or(0.0);
+    // Only apply strong backdrop softening when zoomed tight on a body embedded inside the disk
+    let in_disk_focus = if focus_dist > 0.05 && focus_dist < outer * 1.15 {
+        1.0_f32
+    } else {
+        0.35_f32
+    };
+    let t = ((zoom_r - outer * 0.006) / (outer * 0.115)).clamp(0.0, 1.0);
+    let smooth = t * t * (3.0 - 2.0 * t);
+    let min_fade = 1.0 - 0.82 * in_disk_focus;
+    min_fade + (1.0 - min_fade) * smooth
+}
+
 /// Spawns the volumetric gas disk geometry with multi-layered ethereal depth and double-sided visibility.
 pub fn setup_gas_cloud_disk(
     mut commands: Commands,
@@ -107,6 +142,8 @@ pub fn setup_gas_cloud_disk(
                     1.0,
                 ),
                 star_params: Vec4::new(0.013, 3600.0, 1.8, 0.0),
+                camera_params: Vec4::new(0.0, 15.0, 35.0, 1.0),
+                disk_center: Vec4::ZERO,
             },
         },
     });
@@ -133,6 +170,7 @@ pub fn setup_gas_cloud_disk(
             NotShadowReceiver,
             GasCloudDisk,
             GasCloudLayerLod(lod_tier),
+            GasCloudBaseY(y_offset),
         ));
     }
 }
@@ -202,51 +240,13 @@ fn compute_gas_star_uniforms(
     (inner, star_p)
 }
 
-/// Updates gas cloud animation time, density clearance, distance-LOD visibility, and star ignition shockwave.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Gas cloud LOD + uniform sync queries"
-)]
-pub fn update_gas_cloud_material(
-    sim_time: Res<SimTime>,
-    config: Res<SimulationConfig>,
-    disk_params: Res<DiskParameters>,
-    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
-    mut materials: ResMut<Assets<GasCloudMaterial>>,
-    mut gas_query: Query<
-        (
-            &MeshMaterial3d<GasCloudMaterial>,
-            Option<&GasCloudLayerLod>,
-            &mut Visibility,
-        ),
-        With<GasCloudDisk>,
-    >,
-    star_query: Query<
-        (
-            &Radius,
-            &Temperature,
-            &Luminosity,
-            &IgnitionState,
-            Option<&BlackHoleStarState>,
-            &CelestialBody,
-        ),
-        With<CentralStar>,
-    >,
-    cam_query: Query<&GlobalTransform, With<Camera3d>>,
-    supernova_pool: Option<Res<crate::rendering::effects::supernova::SupernovaDebrisPool>>,
-) {
-    // The GMC scenario renders gas through the 3D volumetric nebula; the planar disk must not appear.
-    let is_gmc = scenario_state.is_some_and(|s| {
-        s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
-    });
-    let is_massive = disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
-    let is_compact = disk_params.outer_radius_au < 2.0;
-    let is_remnant_or_pulsar = if let Ok((_, _, _, _, _, star_body)) = star_query.single() {
-        star_body.body_type == BodyType::Pulsar || star_body.body_type == BodyType::Magnetar
-    } else {
-        false
-    };
-
+fn compute_gas_disk_scale_and_density(
+    disk_params: &DiskParameters,
+    config: &SimulationConfig,
+    is_massive: bool,
+    is_compact: bool,
+    is_remnant_or_pulsar: bool,
+) -> (f32, f32) {
     let disk_outer = if is_massive {
         (disk_params.outer_radius_au as f32).max(280.0)
     } else if is_remnant_or_pulsar {
@@ -267,14 +267,105 @@ pub fn update_gas_cloud_material(
         config.gas_density_scale
     };
 
-    let cam_pos = cam_query.iter().next().map(GlobalTransform::translation);
-    let max_lod_tier = if is_gmc {
+    (disk_outer, density_scale)
+}
+
+/// Updates gas cloud animation time, density clearance, distance-LOD visibility, and star ignition shockwave.
+#[allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    reason = "Gas cloud material, LOD tier, and floating render-origin synchronization"
+)]
+pub fn update_gas_cloud_material(
+    sim_time: Res<SimTime>,
+    config: Res<SimulationConfig>,
+    disk_params: Res<DiskParameters>,
+    scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
+    mut materials: ResMut<Assets<GasCloudMaterial>>,
+    mut gas_query: Query<
+        (
+            &mut Transform,
+            &MeshMaterial3d<GasCloudMaterial>,
+            Option<&GasCloudLayerLod>,
+            Option<&GasCloudBaseY>,
+            &mut Visibility,
+        ),
+        With<GasCloudDisk>,
+    >,
+    star_query: Query<
+        (
+            &Radius,
+            &Temperature,
+            &Luminosity,
+            &IgnitionState,
+            Option<&BlackHoleStarState>,
+            &CelestialBody,
+        ),
+        With<CentralStar>,
+    >,
+    cam_query: Query<
+        (&Transform, &GlobalTransform, Option<&PanOrbitCamera>),
+        (With<Camera3d>, Without<GasCloudDisk>),
+    >,
+    supernova_pool: Option<Res<crate::rendering::effects::supernova::SupernovaDebrisPool>>,
+) {
+    // The GMC scenario renders gas through the 3D volumetric nebula; the planar disk must not appear.
+    let is_gmc = scenario_state.is_some_and(|s| {
+        s.current_preset == crate::simulation::scenarios::ScenarioPreset::MolecularCloudCluster
+    });
+    let is_massive = disk_params.central_star_mass > 10.0 || disk_params.outer_radius_au > 100.0;
+    let is_compact = disk_params.outer_radius_au < 2.0;
+    let is_remnant_or_pulsar = star_query.single().is_ok_and(|(_, _, _, _, _, star_body)| {
+        star_body.body_type == BodyType::Pulsar || star_body.body_type == BodyType::Magnetar
+    });
+    let (disk_outer, density_scale) = compute_gas_disk_scale_and_density(
+        &disk_params,
+        &config,
+        is_massive,
+        is_compact,
+        is_remnant_or_pulsar,
+    );
+
+    let origin_v = opt_origin
+        .as_deref()
+        .copied()
+        .unwrap_or_default()
+        .0
+        .as_vec3();
+    let (cam_pos_sim, orbit_radius, focus_dist, in_surface_mode) =
+        cam_query
+            .iter()
+            .next()
+            .map_or((None, None, None, false), |(tf, gtf, opt_pan)| {
+                let cam_render = if opt_pan.is_none() && tf.translation == Vec3::ZERO {
+                    gtf.translation()
+                } else {
+                    tf.translation
+                };
+                (
+                    Some(cam_render + origin_v),
+                    opt_pan.map(|p| p.radius),
+                    opt_pan.map(|p| p.focus.length()),
+                    opt_pan.is_some_and(|p| p.surface_horizon_mode),
+                )
+            });
+    let max_lod_tier = if is_gmc || in_surface_mode {
         None
     } else {
-        compute_gas_cloud_max_lod_tier(density_scale, disk_outer, cam_pos)
+        compute_gas_cloud_max_lod_tier(density_scale, disk_outer, cam_pos_sim)
     };
 
-    for (_, opt_lod, mut vis) in &mut gas_query {
+    let mut shared_handle: Option<Handle<GasCloudMaterial>> = None;
+    for (mut tf, mat_handle, opt_lod, opt_base_y, mut vis) in &mut gas_query {
+        if shared_handle.is_none() {
+            shared_handle = Some(mat_handle.0.clone());
+        }
+        let base_y = opt_base_y.map_or(tf.translation.y, |b| b.0);
+        let target_t = Vec3::new(-origin_v.x, base_y - origin_v.y, -origin_v.z);
+        if tf.translation != target_t {
+            tf.translation = target_t;
+        }
         let tier = opt_lod.map_or(0, |l| l.0);
         let target_vis = if max_lod_tier.is_some_and(|max_t| tier <= max_t) {
             Visibility::Inherited
@@ -296,16 +387,20 @@ pub fn update_gas_cloud_material(
         supernova_pool.as_deref(),
     );
 
+    let cam_p = cam_pos_sim.unwrap_or(Vec3::new(0.0, 15.0, 35.0));
+    let contrast_fade = compute_gas_closeup_contrast_fade(orbit_radius, focus_dist, disk_outer);
     let new_uniforms = GasUniforms {
         time_data: Vec4::new(anim_time, target_inner, disk_outer, density_scale),
         star_params,
+        camera_params: Vec4::new(cam_p.x, cam_p.y, cam_p.z, contrast_fade),
+        disk_center: Vec4::new(-origin_v.x, -origin_v.y, -origin_v.z, 0.0),
     };
 
     // All layers share the same material handle; guard update to prevent redundant buffer uploads
-    if let Some((handle, _, _)) = gas_query.iter().next()
-        && let Some(mat) = materials.get(handle)
+    if let Some(handle) = shared_handle
+        && let Some(mat) = materials.get(&handle)
         && mat.extension.uniforms != new_uniforms
-        && let Some(mut mat_mut) = materials.get_mut(handle)
+        && let Some(mut mat_mut) = materials.get_mut(&handle)
     {
         mat_mut.extension.uniforms = new_uniforms;
     }
@@ -321,7 +416,8 @@ impl Plugin for GasCloudPlugin {
             .add_systems(
                 Update,
                 update_gas_cloud_material
-                    .after(crate::simulation::physics::update_simulation_visual_time),
+                    .after(crate::rendering::origin::update_render_origin)
+                    .after(crate::rendering::camera::update_pan_orbit_camera),
             );
     }
 }

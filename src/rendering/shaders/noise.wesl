@@ -95,6 +95,13 @@ fn fbm_lod(p: vec3<f32>) -> f32 {
     for (var i = 0; i < 5; i = i + 1) {
         let octave_fw = fw * exp2(f32(i));
         let blend = 1.0 - smoothstep(0.18, 0.65, octave_fw);
+        if (blend <= 0.001) {
+            for (var j = i; j < 5; j = j + 1) {
+                v += a * 0.5;
+                a *= 0.5;
+            }
+            break;
+        }
         v += a * mix(0.5, noise(pos), blend);
         pos = pos * 2.02 + shift;
         a *= 0.5;
@@ -114,6 +121,14 @@ fn eroded_continent_fbm_lod(p: vec3<f32>) -> f32 {
     for (var i = 0; i < 5; i = i + 1) {
         let octave_fw = fw * exp2(f32(i));
         let blend = 1.0 - smoothstep(0.18, 0.65, octave_fw);
+        if (blend <= 0.001) {
+            let erosion_weight = 1.0 / (1.0 + length(warp_accum) * 0.45);
+            for (var j = i; j < 5; j = j + 1) {
+                val += amp * 0.5 * erosion_weight;
+                amp *= 0.49;
+            }
+            break;
+        }
         let sample_p = pos - warp_accum * 0.16;
         let n0 = mix(0.5, noise(sample_p), blend);
         let nx = mix(0.5, noise(sample_p + vec3<f32>(eps, 0.0, 0.0)), blend) - n0;

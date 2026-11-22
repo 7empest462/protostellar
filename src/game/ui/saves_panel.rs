@@ -457,7 +457,7 @@ fn rebuild_saves_list(
 }
 
 fn consume_refresh_events(
-    panel: &mut SavesPanelState,
+    panel_state: &mut ResMut<SavesPanelState>,
     save_events: &mut MessageReader<SaveSystemEvent>,
     load_events: &mut MessageReader<LoadSystemEvent>,
     scenario_events: &mut MessageReader<LoadScenarioEvent>,
@@ -469,11 +469,11 @@ fn consume_refresh_events(
     scenario_events.clear();
 
     if events_fired {
-        panel.pending_refresh_ticks = 2;
-        panel.dirty = true;
-    } else if panel.pending_refresh_ticks > 0 {
-        panel.pending_refresh_ticks = panel.pending_refresh_ticks.saturating_sub(1);
-        panel.dirty = true;
+        panel_state.pending_refresh_ticks = 2;
+        panel_state.dirty = true;
+    } else if panel_state.pending_refresh_ticks > 0 {
+        panel_state.pending_refresh_ticks = panel_state.pending_refresh_ticks.saturating_sub(1);
+        panel_state.dirty = true;
     }
 }
 
@@ -492,7 +492,7 @@ fn render_saves_panel_dom(
         Display::None
     };
     for (mut node, elem) in container_query.iter_mut() {
-        if matches!(elem, SavesPanelElement::Container) {
+        if matches!(elem, SavesPanelElement::Container) && node.display != display {
             node.display = display;
         }
     }
@@ -514,7 +514,7 @@ fn render_saves_panel_dom(
         scenario_now
     );
     for (mut text, elem) in summary_query.iter_mut() {
-        if matches!(elem, SavesPanelElement::SummaryText) {
+        if matches!(elem, SavesPanelElement::SummaryText) && text.0 != summary_line {
             text.0.clone_from(&summary_line);
         }
     }
@@ -546,16 +546,25 @@ pub fn update_saves_panel(
     content_query: Query<(Entity, &SavesPanelElement), Without<Text>>,
     mut commands: Commands,
 ) {
-    let Some(ref mut panel) = panel_state else {
-        return;
-    };
-
-    consume_refresh_events(
-        panel,
-        &mut save_events,
-        &mut load_events,
-        &mut scenario_events,
-    );
+    let has_events =
+        !save_events.is_empty() || !load_events.is_empty() || !scenario_events.is_empty();
+    let has_pending = panel_state
+        .as_deref()
+        .is_some_and(|p| p.pending_refresh_ticks > 0);
+    if has_events || has_pending {
+        if let Some(ref mut panel) = panel_state {
+            consume_refresh_events(
+                panel,
+                &mut save_events,
+                &mut load_events,
+                &mut scenario_events,
+            );
+        }
+    } else {
+        save_events.clear();
+        load_events.clear();
+        scenario_events.clear();
+    }
 
     let slot_changed = slot_state
         .as_ref()
@@ -564,19 +573,32 @@ pub fn update_saves_panel(
         .as_ref()
         .is_some_and(bevy::ecs::change_detection::DetectChanges::is_changed);
 
-    if !panel.is_changed() && !panel.dirty && !slot_changed && !scenario_changed {
+    let needs_render = panel_state
+        .as_ref()
+        .is_some_and(|p| p.is_changed() || p.dirty)
+        || slot_changed
+        || scenario_changed;
+    if !needs_render {
         return;
     }
+
+    let Some(ref mut panel) = panel_state else {
+        return;
+    };
 
     let active_preset = scenario_state.as_ref().map(|s| s.current_preset);
     if panel.is_open && (panel.dirty || (panel.filter_active_scenario && scenario_changed)) {
         panel.refresh_entries(active_preset);
     }
 
-    let active_sanitized = slot_state.as_ref().map_or_else(
-        || "quicksave".to_string(),
-        |s| sanitize_save_slot_name(&s.slot_name),
-    );
+    let active_sanitized = if panel.is_open {
+        slot_state.as_ref().map_or_else(
+            || "quicksave".to_string(),
+            |s| sanitize_save_slot_name(&s.slot_name),
+        )
+    } else {
+        String::new()
+    };
     render_saves_panel_dom(
         panel,
         active_preset,

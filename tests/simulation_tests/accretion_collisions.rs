@@ -193,7 +193,7 @@ fn test_grazing_bounce_preserves_momentum_and_weighted_com() {
     let pos1 = DVec3::new(2.0, 0.0, 0.0);
     let vel1 = DVec3::new(0.5, 0.0, 0.2);
     let pos2 = pos1 + DVec3::new(0.0, 0.0, r_contact * 0.92);
-    let vel2 = vel1 + DVec3::new(4.0, 0.0, -1.5);
+    let vel2 = vel1 + DVec3::new(8.0, 0.0, -3.0);
 
     let p_initial = vel1 * m1_val + vel2 * m2_val;
     let mr_initial = pos1 * m1_val + pos2 * m2_val;

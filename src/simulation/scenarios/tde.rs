@@ -40,7 +40,7 @@ pub fn spawn_tde_scenario(commands: &mut Commands, disk_params: &mut DiskParamet
                 color: Color::WHITE,
                 intensity: 0.0, // Dark until accretion!
                 range: 500.0,
-                shadow_maps_enabled: true,
+                shadow_maps_enabled: false,
                 ..default()
             },
         ))

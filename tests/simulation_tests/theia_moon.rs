@@ -546,10 +546,11 @@ fn test_sibling_moons_orbiting_same_planet_collide_and_merge_when_crossing_paths
         0.074,
     );
 
-    // Moon 2: "Earth I (Moon)" at 0.0080 AU (distance 0.0005 AU, within visual contact radius ~0.0036 AU)
+    // Moon 2: "Earth I (Moon)" overlapping Moon 1 within true 1:1 physical contact radius
     let moon2_mass = 0.0050 * EARTH_MASS_SOLAR;
     let moon2_rad = EARTH_RADIUS_AU * 0.20;
-    let moon2_pos = earth_pos + DVec3::new(0.0080, 0.0, 0.0);
+    let moon2_orbit = 0.0075 + (moon1_rad + moon2_rad) * 0.75;
+    let moon2_pos = earth_pos + DVec3::new(moon2_orbit, 0.0, 0.0);
     let moon2_vel = earth_vel + DVec3::new(0.0, 0.0, 0.2);
     let moon2_ent = spawn_test_moon(
         app.world_mut(),
@@ -559,7 +560,7 @@ fn test_sibling_moons_orbiting_same_planet_collide_and_merge_when_crossing_paths
         moon2_rad,
         moon2_pos,
         moon2_vel,
-        0.0080,
+        moon2_orbit,
         0.078,
     );
 

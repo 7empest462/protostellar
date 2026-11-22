@@ -308,6 +308,8 @@ pub struct ScenarioResetResources<'w, 's> {
         Option<ResMut<'w, crate::rendering::effects::remnants::PersistentRemnantPool>>,
         Option<ResMut<'w, crate::rendering::effects::kilonova::KilonovaPool>>,
         Option<ResMut<'w, crate::rendering::surface_terrain::SurfaceTerrainState>>,
+        Option<ResMut<'w, crate::simulation::economy::ProgressionState>>,
+        Option<ResMut<'w, crate::simulation::events::CrisisInterceptorPool>>,
     ),
     #[allow(
         clippy::type_complexity,
@@ -335,6 +337,7 @@ pub struct ScenarioResetResources<'w, 's> {
                 With<crate::rendering::effects::supernova::SupernovaVisualShell>,
                 With<crate::rendering::surface_terrain::PlanetarySurfaceTerrainRoot>,
                 With<crate::simulation::probes::SpaceProbe>,
+                With<crate::rendering::effects::CivilizationVisualMarker>,
             )>,
         ),
     >,
@@ -408,6 +411,12 @@ pub fn clear_transient_pools_and_entities(
     }
     if let Some(pool) = extra.pools.5.as_mut() {
         pool.clear();
+    }
+    if let Some(prog) = extra.pools.8.as_mut() {
+        prog.reset_session_counters();
+    }
+    if let Some(interceptors) = extra.pools.9.as_mut() {
+        interceptors.bolts.clear();
     }
     if let Some(pool) = extra.pools.6.as_mut() {
         pool.clear();

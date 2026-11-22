@@ -6,15 +6,20 @@ use bevy::camera::{Exposure, Hdr};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::gizmos::config::GizmoLineJoint;
 use bevy::input::gestures::PinchGesture;
-use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
+use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::math::DVec3;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
 
+use crate::rendering::camera_controls::{
+    handle_camera_keyboard_flight, handle_camera_mouse_controls,
+};
 pub use crate::rendering::camera_picking::IgnoreUiPicking;
 use crate::rendering::camera_picking::{
     UiInteractionStateQuery, UiPickingNodesQuery, handle_camera_target_picking,
     is_cursor_over_scroll_container, is_ui_interaction_blocking,
 };
+use crate::rendering::origin::RenderOrigin;
 use crate::rendering::post_processing::PostProcessingSettings;
 
 use crate::simulation::components::*;
@@ -23,9 +28,12 @@ use crate::simulation::resources::*;
 /// Orbital camera controller component with smooth cinematic inertial damping.
 #[derive(Component, Debug, Clone)]
 pub struct PanOrbitCamera {
-    /// 3D focus point in simulation render coordinates (AU)
+    /// 3D focus point in simulation coordinates (AU, `f32` mirror of `focus_au`)
     pub focus: Vec3,
     pub target_focus: Vec3,
+    /// Double-precision 3D focus point in simulation coordinates (AU)
+    pub focus_au: DVec3,
+    pub target_focus_au: DVec3,
     /// Distance from focus point in AU
     pub radius: f32,
     pub target_radius: f32,
@@ -37,9 +45,9 @@ pub struct PanOrbitCamera {
     pub target_pitch: f32,
     /// Target entity to track (if focus-locked)
     pub target_entity: Option<Entity>,
-    /// Minimum zoom distance in AU (~10,000 km)
+    /// Minimum zoom distance in AU
     pub min_radius: f32,
-    /// Maximum zoom distance in AU (150 AU outer solar system)
+    /// Maximum zoom distance in AU
     pub max_radius: f32,
     /// Sensitivity multipliers
     pub orbit_sensitivity: f32,
@@ -49,12 +57,18 @@ pub struct PanOrbitCamera {
     pub focus_transition_progress: f32,
     /// Starting focus point for interplanetary camera flight
     pub focus_transition_start: Vec3,
+    /// Double-precision starting focus point for interplanetary flight (AU)
+    pub focus_transition_start_au: DVec3,
     /// Starting orbital zoom radius for interplanetary camera flight
     pub radius_transition_start: f32,
     /// Starting camera eye offset `(eye_0 - target_focus)` for spherical-glide flight
     pub transition_start_offset: Vec3,
-    /// Last rendered orbital camera eye position in world space (AU)
+    /// Double-precision starting camera eye offset `(eye_0 - target_focus_au)`
+    pub transition_start_offset_au: DVec3,
+    /// Last rendered orbital camera eye position in simulation space (AU)
     pub last_orbital_eye: Option<Vec3>,
+    /// Last rendered orbital camera eye position in double precision (AU)
+    pub last_orbital_eye_au: Option<DVec3>,
     /// Previous target entity to detect focus target changes
     pub previous_target_entity: Option<Entity>,
     /// Atmospheric entry descent transition progress for Surface Horizon Mode (0.0 to 1.0)
@@ -69,6 +83,10 @@ pub struct PanOrbitCamera {
     pub surface_elevation: f32,
     pub surface_lat_lon: Vec2,
     pub surface_altitude_scale: f32,
+    #[doc(hidden)]
+    pub synced_focus_f32: Vec3,
+    #[doc(hidden)]
+    pub synced_target_focus_f32: Vec3,
 }
 
 impl Default for PanOrbitCamera {
@@ -76,6 +94,8 @@ impl Default for PanOrbitCamera {
         Self {
             focus: Vec3::ZERO,
             target_focus: Vec3::ZERO,
+            focus_au: DVec3::ZERO,
+            target_focus_au: DVec3::ZERO,
             radius: 16.0, // 16 AU framing of inner and giant solar system
             target_radius: 16.0,
             yaw: 0.785, // 45 degrees
@@ -83,16 +103,19 @@ impl Default for PanOrbitCamera {
             pitch: 0.62, // ~36 degrees inclination
             target_pitch: 0.62,
             target_entity: None,
-            min_radius: 0.005,
+            min_radius: 1e-7,
             max_radius: 3_000_000.0,
             orbit_sensitivity: 0.005,
             zoom_sensitivity: 0.13,
             pan_sensitivity: 0.02,
             focus_transition_progress: 1.0,
             focus_transition_start: Vec3::ZERO,
+            focus_transition_start_au: DVec3::ZERO,
             radius_transition_start: 16.0,
             transition_start_offset: Vec3::new(0.0, 0.0, 16.0),
+            transition_start_offset_au: DVec3::new(0.0, 0.0, 16.0),
             last_orbital_eye: None,
+            last_orbital_eye_au: None,
             previous_target_entity: None,
             entry_transition_progress: 1.0,
             surface_entry_start_offset: Vec3::ZERO,
@@ -102,11 +125,54 @@ impl Default for PanOrbitCamera {
             surface_elevation: 0.12,
             surface_lat_lon: Vec2::new(0.32, 0.0),
             surface_altitude_scale: 0.022,
+            synced_focus_f32: Vec3::ZERO,
+            synced_target_focus_f32: Vec3::ZERO,
         }
     }
 }
 
 impl PanOrbitCamera {
+    /// Propagates any external `f32` writes to `focus` / `target_focus` into `f64` mirrors.
+    #[inline]
+    pub fn sync_f64_from_f32_edits(&mut self) {
+        if self.focus != self.synced_focus_f32 {
+            self.focus_au = self.focus.as_dvec3();
+            self.synced_focus_f32 = self.focus;
+        }
+        if self.target_focus != self.synced_target_focus_f32 {
+            self.target_focus_au = self.target_focus.as_dvec3();
+            self.synced_target_focus_f32 = self.target_focus;
+        }
+    }
+
+    #[inline]
+    fn assign_synced_au(au: &mut DVec3, f32_val: &mut Vec3, synced_f32: &mut Vec3, val: DVec3) {
+        *au = val;
+        let v3 = val.as_vec3();
+        *f32_val = v3;
+        *synced_f32 = v3;
+    }
+
+    #[inline]
+    pub fn set_focus_au(&mut self, val: DVec3) {
+        Self::assign_synced_au(
+            &mut self.focus_au,
+            &mut self.focus,
+            &mut self.synced_focus_f32,
+            val,
+        );
+    }
+
+    #[inline]
+    pub fn set_target_focus_au(&mut self, val: DVec3) {
+        Self::assign_synced_au(
+            &mut self.target_focus_au,
+            &mut self.target_focus,
+            &mut self.synced_target_focus_f32,
+            val,
+        );
+    }
+
     #[inline]
     pub fn orbital_rotation(&self) -> Quat {
         Quat::from_axis_angle(Vec3::Y, self.yaw) * Quat::from_axis_angle(Vec3::X, -self.pitch)
@@ -119,6 +185,51 @@ impl PanOrbitCamera {
         })
     }
 
+    #[inline]
+    pub fn current_orbital_eye_au(&self) -> DVec3 {
+        self.last_orbital_eye_au
+            .unwrap_or_else(|| self.sync_view_eye_fallback_au())
+    }
+
+    #[inline]
+    fn sync_view_eye_fallback_au(&self) -> DVec3 {
+        let base_focus = if self.focus == self.synced_focus_f32 {
+            self.focus_au
+        } else {
+            self.focus.as_dvec3()
+        };
+        base_focus + (self.orbital_rotation() * Vec3::new(0.0, 0.0, self.radius)).as_dvec3()
+    }
+
+    /// Initiates a smooth, strictly monotonic spherical-glide transition in double precision
+    /// to `entity` at `target_au` with settled framing distance `target_radius`.
+    pub fn initiate_target_transition_au(
+        &mut self,
+        entity: Entity,
+        target_au: DVec3,
+        target_radius: f32,
+    ) {
+        self.sync_f64_from_f32_edits();
+        let current_eye_au = self.current_orbital_eye_au();
+        self.surface_horizon_mode = false;
+        self.target_entity = Some(entity);
+        self.previous_target_entity = Some(entity);
+        self.target_radius = target_radius;
+        let flight_thresh = f64::from(target_radius * 0.5).clamp(1e-6, 0.05);
+        if self.focus_au.distance(target_au) > flight_thresh {
+            self.focus_transition_start_au = self.focus_au;
+            self.focus_transition_start = self.focus_transition_start_au.as_vec3();
+            self.radius_transition_start = self.radius.max(1e-9);
+            self.transition_start_offset_au = current_eye_au - target_au;
+            self.transition_start_offset = self.transition_start_offset_au.as_vec3();
+            self.focus_transition_progress = 0.0;
+        } else {
+            self.focus_transition_progress = 1.0;
+            self.set_focus_au(target_au);
+        }
+        self.set_target_focus_au(target_au);
+    }
+
     /// Initiates a smooth, strictly monotonic spherical-glide transition to `entity` at
     /// `target_vec` with settled framing distance `target_radius`.
     pub fn initiate_target_transition(
@@ -127,21 +238,7 @@ impl PanOrbitCamera {
         target_vec: Vec3,
         target_radius: f32,
     ) {
-        let current_eye = self.current_orbital_eye();
-        self.surface_horizon_mode = false;
-        self.target_entity = Some(entity);
-        self.previous_target_entity = Some(entity);
-        self.target_radius = target_radius;
-        if self.focus.distance(target_vec) > 0.05 {
-            self.focus_transition_start = self.focus;
-            self.radius_transition_start = self.radius.max(1e-5);
-            self.transition_start_offset = current_eye - target_vec;
-            self.focus_transition_progress = 0.0;
-        } else {
-            self.focus_transition_progress = 1.0;
-            self.focus = target_vec;
-        }
-        self.target_focus = target_vec;
+        self.initiate_target_transition_au(entity, target_vec.as_dvec3(), target_radius);
     }
 }
 
@@ -291,7 +388,7 @@ pub(crate) fn resolve_camera_body_radii(
     if let Some(t) = opt_t {
         let sx = t.scale.x;
         let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && radius_au < 0.25;
-        if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
+        if sx.is_finite() && sx > 1e-10 && !is_unsynced_default {
             let close_vis_r = crate::rendering::bodies::transforms::compute_view_visual_radius(
                 radius_au,
                 body_type,
@@ -325,7 +422,7 @@ fn update_camera_min_zoom_bounds(
             targets_query.get(target_ent)
         {
             let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-            camera.target_focus = target_vec;
+            camera.set_target_focus_au(pos.0);
             let is_lrd = is_little_red_dot(body);
             let (curr_vis, close_vis) = resolve_camera_body_radii(
                 opt_t,
@@ -355,7 +452,7 @@ fn update_camera_min_zoom_bounds(
             .iter()
             .map(|(_, pos, radius, body, mass, opt_t, opt_comp, opt_diff)| {
                 let center = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-                let dist = camera.target_focus.distance(center);
+                let dist = camera.target_focus_au.distance(pos.0) as f32;
                 let (curr_vis, close_vis) = resolve_camera_body_radii(
                     opt_t,
                     radius.0,
@@ -386,210 +483,14 @@ fn update_camera_min_zoom_bounds(
             min_r
         }
     } else {
-        camera.min_radius = 0.001;
-        0.001
+        camera.min_radius = 1e-7;
+        1e-7
     };
 
     camera.target_radius = camera
         .target_radius
         .clamp(target_min_radius, camera.max_radius);
     camera.radius = camera.radius.clamp(camera.min_radius, camera.max_radius);
-}
-
-#[allow(clippy::too_many_arguments, reason = "Keyboard camera flight helper")]
-fn handle_camera_keyboard_flight(
-    keyboard_input: &ButtonInput<KeyCode>,
-    transform: &Transform,
-    camera: &mut PanOrbitCamera,
-    player_state: &mut PlayerInteractionState,
-    targets_query: &CameraTargetsQuery,
-    config: &SimulationConfig,
-    star_pos: Vec3,
-    min_orbit_r: f32,
-) {
-    if camera.surface_horizon_mode {
-        return;
-    }
-
-    if keyboard_input.just_pressed(KeyCode::KeyF) {
-        if let Some(target) = player_state.selected_entity {
-            if let Ok((_, pos, radius, body, mass, _opt_t, opt_comp, opt_diff)) =
-                targets_query.get(target)
-            {
-                let target_vec = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-                let frame_radius = if body.name.starts_with("🚀") || radius.0 <= 1e-6 {
-                    let visual_radius =
-                        config.calc_visual_radius_for_type(radius.0, body.body_type);
-                    0.015f32.max(config.calc_camera_framing_radius(visual_radius))
-                } else {
-                    crate::rendering::bodies::transforms::compute_close_view_camera_framing_radius(
-                        radius.0,
-                        body.body_type,
-                        mass.0,
-                        opt_comp,
-                        opt_diff,
-                        player_state.show_atmospheres(),
-                        (target_vec - star_pos).length(),
-                        min_orbit_r,
-                        config,
-                    )
-                };
-                camera.initiate_target_transition(target, target_vec, frame_radius);
-            } else {
-                camera.target_entity = Some(target);
-            }
-        } else {
-            camera.target_focus = Vec3::ZERO;
-            camera.target_entity = None;
-        }
-    }
-
-    let is_shift =
-        keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
-    if !is_shift && keyboard_input.just_pressed(KeyCode::KeyR) {
-        camera.target_focus = Vec3::ZERO;
-        camera.target_entity = None;
-        player_state.selected_entity = None;
-    }
-
-    if !is_shift {
-        let move_speed = (camera.target_radius * 0.025).clamp(0.1, 5.0);
-        if keyboard_input.pressed(KeyCode::KeyW) {
-            camera.target_focus += transform.rotation * -Vec3::Z * move_speed;
-            camera.target_entity = None;
-        }
-        if keyboard_input.pressed(KeyCode::KeyS) {
-            camera.target_focus += transform.rotation * Vec3::Z * move_speed;
-            camera.target_entity = None;
-        }
-        if keyboard_input.pressed(KeyCode::KeyA) {
-            camera.target_focus += transform.rotation * -Vec3::X * move_speed;
-            camera.target_entity = None;
-        }
-        if keyboard_input.pressed(KeyCode::KeyD) {
-            camera.target_focus += transform.rotation * Vec3::X * move_speed;
-            camera.target_entity = None;
-        }
-        if keyboard_input.pressed(KeyCode::KeyQ) {
-            camera.target_focus.y -= move_speed;
-            camera.target_entity = None;
-        }
-        if keyboard_input.pressed(KeyCode::KeyE) {
-            camera.target_focus.y += move_speed;
-            camera.target_entity = None;
-        }
-    }
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Mouse orbit, zoom, pinch, and pan controls"
-)]
-fn handle_camera_mouse_controls(
-    mouse_buttons: &ButtonInput<MouseButton>,
-    keyboard_input: &ButtonInput<KeyCode>,
-    mouse_motion_events: &mut MessageReader<MouseMotion>,
-    mouse_wheel_events: &mut MessageReader<MouseWheel>,
-    pinch_events: Option<&Messages<PinchGesture>>,
-    pinch_cursor: &mut bevy::ecs::message::MessageCursor<PinchGesture>,
-    camera: &mut PanOrbitCamera,
-    transform: &Transform,
-    cursor_over_ui: bool,
-    text_focused: bool,
-    dt: f32,
-) {
-    let mut delta_yaw = 0.0;
-    let mut delta_pitch = 0.0;
-    let mut delta_pan = Vec2::ZERO;
-
-    if mouse_buttons.pressed(MouseButton::Right) && !keyboard_input.pressed(KeyCode::ShiftLeft) {
-        for ev in mouse_motion_events.read() {
-            delta_yaw -= ev.delta.x * camera.orbit_sensitivity;
-            delta_pitch -= ev.delta.y * camera.orbit_sensitivity;
-        }
-    } else if mouse_buttons.pressed(MouseButton::Middle)
-        || (mouse_buttons.pressed(MouseButton::Right) && keyboard_input.pressed(KeyCode::ShiftLeft))
-    {
-        for ev in mouse_motion_events.read() {
-            delta_pan.x -= ev.delta.x * camera.pan_sensitivity * (camera.target_radius / 30.0);
-            delta_pan.y += ev.delta.y * camera.pan_sensitivity * (camera.target_radius / 30.0);
-        }
-        camera.target_entity = None;
-    } else {
-        mouse_motion_events.clear();
-    }
-
-    let mut scroll = 0.0;
-    for ev in mouse_wheel_events.read() {
-        if cursor_over_ui {
-            continue;
-        }
-        let delta = match ev.unit {
-            MouseScrollUnit::Line => ev.y,
-            MouseScrollUnit::Pixel => ev.y / 14.0,
-        };
-        scroll += delta;
-    }
-
-    if let Some(pinches) = pinch_events {
-        for ev in pinch_cursor.read(pinches) {
-            if !cursor_over_ui {
-                scroll += ev.0 * 16.0;
-            }
-        }
-    }
-
-    // Keyboard zoom shortcuts: Alt+= / Alt+-, PageUp / PageDown, or unmodified NumpadAdd / NumpadSubtract
-    if !text_focused {
-        let is_shift_key = keyboard_input.pressed(KeyCode::ShiftLeft)
-            || keyboard_input.pressed(KeyCode::ShiftRight);
-        let is_alt_key =
-            keyboard_input.pressed(KeyCode::AltLeft) || keyboard_input.pressed(KeyCode::AltRight);
-        let key_step = if dt >= 0.002 {
-            (dt.clamp(0.002, 0.25) * 60.0) * 0.6
-        } else {
-            0.6
-        };
-        if (is_alt_key && keyboard_input.pressed(KeyCode::Equal))
-            || keyboard_input.pressed(KeyCode::PageUp)
-            || (!is_shift_key && keyboard_input.pressed(KeyCode::NumpadAdd))
-        {
-            scroll += key_step;
-        }
-        if (is_alt_key && keyboard_input.pressed(KeyCode::Minus))
-            || keyboard_input.pressed(KeyCode::PageDown)
-            || (!is_shift_key && keyboard_input.pressed(KeyCode::NumpadSubtract))
-        {
-            scroll -= key_step;
-        }
-    }
-
-    if scroll.abs() > 0.0 {
-        let sensitivity = if keyboard_input.pressed(KeyCode::ShiftLeft)
-            || keyboard_input.pressed(KeyCode::ShiftRight)
-        {
-            camera.zoom_sensitivity * 0.35 // Micro-zoom precision mode
-        } else if keyboard_input.pressed(KeyCode::ControlLeft)
-            || keyboard_input.pressed(KeyCode::ControlRight)
-        {
-            camera.zoom_sensitivity * 2.2 // Rapid macro-zoom mode
-        } else {
-            camera.zoom_sensitivity
-        };
-
-        let zoom_factor = (-scroll * sensitivity).exp();
-        camera.target_radius =
-            (camera.target_radius * zoom_factor).clamp(camera.min_radius, camera.max_radius);
-    }
-
-    camera.target_yaw += delta_yaw;
-    camera.target_pitch = (camera.target_pitch + delta_pitch).clamp(-1.54, 1.54);
-
-    if camera.target_entity.is_none() && delta_pan != Vec2::ZERO {
-        let right = transform.rotation * Vec3::X;
-        let up = transform.rotation * Vec3::Y;
-        camera.target_focus += right * delta_pan.x + up * delta_pan.y;
-    }
 }
 
 /// Singularity-free unit-sphere great-circle slerp from `d0` to `d1`.
@@ -629,16 +530,25 @@ fn smooth_lerp_factor(rate_at_60hz: f32, dt: f32) -> f32 {
 
 #[inline]
 fn interpolate_log_radius(current: f32, target: f32, alpha: f32, min_r: f32, max_r: f32) -> f32 {
-    let cur = current.clamp(min_r, max_r).max(1e-6);
-    let tgt = target.clamp(min_r, max_r).max(1e-6);
-    if (tgt - cur).abs() <= 1e-6 {
+    let cur = current.clamp(min_r, max_r).max(1e-10);
+    let tgt = target.clamp(min_r, max_r).max(1e-10);
+    let tol = (tgt * 1e-5).max(1e-10);
+    if (tgt - cur).abs() <= tol {
         return tgt;
     }
     let log_r = cur.ln() + (tgt.ln() - cur.ln()) * alpha;
     log_r.exp().clamp(min_r, max_r)
 }
 
-fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3, Quat) {
+#[inline]
+fn interpolate_log_scalar(a: f32, b: f32, alpha: f32) -> f32 {
+    let sa = a.max(1e-10);
+    let sb = b.max(1e-10);
+    let t = alpha.clamp(0.0, 1.0);
+    (sa.ln() + (sb.ln() - sa.ln()) * t).exp()
+}
+
+fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (DVec3, Quat) {
     let rot_alpha = smooth_lerp_factor(0.24, dt);
     let zoom_alpha = smooth_lerp_factor(0.36, dt);
     let focus_alpha = smooth_lerp_factor(0.18, dt);
@@ -651,7 +561,7 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
     if camera.target_entity.is_some() {
         if dt <= 0.0 {
             camera.focus_transition_progress = 1.0;
-            camera.focus = camera.target_focus;
+            camera.set_focus_au(camera.target_focus_au);
             camera.radius = interpolate_log_radius(
                 camera.radius,
                 camera.target_radius,
@@ -661,44 +571,47 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
             );
         } else if camera.focus_transition_progress < 1.0 {
             camera.focus_transition_progress =
-                (camera.focus_transition_progress + dt * 2.2).min(1.0);
+                (camera.focus_transition_progress + dt * 2.0).min(1.0);
             let t = camera.focus_transition_progress;
             let u = t * t * (3.0 - 2.0 * t);
             let inv_u = 1.0 - u;
             let smooth_t = 1.0 - inv_u * inv_u * inv_u;
 
-            camera.focus = camera
-                .focus_transition_start
-                .lerp(camera.target_focus, smooth_t);
+            let next_focus = camera
+                .focus_transition_start_au
+                .lerp(camera.target_focus_au, f64::from(smooth_t));
+            camera.set_focus_au(next_focus);
             let d_end = camera
                 .target_radius
                 .clamp(camera.min_radius, camera.max_radius);
-            camera.radius = (camera.radius_transition_start
-                + (d_end - camera.radius_transition_start) * smooth_t)
+            camera.radius = interpolate_log_scalar(camera.radius_transition_start, d_end, smooth_t)
                 .clamp(camera.min_radius, camera.max_radius);
 
             if camera.focus_transition_progress >= 1.0 {
-                camera.focus = camera.target_focus;
+                camera.set_focus_au(camera.target_focus_au);
                 camera.radius = d_end;
             } else {
-                let start_off = camera.transition_start_offset;
-                let d_start = start_off.length().max(1e-5);
-                let d0 = if start_off.length_squared() > 1e-10 {
-                    start_off / d_start
+                let start_off_au = camera.transition_start_offset_au;
+                let d_start = (start_off_au.length() as f32).max(1e-10);
+                let d0 = if start_off_au.length_squared() > 1e-18 {
+                    (start_off_au / f64::from(d_start))
+                        .as_vec3()
+                        .normalize_or(back_dir)
                 } else {
                     back_dir
                 };
                 let t_ang = (t / 0.65).min(1.0);
                 let sigma = t_ang * t_ang * (3.0 - 2.0 * t_ang);
                 let dir_t = slerp_unit_directions(d0, back_dir, rot * Vec3::Y, sigma);
-                let dist_t = (d_start + (d_end - d_start) * smooth_t)
+                let dist_t = interpolate_log_scalar(d_start, d_end, smooth_t)
                     .clamp(camera.min_radius, camera.max_radius);
-                let translation = camera.target_focus + dir_t * dist_t;
-                camera.last_orbital_eye = Some(translation);
-                return (translation, rot);
+                let eye_au = camera.target_focus_au + dir_t.as_dvec3() * f64::from(dist_t);
+                camera.last_orbital_eye_au = Some(eye_au);
+                camera.last_orbital_eye = Some(eye_au.as_vec3());
+                return (eye_au, rot);
             }
         } else {
-            camera.focus = camera.target_focus;
+            camera.set_focus_au(camera.target_focus_au);
             camera.radius = interpolate_log_radius(
                 camera.radius,
                 camera.target_radius,
@@ -708,7 +621,10 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
             );
         }
     } else {
-        camera.focus = camera.focus.lerp(camera.target_focus, focus_alpha);
+        let next_focus = camera
+            .focus_au
+            .lerp(camera.target_focus_au, f64::from(focus_alpha));
+        camera.set_focus_au(next_focus);
         camera.radius = interpolate_log_radius(
             camera.radius,
             camera.target_radius,
@@ -718,9 +634,10 @@ fn integrate_orbital_camera_pose(camera: &mut PanOrbitCamera, dt: f32) -> (Vec3,
         );
     }
 
-    let translation = camera.focus + back_dir * camera.radius;
-    camera.last_orbital_eye = Some(translation);
-    (translation, rot)
+    let eye_au = camera.focus_au + back_dir.as_dvec3() * f64::from(camera.radius);
+    camera.last_orbital_eye_au = Some(eye_au);
+    camera.last_orbital_eye = Some(eye_au.as_vec3());
+    (eye_au, rot)
 }
 
 fn sync_camera_target_transition_state(camera: &mut PanOrbitCamera) {
@@ -728,15 +645,16 @@ fn sync_camera_target_transition_state(camera: &mut PanOrbitCamera) {
         return;
     }
     if let Some(ent) = camera.target_entity {
-        let target_vec = camera.target_focus;
+        let target_au = camera.target_focus_au;
         let target_rad = camera.target_radius;
-        camera.initiate_target_transition(ent, target_vec, target_rad);
+        camera.initiate_target_transition_au(ent, target_au, target_rad);
     } else {
         if camera.focus_transition_progress < 1.0 {
-            let eye = camera.current_orbital_eye();
-            let back = camera.orbital_rotation() * Vec3::Z;
-            camera.focus = eye - back * camera.radius;
-            camera.target_focus = camera.focus;
+            let eye_au = camera.current_orbital_eye_au();
+            let back = (camera.orbital_rotation() * Vec3::Z).as_dvec3();
+            let next_focus = eye_au - back * f64::from(camera.radius);
+            camera.set_focus_au(next_focus);
+            camera.set_target_focus_au(next_focus);
         }
         camera.focus_transition_progress = 1.0;
         camera.previous_target_entity = None;
@@ -755,6 +673,7 @@ pub fn update_pan_orbit_camera(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<RenderOrigin>>,
     mut mouse_motion_events: MessageReader<MouseMotion>,
     mut mouse_wheel_events: MessageReader<MouseWheel>,
     mut player_state: ResMut<PlayerInteractionState>,
@@ -789,8 +708,33 @@ pub fn update_pan_orbit_camera(
         return;
     };
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    camera.sync_f64_from_f32_edits();
+
     let text_focused =
         crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query);
+    let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
+
+    if camera.surface_horizon_mode {
+        camera.previous_target_entity = camera.target_entity;
+        let eye_au = origin.to_sim(transform.translation);
+        camera.last_orbital_eye_au = Some(eye_au);
+        camera.last_orbital_eye = Some(eye_au.as_vec3());
+        if player_state.just_selected_via_ui {
+            player_state.just_selected_via_ui = false;
+        }
+        if !text_focused
+            && (keyboard_input.just_pressed(KeyCode::KeyF)
+                || keyboard_input.just_pressed(KeyCode::KeyR)
+                || keyboard_input.just_pressed(KeyCode::Escape))
+        {
+            camera.surface_horizon_mode = false;
+            camera.entry_transition_progress = 1.0;
+            camera.last_orbital_eye = None;
+            camera.last_orbital_eye_au = None;
+        }
+        return;
+    }
 
     let (star_pos, min_orbit_r) = compute_system_min_orbit_r(&targets_query);
     update_camera_min_zoom_bounds(
@@ -801,25 +745,6 @@ pub fn update_pan_orbit_camera(
         min_orbit_r,
         player_state.show_atmospheres(),
     );
-
-    let dt = time.as_ref().map_or(0.016, |t| t.delta_secs());
-
-    if camera.surface_horizon_mode {
-        camera.previous_target_entity = camera.target_entity;
-        camera.last_orbital_eye = Some(transform.translation);
-        player_state.just_selected_via_ui = false;
-        if !text_focused
-            && (keyboard_input.just_pressed(KeyCode::KeyF)
-                || keyboard_input.just_pressed(KeyCode::KeyR)
-                || keyboard_input.just_pressed(KeyCode::Escape))
-        {
-            camera.surface_horizon_mode = false;
-            camera.entry_transition_progress = 1.0;
-            camera.last_orbital_eye = None;
-            return;
-        }
-        return;
-    }
 
     sync_camera_target_transition_state(&mut camera);
 
@@ -845,6 +770,7 @@ pub fn update_pan_orbit_camera(
         &mut player_state,
         &mut camera,
         &config,
+        &origin,
         &ui_interaction_query,
         &ui_nodes_query,
         &mouse_buttons,
@@ -880,7 +806,7 @@ pub fn update_pan_orbit_camera(
         dt,
     );
 
-    let (translation, rot) = integrate_orbital_camera_pose(&mut camera, dt);
-    transform.translation = translation;
+    let (eye_au, rot) = integrate_orbital_camera_pose(&mut camera, dt);
+    transform.translation = origin.to_render(eye_au);
     transform.rotation = rot;
 }

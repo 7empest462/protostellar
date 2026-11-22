@@ -1,11 +1,28 @@
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::f32::consts::TAU;
 
-use crate::rendering::materials::PlanetMaterial;
+use crate::rendering::bodies::VisualAssets;
+use crate::rendering::materials::{PlanetMaterial, SupernovaMaterial, SupernovaUniforms};
 use crate::simulation::accretion::events::*;
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
 use crate::simulation::terraforming::{BombardmentEvent, BombardmentType};
+
+/// Marker component for a 3D volumetric incandescent molten plume & protolunar debris torus
+/// spawned around a planet undergoing a giant Theia-scale or planetary merger impact.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ImpactPlumeVisual {
+    pub primary_entity: Entity,
+    pub is_torus: bool,
+}
+
+/// Marker component for the dynamic incandescent giant-impact flash `PointLight`.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ImpactFlashLight {
+    pub primary_entity: Entity,
+}
 
 type BodyQueryItem<'w> = (
     Entity,
@@ -16,6 +33,7 @@ type BodyQueryItem<'w> = (
     Option<&'static Transform>,
     Option<&'static PlanetaryBasins>,
     Option<&'static MeshMaterial3d<PlanetMaterial>>,
+    Option<&'static CelestialBody>,
 );
 
 /// Characteristic dynamical frequency (rad/s) for real-time ballistic ejecta arcs around a planet's visual surface.
@@ -25,10 +43,10 @@ const EJECTA_SURFACE_OMEGA: f32 = 2.4;
 /// uses the rendered 3D mesh visual radius (`Transform.scale.x`) when present in-game,
 /// and falls back to physical `Radius` in headless simulation tests.
 fn effective_surface_radius(p_rad: Option<&Radius>, p_transform: Option<&Transform>) -> f32 {
-    let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
+    let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-9);
     if let Some(tf) = p_transform {
         let vis_r = tf.scale.x;
-        if vis_r > phys_r && (vis_r - 1.0).abs() > 1e-4 {
+        if vis_r.is_finite() && vis_r > 1e-10 && !((vis_r - 1.0).abs() < 1e-4 && phys_r < 0.25) {
             return vis_r;
         }
     }
@@ -56,8 +74,8 @@ pub fn p_surf_to_world_normal(p_surf_dir: Vec3, spin_axis_vec4: Vec4, spin_angle
     let s_tangent_x = s_axis.cross(s_ref).normalize_or_zero();
     let s_tangent_z = s_tangent_x.cross(s_axis);
 
-    let c = (-spin_angle).cos();
-    let s = (-spin_angle).sin();
+    let c = spin_angle.cos();
+    let s = spin_angle.sin();
     let p_tilted = Vec3::new(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
     let world_n = s_tangent_x * p_tilted.x + s_axis * p_tilted.y + s_tangent_z * p_tilted.z;
     let norm = world_n.normalize_or_zero();
@@ -214,7 +232,7 @@ fn collect_moon_formation_ejecta(
         });
 
         // Spawn 3D Keplerian Molten Debris Fragments forming the proto-lunar accretion disk
-        if let Ok((_, p_pos, _, _, p_rad, p_tf, _, _)) = bodies_query.get(ev.parent_entity) {
+        if let Ok((_, p_pos, _, _, p_rad, p_tf, _, _, _)) = bodies_query.get(ev.parent_entity) {
             let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
             let r_surf = effective_surface_radius(p_rad, p_tf);
             let v_circ_surf = EJECTA_SURFACE_OMEGA * r_surf;
@@ -244,7 +262,7 @@ fn collect_moon_formation_ejecta(
                     initial_temperature: temp,
                     temperature: temp,
                     cooling_rate: 0.12 + ((i as f32 * 0.9).sin() * 0.5 + 0.5) * 0.08,
-                    radius: (r_surf * 0.032).clamp(0.0005, 0.008),
+                    radius: (r_surf * 0.032).clamp(1e-7, 0.008),
                     mass: ev.moon_mass / f64::from(n_molten),
                     primary_entity: ev.parent_entity,
                     age: 0.0,
@@ -269,15 +287,18 @@ fn collect_collision_merger_ejecta(
 ) {
     for ev in merge_reader.read() {
         let p_ent = ev.primary_entity;
-        let Ok((_, p_pos, _, _, p_rad, p_tf, opt_basins, opt_mat_handle)) = bodies_query.get(p_ent)
+        let Ok((_, p_pos, _, _, p_rad, p_tf, opt_basins, opt_mat_handle, opt_body)) =
+            bodies_query.get(p_ent)
         else {
             continue;
         };
+        if ev.new_body_type.is_star_or_remnant()
+            || opt_body.is_some_and(|b| b.body_type.is_star_or_remnant())
+        {
+            continue;
+        }
 
-        let p_center = p_tf.map_or(
-            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-            |tf| tf.translation,
-        );
+        let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
         let r_surf = effective_surface_radius(p_rad, p_tf);
         let imp_pos = Vec3::new(
             ev.merged_position.x as f32,
@@ -318,16 +339,13 @@ fn collect_bombardment_ejecta(
     opt_materials: Option<&Assets<PlanetMaterial>>,
 ) {
     for ev in bombard_reader.read() {
-        let Ok((p_ent, p_pos, _, p_mass, p_rad, p_tf, opt_basins, opt_mat_handle)) =
+        let Ok((p_ent, p_pos, _, p_mass, p_rad, p_tf, opt_basins, opt_mat_handle, _)) =
             bodies_query.get(ev.target_entity)
         else {
             continue;
         };
 
-        let p_center = p_tf.map_or(
-            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-            |tf| tf.translation,
-        );
+        let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
         let r_surf = effective_surface_radius(p_rad, p_tf);
         let world_normal = resolve_entity_world_impact_normal(
             ev.surface_normal,
@@ -369,7 +387,8 @@ fn collect_basin_impact_ejecta(
     opt_materials: Option<&Assets<PlanetMaterial>>,
     triggered_basins: &mut Vec<(Entity, Vec3)>,
 ) {
-    for (p_ent, p_pos, _, p_mass, p_rad, p_tf, opt_basins, opt_mat_handle) in bodies_query.iter() {
+    for (p_ent, p_pos, _, p_mass, p_rad, p_tf, opt_basins, opt_mat_handle, _) in bodies_query.iter()
+    {
         let Some(pb) = opt_basins else {
             continue;
         };
@@ -393,10 +412,7 @@ fn collect_basin_impact_ejecta(
         }
         triggered_basins.push((p_ent, norm_key));
 
-        let p_center = p_tf.map_or(
-            Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-            |tf| tf.translation,
-        );
+        let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
         let r_surf = effective_surface_radius(p_rad, p_tf);
         let world_normal = resolve_entity_world_impact_normal(
             latest.surface_normal,
@@ -431,7 +447,7 @@ fn collect_collision_bounce_ejecta(
     bodies_query: &Query<BodyQueryItem>,
 ) {
     for ev in bounce_reader.read() {
-        let (Ok((_, pos1, _, _, r1, tf1, _, _)), Ok((_, pos2, _, _, _, _, _, _))) =
+        let (Ok((_, pos1, _, _, r1, tf1, _, _, _)), Ok((_, pos2, _, _, _, _, _, _, _))) =
             (bodies_query.get(ev.entity1), bodies_query.get(ev.entity2))
         else {
             continue;
@@ -508,11 +524,8 @@ fn step_ejecta_simulation(
         frag.temperature = 200.0 + (frag.initial_temperature - 200.0) * cool_decay;
 
         // Gravitational acceleration toward primary planet and surface reabsorption in planet local frame
-        if let Ok((_, p_pos, _, _, p_rad, p_tf, _, _)) = bodies_query.get(frag.primary_entity) {
-            let p_center = p_tf.map_or(
-                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-                |tf| tf.translation,
-            );
+        if let Ok((_, p_pos, _, _, p_rad, p_tf, _, _, _)) = bodies_query.get(frag.primary_entity) {
+            let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
             let r_surf = effective_surface_radius(p_rad, p_tf);
 
             // Backward compatibility for fragments initialized without local coordinates
@@ -532,7 +545,7 @@ fn step_ejecta_simulation(
             }
 
             let mu_eff = EJECTA_SURFACE_OMEGA * EJECTA_SURFACE_OMEGA * r_surf * r_surf * r_surf;
-            let inv_r3 = 1.0 / (dist * dist * dist).max(1e-18);
+            let inv_r3 = 1.0 / (dist * dist * dist).max(1e-24);
             let a_prim = to_center * (mu_eff * inv_r3);
             frag.local_velocity += a_prim * dt;
 
@@ -544,7 +557,7 @@ fn step_ejecta_simulation(
 
             frag.local_position += frag.local_velocity * dt;
 
-            // Synchronize world coordinates
+            // Synchronize heliocentric simulation coordinates
             frag.position = p_center + frag.local_position;
             frag.trail[0] = p_center + frag.local_trail[0];
             frag.trail[1] = p_center + frag.local_trail[1];
@@ -568,11 +581,8 @@ fn step_ejecta_simulation(
     // Step expanding ring structures
     ejecta_pool.rings.retain_mut(|ring| {
         ring.timer += dt;
-        if let Ok((_, pos, _, _, _, p_tf, _, _)) = bodies_query.get(ring.primary_entity) {
-            ring.primary_pos = p_tf
-                .map_or(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32), |tf| {
-                    tf.translation
-                });
+        if let Ok((_, pos, _, _, _, _, _, _, _)) = bodies_query.get(ring.primary_entity) {
+            ring.primary_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         }
         for frag in &mut ring.fragments {
             frag.1 += frag.2 * dt;
@@ -644,6 +654,7 @@ fn draw_molten_fragments(
     gizmos: &mut Gizmos,
     fragments: &[MoltenDebrisFragment],
     transforms_query: &Query<&Transform>,
+    origin: crate::rendering::origin::RenderOrigin,
 ) {
     let mut cached_ent = Entity::PLACEHOLDER;
     let mut p_center = Vec3::ZERO;
@@ -670,11 +681,11 @@ fn draw_molten_fragments(
             )
         } else {
             (
-                frag.position,
-                frag.trail[0],
-                frag.trail[1],
-                frag.trail[2],
-                frag.trail[3],
+                origin.shift_vec3(frag.position),
+                origin.shift_vec3(frag.trail[0]),
+                origin.shift_vec3(frag.trail[1]),
+                origin.shift_vec3(frag.trail[2]),
+                origin.shift_vec3(frag.trail[3]),
             )
         };
 
@@ -694,7 +705,7 @@ fn draw_molten_fragments(
 
         // Bright incandescent leading head bolt along the velocity vector
         let vel_dir = frag.local_velocity.normalize_or_zero();
-        let head_len = (frag.radius * 0.45).clamp(0.00015, 0.0025);
+        let head_len = (frag.radius * 0.45).clamp(1e-7, 0.0025);
         let head_col = Color::srgba(
             (srgba.red * 1.15).min(1.0),
             (srgba.green * 1.15 + 0.12).min(1.0),
@@ -729,11 +740,12 @@ fn draw_ejecta_rings(
     gizmos: &mut Gizmos,
     rings: &[ImpactEjectaRing],
     transforms_query: &Query<&Transform>,
+    origin: crate::rendering::origin::RenderOrigin,
 ) {
     for ring in rings {
         let p_center = transforms_query
             .get(ring.primary_entity)
-            .map_or(ring.primary_pos, |tf| tf.translation);
+            .map_or_else(|_| origin.shift_vec3(ring.primary_pos), |tf| tf.translation);
         let p = (ring.timer / ring.max_timer).clamp(0.0, 1.0);
         let coalesce = p * p;
         let alpha = if p < 0.1 {
@@ -767,7 +779,7 @@ fn draw_ejecta_rings(
             let pos1 =
                 p_center + Vec3::new(current_r * phi.cos(), current_z, current_r * phi.sin());
             let tangent = Vec3::new(-phi.sin(), 0.0, phi.cos());
-            let arc_half = (current_r * 0.14).clamp(0.00008, 0.0035) * (1.0 - frac * 0.35);
+            let arc_half = (current_r * 0.14).clamp(1e-7, 0.0035) * (1.0 - frac * 0.35);
             gizmos.line(
                 pos1 - tangent * arc_half,
                 pos1 + tangent * arc_half,
@@ -791,14 +803,166 @@ pub fn draw_impact_ejecta_system(
     mut gizmos: Gizmos,
     ejecta_pool: Option<Res<ImpactEjectaPool>>,
     transforms_query: Query<&Transform>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let Some(pool) = ejecta_pool else {
         return;
     };
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     if !pool.fragments.is_empty() {
-        draw_molten_fragments(&mut gizmos, &pool.fragments, &transforms_query);
+        draw_molten_fragments(&mut gizmos, &pool.fragments, &transforms_query, origin);
     }
     if !pool.rings.is_empty() {
-        draw_ejecta_rings(&mut gizmos, &pool.rings, &transforms_query);
+        draw_ejecta_rings(&mut gizmos, &pool.rings, &transforms_query, origin);
+    }
+}
+
+fn impact_plume_scale_and_uniforms(
+    ring: &ImpactEjectaRing,
+    center: Vec3,
+    is_torus: bool,
+) -> (Vec3, SupernovaUniforms) {
+    let p = (ring.timer / ring.max_timer.max(0.1)).clamp(0.0, 1.0);
+    let flash = (-3.2 * ring.timer).exp();
+    let max_ring_r = ring
+        .fragments
+        .iter()
+        .map(|f| f.0)
+        .fold(1e-5_f32, f32::max)
+        .clamp(1e-5, 0.35);
+    let scale = if is_torus {
+        let eq_r = max_ring_r * (0.85 + 0.45 * p.powf(0.55));
+        Vec3::new(eq_r, (eq_r * 0.16).max(1e-6), eq_r)
+    } else {
+        let plume_r = max_ring_r * (0.45 + 0.55 * p.powf(0.45));
+        Vec3::splat(plume_r)
+    };
+    let uniforms = SupernovaUniforms {
+        params: Vec4::new(ring.timer, ring.max_timer.max(0.1), max_ring_r, 8.0),
+        core_params: Vec4::new(flash, if is_torus { 6.0 } else { 4.0 }, 1.0, 0.85),
+        center_and_asphericity: Vec4::new(center.x, center.y, center.z, 0.55),
+        // Incandescent silicate magma gold + fiery orange mantle + deep molten basalt crimson
+        core_color: Vec4::new(1.85, 1.18, 0.32, 1.0),
+        mantle_color: Vec4::new(1.55, 0.48, 0.12, 0.90),
+        envelope_color: Vec4::new(1.15, 0.16, 0.05, 0.88),
+        jet_color: Vec4::new(1.70, 0.85, 0.25, 0.95),
+    };
+    (scale, uniforms)
+}
+
+/// Synchronizes 3D volumetric incandescent molten impact plumes, coalescing protolunar debris tori,
+/// and dynamic impact flash `PointLight`s for active giant planetary collisions.
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "Giant impact 3D volumetric plume, torus, and flash light synchronization"
+)]
+pub fn sync_impact_plume_visuals(
+    mut commands: Commands,
+    ejecta_pool: Option<Res<ImpactEjectaPool>>,
+    visual_assets: Option<Res<VisualAssets>>,
+    mut sn_materials: Option<ResMut<Assets<SupernovaMaterial>>>,
+    body_tf_query: Query<&Transform, (Without<ImpactPlumeVisual>, Without<ImpactFlashLight>)>,
+    mut plume_query: Query<(
+        Entity,
+        &ImpactPlumeVisual,
+        &mut Transform,
+        &MeshMaterial3d<SupernovaMaterial>,
+    )>,
+    mut light_query: Query<
+        (Entity, &ImpactFlashLight, &mut PointLight, &mut Transform),
+        Without<ImpactPlumeVisual>,
+    >,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
+) {
+    let (Some(pool), Some(assets), Some(sn_mats)) =
+        (ejecta_pool, visual_assets, sn_materials.as_deref_mut())
+    else {
+        return;
+    };
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+
+    let mut active_rings: FxHashMap<Entity, (&ImpactEjectaRing, Vec3)> = FxHashMap::default();
+    for ring in &pool.rings {
+        let center = body_tf_query
+            .get(ring.primary_entity)
+            .map_or_else(|_| origin.shift_vec3(ring.primary_pos), |tf| tf.translation);
+        active_rings.insert(ring.primary_entity, (ring, center));
+    }
+
+    let mut existing_plumes: FxHashSet<(Entity, bool)> = FxHashSet::default();
+    for (ent, plume, mut tf, mat_handle) in plume_query.iter_mut() {
+        let Some(&(ring, center)) = active_rings.get(&plume.primary_entity) else {
+            if let Ok(mut cmd) = commands.get_entity(ent) {
+                cmd.try_despawn();
+            }
+            continue;
+        };
+        existing_plumes.insert((plume.primary_entity, plume.is_torus));
+        let (target_scale, next_u) = impact_plume_scale_and_uniforms(ring, center, plume.is_torus);
+        if tf.translation != center {
+            tf.translation = center;
+        }
+        if tf.scale != target_scale {
+            tf.scale = target_scale;
+        }
+        if let Some(mat) = sn_mats.get(&mat_handle.0)
+            && mat.uniforms != next_u
+            && let Some(mut mat_mut) = sn_mats.get_mut(&mat_handle.0)
+        {
+            mat_mut.uniforms = next_u;
+        }
+    }
+
+    let mut has_light: FxHashSet<Entity> = FxHashSet::default();
+    for (ent, fl, mut light, mut tf) in light_query.iter_mut() {
+        let Some(&(ring, center)) = active_rings.get(&fl.primary_entity) else {
+            if let Ok(mut cmd) = commands.get_entity(ent) {
+                cmd.try_despawn();
+            }
+            continue;
+        };
+        has_light.insert(fl.primary_entity);
+        let p = (ring.timer / ring.max_timer.max(0.1)).clamp(0.0, 1.0);
+        let target_intensity = 4.5e7 * (1.0 - p).powf(2.0);
+        if tf.translation != center {
+            tf.translation = center;
+        }
+        if (light.intensity - target_intensity).abs() > 1e4 {
+            light.intensity = target_intensity;
+        }
+    }
+
+    for (&primary_entity, &(ring, center)) in &active_rings {
+        for is_torus in [false, true] {
+            if !existing_plumes.contains(&(primary_entity, is_torus)) {
+                let (scale, uniforms) = impact_plume_scale_and_uniforms(ring, center, is_torus);
+                let mat_handle = sn_mats.add(SupernovaMaterial { uniforms });
+                commands.spawn((
+                    ImpactPlumeVisual {
+                        primary_entity,
+                        is_torus,
+                    },
+                    Mesh3d(assets.star_mesh.clone()),
+                    MeshMaterial3d(mat_handle),
+                    Transform::from_translation(center).with_scale(scale),
+                    NotShadowCaster,
+                    NotShadowReceiver,
+                ));
+            }
+        }
+        if !has_light.contains(&primary_entity) {
+            commands.spawn((
+                ImpactFlashLight { primary_entity },
+                PointLight {
+                    color: Color::srgb(1.0, 0.68, 0.28),
+                    intensity: 4.5e7,
+                    range: 15.0,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::from_translation(center),
+            ));
+        }
     }
 }

@@ -337,6 +337,20 @@ fn classify_merged_body_type(
         if star_type == BodyType::Protostar && total_mass < 500.0 {
             return BodyType::Protostar;
         }
+        if star_type.is_evolved_giant() && total_mass < 500.0 {
+            if total_mass >= 25.0 {
+                return BodyType::Hypergiant;
+            }
+            if total_mass >= 8.0
+                && !matches!(
+                    star_type,
+                    BodyType::RedSupergiant | BodyType::YellowHypergiant | BodyType::Hypergiant
+                )
+            {
+                return BodyType::RedSupergiant;
+            }
+            return star_type;
+        }
         return classify_body_by_mass_and_comp(total_mass, merged_comp, true);
     }
     if pair.p_type == BodyType::Moon || pair.s_type == BodyType::Moon {
@@ -378,6 +392,7 @@ fn apply_post_merger_thermo_state(
     commands: &mut Commands,
     primary_entity: Entity,
     physics: &InelasticMergerPhysics,
+    was_active_fusion_star: bool,
     rad: &mut Radius,
     t: &mut Temperature,
 ) {
@@ -411,7 +426,10 @@ fn apply_post_merger_thermo_state(
                 (0.000_477 * (physics.total_mass / 0.000_954).powf(0.08)).clamp(0.00035, 0.00085);
             t.0 =
                 t.0.max(800.0 + ((physics.total_mass - 0.0125) / 0.0675).clamp(0.0, 1.0) * 1600.0);
-        } else if physics.updated_type != BodyType::Protostar {
+        } else if physics.updated_type != BodyType::Protostar
+            && !physics.updated_type.is_evolved_giant()
+            && !was_active_fusion_star
+        {
             rad.0 = (SOLAR_RADIUS_AU * physics.total_mass.powf(0.8)).clamp(0.002, 0.12);
             t.0 = (5778.0 * physics.total_mass.powf(0.505)).clamp(3000.0, 48_000.0);
             if let Ok(mut cmd) = commands.get_entity(primary_entity) {
@@ -551,10 +569,19 @@ pub fn handle_inelastic_merger(
         pos.0 = physics.merged_pos;
         vel.0 = physics.merged_vel;
         acc.0 = physics.new_acc;
+        let was_active_fusion_star = pair.p_type.is_star()
+            && !matches!(
+                pair.p_type,
+                BodyType::BrownDwarf
+                    | BodyType::Protostar
+                    | BodyType::TTauriStar
+                    | BodyType::HerbigAeBeStar
+            );
         apply_post_merger_thermo_state(
             ctx.commands,
             pair.primary_entity,
             &physics,
+            was_active_fusion_star,
             &mut rad,
             &mut t,
         );

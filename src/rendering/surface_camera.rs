@@ -7,16 +7,21 @@
 //! drive across the spherical surface with `WASD`, and observe 3D procedural
 //! alien flora, civilization biodomes, and geological formations on the horizon.
 
+use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::math::{DQuat, DVec3};
 use bevy::pbr::{AtmosphereSettings, ContactShadows};
 use bevy::prelude::*;
-use bevy_light::atmosphere::{Atmosphere, ScatteringMedium};
+use bevy_light::atmosphere::Atmosphere;
 
 use crate::game::ui::NotificationToast;
 use crate::rendering::camera::PanOrbitCamera;
+use crate::rendering::materials::PlanetMaterial;
+use crate::rendering::origin::RenderOrigin;
+use crate::rendering::surface_terrain::{
+    cleanup_surface_horizon_effects, sync_surface_horizon_atmosphere_and_shadows,
+};
 use crate::simulation::components::celestial::SpinState;
-use crate::simulation::components::planetary::{PlanetaryClimate, VolatileInventory};
 use crate::simulation::components::{
     BiosphereState, BodyType, CelestialBody, Composition, Mass, Radius, SimPosition, Temperature,
 };
@@ -24,28 +29,6 @@ use crate::simulation::probes::navigation::compute_planet_spin_frame;
 use crate::simulation::probes::{FlightComputer, ProbeStatus, ProbeType, SpaceProbe};
 use crate::simulation::resources::{PlayerInteractionState, SimTime, SimulationConfig};
 use crate::utils::constants::AU_TO_KM;
-
-/// Pre-allocated GPU scattering media for Hillaire analytical atmosphere rendering.
-#[derive(Resource, Clone)]
-pub struct SurfaceAtmosphereMedia {
-    pub earth: Handle<ScatteringMedium>,
-    pub mars: Handle<ScatteringMedium>,
-}
-
-impl FromWorld for SurfaceAtmosphereMedia {
-    fn from_world(world: &mut World) -> Self {
-        if let Some(mut mediums) = world.get_resource_mut::<Assets<ScatteringMedium>>() {
-            let earth = mediums.add(ScatteringMedium::earth(64, 64));
-            let mars = mediums.add(ScatteringMedium::earth(64, 64).with_density_multiplier(0.015));
-            Self { earth, mars }
-        } else {
-            Self {
-                earth: Handle::default(),
-                mars: Handle::default(),
-            }
-        }
-    }
-}
 
 /// Computes an orthonormal right-handed surface tangent frame `(east, up, north)`
 /// where `up` is the unit planetary zenith normal and `north` is the forward
@@ -252,7 +235,77 @@ type SurfaceWorldQueryItem<'a> = (
     Option<&'a SpinState>,
     Option<&'a BiosphereState>,
     Option<&'a Transform>,
+    Option<&'a MeshMaterial3d<PlanetMaterial>>,
 );
+
+/// Resolves the exact `(spin_dir, spin_angle, spin_axis_vec4)` of a host world, reading directly
+/// from its active `PlanetMaterial` uniform when available so the surface camera is 100% phase-locked
+/// with `planet.wesl` and `atmosphere.wesl`, or falling back to `compute_planet_spin_frame` in headless tests.
+pub fn resolve_host_planet_spin_state(
+    opt_spin: Option<&SpinState>,
+    elapsed_years: f64,
+    opt_mat_handle: Option<&MeshMaterial3d<PlanetMaterial>>,
+    opt_materials: Option<&Assets<PlanetMaterial>>,
+) -> (DVec3, f64, Vec4) {
+    let (fallback_dir, fallback_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
+    if let Some(mat) = opt_mat_handle
+        .zip(opt_materials)
+        .and_then(|(h, mats)| mats.get(&h.0))
+    {
+        let u = &mat.extension.uniforms;
+        let axis_v3 = u.spin_axis.xyz();
+        let spin_dir = if axis_v3.length_squared() > 0.01 {
+            axis_v3.normalize().as_dvec3()
+        } else {
+            fallback_dir
+        };
+        return (spin_dir, f64::from(u.spin_angle), u.spin_axis);
+    }
+    let axis_v4 = Vec4::new(
+        fallback_dir.x as f32,
+        fallback_dir.y as f32,
+        fallback_dir.z as f32,
+        0.0,
+    );
+    (fallback_dir, fallback_angle, axis_v4)
+}
+
+/// Maps `(unspun_norm, heading_unspun)` to world-space `(world_up, world_heading)`:
+/// - When mounted on a landed Rover (`is_rover == true`), rotates in the rover's `spin_dir` frame.
+/// - When standing directly on a planet/moon (`is_rover == false`), maps from `p_surf` body coordinates
+///   via `p_surf_to_world_normal`, matching `planet.wesl::get_spun_p_surf` 1:1 and keeping local north
+///   aligned with the planet's true 3D rotational pole (`spin_dir`) without precession wobble.
+#[inline]
+pub fn resolve_surface_world_up_and_heading(
+    unspun_norm: Vec3,
+    heading_unspun: Vec3,
+    spin_dir: DVec3,
+    spin_angle: f64,
+    spin_axis_v4: Vec4,
+    is_rover: bool,
+) -> (Vec3, Vec3) {
+    if is_rover {
+        let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
+        (
+            (spin_rot * unspun_norm).normalize_or_zero(),
+            (spin_rot * heading_unspun).normalize_or_zero(),
+        )
+    } else {
+        let ang = spin_angle as f32;
+        (
+            crate::rendering::effects::impact_debris::p_surf_to_world_normal(
+                unspun_norm,
+                spin_axis_v4,
+                ang,
+            ),
+            crate::rendering::effects::impact_debris::p_surf_to_world_normal(
+                heading_unspun,
+                spin_axis_v4,
+                ang,
+            ),
+        )
+    }
+}
 
 fn extract_probe_surface_vectors(probe: &SpaceProbe) -> (Vec3, Vec3) {
     let unspun = probe
@@ -283,7 +336,7 @@ fn resolve_surface_vantage_point(
             return Some((comp.target_entity, Some(probe_ent), unspun, h));
         }
 
-        if let Ok((.., body, _, _, _)) = worlds_query.get(ent)
+        if let Ok((.., body, _, _, _, _)) = worlds_query.get(ent)
             && !body.body_type.is_star_or_remnant()
         {
             for (probe_ent, probe, comp, _) in probes_query.iter() {
@@ -307,7 +360,7 @@ fn resolve_surface_vantage_point(
                 && (!require_landed || probe.status == ProbeStatus::Landed)
                 && worlds_query
                     .get(comp.target_entity)
-                    .is_ok_and(|(.., b, _, _, _)| !b.body_type.is_star_or_remnant())
+                    .is_ok_and(|(.., b, _, _, _, _)| !b.body_type.is_star_or_remnant())
             {
                 let (unspun, h) = extract_probe_surface_vectors(probe);
                 return Some((comp.target_entity, Some(probe_ent), unspun, h));
@@ -316,7 +369,7 @@ fn resolve_surface_vantage_point(
     }
 
     // Otherwise fall back to the first non-star world in the system
-    for (world_ent, .., body, _, _, _) in worlds_query.iter() {
+    for (world_ent, .., body, _, _, _, _) in worlds_query.iter() {
         if !body.body_type.is_star_or_remnant() {
             let u = lat_lon_to_unspun_normal(surface_lat_lon.x, surface_lat_lon.y);
             return Some((world_ent, None, u, Vec3::Y));
@@ -324,17 +377,6 @@ fn resolve_surface_vantage_point(
     }
 
     None
-}
-
-fn compute_effective_surface_radius(
-    _unspun_norm: Vec3,
-    _comp: &Composition,
-    _temp_k: f32,
-    _body_type: BodyType,
-    _opt_bio: Option<&BiosphereState>,
-    vis_rad: f32,
-) -> f32 {
-    vis_rad
 }
 
 fn read_surface_mouse_and_scroll_deltas(
@@ -367,7 +409,7 @@ fn read_surface_mouse_and_scroll_deltas(
 #[inline]
 fn sync_orbital_near_plane(projection: &mut Projection, orbital_radius: f32) {
     if let Projection::Perspective(ref mut p) = *projection {
-        let desired_near = (orbital_radius.max(1e-6) * 0.02).clamp(1e-7, 0.0001);
+        let desired_near = (orbital_radius.max(1e-9) * 0.015).clamp(1e-10, 0.001);
         if (p.near - desired_near).abs() > desired_near * 0.05 {
             p.near = desired_near;
         }
@@ -421,6 +463,7 @@ type ActiveSurfaceWorld<'a> = (
     Option<&'a SpinState>,
     Option<&'a BiosphereState>,
     Option<&'a Transform>,
+    Option<&'a MeshMaterial3d<PlanetMaterial>>,
 );
 
 fn resolve_surface_host_and_world<'a>(
@@ -438,7 +481,7 @@ fn resolve_surface_host_and_world<'a>(
         worlds_query,
         probes_query,
     )?;
-    let (_, pos, radius, _mass, temp, comp, body, opt_spin, opt_bio, opt_t) =
+    let (_, pos, radius, _mass, temp, comp, body, opt_spin, opt_bio, opt_t, opt_mat) =
         worlds_query.get(host_ent).ok()?;
     Some((
         host_ent,
@@ -453,17 +496,18 @@ fn resolve_surface_host_and_world<'a>(
         opt_spin,
         opt_bio,
         opt_t,
+        opt_mat,
     ))
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "Coordinates surface horizon pose, rover driving, and atmospheric lighting"
+    reason = "Coordinates surface horizon pose, rover driving, and prepass/atmosphere cleanup"
 )]
 fn apply_surface_horizon_view(
     mut commands: Commands,
     cam_entity: Entity,
-    flags: (bool, bool),
+    flags: (bool, bool, bool),
     camera: &mut PanOrbitCamera,
     transform: &mut Transform,
     projection: &mut Projection,
@@ -476,24 +520,32 @@ fn apply_surface_horizon_view(
         (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
         Without<PanOrbitCamera>,
     >,
-    atmospheres_query: &Query<
-        (
-            Option<&VolatileInventory>,
-            Option<&PlanetaryClimate>,
-            Has<Atmosphere>,
-        ),
-        Without<PanOrbitCamera>,
-    >,
     all_atmospheres: &Query<Entity, With<Atmosphere>>,
-    atmosphere_media: Option<&SurfaceAtmosphereMedia>,
-    show_atmospheres: bool,
+    planet_materials: Option<&Assets<PlanetMaterial>>,
+    opt_origin: Option<&RenderOrigin>,
 ) {
-    let (host, rover, unspun_norm, heading_unspun, pos, rad, temp, comp, body, spin, bio, t) =
-        world;
+    let (
+        _host,
+        rover,
+        unspun_norm,
+        heading_unspun,
+        pos,
+        rad,
+        _temp,
+        _comp,
+        body,
+        spin,
+        _bio,
+        t,
+        mat,
+    ) = world;
+    let origin = opt_origin.copied().unwrap_or_default();
     let (eff_r, vis_r, planet_pos, up, heading) = resolve_and_drive_surface_geometry(
         rover,
         spin,
         t,
+        mat,
+        planet_materials,
         rad.0,
         body.body_type,
         pos.0,
@@ -501,32 +553,39 @@ fn apply_surface_horizon_view(
         sim_time,
         probes_query,
         camera,
+        opt_origin,
         forward_drive,
         turn_drive,
-        comp,
-        temp.0,
-        bio,
         unspun_norm,
         heading_unspun,
     );
     compute_and_apply_surface_pose(
-        camera, transform, projection, planet_pos, eff_r, vis_r, up, heading, dt,
+        camera, transform, projection, planet_pos, eff_r, vis_r, up, heading, dt, origin,
     );
     sync_surface_horizon_atmosphere_and_shadows(
         &mut commands,
         cam_entity,
-        host,
         flags.1,
         flags.0,
-        eff_r,
-        comp,
-        temp.0 as f32,
-        atmospheres_query,
+        flags.2,
         all_atmospheres,
-        atmosphere_media,
-        show_atmospheres,
     );
 }
+
+type SurfaceCameraQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut PanOrbitCamera,
+        &'static mut Transform,
+        &'static mut Projection,
+        Has<AtmosphereSettings>,
+        Has<ContactShadows>,
+        Has<DepthPrepass>,
+    ),
+    Without<SpaceProbe>,
+>;
 
 /// Synchronizes the 3D camera transform, near clipping plane, and manual rover driving
 /// when First-Person Surface / Rover Horizon Mode (`Shift + V`) is active.
@@ -536,7 +595,8 @@ fn apply_surface_horizon_view(
 )]
 pub fn update_surface_horizon_camera(
     mut commands: Commands,
-    atmosphere_media: Option<Res<SurfaceAtmosphereMedia>>,
+    planet_materials: Option<Res<Assets<PlanetMaterial>>>,
+    opt_origin: Option<Res<RenderOrigin>>,
     (mouse_buttons, keyboard_input, mut mouse_motion_events, mut mouse_wheel_events): (
         Res<ButtonInput<MouseButton>>,
         Res<ButtonInput<KeyCode>>,
@@ -548,26 +608,8 @@ pub fn update_surface_horizon_camera(
     sim_time: Option<Res<SimTime>>,
     time: Option<Res<Time>>,
     mut toast: ResMut<NotificationToast>,
-    mut camera_query: Query<
-        (
-            Entity,
-            &mut PanOrbitCamera,
-            &mut Transform,
-            &mut Projection,
-            Has<AtmosphereSettings>,
-            Has<ContactShadows>,
-        ),
-        Without<SpaceProbe>,
-    >,
+    mut camera_query: SurfaceCameraQuery,
     worlds_query: Query<SurfaceWorldQueryItem, (Without<SpaceProbe>, Without<PanOrbitCamera>)>,
-    atmospheres_query: Query<
-        (
-            Option<&VolatileInventory>,
-            Option<&PlanetaryClimate>,
-            Has<Atmosphere>,
-        ),
-        Without<PanOrbitCamera>,
-    >,
     all_atmospheres: Query<Entity, With<Atmosphere>>,
     mut probes_query: Query<
         (Entity, &mut SpaceProbe, &FlightComputer, &mut SimPosition),
@@ -578,8 +620,15 @@ pub fn update_surface_horizon_camera(
         Query<(), With<bevy::text::EditableText>>,
     ),
 ) {
-    let Ok((cam_entity, mut camera, mut transform, mut projection, has_atm, has_shadows)) =
-        camera_query.single_mut()
+    let Ok((
+        cam_entity,
+        mut camera,
+        mut transform,
+        mut projection,
+        has_atm,
+        has_shadows,
+        has_depth_prepass,
+    )) = camera_query.single_mut()
     else {
         return;
     };
@@ -603,6 +652,7 @@ pub fn update_surface_horizon_camera(
             cam_entity,
             has_atm,
             has_shadows,
+            has_depth_prepass,
             &all_atmospheres,
         );
         sync_orbital_near_plane(&mut projection, camera.radius);
@@ -622,6 +672,7 @@ pub fn update_surface_horizon_camera(
             cam_entity,
             has_atm,
             has_shadows,
+            has_depth_prepass,
             &all_atmospheres,
         );
         toast.message =
@@ -637,7 +688,7 @@ pub fn update_surface_horizon_camera(
     apply_surface_horizon_view(
         commands,
         cam_entity,
-        (has_atm, has_shadows),
+        (has_atm, has_shadows, has_depth_prepass),
         &mut camera,
         &mut transform,
         &mut projection,
@@ -647,10 +698,9 @@ pub fn update_surface_horizon_camera(
         sim_time.as_deref(),
         dt,
         &mut probes_query,
-        &atmospheres_query,
         &all_atmospheres,
-        atmosphere_media.as_deref(),
-        player_state.show_atmospheres(),
+        planet_materials.as_deref(),
+        opt_origin.as_deref(),
     );
 }
 
@@ -662,6 +712,8 @@ fn resolve_and_drive_surface_geometry(
     opt_rover_ent: Option<Entity>,
     opt_spin: Option<&SpinState>,
     opt_t: Option<&Transform>,
+    opt_mat_handle: Option<&MeshMaterial3d<PlanetMaterial>>,
+    opt_materials: Option<&Assets<PlanetMaterial>>,
     radius_au: f64,
     body_type: BodyType,
     pos_au: DVec3,
@@ -672,24 +724,22 @@ fn resolve_and_drive_surface_geometry(
         Without<PanOrbitCamera>,
     >,
     camera: &mut PanOrbitCamera,
+    opt_origin: Option<&RenderOrigin>,
     forward_drive: f32,
     turn_drive: f32,
-    comp: &Composition,
-    temp_k: f64,
-    opt_bio: Option<&BiosphereState>,
     mut unspun_norm: Vec3,
     mut heading_unspun: Vec3,
 ) -> (f32, f32, Vec3, Vec3, Vec3) {
+    let origin = opt_origin.copied().unwrap_or_default();
     let elapsed_years = opt_sim_time.map_or(0.0, |st| st.elapsed_years);
-    let (spin_dir, spin_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
+    let (spin_dir, spin_angle, spin_axis_v4) =
+        resolve_host_planet_spin_state(opt_spin, elapsed_years, opt_mat_handle, opt_materials);
     let spin_rot_d = DQuat::from_axis_angle(spin_dir, spin_angle);
-    let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
-    let vis_rad = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+    let vis_rad = crate::rendering::bodies::transforms::resolve_surface_mode_visual_radius(
         opt_t,
         radius_au,
         body_type,
         pos_au.length() as f32,
-        0.001,
         config,
     );
 
@@ -709,109 +759,30 @@ fn resolve_and_drive_surface_geometry(
         );
     }
 
-    let effective_rad = compute_effective_surface_radius(
+    let raw_pos = origin.to_render(pos_au);
+    let planet_pos = if opt_origin.is_none()
+        && camera.target_focus.length_squared() > 1e-6
+        && camera.target_focus.distance(raw_pos) < 0.05
+    {
+        camera.target_focus
+    } else if opt_origin.is_none()
+        && let Some(tf) = opt_t
+        && tf.translation.length_squared() > 1e-6
+        && tf.translation.distance(raw_pos) < 0.05
+    {
+        tf.translation
+    } else {
+        raw_pos
+    };
+    let (world_up, world_heading) = resolve_surface_world_up_and_heading(
         unspun_norm,
-        comp,
-        temp_k as f32,
-        body_type,
-        opt_bio,
-        vis_rad,
+        heading_unspun,
+        spin_dir,
+        spin_angle,
+        spin_axis_v4,
+        opt_rover_ent.is_some(),
     );
-
-    let planet_pos = pos_au.as_vec3();
-    let world_up = (spin_rot * unspun_norm).normalize_or_zero();
-    let world_heading = (spin_rot * heading_unspun).normalize_or_zero();
-    (effective_rad, vis_rad, planet_pos, world_up, world_heading)
-}
-
-fn cleanup_surface_horizon_effects(
-    commands: &mut Commands,
-    cam_entity: Entity,
-    has_atmosphere_settings: bool,
-    has_contact_shadows: bool,
-    all_atmospheres: &Query<Entity, With<Atmosphere>>,
-) {
-    if has_atmosphere_settings {
-        commands.entity(cam_entity).remove::<AtmosphereSettings>();
-    }
-    if has_contact_shadows {
-        commands.entity(cam_entity).remove::<ContactShadows>();
-    }
-    for ent in all_atmospheres.iter() {
-        commands.entity(ent).remove::<Atmosphere>();
-    }
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Synchronizes Hillaire sky rendering, contact shadows, and host world atmosphere state"
-)]
-fn sync_surface_horizon_atmosphere_and_shadows(
-    commands: &mut Commands,
-    cam_entity: Entity,
-    host_ent: Entity,
-    has_contact_shadows: bool,
-    has_atmosphere_settings: bool,
-    effective_rad: f32,
-    comp: &Composition,
-    temp_k: f32,
-    atmospheres_query: &Query<
-        (
-            Option<&VolatileInventory>,
-            Option<&PlanetaryClimate>,
-            Has<Atmosphere>,
-        ),
-        Without<PanOrbitCamera>,
-    >,
-    all_atmospheres: &Query<Entity, With<Atmosphere>>,
-    atmosphere_media: Option<&SurfaceAtmosphereMedia>,
-    show_atmospheres: bool,
-) {
-    if !has_contact_shadows {
-        commands.entity(cam_entity).insert(ContactShadows {
-            linear_steps: 16,
-            thickness: 0.15,
-            length: 0.35,
-        });
-    }
-
-    let (opt_volatiles, opt_climate, has_atmosphere_comp) = atmospheres_query
-        .get(host_ent)
-        .unwrap_or((None, None, false));
-
-    let has_atmosphere = show_atmospheres
-        && (opt_volatiles.is_some_and(|v| v.atmospheric_pressure_bar >= 0.005)
-            || opt_climate.is_some()
-            || comp.gas_frac > 0.05);
-
-    for ent in all_atmospheres.iter() {
-        if ent != host_ent || !has_atmosphere {
-            commands.entity(ent).remove::<Atmosphere>();
-        }
-    }
-
-    if has_atmosphere {
-        if !has_atmosphere_settings {
-            commands
-                .entity(cam_entity)
-                .insert(AtmosphereSettings::default());
-        }
-        if !has_atmosphere_comp && let Some(media) = atmosphere_media {
-            let medium = if comp.silicate_frac > 0.6 && comp.metal_frac > 0.2 && temp_k < 270.0 {
-                media.mars.clone()
-            } else {
-                media.earth.clone()
-            };
-            commands.entity(host_ent).insert(Atmosphere {
-                inner_radius: effective_rad,
-                outer_radius: effective_rad * 1.05,
-                ground_albedo: Vec3::splat(opt_climate.map_or(0.3, |c| c.albedo)),
-                medium,
-            });
-        }
-    } else if has_atmosphere_settings {
-        commands.entity(cam_entity).remove::<AtmosphereSettings>();
-    }
+    (vis_rad, vis_rad, planet_pos, world_up, world_heading)
 }
 
 #[allow(
@@ -828,6 +799,7 @@ fn compute_and_apply_surface_pose(
     world_up: Vec3,
     world_heading: Vec3,
     dt: f32,
+    origin: RenderOrigin,
 ) {
     let (eye_pos, eye_rot) = compute_surface_horizon_camera_pose(
         planet_pos,
@@ -838,9 +810,9 @@ fn compute_and_apply_surface_pose(
         camera.surface_azimuth,
         camera.surface_elevation,
     );
-    apply_surface_entry_descent(camera, transform, eye_pos, eye_rot, planet_pos, dt);
+    apply_surface_entry_descent(camera, transform, eye_pos, eye_rot, planet_pos, dt, origin);
     if let Projection::Perspective(ref mut p) = *projection {
-        p.near = (vis_rad * 0.0005).clamp(1e-8, 0.00001);
+        p.near = (vis_rad * 0.0005).clamp(1e-11, 0.00001);
     }
 }
 
@@ -852,6 +824,7 @@ fn apply_surface_entry_descent(
     eye_rot: Quat,
     planet_pos: Vec3,
     dt: f32,
+    origin: RenderOrigin,
 ) {
     if camera.entry_transition_progress < 1.0 && dt > 0.0 {
         if camera.surface_entry_start_offset == Vec3::ZERO {
@@ -874,8 +847,8 @@ fn apply_surface_entry_descent(
         transform.rotation = eye_rot;
     }
 
-    camera.focus = eye_pos;
-    camera.target_focus = planet_pos;
+    camera.set_focus_au(origin.to_sim(eye_pos));
+    camera.set_target_focus_au(origin.to_sim(planet_pos));
 }
 
 #[allow(
@@ -928,17 +901,19 @@ pub fn draw_surface_horizon_environment_gizmos(
         Without<PanOrbitCamera>,
     >,
     sim_time: Option<Res<SimTime>>,
+    planet_materials: Option<Res<Assets<PlanetMaterial>>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<RenderOrigin>>,
 ) {
     let Ok(camera) = camera_query.single() else {
         return;
     };
-    if !camera.surface_horizon_mode {
+    if !camera.surface_horizon_mode || camera.entry_transition_progress >= 1.0 {
         return;
     }
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
 
-    let Some((host_ent, _, unspun_norm, heading_unspun)) = resolve_surface_vantage_point(
+    let Some((host_ent, opt_rover, unspun_norm, heading_unspun)) = resolve_surface_vantage_point(
         camera.target_entity,
         camera.surface_lat_lon,
         &worlds_query,
@@ -947,26 +922,35 @@ pub fn draw_surface_horizon_environment_gizmos(
         return;
     };
 
-    let Ok((_, pos, radius, _mass, _temp, _comp, body, opt_spin, _opt_bio, opt_t)) =
+    let Ok((_, pos, radius, _mass, _temp, _comp, body, opt_spin, _opt_bio, opt_t, opt_mat)) =
         worlds_query.get(host_ent)
     else {
         return;
     };
 
-    let planet_pos = pos.0.as_vec3();
-    let vis_rad = crate::rendering::bodies::transforms::resolve_synced_visual_radius(
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let planet_pos = origin.to_render(pos.0);
+    let vis_rad = crate::rendering::bodies::transforms::resolve_surface_mode_visual_radius(
         opt_t,
         radius.0,
         body.body_type,
         pos.0.length() as f32,
-        0.001,
         &config,
     );
-    let (spin_dir, spin_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
-    let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
-
-    let world_up = (spin_rot * unspun_norm).normalize_or_zero();
-    let world_heading = (spin_rot * heading_unspun).normalize_or_zero();
+    let (spin_dir, spin_angle, spin_axis_v4) = resolve_host_planet_spin_state(
+        opt_spin,
+        elapsed_years,
+        opt_mat,
+        planet_materials.as_deref(),
+    );
+    let (world_up, world_heading) = resolve_surface_world_up_and_heading(
+        unspun_norm,
+        heading_unspun,
+        spin_dir,
+        spin_angle,
+        spin_axis_v4,
+        opt_rover.is_some(),
+    );
     let (east, up, north) = compute_surface_tangent_basis(world_up, world_heading);
 
     // Draw Holographic Surface Compass & Horizon Clinometer Ring on the planet's surface

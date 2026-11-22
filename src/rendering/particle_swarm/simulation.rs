@@ -597,6 +597,9 @@ pub fn apply_particle_accretion_to_bodies(
     gas_scale: f32,
     disk_params: &DiskParameters,
 ) {
+    if accreted_events.is_empty() && pending_gpu_accretions.is_empty() {
+        return;
+    }
     let mut mass_gains: rustc_hash::FxHashMap<Entity, f64> = rustc_hash::FxHashMap::default();
     for (ent, delta_m) in accreted_events {
         *mass_gains.entry(ent).or_insert(0.0) += delta_m;

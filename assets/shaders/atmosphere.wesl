@@ -44,7 +44,7 @@ fn ray_sphere_intersect(ro: vec3<f32>, rd: vec3<f32>, center: vec3<f32>, radius:
 fn directional_shape_scale(unit_dir: vec3<f32>) -> f32 {
     var scale = 1.0;
     let cam_alt_ratio = length(view.world_position - atmo.planet_center.xyz)
-        / max(atmo.optical_params.z, 1e-6);
+        / max(atmo.optical_params.z, 1e-10);
     let surface_mode_blend = smoothstep(1.06, 1.38, cam_alt_ratio);
     let oblate = clamp(atmo.spin_axis.w, 0.0, 0.25) * surface_mode_blend;
     if (oblate > 0.001) {
@@ -141,7 +141,7 @@ fn render_stellar_corona_and_diffraction(
     let closest_pos = ray_origin + ray_dir * t_closest;
     let p_rel = closest_pos - center;
     let b_dist = length(p_rel);
-    let unit_dir = p_rel / max(b_dist, 1e-5);
+    let unit_dir = p_rel / max(b_dist, 1e-10);
 
     let shape_scale = directional_shape_scale(unit_dir);
     let r_star = r_star_base * shape_scale;
@@ -155,7 +155,7 @@ fn render_stellar_corona_and_diffraction(
     let hit_star = ray_sphere_intersect(ray_origin, ray_dir, center, r_star);
     let hits_disk = hit_star.x > 0.0 && b_dist < r_star * 0.985;
 
-    let corona_thickness = max(r_outer - r_star, 0.0001);
+    let corona_thickness = max(r_outer - r_star, 1e-10);
     let rho = clamp((b_dist - r_star) / corona_thickness, 0.0, 1.0);
     let edge_fade = 1.0 - smoothstep(0.68, 1.0, rho);
 
@@ -440,7 +440,10 @@ fn evaluate_surface_sky_clouds(
 }
 
 @fragment
-fn fragment(in: VertexOutput) -> FragmentOutput {
+fn fragment(
+    in: VertexOutput,
+    @builtin(front_facing) is_front: bool,
+) -> FragmentOutput {
     var out: FragmentOutput;
 
     // Camera-relative eye coordinates: transforms ray origin to origin (0,0,0) and
@@ -448,9 +451,17 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // float precision at any distance (e.g. Planet 9 at 361 AU), eliminating polygonal faceting.
     let ray_origin = vec3<f32>(0.0);
     let center = atmo.planet_center.xyz - view.world_position;
+    let cam_dist = length(center);
     let ray_dir = normalize(in.world_position.xyz - view.world_position);
     let r_planet = atmo.optical_params.z;
     let r_atmo = atmo.optical_params.w;
+
+    // Discard back-faces whenever camera is outside the atmosphere/corona shell to eliminate
+    // 2x overdraw and double-blending before running ray-sphere intersections or diffraction spikes.
+    let max_stretch = 1.0 + clamp(atmo.tidal_deformation.w, 0.0, 0.85) * 1.15 + clamp(atmo.spin_axis.w, 0.0, 0.25) * 0.35;
+    if (!is_front && cam_dist > r_atmo * max_stretch * 1.32) {
+        discard;
+    }
 
     // 3D Planetary Internal Cutaway Mode: discard atmosphere in the primary +X / +Z quadrant
     let atmo_flags = u32(round(max(atmo.ring_and_ozone_params.w, 0.0)));
@@ -487,7 +498,6 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     }
 
     // Account for maximum tidal/oblate expansion on bounding sphere intersection
-    let max_stretch = 1.0 + clamp(atmo.tidal_deformation.w, 0.0, 0.85) * 1.15 + clamp(atmo.spin_axis.w, 0.0, 0.25) * 0.35;
     let hit_atmo = ray_sphere_intersect(ray_origin, ray_dir, center, r_atmo * max_stretch);
     if (hit_atmo.y <= 0.0) {
         out.color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -502,8 +512,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let r_atmo_def = r_atmo * local_shape;
 
     // Detect Surface Horizon Mode / low-altitude camera inside or on mountain peaks of the planet
-    let cam_dist = length(center);
-    let cam_alt_ratio = cam_dist / max(r_planet_def, 1e-6);
+    let cam_alt_ratio = cam_dist / max(r_planet_def, 1e-10);
     let is_surface_view = cam_alt_ratio < 1.42;
     // Prevent double-rendering of the outer atmospheric limb when the camera is outside the double-sided mesh
     let frag_rel = (in.world_position.xyz - view.world_position) - center;
@@ -511,11 +520,11 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         discard;
     }
     let surface_blend = smoothstep(1.42, 1.15, cam_alt_ratio);
-    let cam_up_zenith = -center / max(cam_dist, 1e-6);
+    let cam_up_zenith = -center / max(cam_dist, 1e-10);
     let view_elev_sin = dot(ray_dir, cam_up_zenith);
 
     // Ensure the effective atmosphere shell always encompasses the camera even on high mountain peaks
-    let r_ground_eff = select(r_planet_def, min(r_planet_def, cam_dist * 0.992), is_surface_view);
+    let r_ground_eff = select(r_planet_def, min(r_planet_def, cam_dist * 0.9992), is_surface_view);
     let r_atmo_eff = select(r_atmo_def, max(r_atmo_def, cam_dist + r_planet_def * 0.12), is_surface_view);
 
     let hit_atmo_def = ray_sphere_intersect(ray_origin, ray_dir, center, r_atmo_eff);
@@ -527,10 +536,12 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let t_start = max(hit_atmo_def.x, 0.0);
     var t_end = hit_atmo_def.y;
 
-    // Ray-sphere intersection with deformed inner solid planet
+    // Ray-sphere intersection with deformed inner solid planet (in surface view, the opaque
+    // planet mesh's hardware depth buffer already occludes all ground pixels so every visible
+    // atmosphere pixel is sky and must march smoothly to hit_atmo_def.y without a horizon band).
     let hit_planet = ray_sphere_intersect(ray_origin, ray_dir, center, r_ground_eff);
     var hit_ground = false;
-    if (hit_planet.x > 0.0 && (!is_surface_view || view_elev_sin < -0.10)) {
+    if (!is_surface_view && hit_planet.x > 0.0) {
         t_end = min(t_end, hit_planet.x);
         hit_ground = true;
     }
@@ -582,7 +593,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let step_count = select(7, 5, hit_ground && !is_surface_view);
     let step_size = (t_end - t_start) / f32(step_count);
     let pressure_scale = clamp(pow(max(pressure, 0.01), 0.28), 0.22, 2.2);
-    let path_norm_unit = mix(max(r_planet_def * 0.22, 1e-6), max(atmo_thickness * 0.52, 1e-6), surface_blend);
+    let path_norm_unit = mix(max(r_planet_def * 0.22, 1e-10), max(atmo_thickness * 0.52, 1e-10), surface_blend);
     let step_norm = (step_size / path_norm_unit) * pressure_scale;
     let h_r_norm = h_r / path_norm_unit;
     let h_m_norm = h_m / path_norm_unit;
@@ -609,8 +620,8 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         let sample_pos = ray_origin + ray_dir * t_sample;
         let p_rel = sample_pos - center;
         let sample_dist = length(p_rel);
-        let norm_p = p_rel / max(sample_dist, 1e-6);
-        let step_shape = directional_shape_scale(norm_p);
+        let norm_p = p_rel / max(sample_dist, 1e-10);
+        let step_shape = select(1.0, directional_shape_scale(norm_p), !is_surface_view);
         let r_p_step = select(r_planet * step_shape, r_ground_eff, is_surface_view);
         let r_a_step = select(r_atmo * step_shape, r_atmo_eff, is_surface_view);
         let alt = max(sample_dist - r_p_step, 0.0);
@@ -639,7 +650,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         }
 
         // 3D Volumetric Ring Shadow God-Rays through the atmosphere shell
-        let ring_trans = evaluate_ring_shadow_transmittance(p_rel / max(r_p_step, 1e-6), star_dir, s_axis);
+        let ring_trans = evaluate_ring_shadow_transmittance(p_rel / max(r_p_step, 1e-10), star_dir, s_axis);
         sun_visible *= ring_trans;
 
         // Sunlight optical depth from sample point using spherical Chapman airmass
@@ -680,7 +691,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
             let night_vis = max(smoothstep(0.06, -0.26, mu_s), dayside_cusp);
 
             if (oval_ring * pole_fade * night_vis > 0.004) {
-                let step_atmo_thick = max(r_a_step - r_p_step, 1e-6);
+                let step_atmo_thick = max(r_a_step - r_p_step, 1e-10);
                 let alt_frac = alt / step_atmo_thick;
                 let iono_layer = smoothstep(0.14, 0.42, alt_frac) * smoothstep(0.98, 0.62, alt_frac);
 
@@ -740,7 +751,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let closest_pos = ray_origin + ray_dir * t_closest;
     let closest_rel = closest_pos - center;
     let closest_shape = directional_shape_scale(normalize(closest_rel));
-    let rim_norm = (length(closest_rel) - r_planet * closest_shape) / max((r_atmo - r_planet) * closest_shape, 1e-6);
+    let rim_norm = (length(closest_rel) - r_planet * closest_shape) / max((r_atmo - r_planet) * closest_shape, 1e-10);
     if (!is_surface_view && (rim_norm >= 1.0 || hit_atmo_def.y <= 0.0)) {
         discard;
     }

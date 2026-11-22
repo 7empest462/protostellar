@@ -582,25 +582,25 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let star_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(5)
+            .ico(16)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 32)),
     );
     let star_mesh_hires = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(6)
+            .ico(48)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(96, 64)),
     );
     let planet_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(5)
+            .ico(16)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(48, 32)),
     );
     let planet_mesh_hires = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(6)
+            .ico(48)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(96, 64)),
     );
     let particle_mesh = meshes.add(
@@ -662,7 +662,7 @@ pub fn setup_visual_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let atmosphere_mesh = meshes.add(
         Sphere::new(1.0)
             .mesh()
-            .ico(4)
+            .ico(16)
             .unwrap_or_else(|_| Sphere::new(1.0).mesh().uv(32, 24)),
     );
     let pulsar_beam_mesh = meshes.add(generate_pulsar_beam_mesh());
@@ -838,21 +838,31 @@ pub fn select_body_mesh(
     }
 }
 
-/// Dynamically upgrades the focused/selected celestial body to a higher-subdivision `ico(6)`
-/// mesh (81,920 triangles) for smooth silhouettes on close-up worlds, while
-/// preserving lightweight `ico(5)` meshes for all distant worlds.
+/// Dynamically upgrades the focused/selected celestial body to a higher-subdivision `ico(48)`
+/// mesh (24,012 vertices / 48,020 triangles) for smooth circular silhouettes on close-up and
+/// surface worlds, while preserving lightweight `ico(16)` meshes (5,780 triangles) for distant worlds.
 pub fn sync_selected_body_mesh_lod(
     player_state: Option<Res<crate::simulation::resources::PlayerInteractionState>>,
     visual_assets: Option<Res<VisualAssets>>,
+    camera_query: Query<&crate::rendering::camera::PanOrbitCamera>,
+    probes_query: Query<&crate::simulation::probes::FlightComputer>,
     mut bodies_query: Query<(Entity, &CelestialBody, &mut Mesh3d)>,
 ) {
     let (Some(player_state), Some(visual_assets)) = (player_state, visual_assets) else {
         return;
     };
-    let selected_entity = player_state.selected_entity;
+    let raw_selected = player_state
+        .selected_entity
+        .or_else(|| camera_query.iter().next().and_then(|c| c.target_entity));
+    let selected_host = raw_selected.and_then(|ent| {
+        probes_query
+            .get(ent)
+            .ok()
+            .map_or(Some(ent), |fc| Some(fc.target_entity))
+    });
 
     for (entity, body, mut mesh) in bodies_query.iter_mut() {
-        let is_selected = selected_entity == Some(entity);
+        let is_selected = raw_selected == Some(entity) || selected_host == Some(entity);
         if is_selected {
             if body.body_type.is_star_or_remnant() {
                 if mesh.0 != visual_assets.star_mesh_hires {

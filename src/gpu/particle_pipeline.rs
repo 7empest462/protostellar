@@ -320,6 +320,7 @@ fn prepare_gpu_particle_pull_resources(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     views: Query<&ExtractedView>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     disk_params: Option<Res<GpuSimExtractedParams>>,
     disk_engine: Option<Res<GpuParticleOrbitEngine>>,
     galaxy_params: Option<Res<GpuGalaxyExtractedParams>>,
@@ -348,17 +349,25 @@ fn prepare_gpu_particle_pull_resources(
     );
     let device = render_device.wgpu_device();
     let layout = pipeline_cache.get_bind_group_layout(&pull_pipeline.bind_group_layout);
+    let origin_v = opt_origin
+        .as_deref()
+        .copied()
+        .unwrap_or_default()
+        .0
+        .as_vec3();
+    let sim_to_render = Mat4::from_translation(-origin_v);
 
     for view in &views {
         let clip_from_world = view
             .clip_from_world
             .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
+        let clip_from_sim = clip_from_world * sim_to_render;
         let cam_right = view.world_from_view.right().as_vec3();
         let cam_up = view.world_from_view.up().as_vec3();
-        let cam_pos = view.world_from_view.translation();
+        let cam_pos = view.world_from_view.translation() + origin_v;
 
         let uniforms = GpuParticlePullUniforms {
-            clip_from_world: clip_from_world.to_cols_array_2d(),
+            clip_from_world: clip_from_sim.to_cols_array_2d(),
             camera_right_and_base_r: [cam_right.x, cam_right.y, cam_right.z, base_render_r],
             camera_up_and_scale: [cam_up.x, cam_up.y, cam_up.z, source.render_scale],
             camera_pos_and_base_mass: [cam_pos.x, cam_pos.y, cam_pos.z, source.base_mass],

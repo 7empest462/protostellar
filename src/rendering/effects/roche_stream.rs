@@ -192,7 +192,7 @@ fn compute_roche_stream_pose(
     // (~32% of donor_vis_r, pinching to a sleek ~16% filament), preventing gigantic megatubes in wide orbits.
     let target_star_fit = (donor_vis_r * 0.32) / 0.050;
     let max_cross = (span * 0.25).max(donor_vis_r * 4.0);
-    let min_cross = (donor_vis_r * 1.5).min(span * 0.10).max(0.001);
+    let min_cross = (donor_vis_r * 1.5).min(span * 0.10).max(1e-7);
     let cross_scale = target_star_fit.clamp(min_cross, max_cross);
     Some((start_pos, rotation, span, cross_scale))
 }
@@ -259,7 +259,9 @@ pub fn update_roche_streams(
     time_warp: Option<Res<crate::simulation::resources::TimeWarp>>,
     config: Res<crate::simulation::resources::SimulationConfig>,
     mut active_streams: Local<HashSet<Entity>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let stream_mesh = if let Some(cache) = mesh_cache {
         cache.0.clone()
     } else {
@@ -284,8 +286,8 @@ pub fn update_roche_streams(
             let acc_vis_r =
                 config.calc_visual_radius_for_type(accretor_rad.0, accretor_body.body_type);
             let Some((start_pos, rotation, span, cross_scale)) = compute_roche_stream_pose(
-                donor_pos.0.as_vec3(),
-                accretor_pos.0.as_vec3(),
+                origin.to_render(donor_pos.0),
+                origin.to_render(accretor_pos.0),
                 donor_vel.0.as_vec3().normalize_or_zero(),
                 donor_vis_r,
                 acc_vis_r,

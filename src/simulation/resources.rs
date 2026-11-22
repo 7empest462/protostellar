@@ -32,11 +32,10 @@ pub struct SimulationConfig {
     /// Global render size multiplier for microscopic dust particles (0.1x - 0.3x for fine dusty haze).
     pub particle_render_scale: f32,
     /// Uniform size exaggeration factor applied to ALL celestial bodies (stars, planets, moons).
-    /// Acts like Universe Sandbox's "Size Scale" slider.
-    /// At 1.0× with power-law compression, the Sun renders at ~0.025 AU visual radius.
-    /// Adjustable at runtime with `,` (decrease) and `.` (increase) keys.
+    /// At `1.0` (default), bodies render at true 1:1 physical radii in AU relative to orbital distances.
+    /// Adjustable at runtime with `,` (decrease) and `Shift+.` (increase) keys.
     pub size_exaggeration: f32,
-    /// Minimum visual radius floor (AU) to prevent tiny bodies (dust, planetesimals) from vanishing.
+    /// Legacy compatibility field retained for serialized configs (true 1:1 scale uses physical radii).
     pub min_body_visual_radius: f32,
     /// Particle swarm density preset tier (100k Standard, 250k High, 500k Ultra).
     pub particle_density: ParticleDensityTier,
@@ -106,144 +105,75 @@ impl Default for SimulationConfig {
 }
 
 impl SimulationConfig {
-    /// Reference radius: 1 Solar Radius in AU (~0.00465 AU)
-    const VISUAL_REF_RADIUS: f32 = 0.00465;
-    /// Base visual size for a body with radius equal to the Sun at 1× exaggeration.
-    const VISUAL_BASE_SIZE: f32 = 0.025;
-    /// Power-law compression exponent. 1.0 = true linear scale, 0.0 = all same size.
-    /// 0.45 compresses the enormous range (planetesimal → supergiant) into a manageable
-    /// visual range while preserving correct ordering and approximate proportionality.
-    const VISUAL_COMPRESSION: f32 = 0.45;
-
-    /// Computes the unified visual render radius from a body's physical radius in AU.
+    /// Computes the zoom-invariant 1:1 visual render radius (in AU) from a body's physical
+    /// radius in AU, scaled linearly by `size_exaggeration` (default `1.0`).
     ///
-    /// Uses power-law compression: `base × (R_phys / R_ref)^power × exaggeration`
-    /// This ensures ALL bodies (stars, planets, moons) share the same scaling law,
-    /// so their visual size ratios are always physically correct.
-    ///
-    /// Example outputs at 1× exaggeration:
-    /// - Sun      (R=0.00465 AU) → 0.025 AU visual radius
-    /// - Jupiter  (R=0.000477 AU) → 0.0087 AU
-    /// - Earth    (R=0.0000426 AU) → 0.0029 AU
-    /// - TRAPPIST-1 star (R=0.00056 AU) → 0.0100 AU
-    /// - TRAPPIST-1e (R=0.0000392 AU) → 0.0028 AU
+    /// Example outputs at `1.0x` true physical scale:
+    /// - Sun         (`0.00465 AU`) -> `0.00465 AU`
+    /// - Jupiter     (`0.000477 AU`) -> `0.000477 AU`
+    /// - Earth       (`0.0000426 AU`) -> `0.0000426 AU`
+    /// - Moon        (`0.0000116 AU`) -> `0.0000116 AU`
+    /// - TRAPPIST-1  (`0.00056 AU`) -> `0.00056 AU`
     pub fn calc_visual_radius(&self, physical_radius_au: f64) -> f32 {
-        let r = (physical_radius_au as f32).max(1e-9);
-        let ratio = r / Self::VISUAL_REF_RADIUS;
-        let compressed = ratio.powf(Self::VISUAL_COMPRESSION);
-        (Self::VISUAL_BASE_SIZE * compressed * self.size_exaggeration)
-            .max(self.min_body_visual_radius)
+        let r = if physical_radius_au.is_finite() {
+            physical_radius_au.max(1e-9) as f32
+        } else {
+            1e-6
+        };
+        let exag = if self.size_exaggeration.is_finite() {
+            self.size_exaggeration.clamp(0.1, 100.0)
+        } else {
+            1.0
+        };
+        r * exag
     }
 
-    /// Computes the visual render radius taking into account the celestial body classification.
-    /// Asteroids, comets, and minor planetesimals are scaled down (0.35x) so they appear
-    /// distinctly miniature compared to major planets and protoplanetary embryos.
+    /// Computes the zoom-invariant 1:1 visual render radius for any celestial body classification.
+    /// Delegates linearly to [`SimulationConfig::calc_visual_radius`] so stars, planets, moons,
+    /// compact remnants, and minor bodies always maintain exact true proportions.
     pub fn calc_visual_radius_for_type(
         &self,
         physical_radius_au: f64,
-        body_type: crate::simulation::components::BodyType,
+        _body_type: crate::simulation::components::BodyType,
     ) -> f32 {
-        let base_rad = self.calc_visual_radius(physical_radius_au);
-        if matches!(
-            body_type,
-            crate::simulation::components::BodyType::Asteroid
-                | crate::simulation::components::BodyType::Comet
-                | crate::simulation::components::BodyType::Planetesimal
-                | crate::simulation::components::BodyType::DustGrain
-        ) {
-            (base_rad * 0.35).max(0.0003)
-        } else if body_type == crate::simulation::components::BodyType::Moon {
-            (base_rad * 0.46).max(0.00025)
-        } else if body_type == crate::simulation::components::BodyType::BlackHole {
-            // Event horizon shadow: scales monotonically with mass from stellar-mass to supermassive.
-            // A 5-10 M_sun BH is compact (~0.0022-0.0028 AU), distinctly smaller than a 0.025 AU main-sequence star.
-            // At 1,600 M_sun, it dynamically scales up to ~0.020 AU.
-            // Above 1,600 M_sun (IMBH/SMBH regime, e.g. Sgr A* at 4.3e6 M_sun where true R_s = 0.0848 AU),
-            // it converges smoothly to the true physical Schwarzschild radius so it remains physically proportioned.
-            let mass_factor = (physical_radius_au / 1.974e-8).max(1.0);
-            let r_base = if mass_factor <= 1600.0 {
-                0.0012 * (mass_factor.powf(0.38) as f32)
-            } else {
-                let r_1600 = 0.0012 * (1600.0_f64.powf(0.38) as f32);
-                let excess = (mass_factor / 1600.0).powf(0.185) as f32;
-                (r_1600 * excess).max(physical_radius_au as f32)
-            };
-            (r_base * self.size_exaggeration).clamp(0.0020, 2.50)
-        } else {
-            base_rad
-        }
+        self.calc_visual_radius(physical_radius_au)
     }
 
-    /// Computes the visual render radius taking into account orbital scale and distance to prevent
-    /// visual overlap in compact multi-planet systems (e.g. TRAPPIST-1).
+    /// Computes the visual render radius without orbital compression or distance distortion.
+    /// Even compact systems such as TRAPPIST-1 retain ~20–90 planetary radii of open separation
+    /// at true 1:1 scale, so bodies remain strictly linear with physical radius.
     pub fn calc_visual_radius_with_orbit(
         &self,
         physical_radius_au: f64,
-        body_type: crate::simulation::components::BodyType,
-        r_orb: f32,
-        min_planetary_orbit_au: f32,
+        _body_type: crate::simulation::components::BodyType,
+        _r_orb: f32,
+        _min_planetary_orbit_au: f32,
     ) -> f32 {
-        let base_rad = self.calc_visual_radius_for_type(physical_radius_au, body_type);
-        // Only compact multi-planet systems around ultra-cool stars (where inner planets orbit < 0.15 AU)
-        // require scaling. Planets and moons with orbital radius >= 0.15 AU have ample orbital separation
-        // and retain their full, natural visual radius.
-        if min_planetary_orbit_au < 0.15 && min_planetary_orbit_au > 0.0 {
-            if body_type == crate::simulation::components::BodyType::BlackHole {
-                base_rad
-            } else if body_type.is_star_or_remnant() {
-                // For compact systems (e.g. TRAPPIST-1), scale the star so it does not engulf
-                // the inner planetary orbits. Only applies to low-mass physical stars (R < 0.002 AU).
-                if physical_radius_au < 0.002 {
-                    let max_star_r =
-                        (min_planetary_orbit_au * 0.28).max(0.001) * self.size_exaggeration;
-                    base_rad.min(max_star_r)
-                } else {
-                    base_rad
-                }
-            } else if (body_type.is_planet()
-                || body_type == crate::simulation::components::BodyType::Moon)
-                && r_orb < 0.15
-            {
-                // In compact systems, scale planets down proportionally with the compact star
-                // so the star is visibly dominant (~4.5-5.5x wider) and dark voids remain between orbits.
-                let compact_star_r = (min_planetary_orbit_au * 0.28).max(0.001);
-                // Standard red dwarf base visual radius ~0.00965 AU:
-                let ref_star_vis_r = self.calc_visual_radius(0.00056);
-                let star_scale_ratio = (compact_star_r / ref_star_vis_r).clamp(0.05, 1.0);
-                // Apply proportional scale factor with 0.70 hierarchy factor so star is prominent
-                let compact_planet_r = base_rad * star_scale_ratio * 0.70;
-                // Also guarantee planet visual radius does not exceed 7% of its orbital distance
-                let max_orbit_r = (r_orb * 0.07).max(0.00025);
-                let scaled_r = compact_planet_r.min(max_orbit_r).max(0.00025);
-
-                // Smoothly blend to base_rad between 0.06 AU and 0.15 AU to prevent visual popping or pulsing
-                if r_orb > 0.06 {
-                    let t = ((r_orb - 0.06) / (0.15 - 0.06)).clamp(0.0, 1.0);
-                    let smooth_t = t * t * (3.0 - 2.0 * t);
-                    scaled_r * (1.0 - smooth_t) + base_rad * smooth_t
-                } else {
-                    scaled_r
-                }
-            } else {
-                base_rad
-            }
-        } else {
-            base_rad
-        }
+        self.calc_visual_radius(physical_radius_au)
     }
 
     /// Computes the safe minimum camera zoom radius for a celestial body with given visual radius (AU).
-    /// Provides a spectacular, cinematic close-up view occupying ~75-80% of screen height while
-    /// guaranteeing safe surface clearance so the camera never penetrates or near-clips through the body.
+    /// Allows close orbital inspection right down to true-scale terrestrial planets, moons, and comets
+    /// while preserving clearance outside the body's surface.
     pub fn calc_camera_min_zoom_radius(&self, visual_radius: f32) -> f32 {
-        (visual_radius * 1.55).max(visual_radius + 0.0004)
+        let r = if visual_radius.is_finite() {
+            visual_radius.max(1e-8)
+        } else {
+            1e-6
+        };
+        (r * 1.40).max(1e-8)
     }
 
     /// Computes the optimal camera framing distance when focusing or locking onto a celestial body.
-    /// Nicely frames the body in view (~30-35% screen height) with room to observe its immediate orbits.
+    /// Nicely frames the body in view across all true-scale regimes (stars, planets, moons, comets).
     pub fn calc_camera_framing_radius(&self, visual_radius: f32) -> f32 {
         let min_r = self.calc_camera_min_zoom_radius(visual_radius);
-        (visual_radius * 3.6).clamp(min_r, 250.0)
+        let r = if visual_radius.is_finite() {
+            visual_radius.max(1e-8)
+        } else {
+            1e-6
+        };
+        (r * 3.5).clamp(min_r, 250.0)
     }
 
     /// Legacy mass-based render radius used only for accretion collision cross-sections.

@@ -31,6 +31,7 @@ pub fn probe_navigation_system(
         Option<&mut Radius>,
     )>,
     mut targets: Query<NavigationTargetData, Without<SpaceProbe>>,
+    camera_query: Query<&crate::rendering::camera::PanOrbitCamera>,
     sim_time: Res<SimTime>,
     time_warp: Res<crate::simulation::resources::TimeWarp>,
     config: Option<Res<SimulationConfig>>,
@@ -43,6 +44,8 @@ pub fn probe_navigation_system(
     } else {
         sim_time.current_dt_yr.max(0.0)
     };
+    let surface_cam_active = camera_query.iter().any(|c| c.surface_horizon_mode);
+    let rover_dt = if surface_cam_active { 0.0 } else { dt };
 
     for (mut probe_vel, mut probe_pos, mut probe, mut computer, mut opt_rad) in probes.iter_mut() {
         if let Ok((
@@ -63,7 +66,7 @@ pub fn probe_navigation_system(
             let vis_rad = opt_transform
                 .map(|t| f64::from(t.scale.x))
                 .filter(|&s| {
-                    s.is_finite() && s > 1e-6 && !((s - 1.0).abs() < 1e-6 && radius < 0.25)
+                    s.is_finite() && s > 1e-10 && !((s - 1.0).abs() < 1e-6 && radius < 0.25)
                 })
                 .unwrap_or_else(|| {
                     config.as_ref().map_or(radius, |c| {
@@ -74,7 +77,7 @@ pub fn probe_navigation_system(
             computer.distance_to_target = distance;
             computer.relative_speed = (probe_vel.0 - target_vel.0).length();
 
-            let threshold = (vis_rad * 2.8).clamp(0.0035, 0.25);
+            let threshold = (vis_rad * 2.8).clamp(1e-6, 0.25);
             let mut arrived = distance <= threshold;
 
             if !arrived && probe.status == ProbeStatus::Transit {
@@ -112,7 +115,7 @@ pub fn probe_navigation_system(
                     target_vel.0,
                     radius,
                     vis_rad,
-                    dt,
+                    rover_dt,
                     sim_time.elapsed_years,
                     opt_spin,
                     opt_comp,

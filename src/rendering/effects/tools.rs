@@ -5,9 +5,13 @@ use crate::simulation::resources::{PlayerInteractionState, SlingshotArchetype};
 use crate::utils::constants::G_ASTRO;
 use crate::utils::math::*;
 
-pub fn draw_tractor_beam_gizmo(gizmos: &mut Gizmos, player_state: &PlayerInteractionState) {
+pub fn draw_tractor_beam_gizmo(
+    gizmos: &mut Gizmos,
+    player_state: &PlayerInteractionState,
+    origin: crate::rendering::origin::RenderOrigin,
+) {
     if let Some(t_pos) = player_state.tractor_position {
-        let t_vec = Vec3::new(t_pos.x as f32, t_pos.y as f32, t_pos.z as f32);
+        let t_vec = origin.to_render(t_pos);
         gizmos.sphere(
             Isometry3d::from_translation(t_vec),
             0.5,
@@ -19,10 +23,11 @@ pub fn draw_tractor_beam_gizmo(gizmos: &mut Gizmos, player_state: &PlayerInterac
 pub fn draw_planet_builder_preview(
     gizmos: &mut Gizmos,
     builder: &crate::game::ui::PlanetBuilderState,
-    star_vec: Vec3,
+    star_rel_au: DVec3,
     star_mass_val: f64,
     elapsed: f32,
 ) {
+    let star_vec = star_rel_au.as_vec3();
     if !builder.is_open {
         return;
     }
@@ -67,7 +72,7 @@ pub fn draw_planet_builder_preview(
         crate::rendering::effects::orbits::draw_hyperbolic_trajectory(
             gizmos,
             &preview_elements,
-            star_vec,
+            star_rel_au,
             Color::srgba(0.20, 0.95, 1.0, 0.80 * pulse).to_srgba(),
             None,
             None,
@@ -85,9 +90,9 @@ pub fn draw_planet_builder_preview(
     }
 
     if let Some(ghost_pt) =
-        position_at_true_anomaly(&preview_elements, preview_elements.true_anomaly)
+        position_at_true_anomaly_dvec(&preview_elements, preview_elements.true_anomaly)
     {
-        let ghost_world = ghost_pt + star_vec;
+        let ghost_world = (ghost_pt + star_rel_au).as_vec3();
         gizmos
             .sphere(
                 Isometry3d::from_translation(ghost_world),
@@ -107,17 +112,17 @@ pub fn draw_planet_builder_preview(
             .resolution(64);
     }
 
-    let (opt_peri, opt_apo) = apsides_positions(&preview_elements);
+    let (opt_peri, opt_apo) = apsides_positions_dvec(&preview_elements);
     if let Some(peri) = opt_peri {
         gizmos.sphere(
-            Isometry3d::from_translation(peri + star_vec),
+            Isometry3d::from_translation((peri + star_rel_au).as_vec3()),
             0.035,
             Color::srgba(0.2, 1.0, 0.5, 0.9),
         );
     }
     if let Some(apo) = opt_apo {
         gizmos.sphere(
-            Isometry3d::from_translation(apo + star_vec),
+            Isometry3d::from_translation((apo + star_rel_au).as_vec3()),
             0.035,
             Color::srgba(1.0, 0.5, 0.2, 0.9),
         );
@@ -357,16 +362,28 @@ fn draw_slingshot_orbit_forecast(
     }
 }
 
+/// Central star kinematic state passed into slingshot preview rendering.
+#[derive(Clone, Copy, Debug)]
+pub struct SlingshotStarState {
+    pub pos: DVec3,
+    pub vel: DVec3,
+    pub mass: f64,
+}
+
 /// Renders interactive slingshot aim vector, arrowhead, predicted Keplerian orbit ribbon, and apsides.
 pub fn draw_slingshot_preview(
     gizmos: &mut Gizmos,
     slingshot: &crate::simulation::resources::SlingshotState,
-    star_vec: Vec3,
-    star_vel_dvec: DVec3,
-    star_mass_val: f64,
+    star_state: SlingshotStarState,
     target_state: Option<(DVec3, f64)>,
     elapsed: f32,
+    origin: crate::rendering::origin::RenderOrigin,
 ) {
+    let SlingshotStarState {
+        pos: star_pos_dvec,
+        vel: star_vel_dvec,
+        mass: star_mass_val,
+    } = star_state;
     if !slingshot.is_active {
         return;
     }
@@ -376,16 +393,12 @@ pub fn draw_slingshot_preview(
         return;
     };
 
-    let p_orig = Vec3::new(
-        origin_dvec.x as f32,
-        origin_dvec.y as f32,
-        origin_dvec.z as f32,
-    );
-    let p_curr = Vec3::new(curr_dvec.x as f32, curr_dvec.y as f32, curr_dvec.z as f32);
+    let p_orig = origin.to_render(origin_dvec);
+    let p_curr = origin.to_render(curr_dvec);
     let delta = curr_dvec - origin_dvec;
     let dist = delta.length();
 
-    let star_pos_dvec = star_vec.as_dvec3();
+    let star_vec = origin.to_render(star_pos_dvec);
     let rel_pos = origin_dvec - star_pos_dvec;
     let r_launch = rel_pos.length();
 
@@ -438,6 +451,7 @@ pub fn draw_trajectory_prediction_gizmos(
     cam_pos: Option<Vec3>,
     occluders: (Option<(Vec3, f32)>, Option<(Vec3, f32)>),
     elapsed: f32,
+    origin: crate::rendering::origin::RenderOrigin,
 ) {
     if !predictor.is_enabled || predictor.trajectory_points.len() < 2 {
         return;
@@ -471,12 +485,14 @@ pub fn draw_trajectory_prediction_gizmos(
         let [p0, p1] = window else {
             continue;
         };
-        let seg_mid = p0.midpoint(*p1);
+        let r0 = origin.shift_vec3(*p0);
+        let r1 = origin.shift_vec3(*p1);
+        let seg_mid = r0.midpoint(r1);
         let limb_clear = occluders.0.map_or(1.0, |(body_c, body_r)| {
             let d = seg_mid.distance(body_c);
             let inner = body_r * 1.10;
             let outer = body_r * 1.95;
-            let t = ((d - inner) / (outer - inner).max(1e-6)).clamp(0.0, 1.0);
+            let t = ((d - inner) / (outer - inner).max(1e-10)).clamp(0.0, 1.0);
             t * t * (3.0 - 2.0 * t)
         });
         let occ = super::orbits::combined_sphere_occlusion_fade(
@@ -490,8 +506,8 @@ pub fn draw_trajectory_prediction_gizmos(
         let a = base_rgba.alpha * limb_clear * occ * arc_fade;
         if a > 0.015 {
             gizmos.line(
-                *p0,
-                *p1,
+                r0,
+                r1,
                 Color::srgba(base_rgba.red, base_rgba.green, base_rgba.blue, a),
             );
         }
@@ -499,17 +515,9 @@ pub fn draw_trajectory_prediction_gizmos(
 
     // 3. Render Close Encounter / Impact Reticle
     if let Some(enc) = &predictor.active_encounter {
-        let enc_world = Vec3::new(
-            enc.encounter_pos_au.x as f32,
-            enc.encounter_pos_au.y as f32,
-            enc.encounter_pos_au.z as f32,
-        );
+        let enc_world = origin.to_render(enc.encounter_pos_au);
 
-        let tgt_world = Vec3::new(
-            enc.target_pos_at_encounter_au.x as f32,
-            enc.target_pos_at_encounter_au.y as f32,
-            enc.target_pos_at_encounter_au.z as f32,
-        );
+        let tgt_world = origin.to_render(enc.target_pos_at_encounter_au);
 
         let badge_rgba = enc.encounter_type.badge_color().to_srgba();
         let ring_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
@@ -583,6 +591,7 @@ pub fn draw_bombardment_projectiles_gizmo(
         &crate::simulation::components::Radius,
     )>,
     elapsed: f32,
+    origin: crate::rendering::origin::RenderOrigin,
 ) {
     let pulse = 0.65 + 0.35 * (elapsed * 8.0).sin().abs();
 
@@ -595,8 +604,8 @@ pub fn draw_bombardment_projectiles_gizmo(
             continue;
         };
 
-        let p_vec = Vec3::new(p_pos.0.x as f32, p_pos.0.y as f32, p_pos.0.z as f32);
-        let t_vec = Vec3::new(t_pos.0.x as f32, t_pos.0.y as f32, t_pos.0.z as f32);
+        let p_vec = origin.to_render(p_pos.0);
+        let t_vec = origin.to_render(t_pos.0);
         let trail_rgba = proj.trail_color.to_srgba();
 
         // 1. Inbound trajectory intercept spline
@@ -609,14 +618,15 @@ pub fn draw_bombardment_projectiles_gizmo(
         gizmos.line(p_vec, t_vec, line_col);
 
         // 2. Projectile leading beacon sphere
+        let beacon_r = (t_rad.0 as f32 * 0.35).clamp(1e-5, 0.05);
         gizmos.sphere(
             Isometry3d::from_translation(p_vec),
-            0.05 * pulse,
+            beacon_r * pulse,
             Color::srgba(trail_rgba.red, trail_rgba.green, trail_rgba.blue, 0.95),
         );
 
         // 3. Targeting corridor rings around the planet's atmospheric boundary
-        let target_reticle_r = (t_rad.0 as f32 * 1.5).clamp(0.06, 1.2);
+        let target_reticle_r = (t_rad.0 as f32 * 1.5).clamp(1e-5, 1.2);
         gizmos
             .circle(
                 Isometry3d::new(t_vec, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),

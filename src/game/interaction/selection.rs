@@ -72,7 +72,7 @@ pub fn handle_tab_selection(
         let frame_r = if target.body_type == BodyType::BlackHole && target.mass_solar > 1_000_000.0
         {
             100_000.0 // Supermassive Black Holes (Galactic Centers) should zoom out to see the galaxy
-        } else if target.name.starts_with("🚀") || target.radius_au <= 1e-6 {
+        } else if target.name.starts_with("🚀") || target.radius_au <= 1e-11 {
             let visual_r = config.calc_visual_radius_for_type(target.radius_au, target.body_type);
             0.015f32.max(config.calc_camera_framing_radius(visual_r))
         } else if let Some(ref item) = item_ok {
@@ -97,9 +97,7 @@ pub fn handle_tab_selection(
             )
         };
         if let Some(item) = item_ok {
-            let p = item.4.0;
-            let target_vec = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
-            cam.initiate_target_transition(target.entity, target_vec, frame_r);
+            cam.initiate_target_transition_au(target.entity, item.4.0, frame_r);
         } else {
             cam.surface_horizon_mode = false;
             cam.target_entity = Some(target.entity);

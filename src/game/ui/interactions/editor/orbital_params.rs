@@ -19,6 +19,74 @@ pub fn handle_mass_change(
     handle_mass_change_with_effects(action, selected_query, None, None, player_state, toast)
 }
 
+fn apply_non_star_mass_ui_update(
+    mass_solar: f64,
+    old_type: BodyType,
+    comp: &Composition,
+    body: &mut CelestialBody,
+    radius: &mut Radius,
+) {
+    let new_type = classify_body_by_mass_and_comp(mass_solar, comp, false);
+    if new_type != old_type {
+        body.body_type = new_type;
+        if new_type.is_planet() && !body.name.starts_with("Planet") {
+            body.name = format!("Planet ({new_type:?})");
+        }
+    }
+    if body.body_type == BodyType::BlackHole {
+        radius.0 = (1.974e-8 * mass_solar).max(1e-7);
+    } else if body.body_type == BodyType::BrownDwarf {
+        radius.0 = 0.11 * SOLAR_RADIUS_AU;
+    } else if body.body_type.is_star_or_remnant() {
+        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
+            radius.0 = SOLAR_RADIUS_AU * mass_solar.max(0.08).powf(0.8);
+        }
+    } else {
+        let avg_density = comp.average_density();
+        radius.0 = ((3.0 * mass_solar / avg_density) / (4.0 * PI))
+            .cbrt()
+            .max(EARTH_RADIUS_AU * 0.1);
+    }
+}
+
+fn format_mass_change_toast(
+    multiplier: f64,
+    mass_solar: f64,
+    was_star: bool,
+    body: &CelestialBody,
+) -> String {
+    let sign = if multiplier > 1.0 { "➕" } else { "➖" };
+    let pct = if multiplier > 1.0 { "+25%" } else { "-20%" };
+    if (was_star || body.body_type.is_star_or_remnant()) && mass_solar >= 0.01 {
+        let readiness = if body.body_type == BodyType::WhiteDwarf && mass_solar > 1.44 {
+            " | 💥 Type Ia Supernova Ready (>1.44 M☉)"
+        } else if matches!(
+            body.body_type,
+            BodyType::NeutronStar | BodyType::Pulsar | BodyType::Magnetar | BodyType::QuarkStar
+        ) && mass_solar > 2.17
+        {
+            " | 🕳️ TOV Collapse Ready (>2.17 M☉)"
+        } else if !body.body_type.is_remnant() && mass_solar >= 25.0 {
+            " | 💥 Hypernova -> Black Hole Ready (>=25 M☉)"
+        } else if !body.body_type.is_remnant() && mass_solar >= 8.0 {
+            " | 💥 Supernova Ready (>=8 M☉)"
+        } else {
+            ""
+        };
+        format!(
+            "{sign} {} Mass Altered: {mass_solar:.2} M☉ ({pct} | {:?}{readiness})",
+            body.name, body.body_type
+        )
+    } else {
+        format!(
+            "{sign} {} Mass Altered: {:.3} M⊕ ({pct} | {:?})",
+            body.name,
+            mass_solar / EARTH_MASS_SOLAR,
+            body.body_type
+        )
+    }
+}
+
 pub fn handle_mass_change_with_effects(
     action: &UiButtonAction,
     selected_query: &mut SelectedWorldQuery,
@@ -44,8 +112,21 @@ pub fn handle_mass_change_with_effects(
         return true;
     };
 
-    let Ok((_, mut mass, mut radius, _, _, comp, mut body, is_star, ..)) =
-        selected_query.get_mut(ent)
+    let Ok((
+        _,
+        mut mass,
+        mut radius,
+        _,
+        _,
+        comp,
+        mut body,
+        is_star,
+        _,
+        mut opt_evo,
+        mut opt_temp,
+        mut opt_lum,
+        ..,
+    )) = selected_query.get_mut(ent)
     else {
         return true;
     };
@@ -53,47 +134,20 @@ pub fn handle_mass_change_with_effects(
     mass.0 *= multiplier;
     let old_type = body.body_type;
     let was_star = is_star.is_some() || old_type.is_star_or_remnant();
-    let new_type = classify_body_by_mass_and_comp(mass.0, &comp, was_star);
 
     if was_star {
-        if !old_type.is_remnant() && !old_type.is_hypothetical() {
-            body.body_type = new_type;
-            body.name = match new_type {
-                BodyType::BrownDwarf => "The Star (Brown Dwarf)".to_string(),
-                BodyType::RedDwarf => "The Star (Red Dwarf - M Type)".to_string(),
-                BodyType::OrangeDwarf => "The Star (Orange Dwarf - K Type)".to_string(),
-                BodyType::YellowDwarf => "The Star (Yellow Dwarf - G2V)".to_string(),
-                BodyType::YellowWhiteDwarf => "The Star (Yellow-White Dwarf - F Type)".to_string(),
-                BodyType::WhiteMainSequence => {
-                    "The Star (White Main-Sequence - A Type)".to_string()
-                }
-                BodyType::BlueGiant => "The Star (Blue Giant - B Type)".to_string(),
-                BodyType::BlueSupergiant => "The Star (Blue Supergiant - O Type)".to_string(),
-                BodyType::Hypergiant => "The Star (Luminous Hypergiant)".to_string(),
-                BodyType::PopulationIIIStar => "The Star (Population III Hypergiant)".to_string(),
-                _ => body.name.clone(),
-            };
-        }
-    } else if new_type != old_type {
-        body.body_type = new_type;
-        if new_type.is_planet() && !body.name.starts_with("Planet") {
-            body.name = format!("Planet ({new_type:?})");
-        }
-    }
-
-    if body.body_type == BodyType::BlackHole {
-        radius.0 = (1.974e-8 * mass.0).max(1e-7);
-    } else if body.body_type == BodyType::BrownDwarf {
-        radius.0 = 0.11 * SOLAR_RADIUS_AU;
-    } else if body.body_type.is_star_or_remnant() {
-        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
-            radius.0 = SOLAR_RADIUS_AU * mass.0.max(0.08).powf(0.8);
-        }
+        crate::simulation::thermodynamics::sync_stellar_classification_after_mass_edit(
+            mass.0,
+            old_type,
+            &comp,
+            &mut body,
+            Some(&mut radius),
+            opt_temp.as_deref_mut(),
+            opt_lum.as_deref_mut(),
+            opt_evo.as_deref_mut(),
+        );
     } else {
-        let avg_density = comp.average_density();
-        radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-            .cbrt()
-            .max(EARTH_RADIUS_AU * 0.1);
+        apply_non_star_mass_ui_update(mass.0, old_type, &comp, &mut body, &mut radius);
     }
 
     if !was_star
@@ -132,14 +186,7 @@ pub fn handle_mass_change_with_effects(
         diff.recalculate(mass.0, radius.0, &comp);
     }
 
-    let sign = if multiplier > 1.0 { "➕" } else { "➖" };
-    let pct = if multiplier > 1.0 { "+25%" } else { "-20%" };
-    toast.message = format!(
-        "{sign} {} Mass Altered: {:.3} M⊕ ({pct} | {:?})",
-        body.name,
-        mass.0 / EARTH_MASS_SOLAR,
-        body.body_type
-    );
+    toast.message = format_mass_change_toast(multiplier, mass.0, was_star, &body);
     toast.timer = 4.0;
     true
 }

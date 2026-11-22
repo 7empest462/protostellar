@@ -72,12 +72,15 @@ pub fn update_trophies_panel(
         return;
     }
 
+    let target_display = if panel_state.is_open {
+        Display::Flex
+    } else {
+        Display::None
+    };
     for mut node in container_query.iter_mut() {
-        node.display = if panel_state.is_open {
-            Display::Flex
-        } else {
-            Display::None
-        };
+        if node.display != target_display {
+            node.display = target_display;
+        }
     }
 
     if panel_state.is_open {
@@ -133,6 +136,13 @@ pub fn update_trophies_panel(
                                 MilestoneId::MagnetarSuperflare => "⚡ Magnetar Giant Flare",
                                 MilestoneId::GeomagneticSuperstorm => "🌌 Carrington Superstorm",
                                 MilestoneId::BinaryInspiral => "🌀 Relativistic Binary Inspiral",
+                                MilestoneId::CivilizationTypeOne => {
+                                    "🏙️ Type I Planetary Civilization"
+                                }
+                                MilestoneId::DysonSwarmTypeTwo => "☀️ Type II Dyson Megastructure",
+                                MilestoneId::CrisisDeflected => "🛡️ Cosmic Crisis Averted",
+                                MilestoneId::InterplanetaryColony => "🛸 Interplanetary Colony",
+                                MilestoneId::GreatFilterOvercome => "🕊️ Great Filter Overcome",
                             };
                             col.spawn(Node {
                                 padding: UiRect::all(Val::Px(4.0)),

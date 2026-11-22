@@ -21,17 +21,17 @@ fn test_black_hole_visual_radius_and_optical_properties() {
     // Sun reference visual radius
     let sun_vis_r = config.calc_visual_radius_for_type(SOLAR_RADIUS_AU, BodyType::YellowDwarf);
 
-    // Stellar-mass black hole must be distinctly compact compared to the Sun (smaller in diameter)
+    // Stellar-mass black hole must render at true 1:1 physical Schwarzschild scale
     assert!(
         vis_r_stellar < sun_vis_r,
-        "Stellar-mass black hole ({vis_r_stellar:.4} AU) must be smaller than the Sun ({sun_vis_r:.4} AU)"
+        "Stellar-mass black hole ({vis_r_stellar:.8} AU) must be smaller than the Sun ({sun_vis_r:.5} AU)"
     );
     assert!(
-        vis_r_stellar >= 0.0020,
-        "Stellar-mass black hole must respect minimum threshold"
+        (vis_r_stellar - r_phys_stellar as f32).abs() < 1e-9,
+        "Stellar-mass black hole must render at true 1:1 physical radius ({r_phys_stellar} AU, got {vis_r_stellar})"
     );
 
-    // 2. Supermassive black hole (450,000 M_sun, physical R_s ~ 13.3 AU)
+    // 2. Supermassive black hole (450,000 M_sun, physical R_s ~ 0.00888 AU)
     let m_supermassive = 450_000.0;
     let r_phys_sm = calculate_schwarzschild_radius(m_supermassive);
     let vis_r_sm = config.calc_visual_radius_for_type(r_phys_sm, BodyType::BlackHole);
@@ -41,8 +41,8 @@ fn test_black_hole_visual_radius_and_optical_properties() {
         "Supermassive black hole must be substantially larger than stellar-mass"
     );
     assert!(
-        vis_r_sm <= 2.50,
-        "Supermassive black hole must respect maximum clamp of 2.50 AU"
+        (vis_r_sm - r_phys_sm as f32).abs() < 1e-6,
+        "Supermassive black hole must render at true 1:1 physical radius ({r_phys_sm} AU, got {vis_r_sm})"
     );
 }
 
@@ -81,12 +81,12 @@ fn test_black_hole_scaling_and_devourment() {
         "Visual radius must scale monotonically with mass"
     );
     assert!(
-        (vis_5 - 0.0022).abs() < 0.0005,
-        "5 M_sun visual radius should be ~0.0022 AU (got {vis_5:.4})"
+        (vis_5 - (1.974e-8 * 5.0) as f32).abs() < 1e-10,
+        "5 M_sun visual radius should match true 1:1 Schwarzschild radius (got {vis_5:.10})"
     );
     assert!(
-        (vis_1600 - 0.020).abs() < 0.003,
-        "1600 M_sun visual radius should be ~0.020 AU (got {vis_1600:.4})"
+        (vis_1600 - (1.974e-8 * 1600.0) as f32).abs() < 1e-8,
+        "1600 M_sun visual radius should match true 1:1 Schwarzschild radius (got {vis_1600:.8})"
     );
 
     // 3. Black hole visual radius must not be suppressed by compact orbit scaling

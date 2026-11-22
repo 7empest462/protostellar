@@ -5,17 +5,44 @@ use bevy::prelude::*;
 
 use crate::simulation::resources::PlayerInteractionState;
 
-use super::types::ScrollableInspector;
+use super::types::{QuickBarScrollViewport, QuickBarState, ScrollableInspector};
 
-/// Handles mouse wheel scrolling for any scrollable UI panel (Inspector, Quick Selector, etc).
+fn compute_scroll_hover(
+    scroll_entity: Entity,
+    computed: &ComputedNode,
+    opt_ui_gt: Option<&bevy::ui::UiGlobalTransform>,
+    cursor_pos: Option<Vec2>,
+    interaction_query: &Query<(
+        Entity,
+        &bevy::picking::hover::Hovered,
+        Has<bevy::ui::Pressed>,
+    )>,
+    parent_query: &Query<&ChildOf>,
+) -> bool {
+    let over_rect = cursor_pos.zip(opt_ui_gt).is_some_and(|(pos, ui_gt)| {
+        let inv = computed.inverse_scale_factor();
+        let half = computed.size() * inv * 0.5;
+        let center = ui_gt.translation * inv;
+        pos.x >= center.x - half.x
+            && pos.x <= center.x + half.x
+            && pos.y >= center.y - half.y
+            && pos.y <= center.y + half.y
+    });
+    over_rect || is_inspector_hovered(scroll_entity, interaction_query, parent_query)
+}
+
+/// Handles mouse wheel scrolling and chevron nudges for scrollable vertical/horizontal UI containers.
+#[allow(clippy::too_many_arguments, reason = "UI scroll container handler")]
 pub fn handle_inspector_scroll(
     mut mouse_wheel: MessageReader<MouseWheel>,
+    mut quick_bar_state: Option<ResMut<QuickBarState>>,
     mut scroll_query: Query<(
         Entity,
         &mut ScrollPosition,
         &ComputedNode,
         Option<&bevy::ui::UiGlobalTransform>,
         Option<&Node>,
+        Has<QuickBarScrollViewport>,
     )>,
     interaction_query: Query<(
         Entity,
@@ -25,42 +52,75 @@ pub fn handle_inspector_scroll(
     parent_query: Query<&ChildOf>,
     windows: Query<&Window>,
 ) {
+    let mut total_delta_x = 0.0;
     let mut total_delta_y = 0.0;
     for ev in mouse_wheel.read() {
-        total_delta_y += match ev.unit {
-            MouseScrollUnit::Line => -ev.y * 28.0,
-            MouseScrollUnit::Pixel => -ev.y,
+        let (dx, dy) = match ev.unit {
+            MouseScrollUnit::Line => (-ev.x * 28.0, -ev.y * 28.0),
+            MouseScrollUnit::Pixel => (-ev.x, -ev.y),
         };
+        total_delta_x += dx;
+        total_delta_y += dy;
     }
 
-    if total_delta_y == 0.0 {
+    let pending_qb_x = quick_bar_state
+        .as_deref()
+        .map_or(0.0, |q| q.pending_scroll_delta_x);
+    if pending_qb_x != 0.0
+        && let Some(ref mut qb) = quick_bar_state
+    {
+        qb.pending_scroll_delta_x = 0.0;
+    }
+
+    if total_delta_x == 0.0 && total_delta_y == 0.0 && pending_qb_x == 0.0 {
         return;
     }
 
     let cursor_pos = windows.single().ok().and_then(Window::cursor_position);
 
-    for (scroll_entity, mut scroll_position, computed, opt_ui_gt, opt_node) in
+    for (scroll_entity, mut scroll_position, computed, opt_ui_gt, opt_node, is_quick_bar_vp) in
         scroll_query.iter_mut()
     {
         if opt_node.is_some_and(|n| n.display == Display::None) {
             continue;
         }
-        let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0)
-            * computed.inverse_scale_factor();
-        if max_offset_y <= 0.5 {
+        let inv = computed.inverse_scale_factor();
+        let max_offset_x = (computed.content_size().x - computed.size().x).max(0.0) * inv;
+        let max_offset_y = (computed.content_size().y - computed.size().y).max(0.0) * inv;
+
+        if is_quick_bar_vp && pending_qb_x != 0.0 && max_offset_x > 0.5 {
+            scroll_position.x = (scroll_position.x + pending_qb_x).clamp(0.0, max_offset_x);
+        }
+
+        if total_delta_x == 0.0 && total_delta_y == 0.0 {
             continue;
         }
-        let over_rect = cursor_pos.zip(opt_ui_gt).is_some_and(|(pos, ui_gt)| {
-            let inv = computed.inverse_scale_factor();
-            let half = computed.size() * inv * 0.5;
-            let center = ui_gt.translation * inv;
-            pos.x >= center.x - half.x
-                && pos.x <= center.x + half.x
-                && pos.y >= center.y - half.y
-                && pos.y <= center.y + half.y
-        });
-        if over_rect || is_inspector_hovered(scroll_entity, &interaction_query, &parent_query) {
+        if !compute_scroll_hover(
+            scroll_entity,
+            computed,
+            opt_ui_gt,
+            cursor_pos,
+            &interaction_query,
+            &parent_query,
+        ) {
+            continue;
+        }
+
+        let allows_x = opt_node.is_some_and(|n| n.overflow.x == OverflowAxis::Scroll);
+        let allows_y = if is_quick_bar_vp {
+            opt_node.is_some_and(|n| n.overflow.y == OverflowAxis::Scroll)
+        } else {
+            !allows_x || opt_node.is_some_and(|n| n.overflow.y == OverflowAxis::Scroll)
+        };
+        if max_offset_y > 0.5 && allows_y && total_delta_y != 0.0 {
             scroll_position.y = (scroll_position.y + total_delta_y).clamp(0.0, max_offset_y);
+        } else if max_offset_x > 0.5 && allows_x {
+            let delta = if total_delta_x.abs() > 0.01 {
+                total_delta_x
+            } else {
+                total_delta_y
+            };
+            scroll_position.x = (scroll_position.x + delta).clamp(0.0, max_offset_x);
         }
     }
 }

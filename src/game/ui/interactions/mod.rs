@@ -48,6 +48,7 @@ pub struct UiOptionalState<'w> {
     pub tech_tree: Option<ResMut<'w, crate::game::ui::types::TechTreePanelState>>,
     pub science: Option<ResMut<'w, crate::simulation::economy::ScienceData>>,
     pub techs: Option<ResMut<'w, crate::simulation::economy::UnlockedTechs>>,
+    pub progression: Option<ResMut<'w, crate::simulation::economy::ProgressionState>>,
     pub hazards_panel: Option<ResMut<'w, crate::game::ui::hazards_panel::HazardsPanelState>>,
     pub hazard_mgr: Option<ResMut<'w, crate::simulation::events::CosmicEventManager>>,
     pub hr_diagram: Option<ResMut<'w, HrDiagramPanelState>>,
@@ -69,13 +70,31 @@ pub struct UiCampaignParams<'w> {
 
 /// Simulation resources bundle for UI action handlers.
 #[derive(SystemParam)]
-pub struct UiSimulationContext<'w> {
+#[allow(
+    clippy::type_complexity,
+    reason = "Bundles simulation state, event writers, and disjoint civilization/crisis queries"
+)]
+pub struct UiSimulationContext<'w, 's> {
     pub disk_params: Res<'w, DiskParameters>,
     pub config: ResMut<'w, SimulationConfig>,
     pub sim_time: Res<'w, SimTime>,
     pub lhb_state: ResMut<'w, crate::game::phases::LateHeavyBombardmentState>,
     pub theia_state: Option<ResMut<'w, crate::simulation::accretion::TheiaImpactState>>,
     pub swarm: Option<ResMut<'w, crate::rendering::particle_swarm::ParticleSwarmData>>,
+    pub supernova_events: Option<MessageWriter<'w, crate::simulation::components::SupernovaEvent>>,
+    pub event_log: Option<ResMut<'w, CosmicEventLog>>,
+    pub crisis_countermeasure_events:
+        Option<MessageWriter<'w, crate::simulation::events::CrisisCountermeasureEvent>>,
+    pub civ_query: Query<
+        'w,
+        's,
+        (
+            &'static mut crate::simulation::biology::CivilizationState,
+            Option<&'static mut BiosphereState>,
+        ),
+    >,
+    pub impactors_query:
+        Query<'w, 's, (Entity, &'static crate::simulation::events::CrisisImpactor)>,
 }
 
 /// UI widget queries for button hover, click styling, and tooltip updates.
@@ -167,42 +186,29 @@ fn enforce_modal_exclusion_for_action(
 fn dispatch_pressed_button_action(
     action: &UiButtonAction,
     core: &mut UiCoreState,
-    save_events: Option<&mut MessageWriter<crate::simulation::serialization::SaveSystemEvent>>,
-    load_events: Option<&mut MessageWriter<crate::simulation::serialization::LoadSystemEvent>>,
-    copy_seed_events: Option<
-        &mut MessageWriter<crate::simulation::serialization::CopySystemSeedClipboardEvent>,
-    >,
-    paste_seed_events: Option<
-        &mut MessageWriter<crate::simulation::serialization::PasteSystemSeedClipboardEvent>,
-    >,
-    slot_state: Option<&mut crate::game::ui::widgets::SaveSlotUiState>,
-    scenario_state: Option<&crate::simulation::scenarios::ActiveScenarioState>,
+    ser: &mut UiSerializationWriters,
     optional: &mut UiOptionalState,
     campaign: &mut UiCampaignParams,
     camera_query: &mut Query<&mut PanOrbitCamera>,
     selected_query: &mut SelectedWorldQuery,
-    config: &mut SimulationConfig,
-    star_mass: f64,
+    sim: &mut UiSimulationContext,
     commands: &mut Commands,
-    scenario_events: &mut MessageWriter<crate::simulation::scenarios::LoadScenarioEvent>,
     quasi_star_query: &mut Query<&mut BlackHoleStarState>,
     sat_diff_query: &mut Query<
         (Option<&SatelliteOf>, Option<&mut InternalDifferentiation>),
         Without<PanOrbitCamera>,
     >,
-    lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
-    theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
-    sim_time_years: f64,
 ) {
+    let star_mass = sim.disk_params.central_star_mass;
     if dispatch_system_and_tool_actions(
         action,
-        save_events,
-        load_events,
-        copy_seed_events,
-        paste_seed_events,
-        slot_state,
+        ser.save_events.as_mut(),
+        ser.load_events.as_mut(),
+        ser.copy_seed_events.as_mut(),
+        ser.paste_seed_events.as_mut(),
+        ser.slot_state.as_deref_mut(),
         optional.saves_panel.as_deref_mut(),
-        scenario_state,
+        ser.scenario_state.as_deref(),
         &mut core.quick_bar_state,
         &mut core.time_warp,
         &mut core.hud_visibility,
@@ -211,6 +217,7 @@ fn dispatch_pressed_button_action(
         optional.tech_tree.as_deref_mut(),
         optional.science.as_deref_mut(),
         optional.techs.as_deref_mut(),
+        optional.progression.as_deref_mut(),
         &mut core.telemetry_history,
         optional.scrubber.as_deref_mut(),
         &mut core.player_state,
@@ -240,6 +247,11 @@ fn dispatch_pressed_button_action(
         action,
         optional.hazards_panel.as_deref_mut(),
         optional.hazard_mgr.as_deref_mut(),
+        sim.crisis_countermeasure_events.as_mut(),
+        &sim.impactors_query,
+        selected_query,
+        &mut core.player_state,
+        camera_query,
         &mut core.toast,
     ) {
         enforce_modal_exclusion_for_action(action, core, optional, campaign);
@@ -250,7 +262,7 @@ fn dispatch_pressed_button_action(
         &mut core.player_state,
         camera_query,
         selected_query,
-        config,
+        &sim.config,
         &mut core.toast,
         &mut core.quick_bar_state,
     ) {
@@ -274,7 +286,7 @@ fn dispatch_pressed_button_action(
     }
     if handle_scenario_action(
         action,
-        scenario_events,
+        &mut ser.scenario_events,
         &mut core.toast,
         quasi_star_query,
         commands,
@@ -289,14 +301,21 @@ fn dispatch_pressed_button_action(
         action,
         &mut core.player_state,
         selected_query,
+        &mut sim.civ_query,
         sat_diff_query,
         camera_query,
         star_mass,
         commands,
         &mut core.toast,
-        lhb_state,
-        theia_state,
-        sim_time_years,
+        &mut sim.lhb_state,
+        sim.theia_state.as_deref_mut(),
+        sim.supernova_events.as_mut(),
+        (
+            optional.progression.as_deref(),
+            optional.techs.as_deref(),
+            optional.science.as_deref_mut(),
+        ),
+        sim.sim_time.elapsed_years,
     );
 }
 
@@ -457,30 +476,29 @@ pub fn handle_ui_button_interactions(
             handle_cycle_particle_density(&mut core.toast, &mut sim);
             continue;
         }
+        if action == UiButtonAction::ClearEventLog {
+            if let Some(ref mut log) = sim.event_log {
+                log.clear();
+            }
+            core.toast.message = "📡 Cosmic Event Feed Cleared".to_string();
+            core.toast.timer = 2.0;
+            continue;
+        }
         dispatch_pressed_button_action(
             &action,
             &mut core,
-            ser.save_events.as_mut(),
-            ser.load_events.as_mut(),
-            ser.copy_seed_events.as_mut(),
-            ser.paste_seed_events.as_mut(),
-            ser.slot_state.as_deref_mut(),
-            ser.scenario_state.as_deref(),
+            &mut ser,
             &mut optional,
             &mut campaign,
             &mut camera_query,
             &mut selected_query,
-            &mut sim.config,
-            star_mass,
+            &mut sim,
             &mut commands,
-            &mut ser.scenario_events,
             &mut quasi_star_query,
             &mut sat_diff_query,
-            &mut sim.lhb_state,
-            sim.theia_state.as_deref_mut(),
-            sim.sim_time.elapsed_years,
         );
     }
+    let _ = star_mass;
 
     if dispatched_any
         && let (Some(audio_state), Some(audio_handles)) = (

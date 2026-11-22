@@ -10,7 +10,7 @@ impl UiButtonAction {
             .or_else(|| self.panels_and_geology_tooltip())
             .or_else(|| self.view_and_body_manipulation_tooltip())
             .or_else(|| self.biosphere_and_volatiles_tooltip())
-            .or_else(|| self.chrome_saves_and_inspector_tooltip())
+            .or_else(|| chrome_saves_and_inspector_tooltip(self))
             .unwrap_or("")
     }
 
@@ -190,13 +190,33 @@ impl UiButtonAction {
             UiButtonAction::ResearchTech(_) => {
                 "Research and unlock this advanced scientific capability using accumulated Science Data."
             }
+            UiButtonAction::ToggleGameMode => {
+                "Switch between Sandbox (unrestricted tools) and Progression Mode (tech-gated capabilities & mastery rank)."
+            }
             UiButtonAction::ToggleHazardsPanel => {
-                "⚡ Hazards [Shift-H]: Trigger deep-space cosmic hazards and test planetary defenses."
+                "⚡ Hazards [Shift-H]: Trigger deep-space cosmic hazards and deploy planetary defense countermeasures."
             }
             UiButtonAction::TriggerCosmicHazard(h) => h.title(),
             UiButtonAction::ToggleAutoHazards => {
                 "Toggle stochastic background generation of deep-space cosmic hazards."
             }
+            UiButtonAction::FocusActiveCrisis => {
+                "Focus camera and selection directly onto the incoming cosmic crisis threat."
+            }
+            UiButtonAction::ExecuteCrisisCountermeasure => {
+                "Deploy the recommended active planetary defense countermeasure against the current crisis."
+            }
+            UiButtonAction::DeployPlanetaryDefense(kind) => match kind {
+                crate::simulation::events::CrisisCountermeasureKind::LaunchKineticDeflector => {
+                    "Launch a kinetic impactor salvo to knock Planet-Killer asteroids or comets off collision course."
+                }
+                crate::simulation::events::CrisisCountermeasureKind::ActivateShieldOverdrive => {
+                    "Overcharge magnetospheric dipole shields for 28s to deflect GRBs and Superflares."
+                }
+                crate::simulation::events::CrisisCountermeasureKind::DeployClimateStabilizer => {
+                    "Deploy orbital climate mirrors & dust scrubbers for 32s to neutralize Great Filter runaway."
+                }
+            },
             UiButtonAction::CycleTonemappingMode => {
                 "🎨 Tonemapping [Shift-C]: Cycle screen post-processing display curves (AgX -> ACES -> Reinhard)."
             }
@@ -320,8 +340,23 @@ impl UiButtonAction {
             UiButtonAction::SeedLife => {
                 "[E]: Seed primordial water oceans, atmosphere, and photosynthetic biosphere."
             }
+            UiButtonAction::ToggleCivOrbitalRing => {
+                "Toggle the proportional Orbital Habitat Ring megastructure on the selected world."
+            }
+            UiButtonAction::ToggleCivSolarMirrors => {
+                "Toggle the free-flying JWST-style Orbital Solar Mirrors around the selected world."
+            }
+            UiButtonAction::ToggleCivPlanetaryShield => {
+                "Toggle the electromagnetic Planetary Shield envelope around the selected world."
+            }
+            UiButtonAction::CycleFloraAndBiolum => {
+                "Cycle exotic flora pigment (Chlorophyll -> Red -> Amber -> Indigo) and nocturnal bioluminescence."
+            }
+            UiButtonAction::ClearCivilization => {
+                "Remove civilization state, night lights, and orbital megastructures from the selected world."
+            }
             UiButtonAction::AgeStar => {
-                "[N]: Step central star forward through far-future lifecycle (Red Giant -> Nebula -> White Dwarf)."
+                "[N]: Advance star by mass-dependent lifecycle (<8 M☉ Giant -> Nebula -> White/Black Dwarf; >=8 M☉ Supergiant -> Supernova -> Pulsar/Black Hole; >1.44 M☉ WD -> Type Ia SN)."
             }
             UiButtonAction::BombardComet => {
                 "Launch guided water-rich comet to deliver H2O volatiles & create oceans."
@@ -371,104 +406,111 @@ impl UiButtonAction {
             _ => return None,
         })
     }
+}
 
-    fn chrome_saves_and_inspector_tooltip(&self) -> Option<&'static str> {
-        Some(match self {
-            UiButtonAction::ToggleFullScreenHud => {
-                "[F11]: Toggle clean full-screen view (hide/show all HUD overlays)."
+fn chrome_saves_and_inspector_tooltip(action: &UiButtonAction) -> Option<&'static str> {
+    Some(match action {
+        UiButtonAction::ToggleFullScreenHud => {
+            "[`] or [Alt+H]: Toggle clean Cinema Mode (hide HUD overlays & diagnostic lines; press [Esc] or [`] to restore)."
+        }
+        UiButtonAction::ToggleTopLeftPanel => {
+            "Minimize or expand top-left system statistics panel."
+        }
+        UiButtonAction::ToggleTopRightPanel => {
+            "Minimize or expand top-right diagnostics and time controls."
+        }
+        UiButtonAction::ToggleInspectorPanel => {
+            "Minimize or expand celestial body inspector & action toolbar."
+        }
+        UiButtonAction::ToggleScenariosPanel => {
+            "Open or close the astrophysical sandbox scenario presets drawer [F1–F11]."
+        }
+        UiButtonAction::ToggleTopControlsPanel => {
+            "Minimize or expand top-right view & tool controls card."
+        }
+        UiButtonAction::ToggleBottomRightPanel => {
+            "Minimize or expand bottom-right navigation and keyboard shortcuts panel."
+        }
+        UiButtonAction::ToggleBottomCenterPanel => {
+            "Minimize or expand bottom-center simulation timer and speed controls."
+        }
+        UiButtonAction::ToggleMinimizePlanetBuilder => {
+            "Minimize or expand the interactive Planet Builder drawer."
+        }
+        UiButtonAction::ToggleMinimizeTelemetryPanel => {
+            "Minimize or expand the planetary telemetry & climate graph drawer."
+        }
+        UiButtonAction::ToggleSlingshotMode => {
+            "[K]: Toggle Interactive Orbital Slingshot Launcher (click-and-drag to aim & launch)."
+        }
+        UiButtonAction::CycleSlingshotArchetype => {
+            "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue)."
+        }
+        UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",
+        UiButtonAction::QuickLoad => "[Shift+F12]: Quick Load saved solar system state from disk.",
+        UiButtonAction::SaveNamedSlot => "Save current solar system state to the named save slot.",
+        UiButtonAction::LoadNamedSlot => "Load solar system state from the named save slot.",
+        UiButtonAction::CopySystemSeedClipboard => {
+            "Copy active system state as a compact seed to the clipboard."
+        }
+        UiButtonAction::PasteSystemSeedClipboard => {
+            "Import and restore system seed from the clipboard."
+        }
+        UiButtonAction::ToggleSavesPanel => "Open or close the Multi-Save & Scenario Slot Manager.",
+        UiButtonAction::RefreshSaveSlots => "Rescan the saves/ directory for saved systems.",
+        UiButtonAction::SaveNewScenarioSlot => {
+            "Create a new numbered save slot tagged for the active scenario."
+        }
+        UiButtonAction::ToggleSavesScenarioFilter => {
+            "Toggle filtering the save list to only the currently active scenario."
+        }
+        UiButtonAction::LoadSaveSlot(_) => "Load this saved solar system state from disk.",
+        UiButtonAction::OverwriteSaveSlot(_) => {
+            "Overwrite this save slot with the current solar system state."
+        }
+        UiButtonAction::SelectSaveSlot(_) => {
+            "Load this slot name into the active Save Slot input box."
+        }
+        UiButtonAction::DeleteSaveSlot(_) => {
+            "Delete this save file from disk (click twice to confirm)."
+        }
+        UiButtonAction::ClearQuickBarFilter => "Clear active quick bar search filter.",
+        UiButtonAction::ToggleQuickBarFilter => "Show or hide the quick body selector search bar.",
+        UiButtonAction::ToggleQuickBarWrap => {
+            "Toggle body selector layout between single-row horizontal strip and wrapped rows."
+        }
+        UiButtonAction::ScrollQuickBarLeft => "Scroll body selector strip left.",
+        UiButtonAction::ScrollQuickBarRight => "Scroll body selector strip right.",
+        UiButtonAction::ToggleEventFeed => {
+            "[Shift+E]: Expand or minimize the clickable Cosmic Event Feed log."
+        }
+        UiButtonAction::JumpToEvent(_) => {
+            "Select and focus camera onto this cosmic event's target body."
+        }
+        UiButtonAction::ClearEventLog => "Clear all recorded events from the Cosmic Event Feed.",
+        UiButtonAction::SelectInspectorTab(tab) => match tab {
+            InspectorTab::Overview => {
+                "Switch to the Overview inspector tab (orbital parameters, mass, and bulk composition)."
             }
-            UiButtonAction::ToggleTopLeftPanel => {
-                "Minimize or expand top-left system statistics panel."
+            InspectorTab::GeodynamicsBio => {
+                "Switch to Geodynamics & Biosphere tab (volcanism, tectonics, oceans, and terraforming)."
             }
-            UiButtonAction::ToggleTopRightPanel => {
-                "Minimize or expand top-right diagnostics and time controls."
+            InspectorTab::RelativityFields => {
+                "Switch to Fields & Relativity tab (magnetic fields, general relativity, and high-energy physics)."
             }
-            UiButtonAction::ToggleInspectorPanel => {
-                "Minimize or expand celestial body inspector & action toolbar."
-            }
-            UiButtonAction::ToggleScenariosPanel => {
-                "Open or close the astrophysical sandbox scenario presets drawer [F1–F11]."
-            }
-            UiButtonAction::ToggleTopControlsPanel => {
-                "Minimize or expand top-right view & tool controls card."
-            }
-            UiButtonAction::ToggleBottomRightPanel => {
-                "Minimize or expand bottom-right navigation and keyboard shortcuts panel."
-            }
-            UiButtonAction::ToggleBottomCenterPanel => {
-                "Minimize or expand bottom-center simulation timer and speed controls."
-            }
-            UiButtonAction::ToggleMinimizePlanetBuilder => {
-                "Minimize or expand the interactive Planet Builder drawer."
-            }
-            UiButtonAction::ToggleMinimizeTelemetryPanel => {
-                "Minimize or expand the planetary telemetry & climate graph drawer."
-            }
-            UiButtonAction::ToggleSlingshotMode => {
-                "[K]: Toggle Interactive Orbital Slingshot Launcher (click-and-drag to aim & launch)."
-            }
-            UiButtonAction::CycleSlingshotArchetype => {
-                "[C]: Cycle Slingshot body archetype (Asteroid -> Comet -> Terrestrial -> Water World -> Gas Giant -> Rogue)."
-            }
-            UiButtonAction::QuickSave => "[F12]: Quick Save solar system state to disk (JSON).",
-            UiButtonAction::QuickLoad => {
-                "[Shift+F12]: Quick Load saved solar system state from disk."
-            }
-            UiButtonAction::SaveNamedSlot => {
-                "Save current solar system state to the named save slot."
-            }
-            UiButtonAction::LoadNamedSlot => "Load solar system state from the named save slot.",
-            UiButtonAction::CopySystemSeedClipboard => {
-                "Copy active system state as a compact seed to the clipboard."
-            }
-            UiButtonAction::PasteSystemSeedClipboard => {
-                "Import and restore system seed from the clipboard."
-            }
-            UiButtonAction::ToggleSavesPanel => {
-                "Open or close the Multi-Save & Scenario Slot Manager."
-            }
-            UiButtonAction::RefreshSaveSlots => "Rescan the saves/ directory for saved systems.",
-            UiButtonAction::SaveNewScenarioSlot => {
-                "Create a new numbered save slot tagged for the active scenario."
-            }
-            UiButtonAction::ToggleSavesScenarioFilter => {
-                "Toggle filtering the save list to only the currently active scenario."
-            }
-            UiButtonAction::LoadSaveSlot(_) => "Load this saved solar system state from disk.",
-            UiButtonAction::OverwriteSaveSlot(_) => {
-                "Overwrite this save slot with the current solar system state."
-            }
-            UiButtonAction::SelectSaveSlot(_) => {
-                "Load this slot name into the active Save Slot input box."
-            }
-            UiButtonAction::DeleteSaveSlot(_) => {
-                "Delete this save file from disk (click twice to confirm)."
-            }
-            UiButtonAction::ClearQuickBarFilter => "Clear active quick bar search filter.",
-            UiButtonAction::SelectInspectorTab(tab) => match tab {
-                InspectorTab::Overview => {
-                    "Switch to the Overview inspector tab (orbital parameters, mass, and bulk composition)."
-                }
-                InspectorTab::GeodynamicsBio => {
-                    "Switch to Geodynamics & Biosphere tab (volcanism, tectonics, oceans, and terraforming)."
-                }
-                InspectorTab::RelativityFields => {
-                    "Switch to Fields & Relativity tab (magnetic fields, general relativity, and high-energy physics)."
-                }
-            },
-            UiButtonAction::AdvanceCivilization => {
-                "Advance civilization: spawns a high-tech biosphere and activates city lights on the night side."
-            }
-            UiButtonAction::LaunchProbe => {
-                "Launch a Space Probe: sends an Orbiter or Rover from a technologically advanced world (or star) to explore the selected target."
-            }
-            UiButtonAction::ToggleListSortMode => {
-                "Toggle whether the list of celestial bodies is sorted by distance from the central star or by descending mass."
-            }
-            UiButtonAction::ToggleAudioMute => {
-                "[M]: Mute or unmute procedural cosmic sonification audio (muted by default)."
-            }
-            _ => return None,
-        })
-    }
+        },
+        UiButtonAction::AdvanceCivilization => {
+            "Advance civilization: uplifts the world step-by-step through Kardashev tiers, growing orbital rings and defense readiness."
+        }
+        UiButtonAction::LaunchProbe => {
+            "Launch a Space Probe: sends an Orbiter or Rover from a technologically advanced world (or star) to explore the selected target."
+        }
+        UiButtonAction::ToggleListSortMode => {
+            "Toggle whether the list of celestial bodies is sorted by distance from the central star or by descending mass."
+        }
+        UiButtonAction::ToggleAudioMute => {
+            "[M]: Mute or unmute procedural cosmic sonification audio (muted by default)."
+        }
+        _ => return None,
+    })
 }

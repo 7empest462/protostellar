@@ -728,9 +728,14 @@ pub fn append_sonification_telemetry(
     } else {
         "MUTED [M: Unmute]"
     };
+    let warp_suffix = if (audio.time_warp_pitch - 1.0).abs() > 0.01 {
+        format!(" | Warp {:.2}x", audio.time_warp_pitch)
+    } else {
+        String::new()
+    };
     let _ = write!(
         out,
-        "\n━━━ ⟪ COSMIC SONIFICATION AUDIO ⟫ ━━━━━━━━━━━━━━━━\n  • Status:     {mute_str} ({})\n  • Carrier:    {:.1} Hz | LFO: {:.2} Hz\n  • Spatial:    Prox {:.0}% | Pan {:+.2}\n  • Oscillosc.: [{wave}]\n  • Signal:     {}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "\n━━━ ⟪ COSMIC SONIFICATION AUDIO ⟫ ━━━━━━━━━━━━━━━━\n  • Status:     {mute_str} ({})\n  • Carrier:    {:.1} Hz | LFO: {:.2} Hz{warp_suffix}\n  • Spatial:    Prox {:.0}% | Pan {:+.2}\n  • Oscillosc.: [{wave}]\n  • Signal:     {}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         audio.mode.label(),
         audio.carrier_freq_hz,
         audio.modulation_hz,

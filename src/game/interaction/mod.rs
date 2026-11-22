@@ -25,6 +25,7 @@ pub struct PlayerToolsEvents<'w> {
         MessageWriter<'w, crate::simulation::neutron_stars::TriggerManualGlitchOrStarquakeEvent>,
     >,
     pub oort_events: Option<MessageWriter<'w, crate::simulation::oort::TriggerOortCloudSwarmEvent>>,
+    pub supernova_events: Option<MessageWriter<'w, crate::simulation::components::SupernovaEvent>>,
     pub focus: Option<Res<'w, bevy::input_focus::InputFocus>>,
 }
 
@@ -70,26 +71,34 @@ pub fn handle_player_tools(
     mut opt_predictor: Option<ResMut<crate::simulation::predictor::TrajectoryPredictorState>>,
     scenario_state: Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
     mut selected_query: SelectedBodyQuery,
-    editable_query: Query<(), With<bevy::text::EditableText>>,
+    (editable_query, opt_origin): (
+        Query<(), With<bevy::text::EditableText>>,
+        Option<Res<crate::rendering::origin::RenderOrigin>>,
+    ),
 ) {
+    if keyboard.get_just_pressed().len() == 0 {
+        return;
+    }
     if crate::game::ui::widgets::is_text_input_focused(events.focus.as_deref(), &editable_query) {
         return;
     }
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let prev_tractor = player_state.tractor_position;
+
     let star_mass = disk_params.central_star_mass;
     let (star_pos, star_vel) = selected_query
         .iter()
-        .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star, _)| {
+        .find(|(_, _, _, _, _, _, _, body, _, _, _, _, opt_star, _, _)| {
             opt_star.is_some() || body.body_type.is_star_or_remnant()
         })
-        .map_or(
-            (DVec3::ZERO, DVec3::ZERO),
-            |(_, _, _, _, p, v, _, _, _, _, _, _, _, _)| (p.0, v.0),
-        );
+        .map_or((DVec3::ZERO, DVec3::ZERO), |(_, _, _, _, p, v, ..)| {
+            (p.0, v.0)
+        });
     let is_star_selected = player_state.selected_entity.is_some_and(|e| {
         selected_query
             .get(e)
-            .is_ok_and(|(_, _, _, _, _, _, _, b, _, _, _, _, s, _)| {
+            .is_ok_and(|(_, _, _, _, _, _, _, b, _, _, _, _, s, _, _)| {
                 s.is_some() || b.body_type.is_star_or_remnant()
             })
     });
@@ -116,6 +125,11 @@ pub fn handle_player_tools(
         opt_hud_visibility.as_deref_mut(),
         opt_saves_panel.as_deref_mut(),
     );
+    if prev_tractor.is_none()
+        && let Some(tp) = player_state.tractor_position
+    {
+        player_state.tractor_position = Some(origin.to_sim(tp.as_vec3()));
+    }
 
     handle_tab_selection(
         &keyboard,
@@ -134,7 +148,7 @@ pub fn handle_player_tools(
         &mut toast,
     );
 
-    handle_selected_body_tools(
+    handle_selected_body_tools_with_events(
         &mut commands,
         &keyboard,
         star_mass,
@@ -143,6 +157,7 @@ pub fn handle_player_tools(
         &mut player_state,
         &mut selected_query,
         &mut toast,
+        events.supernova_events.as_mut(),
     );
 
     handle_theia_hotkey(&keyboard, theia_state.as_deref_mut(), &mut toast);
@@ -175,6 +190,7 @@ pub fn handle_planet_builder_click_spawn(
     mut toast: ResMut<crate::game::ui::NotificationToast>,
     ui_interaction_query: crate::rendering::camera_picking::UiInteractionStateQuery,
     ui_nodes_query: crate::rendering::camera_picking::UiPickingNodesQuery,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     if !builder_state.is_open || !builder_state.click_to_spawn_mode {
         return;
@@ -202,17 +218,20 @@ pub fn handle_planet_builder_click_spawn(
             return;
         };
 
+        let origin = opt_origin.as_deref().copied().unwrap_or_default();
         if let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) {
-            // Intersect ray with the orbital disk plane Y = 0
+            let (star_pos, star_vel, eff_star_mass) = star_query.iter().next().map_or(
+                (DVec3::ZERO, DVec3::ZERO, disk_params.central_star_mass),
+                |(p, v, m)| (p.0, v.0, m.0),
+            );
+            // Intersect ray with the star's ecliptic plane in render space
+            let plane_y = (star_pos.y - origin.0.y) as f32;
             if ray.direction.y.abs() > 1e-5 {
-                let t = -ray.origin.y / ray.direction.y;
+                let t = (plane_y - ray.origin.y) / ray.direction.y;
                 if t > 0.0 {
                     let hit = ray.origin + *ray.direction * t;
-                    let (star_pos, star_vel, eff_star_mass) = star_query.iter().next().map_or(
-                        (DVec3::ZERO, DVec3::ZERO, disk_params.central_star_mass),
-                        |(p, v, m)| (p.0, v.0, m.0),
-                    );
-                    let spawn_coords = DVec3::new(f64::from(hit.x), star_pos.y, f64::from(hit.z));
+                    let hit_sim = origin.to_sim(hit);
+                    let spawn_coords = DVec3::new(hit_sim.x, star_pos.y, hit_sim.z);
                     crate::game::ui::spawn_custom_builder_world_relative(
                         &mut commands,
                         &builder_state,

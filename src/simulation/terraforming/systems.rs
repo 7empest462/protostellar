@@ -38,6 +38,7 @@ fn resolve_bombardment_impact(
     event_writer: &mut MessageWriter<BombardmentEvent>,
     params: BombardmentImpactParams<'_>,
     mut target: TargetImpactContext<'_>,
+    opt_techs: Option<&crate::simulation::economy::UnlockedTechs>,
 ) {
     let curr_p = target.opt_terra.as_ref().map_or_else(
         || {
@@ -49,7 +50,7 @@ fn resolve_bombardment_impact(
         |t| t.total_pressure_bar_for_body(target.mass_solar, target.radius_au),
     );
 
-    let delivery = calculate_impact_delivery(
+    let mut delivery = calculate_impact_delivery(
         params.bombardment_type,
         params.projectile_mass_solar,
         params.projectile_comp,
@@ -59,6 +60,17 @@ fn resolve_bombardment_impact(
         curr_p,
         target.temp.0,
     );
+    if opt_techs
+        .is_some_and(|t| t.has(crate::simulation::economy::TechnologyId::AtmosphericInjection))
+    {
+        delivery.delta_co2_bar *= 2.0;
+        delivery.delta_nitrogen_bar *= 2.0;
+    }
+    if opt_techs.is_some_and(|t| t.has(crate::simulation::economy::TechnologyId::CometRedirection))
+    {
+        delivery.liquid_water_delivered_m_earth *= 1.75;
+        delivery.steam_vapor_delivered_m_earth *= 1.75;
+    }
 
     apply_impact_delivery_to_target(
         commands,
@@ -153,6 +165,7 @@ fn advance_guided_projectile(
     target_data: TargetBodyQueryItem<'_>,
     dt_real: f32,
     sim_time: &SimTime,
+    opt_techs: Option<&crate::simulation::economy::UnlockedTechs>,
 ) {
     let (
         t_ent,
@@ -249,6 +262,7 @@ fn advance_guided_projectile(
             opt_climate,
             opt_diff,
         },
+        opt_techs,
     );
 
     if let Ok(mut entity_cmd) = commands.get_entity(p_ent) {
@@ -258,13 +272,18 @@ fn advance_guided_projectile(
 
 /// Advances guided bombardment projectiles along their intercept corridor, detecting proximity
 /// and resolving atmospheric entry and surface impact.
-#[allow(clippy::type_complexity, reason = "bevy ECS query complexity")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "bevy ECS query complexity and optional tech bonuses"
+)]
 pub fn update_guided_bombardment_projectiles(
     mut commands: Commands,
     sim_time: Res<SimTime>,
     time: Option<Res<Time>>,
     time_warp: Res<TimeWarp>,
     _config: Res<SimulationConfig>,
+    opt_techs: Option<Res<crate::simulation::economy::UnlockedTechs>>,
     mut event_writer: MessageWriter<BombardmentEvent>,
     mut projectile_query: Query<(
         Entity,
@@ -314,6 +333,7 @@ pub fn update_guided_bombardment_projectiles(
             target_data,
             dt_real,
             &sim_time,
+            opt_techs.as_deref(),
         );
     }
 }

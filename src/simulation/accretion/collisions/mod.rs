@@ -24,6 +24,37 @@ use super::impact_regimes::{
     ImpactParams, ImpactRegime, classify_impact, radius_from_mass_density,
 };
 
+fn collect_collision_snapshots(
+    bodies_query: &AccretionQuery,
+    snapshots: &mut Vec<BodySnapshot>,
+) -> (f64, f64) {
+    let mut star_mass = 1.0;
+    let mut max_nonstar_speed = 0.0_f64;
+    snapshots.clear();
+    for (e, m, pos, vel, _, rad, temp, comp, body, _, spin, sat, star) in bodies_query.iter() {
+        if star.is_some() {
+            star_mass = m.0;
+        } else if body.body_type != BodyType::BlackHole {
+            max_nonstar_speed = max_nonstar_speed.max(vel.0.length());
+        }
+        snapshots.push(BodySnapshot {
+            entity: e,
+            mass: m.0,
+            pos: pos.0,
+            vel: vel.0,
+            radius: rad.0,
+            temp: temp.0,
+            comp: *comp,
+            body_type: body.body_type,
+            spin: spin.map_or(DVec3::ZERO, |s| s.spin_vector),
+            name: String::new(),
+            is_central: star.is_some(),
+            satellite_parent: sat.map(|s| s.parent),
+        });
+    }
+    (star_mass, max_nonstar_speed)
+}
+
 /// Detects close-contact collisions and processes physical collision regimes.
 #[allow(
     clippy::too_many_arguments,
@@ -50,34 +81,26 @@ pub fn process_accretion_and_collisions(
         return;
     }
 
-    let mut star_mass = 1.0;
-    snapshots.clear();
-    for (e, m, pos, vel, _, rad, temp, comp, body, _, spin, sat, star) in bodies_query.iter() {
-        if star.is_some() {
-            star_mass = m.0;
-        }
-        snapshots.push(BodySnapshot {
-            entity: e,
-            mass: m.0,
-            pos: pos.0,
-            vel: vel.0,
-            radius: rad.0,
-            temp: temp.0,
-            comp: *comp,
-            body_type: body.body_type,
-            spin: spin.map_or(DVec3::ZERO, |s| s.spin_vector),
-            name: String::new(),
-            is_central: star.is_some(),
-            satellite_parent: sat.map(|s| s.parent),
-        });
-    }
+    let (star_mass, max_nonstar_speed) = collect_collision_snapshots(&bodies_query, &mut snapshots);
+
+    let raw_dt_yr = if sim_time.current_dt_yr > 0.0 {
+        sim_time.current_dt_yr
+    } else {
+        config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
+    };
+    let standard_reach = (0.35 + max_nonstar_speed * raw_dt_yr.min(0.05) * 2.5).clamp(0.35, 6.0);
 
     merged_away.clear();
     newly_formed_moons.clear();
     let mut pending_despawns: SmallVec<[Entity; 32]> = SmallVec::new();
 
     let (candidate_pairs, points_scratch) = &mut *broadphase_scratch;
-    build_kdtree_broadphase_candidates_into(&snapshots, candidate_pairs, points_scratch);
+    build_kdtree_broadphase_candidates_into(
+        &snapshots,
+        candidate_pairs,
+        points_scratch,
+        standard_reach,
+    );
     let n = snapshots.len();
     for i in 0..n {
         let Some(e1) = snapshots.get(i).map(|s| s.entity) else {
@@ -137,12 +160,6 @@ pub fn process_accretion_and_collisions(
                 b2.name.clone_from(&body.name);
             }
 
-            let raw_dt_yr = if sim_time.current_dt_yr > 0.0 {
-                sim_time.current_dt_yr
-            } else {
-                config.base_dt_yr * time_warp.multiplier.max(TimeWarp::MIN_SPEED)
-            };
-
             let mut ctx = CollisionContext {
                 commands: &mut commands,
                 bodies_query: &mut bodies_query,
@@ -200,15 +217,15 @@ fn collect_single_body_candidates_into(
     tree: &kiddo::ImmutableKdTree<f64, 3>,
     large_or_bh_indices: &[usize],
     cand_i: &mut SmallVec<[usize; 8]>,
+    standard_reach: f64,
 ) {
-    const STANDARD_REACH: f64 = 6.0;
-    const STANDARD_SQ_RADIUS: f64 = 3.0 * STANDARD_REACH * STANDARD_REACH;
+    let standard_sq_radius: f64 = 3.0 * standard_reach * standard_reach;
 
     cand_i.clear();
     if !s1.pos.is_finite() {
         return;
     }
-    if s1.body_type == BodyType::BlackHole || s1.radius > 2.0 {
+    if s1.body_type == BodyType::BlackHole || s1.radius > 0.05 {
         for (j, s2) in snapshots.iter().enumerate().skip(i + 1) {
             if within_box_reach(s1.pos, s2.pos, pair_broadphase_reach(s1, s2)) {
                 cand_i.push(j);
@@ -219,7 +236,7 @@ fn collect_single_body_candidates_into(
 
     let neighbors = tree
         .query(&[s1.pos.x, s1.pos.y, s1.pos.z])
-        .within::<kiddo::SquaredEuclidean<f64>>(STANDARD_SQ_RADIUS)
+        .within::<kiddo::SquaredEuclidean<f64>>(standard_sq_radius)
         .unsorted()
         .execute();
     for nb in neighbors {
@@ -227,7 +244,7 @@ fn collect_single_body_candidates_into(
         if j > i
             && snapshots
                 .get(j)
-                .is_some_and(|s2| within_box_reach(s1.pos, s2.pos, STANDARD_REACH))
+                .is_some_and(|s2| within_box_reach(s1.pos, s2.pos, standard_reach))
         {
             cand_i.push(j);
         }
@@ -251,6 +268,7 @@ fn build_kdtree_broadphase_candidates_into(
     snapshots: &[BodySnapshot],
     out_candidates: &mut Vec<SmallVec<[usize; 8]>>,
     points: &mut Vec<[f64; 3]>,
+    standard_reach: f64,
 ) {
     let n = snapshots.len();
     for v in out_candidates.iter_mut() {
@@ -275,7 +293,7 @@ fn build_kdtree_broadphase_candidates_into(
             [0.0, 0.0, 0.0]
         };
         points.push(pt);
-        if s.body_type == BodyType::BlackHole || s.radius > 2.0 {
+        if s.body_type == BodyType::BlackHole || s.radius > 0.05 {
             bh_indices.push(idx);
         }
     }
@@ -285,7 +303,15 @@ fn build_kdtree_broadphase_candidates_into(
 
     for (i, s1) in snapshots.iter().enumerate() {
         if let Some(slot) = out_candidates.get_mut(i) {
-            collect_single_body_candidates_into(i, s1, snapshots, &tree, &bh_indices, slot);
+            collect_single_body_candidates_into(
+                i,
+                s1,
+                snapshots,
+                &tree,
+                &bh_indices,
+                slot,
+                standard_reach,
+            );
         }
     }
 }
@@ -295,7 +321,7 @@ fn build_kdtree_broadphase_candidates_into(
 pub fn build_kdtree_broadphase_candidates(snapshots: &[BodySnapshot]) -> Vec<SmallVec<[usize; 8]>> {
     let mut out = Vec::new();
     let mut points = Vec::new();
-    build_kdtree_broadphase_candidates_into(snapshots, &mut out, &mut points);
+    build_kdtree_broadphase_candidates_into(snapshots, &mut out, &mut points, 6.0);
     out
 }
 
@@ -620,6 +646,7 @@ fn process_body_pair(
 fn compute_pair_roche_and_params(
     pair: &SortedPair,
     p_snap_radius: f64,
+    s_snap_radius: f64,
     min_dist: f64,
     b: f64,
     angular_momentum_rel: f64,
@@ -634,6 +661,8 @@ fn compute_pair_roche_and_params(
     let p_phys_rad =
         if matches!(pair.p_type, BodyType::GasGiant | BodyType::IceGiant) && p_snap_radius > 0.0 {
             p_snap_radius.max(EARTH_RADIUS_AU * 0.3)
+        } else if p_snap_radius > 0.0 {
+            p_snap_radius.min(p_rad_from_comp)
         } else {
             p_rad_from_comp
         };
@@ -642,7 +671,13 @@ fn compute_pair_roche_and_params(
     } else {
         p_comp_density
     };
-    let s_rad_au = radius_from_mass_density(pair.s_m, s_density);
+    let s_rad_comp = radius_from_mass_density(pair.s_m, s_density);
+    let s_rad_au =
+        if s_snap_radius > 0.0 && !matches!(pair.s_type, BodyType::GasGiant | BodyType::IceGiant) {
+            s_snap_radius.min(s_rad_comp)
+        } else {
+            s_rad_comp
+        };
     let d_roche = 2.44 * p_phys_rad * (p_phys_density / s_density.max(1e-4)).cbrt();
 
     let is_giant_minor_roche = !pair.p_type.is_star_or_remnant()
@@ -667,7 +702,7 @@ fn compute_pair_roche_and_params(
         primary_radius_au: if is_giant_minor_roche {
             p_phys_rad
         } else {
-            p_phys_rad.max(r_contact * 0.85)
+            p_phys_rad.max((r_contact - s_rad_au) * 0.85)
         },
         secondary_radius_au: s_rad_au,
         primary_type: pair.p_type,
@@ -703,15 +738,16 @@ fn execute_collision_regimes(
         .clamp(0.0, 1.0);
 
     let pair = sort_collision_pair(b1, b2);
-    let p_snap_radius = if pair.primary_entity == b1.entity {
-        b1.radius
+    let (p_snap_radius, s_snap_radius) = if pair.primary_entity == b1.entity {
+        (b1.radius, b2.radius)
     } else {
-        b2.radius
+        (b2.radius, b1.radius)
     };
 
     let (params, d_roche, p_rad_au) = compute_pair_roche_and_params(
         &pair,
         p_snap_radius,
+        s_snap_radius,
         min_dist,
         b,
         angular_momentum_rel,

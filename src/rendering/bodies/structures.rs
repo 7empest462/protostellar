@@ -55,7 +55,7 @@ fn compute_ring_geometry(
     let (resolved_inner_ratio, resolved_outer_ratio) =
         super::shadows::resolve_effective_ring_ratios_for_body(ring_sys, radius.0, &body.name);
     let ring_outer_scale = if is_star {
-        let vis_r = planet_trans.scale.x.max(0.001);
+        let vis_r = planet_trans.scale.x.max(1e-9);
         let target_outer_r = if ring_sys.outer_radius_au > 0.0 {
             ring_sys.outer_radius_au
         } else {
@@ -223,10 +223,11 @@ fn spawn_planetary_ring_child(
 #[allow(clippy::type_complexity, reason = "Planetary ring query")]
 pub fn sync_planetary_rings(
     mut commands: Commands,
-    (time, sim_time, opt_player_state): (
+    (time, sim_time, opt_player_state, opt_origin): (
         Res<Time>,
         Option<Res<SimTime>>,
         Option<Res<PlayerInteractionState>>,
+        Option<Res<crate::rendering::origin::RenderOrigin>>,
     ),
     _config: Res<SimulationConfig>,
     visual_assets: Res<VisualAssets>,
@@ -258,10 +259,11 @@ pub fn sync_planetary_rings(
     let show_atmospheres = opt_player_state
         .as_deref()
         .is_none_or(PlayerInteractionState::show_atmospheres);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let stars: Vec<Vec3> = stars_query
         .iter()
         .filter(|(_, b)| b.body_type.is_star_or_remnant())
-        .map(|(pos, _)| Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        .map(|(pos, _)| origin.to_render(pos.0))
         .collect();
 
     for (

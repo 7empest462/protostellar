@@ -353,6 +353,68 @@ pub fn handle_save_load_action(
     }
 }
 
+fn handle_progression_and_panel_actions(
+    action: &UiButtonAction,
+    trophies_panel_state: &mut crate::game::ui::types::TrophiesPanelState,
+    opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
+    opt_science: Option<&mut crate::simulation::economy::ScienceData>,
+    opt_techs: Option<&mut crate::simulation::economy::UnlockedTechs>,
+    opt_progression: Option<&mut crate::simulation::economy::ProgressionState>,
+    toast: &mut NotificationToast,
+) -> bool {
+    match action {
+        UiButtonAction::ToggleTrophiesPanel => {
+            trophies_panel_state.is_open = !trophies_panel_state.is_open;
+            toast.message = if trophies_panel_state.is_open {
+                "🏆 Trophies & Milestones Tracker Opened".to_string()
+            } else {
+                "🏆 Trophies Tracker Closed".to_string()
+            };
+            toast.timer = 2.5;
+            true
+        }
+        UiButtonAction::ToggleTechTreePanel => {
+            if let Some(tech_tree_panel_state) = opt_tech_tree {
+                tech_tree_panel_state.is_open = !tech_tree_panel_state.is_open;
+                toast.message = if tech_tree_panel_state.is_open {
+                    "🔬 Science & Technology Tree Opened".to_string()
+                } else {
+                    "🔬 Tech Tree Closed".to_string()
+                };
+                toast.timer = 2.5;
+            }
+            true
+        }
+        UiButtonAction::ToggleGameMode => {
+            if let Some(prog) = opt_progression {
+                prog.mode = prog.mode.toggle();
+                toast.message = format!("🎖️ Game Mode switched to: {}", prog.mode.label());
+                toast.timer = 3.5;
+            }
+            true
+        }
+        UiButtonAction::ResearchTech(tech_id) => {
+            if let (Some(science), Some(techs)) = (opt_science, opt_techs) {
+                if techs.unlock(*tech_id, science) {
+                    let tech_name = crate::simulation::economy::ALL_TECH_NODES
+                        .iter()
+                        .find(|n| n.id == *tech_id)
+                        .map_or("Technology", |n| n.name);
+                    toast.message = format!("✨ Researched: {tech_name}!");
+                    toast.timer = 4.0;
+                } else {
+                    toast.message =
+                        "🔒 Cannot research: Insufficient Science Data or missing prerequisites."
+                            .to_string();
+                    toast.timer = 3.0;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Dispatches time controls, panel toggles, telemetry, trophies, tech tree, scrubber, and tools.
 #[allow(
     clippy::too_many_arguments,
@@ -375,6 +437,7 @@ pub fn dispatch_system_and_tool_actions(
     opt_tech_tree: Option<&mut crate::game::ui::types::TechTreePanelState>,
     opt_science: Option<&mut crate::simulation::economy::ScienceData>,
     opt_techs: Option<&mut crate::simulation::economy::UnlockedTechs>,
+    opt_progression: Option<&mut crate::simulation::economy::ProgressionState>,
     telemetry_history: &mut crate::simulation::telemetry::SimulationTelemetryHistory,
     opt_scrubber: Option<&mut crate::simulation::geology::types::TimelineScrubber>,
     player_state: &mut PlayerInteractionState,
@@ -401,6 +464,7 @@ pub fn dispatch_system_and_tool_actions(
     }
     if matches!(action, UiButtonAction::ClearQuickBarFilter) {
         quick_bar_state.filter_text.clear();
+        quick_bar_state.show_filter = false;
         toast.message = "🔍 Quick Bar filter cleared".to_string();
         toast.timer = 2.0;
         return true;
@@ -408,7 +472,7 @@ pub fn dispatch_system_and_tool_actions(
     if handle_time_action(action, time_warp, toast) {
         return true;
     }
-    if handle_panel_toggle_action(action, hud_visibility, toast) {
+    if handle_panel_toggle_action(action, hud_visibility, player_state, toast) {
         return true;
     }
     if handle_telemetry_action(action, telemetry_panel_state, telemetry_history, toast) {
@@ -449,44 +513,15 @@ pub fn dispatch_system_and_tool_actions(
         }
         return true;
     }
-    if matches!(action, UiButtonAction::ToggleTrophiesPanel) {
-        trophies_panel_state.is_open = !trophies_panel_state.is_open;
-        toast.message = if trophies_panel_state.is_open {
-            "🏆 Trophies & Milestones Tracker Opened".to_string()
-        } else {
-            "🏆 Trophies Tracker Closed".to_string()
-        };
-        toast.timer = 2.5;
-        return true;
-    }
-    if matches!(action, UiButtonAction::ToggleTechTreePanel) {
-        if let Some(tech_tree_panel_state) = opt_tech_tree {
-            tech_tree_panel_state.is_open = !tech_tree_panel_state.is_open;
-            toast.message = if tech_tree_panel_state.is_open {
-                "🔬 Science & Technology Tree Opened".to_string()
-            } else {
-                "🔬 Tech Tree Closed".to_string()
-            };
-            toast.timer = 2.5;
-        }
-        return true;
-    }
-    if let UiButtonAction::ResearchTech(tech_id) = action {
-        if let (Some(science), Some(techs)) = (opt_science, opt_techs) {
-            if techs.unlock(*tech_id, science) {
-                let tech_name = crate::simulation::economy::ALL_TECH_NODES
-                    .iter()
-                    .find(|n| n.id == *tech_id)
-                    .map_or("Technology", |n| n.name);
-                toast.message = format!("✨ Researched: {tech_name}!");
-                toast.timer = 4.0;
-            } else {
-                toast.message =
-                    "🔒 Cannot research: Insufficient Science Data or missing prerequisites."
-                        .to_string();
-                toast.timer = 3.0;
-            }
-        }
+    if handle_progression_and_panel_actions(
+        action,
+        trophies_panel_state,
+        opt_tech_tree,
+        opt_science,
+        opt_techs,
+        opt_progression,
+        toast,
+    ) {
         return true;
     }
     if super::super::epoch_scrubber::handle_epoch_scrubber_action(action, opt_scrubber, toast) {

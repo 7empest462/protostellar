@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::progression::ProgressionState;
 use super::types::{ScienceData, TechnologyId, UnlockedTechs};
 use crate::game::phases::PhaseManager;
 use crate::game::ui::NotificationToast;
@@ -19,6 +20,10 @@ pub struct ProbeTelemetryState {
 }
 
 /// Continuous harvesting system collecting science data from probes, civilizations, and Dyson swarms.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Telemetry harvesting reads probes, biospheres, Dyson swarms, techs, and progression state"
+)]
 pub fn harvest_telemetry_system(
     mut science_data: ResMut<ScienceData>,
     unlocked_techs: Res<UnlockedTechs>,
@@ -28,6 +33,7 @@ pub fn harvest_telemetry_system(
     time: Res<Time>,
     time_warp: Option<Res<crate::simulation::resources::TimeWarp>>,
     reload_gen: Option<Res<crate::simulation::scenarios::ScenarioReloadGeneration>>,
+    progression: Option<Res<ProgressionState>>,
     mut last_gen: Local<u64>,
     mut local_state: Local<ProbeTelemetryState>,
 ) {
@@ -80,10 +86,15 @@ pub fn harvest_telemetry_system(
     }
 
     // 2. Biospheres & Technological Civilizations
+    let lens_mult = if unlocked_techs.has(TechnologyId::GravitationalLensArray) {
+        1.4
+    } else {
+        1.0
+    };
     for bio in biosphere_query.iter() {
         if bio.technosignature > 0.0 {
             // Advanced civilizations generate high-bandwidth scientific telemetry
-            let civ_rate = f64::from(bio.technosignature) * 2.5;
+            let civ_rate = f64::from(bio.technosignature) * 2.5 * lens_mult;
             passive_rate += civ_rate;
         }
     }
@@ -94,15 +105,28 @@ pub fn harvest_telemetry_system(
     } else {
         1.0
     };
+    let mut has_mature_swarm = false;
     for swarm in swarm_query.iter() {
         if swarm.completion_fraction > 0.0 {
+            if swarm.completion_fraction >= 0.35 {
+                has_mature_swarm = true;
+            }
             let swarm_rate = f64::from(swarm.completion_fraction) * 12.0 * dyson_multiplier;
             passive_rate += swarm_rate;
         }
     }
+    if progression
+        .as_deref()
+        .is_some_and(|p| p.stellar_engine_active)
+        || (unlocked_techs.has(TechnologyId::StellarEngine) && has_mature_swarm)
+    {
+        passive_rate += 25.0;
+    }
 
-    // Update global rate & accumulate points
-    science_data.passive_rate_per_sec = passive_rate;
+    // Update global rate & accumulate points only when changed
+    if (science_data.passive_rate_per_sec - passive_rate).abs() > 1e-9 {
+        science_data.passive_rate_per_sec = passive_rate;
+    }
     if dt_visual_secs > 0.0 && passive_rate > 0.0 {
         science_data.add_science(passive_rate * dt_visual_secs);
     }

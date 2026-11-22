@@ -193,6 +193,7 @@ pub fn sync_circumstellar_environments(
     time: Res<Time>,
     sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut materials: ResMut<Assets<CircumstellarMaterial>>,
     stars_query: Query<
         (
@@ -232,8 +233,9 @@ pub fn sync_circumstellar_environments(
             continue;
         };
 
+        let origin = opt_origin.as_deref().copied().unwrap_or_default();
         let visual_r = trans.scale.x.max(rad.0 as f32 * 0.1);
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let world_pos = origin.to_render(pos.0);
         let uniforms =
             compute_circumstellar_uniforms(&profile, world_pos, visual_r, opt_spin, elapsed);
 

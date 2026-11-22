@@ -47,8 +47,8 @@ pub struct GpuOrbitUniforms {
     pub shockwave_radius: f32,
     pub softening_sq: f32,
     pub num_massive_bodies: u32,
-    #[allow(clippy::pub_underscore_fields, reason = "padding for alignment")]
-    pub _pad: f32,
+    /// Condensation snow-line radius in AU (default 2.7 AU, 3.65 AU in Disk Genesis).
+    pub snow_line_au: f32,
     pub tractor_pos_mass: [f32; 4],
     pub massive_bodies: [MassiveBodyGpu; 32],
 }
@@ -133,9 +133,123 @@ impl Default for GpuOrbitUniforms {
             shockwave_radius: 0.0,
             softening_sq: 0.008 * 0.008,
             num_massive_bodies: 1,
-            _pad: 0.0,
+            snow_line_au: 2.7,
             tractor_pos_mass: [0.0, 0.0, 0.0, 0.0],
             massive_bodies: [MassiveBodyGpu::default(); 32],
+        }
+    }
+}
+
+/// Log-radial resolution of the GPU polar nucleation grid.
+pub const NUCLEATION_GRID_R: u32 = 64;
+/// Azimuthal resolution of the GPU polar nucleation grid.
+pub const NUCLEATION_GRID_PHI: u32 = 64;
+/// Total polar spatial cells in VRAM (`64 x 64 = 4096`).
+pub const NUCLEATION_NUM_CELLS: usize = (NUCLEATION_GRID_R * NUCLEATION_GRID_PHI) as usize;
+/// Number of 32-bit atomic slots per VRAM nucleation cell (`80 bytes` per cell).
+pub const NUCLEATION_CELL_U32S: usize = 20;
+/// Maximum simultaneous nucleation collapse events emitted per compact GPU readback packet.
+pub const MAX_GPU_NUCLEATION_EVENTS: usize = 4;
+/// Magic header tag identifying a compact GPU disk nucleation readback packet (`"NUCL"`).
+pub const GPU_NUCLEATION_READBACK_MAGIC: u32 = 0x4E55_434C;
+
+/// Uniform buffer driving the GPU radial/azimuthal overdensity nucleation passes (592 bytes, 16-byte aligned).
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GpuDiskNucleationUniforms {
+    pub star_pos: [f32; 3],
+    pub star_mass: f32,
+    pub inner_radius: f32,
+    pub outer_radius: f32,
+    pub snow_line_au: f32,
+    pub base_mass: f32,
+    pub gas_scale: f32,
+    pub elapsed_years: f32,
+    pub v_ref_scale: f32,
+    pub num_particles: u32,
+    pub enable_promotion: u32,
+    pub max_promotions: u32,
+    pub min_peak_particles: u32,
+    pub frame_seed: u32,
+    pub min_clump_mass_solar: f32,
+    pub coagulate_enabled: u32,
+    pub num_massive_bodies: u32,
+    #[allow(clippy::pub_underscore_fields, reason = "WGSL 16-byte struct padding")]
+    pub _pad: u32,
+    pub massive_bodies: [MassiveBodyGpu; 32],
+}
+
+impl Default for GpuDiskNucleationUniforms {
+    fn default() -> Self {
+        Self {
+            star_pos: [0.0, 0.0, 0.0],
+            star_mass: 1.0,
+            inner_radius: 0.12,
+            outer_radius: 55.0,
+            snow_line_au: 2.7,
+            base_mass: 7.0e-10,
+            gas_scale: 1.0,
+            elapsed_years: 0.0,
+            v_ref_scale: 30.0,
+            num_particles: 50_000,
+            enable_promotion: 0,
+            max_promotions: 0,
+            min_peak_particles: 6,
+            frame_seed: 0,
+            min_clump_mass_solar: 5.4e-9,
+            coagulate_enabled: 0,
+            num_massive_bodies: 0,
+            _pad: 0,
+            massive_bodies: [MassiveBodyGpu::default(); 32],
+        }
+    }
+}
+
+/// Single GPU-detected disk overdensity collapse event ready for Main-world ECS promotion (64 bytes).
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct GpuNucleationEvent {
+    /// Mass-weighted position (`xyz` in AU) and collapsed mass (`w` in solar masses).
+    pub pos_mass: [f32; 4],
+    /// Mass-weighted orbital velocity (`xyz` in AU/yr) and temperature (`w` in K).
+    pub vel_temp: [f32; 4],
+    /// Average particle composition (`silicate`, `ice`, `metal`, `gas`).
+    pub composition: [f32; 4],
+    /// Metadata: `[0] cell_idx`, `[1] consumed_particles`, `[2] zone_kind`, `[3] reserved`.
+    pub meta: [u32; 4],
+}
+
+impl Default for GpuNucleationEvent {
+    fn default() -> Self {
+        Self {
+            pos_mass: [0.0; 4],
+            vel_temp: [0.0; 4],
+            composition: [0.0; 4],
+            meta: [0; 4],
+        }
+    }
+}
+
+/// Compact 272-byte GPU -> CPU readback packet carrying promoted disk planetesimal/embryo events.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+pub struct GpuNucleationReadback {
+    pub event_count: u32,
+    pub magic: u32,
+    pub generation_lo: u32,
+    #[allow(clippy::pub_underscore_fields, reason = "WGSL 16-byte struct padding")]
+    pub _pad: u32,
+    pub events: [GpuNucleationEvent; MAX_GPU_NUCLEATION_EVENTS],
+}
+
+impl Default for GpuNucleationReadback {
+    fn default() -> Self {
+        Self {
+            event_count: 0,
+            magic: GPU_NUCLEATION_READBACK_MAGIC,
+            generation_lo: 0,
+            _pad: 0,
+            events: [GpuNucleationEvent::default(); MAX_GPU_NUCLEATION_EVENTS],
         }
     }
 }

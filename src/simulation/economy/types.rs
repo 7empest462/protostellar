@@ -80,6 +80,7 @@ pub enum TechnologyCategory {
     Propulsion,
     Terraforming,
     Megastructures,
+    PlanetaryDefense,
 }
 
 /// Unique identifiers for all researchable technologies in Protostellar.
@@ -99,6 +100,11 @@ pub enum TechnologyId {
     GravitationalLensArray,
     DysonCollectors,
     StellarEngine,
+
+    // Planetary Defense & Civilizations branch
+    PlanetaryDefenseGrid,
+    MagnetosphericShielding,
+    KardashevAscension,
 }
 
 /// Static definition of a researchable technology node in the Tech Tree.
@@ -168,7 +174,7 @@ impl UnlockedTechs {
     }
 }
 
-pub static ALL_TECH_NODES: [TechNode; 9] = [
+pub static ALL_TECH_NODES: [TechNode; 12] = [
     // --- Propulsion ---
     TechNode {
         id: TechnologyId::IonDrive,
@@ -182,7 +188,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::SolarSail,
         name: "⛵ Photonic Solar Sails",
         category: TechnologyCategory::Propulsion,
-        description: "Ultralight reflective metamaterials harnessing stellar radiation pressure for propellantless cruising.",
+        description: "Ultralight reflective metamaterials harnessing stellar radiation pressure for propellantless cruising and +140% probe telemetry.",
         cost: 350.0,
         prerequisites: &[TechnologyId::IonDrive],
     },
@@ -190,7 +196,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::AntimatterDrive,
         name: "⚛️ Positron-Catalyzed Antimatter Drive",
         category: TechnologyCategory::Propulsion,
-        description: "Relativistic propulsion reaching 0.15c. Enables near-instant interplanetary transits across solar distances.",
+        description: "Relativistic propulsion reaching 0.15c. Enables near-instant interplanetary transits and faster colony expansion.",
         cost: 1000.0,
         prerequisites: &[TechnologyId::SolarSail],
     },
@@ -199,7 +205,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::AtmosphericInjection,
         name: "🏭 Atmospheric Aerosol Injection",
         category: TechnologyCategory::Terraforming,
-        description: "Industrial injection of greenhouse gases and reflective aerosols to regulate planetary surface temperature.",
+        description: "Industrial injection of greenhouse gases and buffer volatiles; doubles atmospheric delivery per bombardment strike.",
         cost: 200.0,
         prerequisites: &[],
     },
@@ -207,7 +213,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::OrbitalMirrorArray,
         name: "🪞 Orbital Solar Reflector Array",
         category: TechnologyCategory::Terraforming,
-        description: "Orbital mirror megastructures focusing stellar flux to thaw frozen ocean worlds and establish liquid water.",
+        description: "Orbital mirror megastructures actively regulating thermal equilibrium on inhabited worlds and countering Great Filter climate shocks.",
         cost: 500.0,
         prerequisites: &[TechnologyId::AtmosphericInjection],
     },
@@ -215,7 +221,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::CometRedirection,
         name: "☄️ Kinetic Cometary Redirection",
         category: TechnologyCategory::Terraforming,
-        description: "Propulsion packages bolted to Oort cloud comets to deliver billions of tons of volatile water ice directly to arid planets.",
+        description: "High-impulse thruster packages boosting cometary water delivery (+75%) and Kinetic Deflector crisis delta-v (+50%).",
         cost: 850.0,
         prerequisites: &[TechnologyId::OrbitalMirrorArray],
     },
@@ -224,7 +230,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::GravitationalLensArray,
         name: "🔭 Solar Gravitational Lensing Array",
         category: TechnologyCategory::Megastructures,
-        description: "Focal-point deep-space telescopes resolving planetary biosignatures and exoplanet topography at light-year distances.",
+        description: "Focal-point telescopes doubling early-warning crisis lead time, boosting crisis science bounties (+50%), and amplifying bio telemetry (+40%).",
         cost: 250.0,
         prerequisites: &[],
     },
@@ -232,7 +238,7 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::DysonCollectors,
         name: "☀️ Dyson Swarm Flux Concentrators",
         category: TechnologyCategory::Megastructures,
-        description: "Advanced photovoltaic mirrors multiplying Dyson Swarm construction rate by 5x and capturing terawatts of research telemetry.",
+        description: "Advanced photovoltaic mirrors multiplying Dyson Swarm construction rate by 5x and amplifying megastructure telemetry.",
         cost: 650.0,
         prerequisites: &[TechnologyId::GravitationalLensArray],
     },
@@ -240,8 +246,33 @@ pub static ALL_TECH_NODES: [TechNode; 9] = [
         id: TechnologyId::StellarEngine,
         name: "🌟 Shkadov Stellar Engine",
         category: TechnologyCategory::Megastructures,
-        description: "Colossal hemispherical thrust mirror using asymmetrical stellar radiation pressure to accelerate the host star through the galaxy.",
+        description: "Colossal hemispherical thrust mirror crowning mature Dyson Swarms with +25/s megastructure telemetry and maximum Kinetic Deflector power.",
         cost: 1500.0,
         prerequisites: &[TechnologyId::DysonCollectors],
+    },
+    // --- Planetary Defense & Civilizations ---
+    TechNode {
+        id: TechnologyId::PlanetaryDefenseGrid,
+        name: "🛰️ Orbital Kinetic Defense Grid",
+        category: TechnologyCategory::PlanetaryDefense,
+        description: "Automated orbital railgun and kinetic interceptor network that engages Planet-Killer asteroids and halves impact losses.",
+        cost: 300.0,
+        prerequisites: &[],
+    },
+    TechNode {
+        id: TechnologyId::MagnetosphericShielding,
+        name: "🛡️ Artificial Magnetospheric Shielding",
+        category: TechnologyCategory::PlanetaryDefense,
+        description: "Superconducting equatorial ring currents deflecting Gamma-Ray Bursts and Solar Superflares from inhabited worlds and probes.",
+        cost: 550.0,
+        prerequisites: &[TechnologyId::PlanetaryDefenseGrid],
+    },
+    TechNode {
+        id: TechnologyId::KardashevAscension,
+        name: "🏙️ Kardashev Uplift & Biosphere Shield",
+        category: TechnologyCategory::PlanetaryDefense,
+        description: "Unlocks forced Civilization Uplift in Progression Mode, doubles Kardashev growth & orbital ring deployment, and lowers colony threshold.",
+        cost: 1100.0,
+        prerequisites: &[TechnologyId::MagnetosphericShielding],
     },
 ];

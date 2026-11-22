@@ -68,21 +68,44 @@ pub fn handle_time_action(
     false
 }
 
+/// Toggles distraction-free Cinema Mode while saving and restoring orbit/overlay visibility.
+pub fn toggle_cinema_mode(
+    hud_visibility: &mut HudVisibilityState,
+    player_state: &mut PlayerInteractionState,
+    toast: &mut NotificationToast,
+) {
+    hud_visibility.is_full_screen_clean = !hud_visibility.is_full_screen_clean;
+    if hud_visibility.is_full_screen_clean {
+        hud_visibility.saved_orbit_mode = Some(player_state.orbit_mode);
+        hud_visibility.saved_overlay_mode = Some(player_state.overlay_mode);
+        player_state.orbit_mode = OrbitVisualizationMode::Off;
+        player_state.overlay_mode = DiagnosticOverlayMode::Hidden;
+        toast.message = "🎬 Cinema Mode Active — Press [`] or [Esc] to restore HUD".to_string();
+    } else {
+        if let Some(prev_orbit) = hud_visibility.saved_orbit_mode.take() {
+            player_state.orbit_mode = prev_orbit;
+        }
+        if let Some(prev_overlay) = hud_visibility.saved_overlay_mode.take() {
+            player_state.overlay_mode = prev_overlay;
+        }
+        toast.message = "👁️ Standard HUD Restored [`]".to_string();
+    }
+    toast.timer = 2.5;
+}
+
 pub fn handle_panel_toggle_action(
     action: &UiButtonAction,
     hud_visibility: &mut HudVisibilityState,
+    player_state: &mut PlayerInteractionState,
     toast: &mut NotificationToast,
 ) -> bool {
     match action {
         UiButtonAction::ToggleFullScreenHud => {
-            hud_visibility.is_full_screen_clean = !hud_visibility.is_full_screen_clean;
-            toast.message = if hud_visibility.is_full_screen_clean {
-                "⛶ Clean Fullscreen Mode (Press [F11] or click top-right badge to restore HUD)"
-                    .to_string()
-            } else {
-                "👁️ Standard HUD View Restored".to_string()
-            };
-            toast.timer = 2.5;
+            toggle_cinema_mode(hud_visibility, player_state, toast);
+            true
+        }
+        UiButtonAction::ToggleEventFeed => {
+            hud_visibility.event_feed_minimized = !hud_visibility.event_feed_minimized;
             true
         }
         UiButtonAction::ToggleTopLeftPanel => {

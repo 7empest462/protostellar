@@ -2,15 +2,99 @@ use bevy::prelude::*;
 
 use crate::simulation::components::*;
 use crate::simulation::resources::*;
+use crate::simulation::tides::TidalState;
 
-/// Computes a realistic camera-adaptive visual radius that transitions to near-physical
-/// scale on close-up and never crowds neighboring orbits in compact systems.
+/// Computes the `tidal_deformation` shader uniform (`xyz` = unit world vector toward dominant
+/// tidal perturber, `w` = `roche_stretch` in `0.0..0.78` plus `+2.0` if tidally locked).
+pub fn compute_tidal_deformation_uniform(
+    world_pos: Vec3,
+    primary_pos: Vec3,
+    primary_mass_solar: f64,
+    body_mass_solar: f64,
+    body_radius_au: f64,
+    opt_tidal: Option<&TidalState>,
+    opt_roche: Option<&crate::simulation::accretion::RocheLobeOverflow>,
+    is_satellite: bool,
+) -> Vec4 {
+    let to_primary = primary_pos - world_pos;
+    let dist_au = f64::from(to_primary.length());
+    let tidal_dir = to_primary.normalize_or_zero();
+
+    // Eggleton / Fluid Roche limit estimate: r_roche ~ 2.44 * R_body * (M_primary / M_body)^(1/3)
+    let mass_ratio = primary_mass_solar / body_mass_solar.max(1e-12);
+    let r_roche_au = 2.44 * body_radius_au * mass_ratio.cbrt();
+
+    let mut stretch = if let Some(roche) = opt_roche {
+        let overflow_boost = (roche.mass_transfer_rate * 2.5e3).clamp(0.0, 0.35) as f32;
+        (0.42 + overflow_boost).clamp(0.35, 0.78)
+    } else if dist_au > 1e-5 && r_roche_au > 0.0 {
+        let prox = (r_roche_au / dist_au) as f32;
+        if prox > 0.33 {
+            ((prox - 0.33) * 0.65).clamp(0.0, 0.72)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    if !is_satellite && opt_tidal.is_some_and(|t| t.is_tidally_locked) {
+        stretch += 2.0;
+    }
+
+    Vec4::new(tidal_dir.x, tidal_dir.y, tidal_dir.z, stretch)
+}
+
+/// Computes the flux-weighted incoming starlight direction for a celestial body,
+/// smoothly blending illumination across multi-star and circumbinary systems.
+pub fn resolve_star_direction(
+    entity: Entity,
+    body_pos: Vec3,
+    star_pos: Vec3,
+    stars: &[(Entity, Vec3, f32)],
+) -> Vec3 {
+    if stars.is_empty() {
+        Vec3::Y
+    } else if stars.len() == 1 {
+        (star_pos - body_pos).normalize_or_zero()
+    } else {
+        let mut weighted_dir = Vec3::ZERO;
+        let mut nearest_dir = Vec3::Y;
+        let mut nearest_dist_sq = f32::MAX;
+
+        for &(s_ent, s_pos, lum_weight) in stars {
+            if s_ent == entity {
+                continue;
+            }
+            let to_star = s_pos - body_pos;
+            let dist_sq = to_star.length_squared();
+            if dist_sq < 1e-12 {
+                continue;
+            }
+            let dir = to_star / dist_sq.sqrt();
+            if dist_sq < nearest_dist_sq {
+                nearest_dist_sq = dist_sq;
+                nearest_dir = dir;
+            }
+            let flux = lum_weight.max(1e-4) / dist_sq.max(1e-6);
+            weighted_dir += dir * flux;
+        }
+
+        if weighted_dir.length_squared() > 1e-12 {
+            weighted_dir.normalize()
+        } else {
+            nearest_dir
+        }
+    }
+}
+
+/// Computes a zoom-invariant, physically proportioned 1:1 visual radius across all distances.
 pub fn compute_realistic_visual_radius(
     physical_radius_au: f64,
     body_type: BodyType,
-    r_orb: f32,
-    min_orbit_r: f32,
-    cam_dist: f32,
+    _r_orb: f32,
+    _min_orbit_r: f32,
+    _cam_dist: f32,
     config: &SimulationConfig,
 ) -> f32 {
     let safe_phys_r = if physical_radius_au.is_finite() {
@@ -18,79 +102,7 @@ pub fn compute_realistic_visual_radius(
     } else {
         1e-6
     };
-    let safe_r_orb = if r_orb.is_finite() {
-        r_orb.max(0.0)
-    } else {
-        1.0
-    };
-    let safe_min_orbit = if min_orbit_r.is_finite() && min_orbit_r > 0.0 {
-        min_orbit_r
-    } else {
-        1.0
-    };
-    let safe_cam_dist = if cam_dist.is_finite() {
-        cam_dist.max(0.0)
-    } else {
-        25.0
-    };
-
-    let r_true = (safe_phys_r as f32).max(1e-6);
-    let r_exag =
-        config.calc_visual_radius_with_orbit(safe_phys_r, body_type, safe_r_orb, safe_min_orbit);
-
-    let orbit_spacing_cap = if safe_r_orb > 0.0005 && !body_type.is_star_or_remnant() {
-        (safe_r_orb * 0.045).max(r_true * 1.25)
-    } else if body_type.is_star_or_remnant() && safe_min_orbit < 0.05 {
-        (safe_min_orbit * 0.32).max(r_true)
-    } else {
-        r_exag
-    };
-    let max_allowed_exag = r_exag.min(orbit_spacing_cap);
-
-    // In single-precision 32-bit float world coordinates, machine epsilon at distance R_orb
-    // is ~ R_orb * 5.96e-8 AU. Enforce a distance-dependent precision floor to eliminate faceting.
-    let precision_mult = if safe_r_orb > 25.0 { 1.5e-4 } else { 3.6e-5 };
-    let float_precision_floor = (safe_r_orb * precision_mult).min(max_allowed_exag);
-
-    let close_scale_floor = if body_type == BodyType::BlackHole {
-        max_allowed_exag
-    } else if body_type.is_star_or_remnant() {
-        (r_true * 1.2)
-            .max(float_precision_floor)
-            .min(max_allowed_exag)
-    } else if body_type == BodyType::Moon {
-        let moon_scale = ((r_true / 0.000_042_6_f32).powf(0.45) * 0.46).clamp(0.05, 1.0);
-        ((r_true * 2.5).max(0.00018 * moon_scale))
-            .max(float_precision_floor * moon_scale)
-            .min(max_allowed_exag)
-    } else if matches!(
-        body_type,
-        BodyType::Asteroid | BodyType::Comet | BodyType::Planetesimal | BodyType::DustGrain
-    ) {
-        let minor_precision_floor = (float_precision_floor * 0.35).min(max_allowed_exag);
-        (r_true * 2.5)
-            .max(0.00010)
-            .max(minor_precision_floor)
-            .min(max_allowed_exag)
-    } else if safe_r_orb > 25.0 {
-        (r_true * 2.5)
-            .max(max_allowed_exag * 0.65)
-            .max(float_precision_floor)
-            .min(max_allowed_exag)
-    } else {
-        (r_true * 2.5)
-            .max(0.00018)
-            .max(float_precision_floor)
-            .min(max_allowed_exag)
-    };
-
-    let close_dist = (close_scale_floor * 8.0).max(0.015);
-    if safe_cam_dist <= close_dist || max_allowed_exag <= close_scale_floor {
-        close_scale_floor
-    } else {
-        let scaled = close_scale_floor * (safe_cam_dist / close_dist).powf(0.78);
-        scaled.min(max_allowed_exag)
-    }
+    config.calc_visual_radius_for_type(safe_phys_r, body_type)
 }
 
 /// Resolves the exact rendered visual radius of a celestial body in `O(1)` by reading its synced
@@ -107,14 +119,36 @@ pub fn resolve_synced_visual_radius(
     if let Some(tf) = opt_transform {
         let sx = tf.scale.x;
         let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && physical_radius_au < 0.25;
-        if sx.is_finite() && sx > 1e-6 && !is_unsynced_default {
+        if sx.is_finite() && sx > 1e-10 && !is_unsynced_default {
             return sx;
         }
     }
     compute_realistic_visual_radius(physical_radius_au, body_type, r_orb, 1.0, cam_dist, config)
 }
 
-/// Computes camera-adaptive visual radius, proportionally shrinking gas-enveloped
+/// Resolves the stable close-up visual radius (`cam_dist = 0.0`) for a First-Person Surface Mode host body.
+/// Preserves smaller stripped-core scales (`show_atmospheres == false`) or custom unit-test scales.
+#[inline]
+pub fn resolve_surface_mode_visual_radius(
+    opt_transform: Option<&Transform>,
+    physical_radius_au: f64,
+    body_type: BodyType,
+    r_orb: f32,
+    config: &SimulationConfig,
+) -> f32 {
+    let close_vis_r =
+        compute_realistic_visual_radius(physical_radius_au, body_type, r_orb, 1.0, 0.0, config);
+    if let Some(tf) = opt_transform {
+        let sx = tf.scale.x;
+        let is_unsynced_default = (sx - 1.0).abs() < 1e-6 && physical_radius_au < 0.25;
+        if sx.is_finite() && sx > 1e-10 && !is_unsynced_default {
+            return sx.min(close_vis_r);
+        }
+    }
+    close_vis_r
+}
+
+/// Computes visual radius, proportionally shrinking gas-enveloped
 /// bodies down to their true solid/icy core diameter when `show_atmospheres` is false.
 #[allow(
     clippy::too_many_arguments,
@@ -160,12 +194,7 @@ pub fn compute_view_visual_radius(
         return full_vis_r;
     }
     let ratio = (stripped_r / physical_radius_au) as f32;
-    let safe_r_orb = if r_orb.is_finite() {
-        r_orb.max(0.0)
-    } else {
-        1.0
-    };
-    let precision_floor = (safe_r_orb * 8.0e-6).max(1e-6).min(full_vis_r);
+    let precision_floor = 1e-9_f32.min(full_vis_r);
     (full_vis_r * ratio).max(precision_floor).min(full_vis_r)
 }
 

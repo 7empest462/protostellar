@@ -439,6 +439,22 @@ fn spawn_objective_row(col: &mut ChildSpawnerCommands, obj: &MissionObjective) {
     });
 }
 
+fn compute_campaign_objectives_hash(campaign_state: &CampaignState) -> u64 {
+    let mut h = (campaign_state.status as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= u64::from(campaign_state.reward_claimed) << 8;
+    h ^= u64::from(campaign_state.failure_reason.is_some()) << 9;
+    h ^= (campaign_state.objectives.len() as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    for (idx, obj) in campaign_state.objectives.iter().enumerate() {
+        let q_val = (obj.current_value * 100.0).round() as i64;
+        let q_frac = (obj.progress_fraction() * 100.0).round() as u64;
+        let flags = u64::from(obj.is_completed) | (u64::from(obj.is_failed) << 1);
+        h = h
+            .rotate_left(11)
+            .wrapping_add((idx as u64) ^ (q_val as u64) ^ (q_frac << 32) ^ (flags << 48));
+    }
+    h
+}
+
 /// Dynamic system updating visibility, modal content, and live objective tracker.
 #[allow(
     clippy::type_complexity,
@@ -450,27 +466,46 @@ pub fn update_campaign_ui(
     mut container_query: Query<(&mut Node, &CampaignPanelElement)>,
     content_query: Query<(Entity, &CampaignPanelElement), Without<Text>>,
     mut commands: Commands,
+    mut last_sig: Local<Option<(bool, Option<CampaignMissionId>, bool, u64)>>,
 ) {
     if !panel_state.is_changed() && !campaign_state.is_changed() {
         return;
     }
 
+    let obj_hash = compute_campaign_objectives_hash(&campaign_state);
+    let sig = (
+        panel_state.is_open,
+        campaign_state.active_mission,
+        panel_state.is_tracker_minimized,
+        obj_hash,
+    );
+    if *last_sig == Some(sig) {
+        return;
+    }
+    *last_sig = Some(sig);
+
     // 1. Update Container Displays
     for (mut node, elem) in container_query.iter_mut() {
         match elem {
             CampaignPanelElement::ModalContainer => {
-                node.display = if panel_state.is_open {
+                let target = if panel_state.is_open {
                     Display::Flex
                 } else {
                     Display::None
                 };
+                if node.display != target {
+                    node.display = target;
+                }
             }
             CampaignPanelElement::TrackerContainer => {
-                node.display = if campaign_state.active_mission.is_some() {
+                let target = if campaign_state.active_mission.is_some() {
                     Display::Flex
                 } else {
                     Display::None
                 };
+                if node.display != target {
+                    node.display = target;
+                }
             }
             _ => {}
         }

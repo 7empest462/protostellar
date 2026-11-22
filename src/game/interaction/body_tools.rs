@@ -27,6 +27,10 @@ pub type SelectedBodyQuery<'w, 's> = Query<
         Option<&'static mut BlackHoleStarState>,
         Option<&'static CentralStar>,
         Option<&'static SatelliteOf>,
+        (
+            Option<&'static mut Luminosity>,
+            Option<&'static mut StellarEvolutionState>,
+        ),
     ),
     (
         Without<PanOrbitCamera>,
@@ -61,6 +65,62 @@ fn equilibrate_moved_orbit_temperature(
     }
 }
 
+fn apply_non_star_mass_edit(
+    commands: &mut Commands,
+    entity: Entity,
+    mass_solar: f64,
+    old_type: BodyType,
+    radius: &mut Radius,
+    comp: &Composition,
+    body: &mut CelestialBody,
+) {
+    let new_type = classify_body_by_mass_and_comp(mass_solar, comp, false);
+    if !old_type.is_remnant() && !old_type.is_hypothetical() {
+        body.body_type = new_type;
+    }
+    if body.body_type == BodyType::BlackHole {
+        radius.0 = (1.974e-8 * mass_solar).max(1e-7);
+    } else if body.body_type == BodyType::BrownDwarf {
+        radius.0 = 0.11 * SOLAR_RADIUS_AU;
+    } else if body.body_type.is_star_or_remnant() {
+        if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
+            radius.0 = SOLAR_RADIUS_AU * mass_solar.max(0.08).powf(0.8);
+        }
+    } else {
+        let avg_density = comp.average_density();
+        radius.0 = ((3.0 * mass_solar / avg_density) / (4.0 * PI))
+            .cbrt()
+            .max(EARTH_RADIUS_AU * 0.1);
+    }
+    if body.body_type.is_star_or_remnant()
+        && let Ok(mut cmd) = commands.get_entity(entity)
+    {
+        let is_bd = body.body_type == BodyType::BrownDwarf;
+        let lum = if is_bd {
+            1e-4 * (mass_solar / 0.05).clamp(0.1, 2.0)
+        } else {
+            mass_solar.max(0.01).powf(3.5)
+        };
+        cmd.remove::<(PlanetaryClimate, BiosphereState)>().insert((
+            Luminosity(lum),
+            IgnitionState {
+                core_temperature: if is_bd { 2.5e6 } else { 1.5e7 },
+                fusion_fraction: if is_bd { 0.05 } else { 1.0 },
+                is_ignited: !is_bd,
+                shockwave_radius: 0.0,
+            },
+            StellarEvolutionState {
+                phase: if is_bd {
+                    StellarEvolutionPhase::ProtostarContraction
+                } else {
+                    StellarEvolutionPhase::MainSequence
+                },
+                ..default()
+            },
+        ));
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "Applies mass scaling and parent-relative orbit adjustments to the selected body"
@@ -83,6 +143,8 @@ fn apply_body_mass_and_orbit_edits(
     body: &mut CelestialBody,
     mut diff_opt: Option<&mut InternalDifferentiation>,
     mut trans_opt: Option<&mut Transform>,
+    opt_lum: Option<&mut Luminosity>,
+    opt_evo: Option<&mut StellarEvolutionState>,
 ) {
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     let increase_mass = keyboard.just_pressed(KeyCode::KeyU)
@@ -106,51 +168,19 @@ fn apply_body_mass_and_orbit_edits(
 
     if mass_changed {
         let old_type = body.body_type;
-        let new_type = classify_body_by_mass_and_comp(mass.0, comp, old_type.is_star_or_remnant());
-        if !old_type.is_remnant() && !old_type.is_hypothetical() {
-            body.body_type = new_type;
-        }
-        if body.body_type == BodyType::BlackHole {
-            radius.0 = (1.974e-8 * mass.0).max(1e-7);
-        } else if body.body_type == BodyType::BrownDwarf {
-            radius.0 = 0.11 * SOLAR_RADIUS_AU;
-        } else if body.body_type.is_star_or_remnant() {
-            if !body.body_type.is_remnant() && !body.body_type.is_hypothetical() {
-                radius.0 = SOLAR_RADIUS_AU * mass.0.max(0.08).powf(0.8);
-            }
+        if old_type.is_star_or_remnant() {
+            crate::simulation::thermodynamics::sync_stellar_classification_after_mass_edit(
+                mass.0,
+                old_type,
+                comp,
+                body,
+                Some(radius),
+                Some(temp),
+                opt_lum,
+                opt_evo,
+            );
         } else {
-            let avg_density = comp.average_density();
-            radius.0 = ((3.0 * mass.0 / avg_density) / (4.0 * PI))
-                .cbrt()
-                .max(EARTH_RADIUS_AU * 0.1);
-        }
-        if !old_type.is_star_or_remnant()
-            && body.body_type.is_star_or_remnant()
-            && let Ok(mut cmd) = commands.get_entity(entity)
-        {
-            let is_bd = body.body_type == BodyType::BrownDwarf;
-            let lum = if is_bd {
-                1e-4 * (mass.0 / 0.05).clamp(0.1, 2.0)
-            } else {
-                mass.0.max(0.01).powf(3.5)
-            };
-            cmd.remove::<(PlanetaryClimate, BiosphereState)>().insert((
-                Luminosity(lum),
-                IgnitionState {
-                    core_temperature: if is_bd { 2.5e6 } else { 1.5e7 },
-                    fusion_fraction: if is_bd { 0.05 } else { 1.0 },
-                    is_ignited: !is_bd,
-                    shockwave_radius: 0.0,
-                },
-                StellarEvolutionState {
-                    phase: if is_bd {
-                        StellarEvolutionPhase::ProtostarContraction
-                    } else {
-                        StellarEvolutionPhase::MainSequence
-                    },
-                    ..default()
-                },
-            ));
+            apply_non_star_mass_edit(commands, entity, mass.0, old_type, radius, comp, body);
         }
         if let Some(ref mut diff) = diff_opt {
             diff.recalculate(mass.0, radius.0, comp);
@@ -262,6 +292,10 @@ pub fn trigger_star_ignition_or_flare(
     } else if ignition.is_ignited {
         ignition.shockwave_radius = 1.6;
         toast.message = "☀️ Coronal Mass Ejection & Solar Blast Triggered!".to_string();
+    } else if body.body_type.is_evolved_giant() {
+        toast.message =
+            "⚠️ Evolved giant core hydrogen exhausted — press [N] or Age to finish remnant evolution!"
+                .to_string();
     } else {
         ignition.core_temperature = 1.0e7;
         ignition.is_ignited = true;
@@ -280,13 +314,24 @@ pub fn trigger_star_ignition_or_flare(
     toast.timer = 5.0;
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Handles star ignition, aging lifecycle transitions, flares, and LRD blowouts"
+)]
 fn handle_star_interaction_actions(
     commands: &mut Commands,
     keyboard: &ButtonInput<KeyCode>,
     entity: Entity,
+    mass: &mut Mass,
+    radius: &mut Radius,
+    temp: &mut Temperature,
+    comp: &Composition,
     body: &mut CelestialBody,
     mut ignition_opt: Option<&mut IgnitionState>,
+    opt_lum: Option<&mut Luminosity>,
+    opt_evo: Option<&mut StellarEvolutionState>,
     opt_quasi: Option<&mut BlackHoleStarState>,
+    supernova_events: Option<&mut MessageWriter<SupernovaEvent>>,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
     if keyboard.just_pressed(KeyCode::KeyI) {
@@ -296,16 +341,26 @@ fn handle_star_interaction_actions(
         }
     }
     if keyboard.just_pressed(KeyCode::KeyN)
-        && body.body_type.is_star()
+        && body.body_type.is_star_or_remnant()
         && let Some(ref mut ignition) = ignition_opt
-        && !ignition.is_ignited
     {
-        ignition.core_temperature = 1.0e7;
-        ignition.is_ignited = true;
-        ignition.fusion_fraction = 1.0;
-        ignition.shockwave_radius = 1.6;
-        body.body_type = BodyType::MainSequenceStar;
-        body.name = "The Star (Main Sequence)".to_string();
+        let mut targets = crate::game::ui::interactions::editor::stellar::StarAgingTargets {
+            entity,
+            mass,
+            radius,
+            body,
+            comp,
+            ignition,
+            evo: opt_evo,
+            temp: Some(temp),
+            lum: opt_lum,
+        };
+        crate::game::ui::interactions::editor::stellar::age_single_star_entity(
+            &mut targets,
+            Some(commands),
+            supernova_events,
+            toast,
+        );
     }
     let is_shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
     if let Some(qs) = opt_quasi {
@@ -542,15 +597,19 @@ fn apply_body_interaction_actions(
     primary_vel: DVec3,
     is_satellite: bool,
     entity: Entity,
-    mass: &Mass,
+    mass: &mut Mass,
     radius: &mut Radius,
+    temp: &mut Temperature,
     pos: &mut SimPosition,
     vel: &mut SimVelocity,
     comp: &mut Composition,
     body: &mut CelestialBody,
     diff_opt: Option<&mut InternalDifferentiation>,
     ignition_opt: Option<&mut IgnitionState>,
+    opt_lum: Option<&mut Luminosity>,
+    opt_evo: Option<&mut StellarEvolutionState>,
     opt_quasi: Option<&mut BlackHoleStarState>,
+    supernova_events: Option<&mut MessageWriter<SupernovaEvent>>,
     player_state: &mut PlayerInteractionState,
     toast: &mut crate::game::ui::NotificationToast,
 ) {
@@ -577,9 +636,16 @@ fn apply_body_interaction_actions(
             commands,
             keyboard,
             entity,
+            mass,
+            radius,
+            temp,
+            comp,
             body,
             ignition_opt,
+            opt_lum,
+            opt_evo,
             opt_quasi,
+            supernova_events,
             toast,
         );
     } else {
@@ -610,9 +676,9 @@ pub fn handle_unselected_star_ignition_hotkey(
 ) {
     if keyboard.just_pressed(KeyCode::KeyI) && !is_star_selected {
         let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-        if let Some((star_ent, _, _, _, _, _, _, mut body, _, _, Some(mut ignition), _, _, _)) =
+        if let Some((star_ent, _, _, _, _, _, _, mut body, _, _, Some(mut ignition), _, _, _, _)) =
             selected_query.iter_mut().find(
-                |(_, _, _, _, _, _, _, body, _, _, _, _, opt_star, _)| {
+                |(_, _, _, _, _, _, _, body, _, _, _, _, opt_star, _, _)| {
                     !body.body_type.is_remnant()
                         && (opt_star.is_some() || body.body_type.is_star_or_remnant())
                 },
@@ -632,9 +698,9 @@ pub fn handle_unselected_star_ignition_hotkey(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "Orchestrates selected body keyboard manipulation tools"
+    reason = "Orchestrates selected body keyboard manipulation tools with supernova events"
 )]
-pub fn handle_selected_body_tools(
+pub fn handle_selected_body_tools_with_events(
     commands: &mut Commands,
     keyboard: &ButtonInput<KeyCode>,
     star_mass: f64,
@@ -643,6 +709,7 @@ pub fn handle_selected_body_tools(
     player_state: &mut PlayerInteractionState,
     selected_query: &mut SelectedBodyQuery,
     toast: &mut crate::game::ui::NotificationToast,
+    supernova_events: Option<&mut MessageWriter<SupernovaEvent>>,
 ) {
     let Some(selected_ent) = player_state.selected_entity else {
         return;
@@ -671,7 +738,7 @@ pub fn handle_selected_body_tools(
             },
             |t| {
                 crate::simulation::thermodynamics::stellar_irradiance_from_mass_or_opt(
-                    None,
+                    t.14.0.as_ref().map(|l| l.0),
                     Some(t.3.0),
                     Some(t.2.0),
                     t.1.0,
@@ -694,6 +761,7 @@ pub fn handle_selected_body_tools(
         mut opt_quasi,
         _opt_star,
         _opt_sat,
+        (mut opt_lum, mut opt_evo),
     )) = selected_query.get_mut(selected_ent)
     {
         apply_body_mass_and_orbit_edits(
@@ -714,6 +782,8 @@ pub fn handle_selected_body_tools(
             &mut body,
             diff_opt.as_deref_mut(),
             trans_opt.as_deref_mut(),
+            opt_lum.as_deref_mut(),
+            opt_evo.as_deref_mut(),
         );
         let mu_mass = if is_satellite {
             primary_mass + mass.0
@@ -728,17 +798,48 @@ pub fn handle_selected_body_tools(
             primary_vel,
             is_satellite,
             entity,
-            &mass,
+            &mut mass,
             &mut radius,
+            &mut temp,
             &mut pos,
             &mut vel,
             &mut comp,
             &mut body,
             diff_opt.as_deref_mut(),
             ignition_opt.as_deref_mut(),
+            opt_lum.as_deref_mut(),
+            opt_evo.as_deref_mut(),
             opt_quasi.as_deref_mut(),
+            supernova_events,
             player_state,
             toast,
         );
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Orchestrates selected body keyboard manipulation tools"
+)]
+pub fn handle_selected_body_tools(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    star_mass: f64,
+    star_pos: DVec3,
+    star_vel: DVec3,
+    player_state: &mut PlayerInteractionState,
+    selected_query: &mut SelectedBodyQuery,
+    toast: &mut crate::game::ui::NotificationToast,
+) {
+    handle_selected_body_tools_with_events(
+        commands,
+        keyboard,
+        star_mass,
+        star_pos,
+        star_vel,
+        player_state,
+        selected_query,
+        toast,
+        None,
+    );
 }

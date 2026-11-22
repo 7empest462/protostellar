@@ -195,6 +195,10 @@ pub struct HudTextQueries<'w, 's> {
 #[derive(Component)]
 pub struct QuickBodySelectorBar;
 
+/// Marker for the horizontally scrollable viewport wrapping the quick body selector strip.
+#[derive(Component)]
+pub struct QuickBarScrollViewport;
+
 /// State configuration for the top celestial body shortcut bar.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct QuickBarState {
@@ -202,6 +206,9 @@ pub struct QuickBarState {
     pub show_minor_bodies: bool,
     pub show_embryos: bool,
     pub sort_by_mass: bool,
+    pub show_filter: bool,
+    pub wrap_rows: bool,
+    pub pending_scroll_delta_x: f32,
     /// Active astronomical belts expanded to reveal individual member buttons.
     pub expanded_belts: BTreeSet<BeltZone>,
     /// Active case-insensitive text search query filtering displayed celestial bodies.
@@ -240,6 +247,12 @@ pub struct HudVisibilityState {
     pub bottom_center_minimized: bool,
     /// Whether the floating telemetry & climate graphing panel is collapsed.
     pub telemetry_minimized: bool,
+    /// Whether the clickable cosmic event log feed is collapsed into its unread pill.
+    pub event_feed_minimized: bool,
+    /// Prior orbit visualization mode saved before entering Cinema Mode.
+    pub saved_orbit_mode: Option<crate::simulation::resources::OrbitVisualizationMode>,
+    /// Prior diagnostic overlay mode saved before entering Cinema Mode.
+    pub saved_overlay_mode: Option<crate::simulation::resources::DiagnosticOverlayMode>,
     /// Currently active tab in the bottom-left Target Inspector.
     pub active_inspector_tab: InspectorTab,
 }
@@ -257,6 +270,9 @@ impl Default for HudVisibilityState {
             bottom_right_minimized: true,
             bottom_center_minimized: true,
             telemetry_minimized: true,
+            event_feed_minimized: true,
+            saved_orbit_mode: None,
+            saved_overlay_mode: None,
             active_inspector_tab: InspectorTab::Overview,
         }
     }
@@ -293,6 +309,10 @@ pub enum HudPanelElement {
     AudioMuteBadge,
     ParticleDensityBadge,
     QuickBarContainer,
+    QuickBarFilterRow,
+    CinemaRestorePill,
+    EventFeedPanel,
+    EventFeedPill,
 }
 
 /// Marker for the scrollable container inside the Target Inspector panel.
@@ -313,6 +333,7 @@ pub enum HudDynamicText {
     AtmospheresBadge,
     CloudsBadge,
     AudioMuteBadge,
+    EventFeedBadge,
 }
 
 /// Discriminant component for action categories within the Target Inspector toolbar.
@@ -520,11 +541,15 @@ pub enum UiButtonAction {
     ClaimCampaignReward,
     AbandonCampaignMission,
     ResearchTech(crate::simulation::economy::TechnologyId),
+    ToggleGameMode,
     // Dynamic Cosmic Hazards & Sensory Polish
     ToggleHazardsPanel,
     TriggerCosmicHazard(crate::simulation::events::CosmicEventType),
     ToggleAutoHazards,
     CycleTonemappingMode,
+    FocusActiveCrisis,
+    ExecuteCrisisCountermeasure,
+    DeployPlanetaryDefense(crate::simulation::events::CrisisCountermeasureKind),
     ToggleAudioMute,
     // Live Celestial Body Editor
     IncreaseMass,
@@ -554,6 +579,11 @@ pub enum UiButtonAction {
     BombardSalvo,
     BombardCore,
     AdvanceCivilization,
+    ToggleCivOrbitalRing,
+    ToggleCivSolarMirrors,
+    ToggleCivPlanetaryShield,
+    CycleFloraAndBiolum,
+    ClearCivilization,
     LaunchProbe,
     // Hydrosphere & Bathymetric Sea Level Controls
     AddOceanWater,
@@ -616,6 +646,14 @@ pub enum UiButtonAction {
     SelectSaveSlot(usize),
     DeleteSaveSlot(usize),
     ClearQuickBarFilter,
+    ToggleQuickBarFilter,
+    ToggleQuickBarWrap,
+    ScrollQuickBarLeft,
+    ScrollQuickBarRight,
+    // Clickable Cosmic Event Feed
+    ToggleEventFeed,
+    JumpToEvent(Option<Entity>),
+    ClearEventLog,
     // Inspector Tab Switching
     SelectInspectorTab(InspectorTab),
 }
@@ -680,6 +718,8 @@ pub struct CosmicEventEntry {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CosmicEventLog {
     pub entries: std::collections::VecDeque<CosmicEventEntry>,
+    pub revision: u64,
+    pub unread_count: usize,
 }
 
 impl CosmicEventLog {
@@ -701,5 +741,17 @@ impl CosmicEventLog {
             headline,
             target_entity,
         });
+        self.revision = self.revision.wrapping_add(1);
+        self.unread_count = (self.unread_count + 1).min(Self::MAX_ENTRIES);
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.unread_count = 0;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub fn mark_read(&mut self) {
+        self.unread_count = 0;
     }
 }

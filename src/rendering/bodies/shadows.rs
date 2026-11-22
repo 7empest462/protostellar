@@ -196,8 +196,8 @@ pub fn compute_eclipse_moons_data(
     let mut moons_pos = [Vec4::ZERO; 4];
     let mut moons_data = [Vec4::ZERO; 4];
     let [mut s0, mut s1, mut s2, mut s3] = [(f32::INFINITY, Vec4::ZERO); 4];
-    let inv_vis_r = 1.0 / visual_radius.max(1e-5);
-    let max_unbound_moon_dist_sq = (visual_radius * 40.0).max(0.025).powi(2);
+    let inv_vis_r = 1.0 / visual_radius.max(1e-10);
+    let max_unbound_moon_dist_sq = (visual_radius * 80.0).max(0.025).powi(2);
 
     // If `entity` is a satellite, resolve its host parent entity (`p != Some(e)` filters out
     // self-tagged host planets so planets never treat themselves as having a parent).

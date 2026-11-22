@@ -208,8 +208,8 @@ fn verify_deep_space_zoom(app: &mut App, camera_ent: Entity) {
             .get::<PanOrbitCamera>(camera_ent)
             .expect("Camera required");
         assert_eq!(
-            cam.min_radius, 0.001,
-            "In deep space far from any celestial body, min_radius should allow free zooming down to 0.001 AU!"
+            cam.min_radius, 1e-7,
+            "In deep space far from any celestial body, min_radius should allow free zooming down to 1e-7 AU!"
         );
     }
 }

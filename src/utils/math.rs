@@ -219,13 +219,13 @@ pub fn conic_semilatus_rectum(elements: &OrbitalElements) -> Option<f64> {
     }
 }
 
-/// Fast-path 3D position evaluation at true anomaly $\nu$ using a precomputed semi-latus rectum $p$.
+/// Fast-path 3D position evaluation at true anomaly $\nu$ in double precision (`DVec3`) using a precomputed semi-latus rectum $p$.
 #[inline]
-pub fn position_at_true_anomaly_with_p(
+pub fn position_at_true_anomaly_dvec_with_p(
     elements: &OrbitalElements,
     p: f64,
     nu: f64,
-) -> Option<Vec3> {
+) -> Option<DVec3> {
     let (sin_nu, cos_nu) = nu.sin_cos();
     let denom = 1.0 + elements.eccentricity * cos_nu;
     if denom <= 1e-5 {
@@ -235,15 +235,30 @@ pub fn position_at_true_anomaly_with_p(
     if !(0.0..=2000.0).contains(&r) || r == 0.0 {
         return None;
     }
-    let pos_3d = elements.periapsis_dir * (r * cos_nu) + elements.semilatus_dir * (r * sin_nu);
-    Some(Vec3::new(pos_3d.x as f32, pos_3d.y as f32, pos_3d.z as f32))
+    Some(elements.periapsis_dir * (r * cos_nu) + elements.semilatus_dir * (r * sin_nu))
+}
+
+/// Fast-path 3D position evaluation at true anomaly $\nu$ using a precomputed semi-latus rectum $p$.
+#[inline]
+pub fn position_at_true_anomaly_with_p(
+    elements: &OrbitalElements,
+    p: f64,
+    nu: f64,
+) -> Option<Vec3> {
+    position_at_true_anomaly_dvec_with_p(elements, p, nu).map(DVec3::as_vec3)
+}
+
+/// Computes the 3D position in AU in double precision for a given true anomaly.
+#[inline]
+pub fn position_at_true_anomaly_dvec(elements: &OrbitalElements, nu: f64) -> Option<DVec3> {
+    let p = conic_semilatus_rectum(elements)?;
+    position_at_true_anomaly_dvec_with_p(elements, p, nu)
 }
 
 /// Computes the 3D position in AU in Bevy coordinates for a given true anomaly.
 /// Returns None if the true anomaly is beyond asymptotes or results in infinite radius.
 pub fn position_at_true_anomaly(elements: &OrbitalElements, nu: f64) -> Option<Vec3> {
-    let p = conic_semilatus_rectum(elements)?;
-    position_at_true_anomaly_with_p(elements, p, nu)
+    position_at_true_anomaly_dvec(elements, nu).map(DVec3::as_vec3)
 }
 
 /// Generates a series of 3D orbital curve points in AU for visualization of bound orbits ($e < 1.0$).
@@ -344,27 +359,39 @@ pub fn generate_trailing_ribbon_points(
     ribbon
 }
 
-/// Returns the periapsis and (optional) apoapsis positions in AU in Bevy coordinates.
-pub fn apsides_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3>) {
-    let peri = position_at_true_anomaly(elements, 0.0);
+/// Returns the periapsis and (optional) apoapsis positions in AU in double precision.
+pub fn apsides_positions_dvec(elements: &OrbitalElements) -> (Option<DVec3>, Option<DVec3>) {
+    let peri = position_at_true_anomaly_dvec(elements, 0.0);
     let apo = if elements.eccentricity < 1.0 {
-        position_at_true_anomaly(elements, PI)
+        position_at_true_anomaly_dvec(elements, PI)
     } else {
         None
     };
     (peri, apo)
 }
 
-/// Returns the ascending node and descending node positions in AU in Bevy coordinates.
-pub fn nodal_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3>) {
+/// Returns the periapsis and (optional) apoapsis positions in AU in Bevy coordinates.
+pub fn apsides_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3>) {
+    let (peri, apo) = apsides_positions_dvec(elements);
+    (peri.map(DVec3::as_vec3), apo.map(DVec3::as_vec3))
+}
+
+/// Returns the ascending node and descending node positions in AU in double precision.
+pub fn nodal_positions_dvec(elements: &OrbitalElements) -> (Option<DVec3>, Option<DVec3>) {
     let omega = elements.argument_of_periapsis;
-    let asc = position_at_true_anomaly(elements, -omega);
+    let asc = position_at_true_anomaly_dvec(elements, -omega);
     let desc = if elements.eccentricity < 1.0 {
-        position_at_true_anomaly(elements, PI - omega)
+        position_at_true_anomaly_dvec(elements, PI - omega)
     } else {
         None
     };
     (asc, desc)
+}
+
+/// Returns the ascending node and descending node positions in AU in Bevy coordinates.
+pub fn nodal_positions(elements: &OrbitalElements) -> (Option<Vec3>, Option<Vec3>) {
+    let (asc, desc) = nodal_positions_dvec(elements);
+    (asc.map(DVec3::as_vec3), desc.map(DVec3::as_vec3))
 }
 
 /// Ergonomic floating-point range and Box-Muller Gaussian sampling helpers for `fastrand::Rng`.

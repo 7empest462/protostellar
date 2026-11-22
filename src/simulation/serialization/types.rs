@@ -45,6 +45,41 @@ pub struct SystemSaveData {
     /// Standalone expanding Alfvén blast wave shock fronts.
     #[serde(default)]
     pub alfven_waves: Vec<AlfvenBlastWaveSave>,
+    /// Saved progression mode, science telemetry, unlocked tech nodes, and crisis stats.
+    #[serde(default)]
+    pub progression: Option<ProgressionSave>,
+}
+
+/// Serializable snapshot of progression mode, economy state, and crisis counters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressionSave {
+    /// Active game mode (Sandbox or Progression).
+    #[serde(default)]
+    pub mode: crate::simulation::economy::GameMode,
+    /// Accumulated science and harvest rates.
+    #[serde(default)]
+    pub science_data: crate::simulation::economy::ScienceData,
+    /// Unlocked technology IDs.
+    #[serde(default)]
+    pub unlocked_techs: Vec<crate::simulation::economy::TechnologyId>,
+    /// Crises averted before catastrophic impact.
+    #[serde(default)]
+    pub crises_averted: u32,
+    /// Crises partially mitigated.
+    #[serde(default)]
+    pub crises_mitigated: u32,
+    /// Catastrophic crisis outcomes.
+    #[serde(default)]
+    pub crises_catastrophic: u32,
+    /// Whether a Shkadov stellar engine is active.
+    #[serde(default)]
+    pub stellar_engine_active: bool,
+    /// Whether scheduled background cosmic crises are enabled.
+    #[serde(default)]
+    pub auto_hazards_enabled: bool,
+    /// Total cosmic crises survived or resolved.
+    #[serde(default)]
+    pub total_hazards_survived: u32,
 }
 
 /// Serialized time warp parameters.
@@ -301,6 +336,10 @@ pub struct CelestialBodySave {
     pub rogue_interloper: Option<crate::simulation::events::RogueInterloper>,
     #[serde(default)]
     pub is_hazard_comet: bool,
+    #[serde(default)]
+    pub civilization: Option<crate::simulation::biology::CivilizationState>,
+    #[serde(default)]
+    pub crisis_impactor: Option<crate::simulation::events::CrisisImpactor>,
 }
 
 impl Default for CelestialBodySave {
@@ -360,6 +399,8 @@ impl Default for CelestialBodySave {
             stellar_activity_clock: None,
             rogue_interloper: None,
             is_hazard_comet: false,
+            civilization: None,
+            crisis_impactor: None,
         }
     }
 }

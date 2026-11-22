@@ -250,11 +250,16 @@ fn update_jet_child_parts(
     }
 }
 
-#[allow(clippy::type_complexity, reason = "Active jet map parameter")]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    reason = "Active jet map parameter"
+)]
 fn spawn_missing_jet_hierarchies(
     commands: &mut Commands,
     assets: &VisualAssets,
     jet_materials: &mut Assets<RelativisticJetMaterial>,
+    origin: &crate::rendering::origin::RenderOrigin,
     active_map: &HashMap<
         Entity,
         (
@@ -279,7 +284,7 @@ fn spawn_missing_jet_hierarchies(
             continue;
         }
 
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let world_pos = origin.to_render(pos.0);
         let (dir_north, dir_south) = compute_jet_pointing_vectors(opt_spin, jet_state, elapsed);
         let (xz_scale, y_scale) = compute_jet_mesh_scales(jet_state, visual_radius);
         let total_len = jet_state.jet_length_au.max(0.1);
@@ -304,12 +309,14 @@ fn spawn_missing_jet_hierarchies(
 /// Automatically provisions [`RelativisticJetState`] for compact remnants and synchronizes 3D meshes.
 #[allow(
     clippy::type_complexity,
+    clippy::too_many_arguments,
     reason = "Relativistic jet synchronization system"
 )]
 pub fn sync_relativistic_jets(
     mut commands: Commands,
     sim_time: Option<Res<SimTime>>,
     visual_assets: Option<Res<VisualAssets>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut jet_materials: ResMut<Assets<RelativisticJetMaterial>>,
     compact_candidates: Query<
         (Entity, &CelestialBody, &Mass, Option<&SpinState>),
@@ -352,6 +359,8 @@ pub fn sync_relativistic_jets(
         return;
     };
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+
     // 1. Auto-insert RelativisticJetState on compact remnants if not explicitly added
     auto_provision_relativistic_jet_states(&mut commands, &compact_candidates);
 
@@ -368,7 +377,7 @@ pub fn sync_relativistic_jets(
     > = active_jets
         .iter()
         .map(|(e, pos, b, jet, spin, opt_t)| {
-            let vis_r = opt_t.map_or(0.06, |t| t.scale.x.max(0.001));
+            let vis_r = opt_t.map_or(0.06, |t| t.scale.x.max(1e-9));
             (e, (pos, b, jet, spin, vis_r))
         })
         .collect();
@@ -392,7 +401,7 @@ pub fn sync_relativistic_jets(
                 }
                 continue;
             }
-            let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let world_pos = origin.to_render(pos.0);
             root_trans.translation = world_pos;
             updated_targets.insert(root.target);
 
@@ -426,6 +435,7 @@ pub fn sync_relativistic_jets(
         &mut commands,
         &assets,
         &mut jet_materials,
+        &origin,
         &active_map,
         &updated_targets,
         elapsed,

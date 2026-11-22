@@ -443,11 +443,10 @@ fn extract_primary_star_lighting(
         (&SimPosition, &Temperature, &Mass),
         (With<CentralStar>, With<CelestialBody>),
     >,
+    origin: &crate::rendering::origin::RenderOrigin,
 ) -> (Vec3, f32) {
     let star_data = primary_star_query.iter().next();
-    let star_pos = star_data.map_or(Vec3::ZERO, |(p, _, _)| {
-        Vec3::new(p.x as f32, p.y as f32, p.z as f32)
-    });
+    let star_pos = star_data.map_or(Vec3::ZERO, |(p, _, _)| origin.to_render(p.0));
     let star_lum = star_data.map_or(1.0, |(_, t, m)| {
         let t_ratio = (t.0 / 5778.0) as f32;
         let m_ratio = m.0 as f32;
@@ -504,7 +503,10 @@ pub fn build_planet_atmosphere_uniforms(
     let has_atmosphere =
         !is_gas_giant && !is_ice_giant && (pressure_bar >= 0.005 || norm.gas_frac >= 0.015);
 
-    let planet_world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let planet_world_pos = opt_planet_mat.map_or_else(
+        || Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
+        |m| m.extension.uniforms.planet_center_and_radius.xyz(),
+    );
     let star_vector = (star_pos - planet_world_pos).normalize_or_zero();
 
     let profile = compute_atmosphere_spectral_profile(
@@ -601,6 +603,7 @@ pub fn build_planet_atmosphere_uniforms(
 
 fn build_stellar_corona_state(
     p_pos: &SimPosition,
+    origin: &crate::rendering::origin::RenderOrigin,
     visual_r: f32,
     body_type: BodyType,
     temp_k: f64,
@@ -609,7 +612,7 @@ fn build_stellar_corona_state(
     opt_flare: Option<&crate::simulation::space_weather::StellarFlareState>,
     elapsed_secs: f32,
 ) -> (AtmosphereUniforms, bool, f32) {
-    let world_pos = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let world_pos = origin.to_render(p_pos.0);
     let spin_axis = opt_planet_mat.map_or_else(
         || compute_spin_axis(opt_spin),
         |m| m.extension.uniforms.spin_axis,
@@ -701,6 +704,7 @@ fn sync_single_atmosphere_entity(
 )]
 fn build_body_atmosphere_shell_state(
     p_pos: &SimPosition,
+    origin: &crate::rendering::origin::RenderOrigin,
     visual_r: f32,
     body: &CelestialBody,
     comp: &Composition,
@@ -722,6 +726,7 @@ fn build_body_atmosphere_shell_state(
         if body.body_type.is_star_or_remnant() || body.body_type == BodyType::QuasiStar {
             build_stellar_corona_state(
                 p_pos,
+                origin,
                 visual_r,
                 body.body_type,
                 temp.0,
@@ -731,8 +736,9 @@ fn build_body_atmosphere_shell_state(
                 elapsed_secs,
             )
         } else {
+            let shifted_pos = SimPosition(p_pos.0 - origin.0);
             build_planet_atmosphere_uniforms(
-                p_pos,
+                &shifted_pos,
                 visual_r,
                 body,
                 comp,
@@ -771,6 +777,7 @@ pub fn sync_planetary_atmospheres(
         Option<Res<crate::simulation::resources::SimTime>>,
         Option<Res<crate::simulation::resources::PlayerInteractionState>>,
     ),
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     visual_assets: Option<Res<VisualAssets>>,
     planet_materials: Option<Res<Assets<PlanetMaterial>>>,
     mut atmo_materials: ResMut<Assets<AtmosphereMaterial>>,
@@ -811,7 +818,8 @@ pub fn sync_planetary_atmospheres(
         return;
     };
 
-    let (star_pos, star_lum) = extract_primary_star_lighting(&primary_star_query);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let (star_pos, star_lum) = extract_primary_star_lighting(&primary_star_query, &origin);
     let elapsed_secs = sim_time
         .as_deref()
         .map_or_else(|| time.elapsed_secs(), |st| st.visual_time_secs);
@@ -859,6 +867,7 @@ pub fn sync_planetary_atmospheres(
 
         let (uniforms, has_atmosphere, shell_outer_scale) = build_body_atmosphere_shell_state(
             p_pos,
+            &origin,
             visual_r,
             body,
             comp,

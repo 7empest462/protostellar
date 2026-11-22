@@ -22,6 +22,10 @@ pub fn handle_body_editor_action(
     action: &UiButtonAction,
     player_state: &mut PlayerInteractionState,
     selected_query: &mut SelectedWorldQuery,
+    civ_query: &mut Query<(
+        &mut crate::simulation::biology::CivilizationState,
+        Option<&mut crate::simulation::components::BiosphereState>,
+    )>,
     sat_diff_query: &mut Query<
         (
             Option<&crate::simulation::components::SatelliteOf>,
@@ -35,6 +39,12 @@ pub fn handle_body_editor_action(
     toast: &mut NotificationToast,
     lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
     theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
+    supernova_events: Option<&mut MessageWriter<crate::simulation::components::SupernovaEvent>>,
+    progression: (
+        Option<&crate::simulation::economy::ProgressionState>,
+        Option<&crate::simulation::economy::UnlockedTechs>,
+        Option<&mut crate::simulation::economy::ScienceData>,
+    ),
     sim_time_years: f64,
 ) -> bool {
     if handle_mass_change_with_effects(
@@ -81,6 +91,47 @@ pub fn handle_body_editor_action(
         return true;
     }
 
+    dispatch_stellar_and_biosphere_actions(
+        action,
+        player_state,
+        selected_query,
+        civ_query,
+        star_mass,
+        commands,
+        toast,
+        lhb_state,
+        theia_state,
+        supernova_events,
+        progression,
+        sim_time_years,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Dispatches stellar, bombardment, and biosphere actions delegated from handle_body_editor_action"
+)]
+fn dispatch_stellar_and_biosphere_actions(
+    action: &UiButtonAction,
+    player_state: &PlayerInteractionState,
+    selected_query: &mut SelectedWorldQuery,
+    civ_query: &mut Query<(
+        &mut crate::simulation::biology::CivilizationState,
+        Option<&mut crate::simulation::components::BiosphereState>,
+    )>,
+    star_mass: f64,
+    commands: &mut Commands,
+    toast: &mut NotificationToast,
+    lhb_state: &mut ResMut<crate::game::phases::LateHeavyBombardmentState>,
+    theia_state: Option<&mut crate::simulation::accretion::TheiaImpactState>,
+    supernova_events: Option<&mut MessageWriter<crate::simulation::components::SupernovaEvent>>,
+    progression: (
+        Option<&crate::simulation::economy::ProgressionState>,
+        Option<&crate::simulation::economy::UnlockedTechs>,
+        Option<&mut crate::simulation::economy::ScienceData>,
+    ),
+    sim_time_years: f64,
+) -> bool {
     match action {
         UiButtonAction::InjectEmbryo => {
             if let Some(state) = theia_state {
@@ -115,7 +166,13 @@ pub fn handle_body_editor_action(
             true
         }
         UiButtonAction::AgeStar => {
-            handle_age_star(selected_query, player_state.selected_entity, toast);
+            handle_age_star_with_effects(
+                selected_query,
+                player_state.selected_entity,
+                Some(commands),
+                supernova_events,
+                toast,
+            );
             true
         }
         UiButtonAction::TidalLock => {
@@ -139,6 +196,9 @@ pub fn handle_body_editor_action(
                 selected_query,
                 player_state,
                 commands,
+                progression.0,
+                progression.1,
+                progression.2,
                 sim_time_years,
                 toast,
             );
@@ -147,8 +207,12 @@ pub fn handle_body_editor_action(
         _ => handle_shatter_and_life(
             action,
             selected_query,
+            civ_query,
             player_state,
             commands,
+            progression.0,
+            progression.1,
+            progression.2,
             sim_time_years,
             toast,
         ),

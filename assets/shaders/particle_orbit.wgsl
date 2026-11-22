@@ -22,7 +22,7 @@ struct SimUniforms {
     shockwave_radius: f32,
     softening_sq: f32,
     num_massive_bodies: u32,
-    _pad: f32,
+    snow_line_au: f32,
     tractor_pos_mass: vec4<f32>,
     massive_bodies: array<vec4<f32>, 32>, // xyz: pos, w: mass
 };
@@ -84,20 +84,35 @@ fn main(
             phi = phi + omega * uniforms.dt;
             phi = phi - floor(phi / (2.0 * PI)) * (2.0 * PI);
 
-            // Aerodynamic Gas Drag & Secular Inward Drift with 3D Flared Scale Height
+            // Aerodynamic Gas Drag & Secular Inward Drift with Dual Pressure Traps
+            // (Inner silicate trap ~0.35 AU & cold-finger water snow line ~2.7-3.65 AU)
             if (uniforms.enable_gas_drag != 0u && uniforms.gas_scale > 0.001) {
-                let h_scale = max(0.030 * r * pow(r / 1.0, 0.25), 0.0001);
+                let r_norm = max(r / 1.0, 0.01);
+                let h_norm = 0.033 * pow(r_norm, 0.25);
+                let h_scale = max(0.030 * r * pow(r_norm, 0.25), 0.0001);
                 let z_atten = exp(-0.5 * (pos.y * pos.y) / (h_scale * h_scale));
-                let gas_density = 1.0e-4 * pow(r / 1.0, -2.25) * uniforms.gas_scale * z_atten;
-                let drag_rate = min(0.000005 * gas_density, 0.0005);
-                // Inner terrestrial silicate sublimation front (~0.35 AU) & snow-line cold-finger trap (~2.7 AU)
-                let inner_trap_boundary = max(uniforms.inner_radius * 2.0, 0.35);
-                let inner_retention = clamp((r - inner_trap_boundary) / 0.85, -0.25, 1.0);
-                let dr_snow = r - 2.7;
-                let snow_trap = 1.0 - 1.80 * exp(-(dr_snow * dr_snow) / (2.0 * 0.25 * 0.25));
-                let max_mig = select(r * 0.005, r * 0.0012, r < 2.0);
-                let migration = clamp(r * drag_rate * uniforms.dt * inner_retention * snow_trap, -r * 0.001, max_mig);
-                r = max(r - migration, uniforms.inner_radius * 0.95);
+                let eta_0 = 0.5 * h_norm * h_norm * 3.25;
+
+                let snow_line = select(2.7, uniforms.snow_line_au, uniforms.snow_line_au > 0.1);
+                let dr_snow = r - snow_line;
+                let snow_trap = 1.0 - 1.85 * exp(-(dr_snow * dr_snow) / (2.0 * 0.25 * 0.25));
+
+                let inner_trap_r = max(uniforms.inner_radius * 2.0, 0.35);
+                let dr_inner = r - inner_trap_r;
+                let inner_trap = select(
+                    1.0,
+                    1.0 - 1.65 * exp(-(dr_inner * dr_inner) / (2.0 * 0.16 * 0.16)),
+                    r < 1.8,
+                );
+
+                let eta_eff = eta_0 * snow_trap * inner_trap;
+                let stokes = 0.055;
+                let drift_factor = (2.0 * stokes) / (1.0 + stokes * stokes);
+                let v_drift = -drift_factor * eta_eff * v_k * uniforms.gas_scale * z_atten;
+
+                let max_inward = select(r * 0.005, r * 0.0012, r < 2.0);
+                let radial_step = clamp(-v_drift * uniforms.dt, -r * 0.001, max_inward);
+                r = max(r - radial_step, uniforms.inner_radius * 0.95);
             }
 
             // Stellar Blast Shockwave & Photo-evaporative Dust Clearing

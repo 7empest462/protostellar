@@ -255,12 +255,12 @@ fn test_all_material_shaders_use_preprocessed_bind_group() {
     }
 
     assert_eq!(
-        checked_wesl_shaders, 15,
-        "Expected 15 non-UI .wesl material shaders (plus sci_fi_panel.wesl = 16 total)"
+        checked_wesl_shaders, 17,
+        "Expected 17 non-UI .wesl material shaders (plus sci_fi_panel.wesl = 18 total)"
     );
     assert_eq!(
-        checked_raw_wgsl_shaders, 6,
-        "Expected 6 standalone raw wgpu .wgsl shaders"
+        checked_raw_wgsl_shaders, 7,
+        "Expected 7 standalone raw wgpu .wgsl shaders"
     );
 }
 
@@ -272,9 +272,11 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
         "assets/shaders/circumstellar.wesl",
         "assets/shaders/comet_tail.wesl",
         "assets/shaders/gas_cloud.wesl",
+        "assets/shaders/megastructure.wesl",
         "assets/shaders/particle_swarm.wesl",
         "assets/shaders/planet.wesl",
         "assets/shaders/planetary_rings.wesl",
+        "assets/shaders/planetary_shield.wesl",
         "assets/shaders/post_processing.wesl",
         "assets/shaders/relativistic_jet.wesl",
         "assets/shaders/roche_stream.wesl",
@@ -288,6 +290,15 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
     for shader_path in wesl_shaders {
         compile_and_validate_wesl_shader(shader_path, &[]);
     }
+
+    // Validate megastructure.wesl when VERTEX_COLORS is disabled (probes/primitives without vertex color)
+    compile_and_validate_wesl_shader(
+        "assets/shaders/megastructure.wesl",
+        &[
+            ShaderDefVal::Bool("VERTEX_COLORS".into(), false),
+            ShaderDefVal::Bool("VERTEX_UVS_A".into(), true),
+        ],
+    );
 
     // Validate GPU-billboarded particle swarm vertex + fragment permutations with full vertex attrs
     compile_and_validate_wesl_shader(
@@ -316,6 +327,7 @@ fn test_all_15_wesl_shaders_compile_through_bevy_shader_cache_and_naga() {
 fn test_all_8_transparent_wesl_shaders_compile_under_forward_pipeline() {
     let transparent_shaders = [
         "assets/shaders/planetary_rings.wesl",
+        "assets/shaders/planetary_shield.wesl",
         "assets/shaders/atmosphere.wesl",
         "assets/shaders/gas_cloud.wesl",
         "assets/shaders/roche_stream.wesl",
@@ -427,6 +439,11 @@ fn test_nbody_galaxy_wgsl_naga_validation() {
 #[test]
 fn test_particle_orbit_wgsl_naga_validation() {
     validate_wgsl_compute_shader_with_naga("assets/shaders/particle_orbit.wgsl");
+}
+
+#[test]
+fn test_particle_nucleate_wgsl_naga_validation() {
+    validate_wgsl_compute_shader_with_naga("assets/shaders/particle_nucleate.wgsl");
 }
 
 #[test]

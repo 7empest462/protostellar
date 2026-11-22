@@ -65,6 +65,12 @@ pub enum MilestoneId {
     MagnetarSuperflare,
     GeomagneticSuperstorm,
     BinaryInspiral,
+    // Track 6A: Living Civilizations, Interplanetary Colonies & Crisis Defense
+    CivilizationTypeOne,
+    DysonSwarmTypeTwo,
+    CrisisDeflected,
+    InterplanetaryColony,
+    GreatFilterOvercome,
 }
 
 /// A scientific discovery milestone tracking solar system emergence.
@@ -647,6 +653,11 @@ fn evaluate_scientific_milestones(
                 stats.has_geomagnetic_storm || current_sim_yr >= 80.0
             }
             MilestoneId::BinaryInspiral => stats.has_binary_inspiral || current_sim_yr >= 120.0,
+            MilestoneId::CivilizationTypeOne
+            | MilestoneId::DysonSwarmTypeTwo
+            | MilestoneId::CrisisDeflected
+            | MilestoneId::InterplanetaryColony
+            | MilestoneId::GreatFilterOvercome => false,
         };
 
         if passed {

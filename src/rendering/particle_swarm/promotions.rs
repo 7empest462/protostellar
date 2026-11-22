@@ -125,10 +125,11 @@ pub fn check_clump_promotions(
     (promotions, active_count)
 }
 
-fn determine_promoted_body_type_and_name(
+pub fn determine_promoted_body_type_and_name(
     mass: f64,
     radius_au: f64,
     comp: &Composition,
+    snow_line_au: f64,
     is_massive_disk: bool,
 ) -> (BodyType, String) {
     let mass_earth = mass / EARTH_MASS_SOLAR;
@@ -146,6 +147,8 @@ fn determine_promoted_body_type_and_name(
         BodyType::Planetesimal
     };
 
+    let near_snowline =
+        (2.4..=3.2).contains(&radius_au) || (radius_au - snow_line_au).abs() <= 0.55;
     let name = match body_type {
         BodyType::BrownDwarf => format!("Brown Dwarf ({:.1} M_J)", mass / JUPITER_MASS_SOLAR),
         BodyType::GasGiant => format!("Planet-{radius_au:.1}AU (Gas Giant)"),
@@ -154,7 +157,7 @@ fn determine_promoted_body_type_and_name(
         BodyType::TerrestrialPlanet => format!("Planet-{radius_au:.1}AU (Terrestrial)"),
         BodyType::Protoplanet => format!("Embryo-{radius_au:.1}AU"),
         BodyType::Planetesimal => {
-            if (2.4..=3.2).contains(&radius_au) {
+            if near_snowline {
                 format!("Snowline Planetesimal-{radius_au:.1}AU")
             } else if radius_au < 2.0 {
                 format!("Rocky Planetesimal-{radius_au:.1}AU")
@@ -169,48 +172,66 @@ fn determine_promoted_body_type_and_name(
     (body_type, name)
 }
 
-pub fn spawn_promoted_bodies(
+/// Spawns a single promoted clump (from either CPU spatial coagulation or GPU disk nucleation)
+/// into full ECS physics/thermodynamics/differentiation simulation.
+pub fn spawn_promoted_body(
     commands: &mut Commands,
-    promotions: PromotedBodyBatch,
+    pos: DVec3,
+    vel: DVec3,
+    mass: f64,
+    radius: f64,
+    comp: Composition,
     disk_params: &DiskParameters,
     is_massive_disk: bool,
-) {
-    for (pos, vel, mass, radius, comp) in promotions {
-        let r_dist = pos.length();
-        let (body_type, name) =
-            determine_promoted_body_type_and_name(mass, r_dist, &comp, is_massive_disk);
-        let temp = (disk_params.reference_temp_1au) * (r_dist / 1.0).powf(-0.5);
+) -> (Entity, BodyType, String) {
+    let r_dist = pos.length().max(0.05);
+    let (body_type, name) = determine_promoted_body_type_and_name(
+        mass,
+        r_dist,
+        &comp,
+        disk_params.snow_line_au,
+        is_massive_disk,
+    );
+    let temp = (disk_params.reference_temp_1au) * (r_dist / 1.0).powf(-0.5);
 
-        let mut diff = InternalDifferentiation::default();
-        diff.recalculate(mass, radius, &comp);
+    let mut diff = InternalDifferentiation::default();
+    diff.recalculate(mass, radius, &comp);
 
-        let mut spin = SpinState::default();
-        let initial_spin =
-            (mass * radius * radius * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
-        spin.update_from_spin(initial_spin, mass, radius);
+    let mut spin = SpinState::default();
+    let initial_spin =
+        (mass * radius * radius * 0.33) * DVec3::new(0.0, 2.0 * PI / (24.0 / 8766.0), 0.0);
+    spin.update_from_spin(initial_spin, mass, radius);
 
-        let is_rocky_body = matches!(
-            body_type,
-            BodyType::Planetesimal
-                | BodyType::Protoplanet
-                | BodyType::TerrestrialPlanet
-                | BodyType::SuperEarth
-        );
-        let initial_water_m_earth = if is_rocky_body && r_dist > 0.35 {
-            compute_endogenous_water_m_earth(mass, &comp, r_dist, 1.0)
+    let is_rocky_body = matches!(
+        body_type,
+        BodyType::Planetesimal
+            | BodyType::Protoplanet
+            | BodyType::TerrestrialPlanet
+            | BodyType::SuperEarth
+    );
+    let initial_water_m_earth = if is_rocky_body && r_dist > 0.35 {
+        compute_endogenous_water_m_earth(mass, &comp, r_dist, 1.0)
+    } else {
+        0.0
+    };
+
+    let vol = VolatileInventory {
+        delivered_water_m_earth: initial_water_m_earth,
+        ocean_coverage_frac: 0.0,
+        atmospheric_pressure_bar: if r_dist < disk_params.snow_line_au {
+            0.5
         } else {
             0.0
-        };
+        },
+        cometary_impact_count: 0,
+    };
 
-        let vol = VolatileInventory {
-            delivered_water_m_earth: initial_water_m_earth,
-            ocean_coverage_frac: 0.0,
-            atmospheric_pressure_bar: if r_dist < 2.7 { 0.5 } else { 0.0 },
-            cometary_impact_count: 0,
-        };
-
-        commands.spawn((
-            CelestialBody { body_type, name },
+    let entity = commands
+        .spawn((
+            CelestialBody {
+                body_type,
+                name: name.clone(),
+            },
             Mass(mass),
             SimPosition(pos),
             SimVelocity(vel),
@@ -223,7 +244,29 @@ pub fn spawn_promoted_bodies(
             diff,
             spin,
             vol,
-        ));
+        ))
+        .id();
+
+    (entity, body_type, name)
+}
+
+pub fn spawn_promoted_bodies(
+    commands: &mut Commands,
+    promotions: PromotedBodyBatch,
+    disk_params: &DiskParameters,
+    is_massive_disk: bool,
+) {
+    for (pos, vel, mass, radius, comp) in promotions {
+        spawn_promoted_body(
+            commands,
+            pos,
+            vel,
+            mass,
+            radius,
+            comp,
+            disk_params,
+            is_massive_disk,
+        );
     }
 }
 

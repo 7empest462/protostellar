@@ -56,49 +56,9 @@ pub type CelestialBodyQueryItem<'a> = (
 
 pub type CelestialBodyQuery<'w, 's> = Query<'w, 's, CelestialBodyQueryItem<'static>>;
 
-/// Computes the `tidal_deformation` shader uniform (`xyz` = unit world vector toward dominant
-/// tidal perturber, `w` = `roche_stretch` in `0.0..0.78` plus `+2.0` if tidally locked).
-pub fn compute_tidal_deformation_uniform(
-    world_pos: Vec3,
-    primary_pos: Vec3,
-    primary_mass_solar: f64,
-    body_mass_solar: f64,
-    body_radius_au: f64,
-    opt_tidal: Option<&TidalState>,
-    opt_roche: Option<&crate::simulation::accretion::RocheLobeOverflow>,
-    is_satellite: bool,
-) -> Vec4 {
-    let to_primary = primary_pos - world_pos;
-    let dist_au = f64::from(to_primary.length());
-    let tidal_dir = to_primary.normalize_or_zero();
-
-    // Eggleton / Fluid Roche limit estimate: r_roche ~ 2.44 * R_body * (M_primary / M_body)^(1/3)
-    let mass_ratio = primary_mass_solar / body_mass_solar.max(1e-12);
-    let r_roche_au = 2.44 * body_radius_au * mass_ratio.cbrt();
-
-    let mut stretch = if let Some(roche) = opt_roche {
-        let overflow_boost = (roche.mass_transfer_rate * 2.5e3).clamp(0.0, 0.35) as f32;
-        (0.42 + overflow_boost).clamp(0.35, 0.78)
-    } else if dist_au > 1e-5 && r_roche_au > 0.0 {
-        let prox = (r_roche_au / dist_au) as f32;
-        if prox > 0.33 {
-            ((prox - 0.33) * 0.65).clamp(0.0, 0.72)
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    };
-
-    if !is_satellite && opt_tidal.is_some_and(|t| t.is_tidally_locked) {
-        stretch += 2.0;
-    }
-
-    Vec4::new(tidal_dir.x, tidal_dir.y, tidal_dir.z, stretch)
-}
-
 fn find_star_position_and_min_orbit(
     query: &CelestialBodyQuery,
+    origin: &crate::rendering::origin::RenderOrigin,
     stars: &mut Vec<(Entity, Vec3, f32)>,
 ) -> (Vec3, f64, Option<Entity>, f32) {
     stars.clear();
@@ -108,7 +68,7 @@ fn find_star_position_and_min_orbit(
 
     for (e, p, m, _, _, _, b, _, _, _, _, (_, _, opt_bhs, ..), _) in query.iter() {
         if b.body_type.is_star_or_remnant() {
-            let p_vec = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+            let p_vec = origin.to_render(p.0);
             if stars.is_empty() || m.0 > s_mass {
                 s_pos = p_vec;
                 s_mass = m.0;
@@ -136,7 +96,7 @@ fn find_star_position_and_min_orbit(
 
     let mut min_r = f32::MAX;
     for (_, p, ..) in query.iter() {
-        let p_vec = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+        let p_vec = origin.to_render(p.0);
         let dist = (p_vec - s_pos).length();
         if dist > 0.001 && dist < min_r {
             min_r = dist;
@@ -147,52 +107,14 @@ fn find_star_position_and_min_orbit(
     (s_pos, s_mass, s_ent, min_orbit_r)
 }
 
-/// Computes the flux-weighted incoming starlight direction for a celestial body,
-/// smoothly blending illumination across multi-star and circumbinary systems.
-pub fn resolve_star_direction(
-    entity: Entity,
-    body_pos: Vec3,
-    star_pos: Vec3,
-    stars: &[(Entity, Vec3, f32)],
-) -> Vec3 {
-    if stars.is_empty() {
-        Vec3::Y
-    } else if stars.len() == 1 {
-        (star_pos - body_pos).normalize_or_zero()
-    } else {
-        let mut weighted_dir = Vec3::ZERO;
-        let mut nearest_dir = Vec3::Y;
-        let mut nearest_dist_sq = f32::MAX;
-
-        for &(s_ent, s_pos, lum_weight) in stars {
-            if s_ent == entity {
-                continue;
-            }
-            let to_star = s_pos - body_pos;
-            let dist_sq = to_star.length_squared();
-            if dist_sq < 1e-12 {
-                continue;
-            }
-            let dir = to_star / dist_sq.sqrt();
-            if dist_sq < nearest_dist_sq {
-                nearest_dist_sq = dist_sq;
-                nearest_dir = dir;
-            }
-            let flux = lum_weight.max(1e-4) / dist_sq.max(1e-6);
-            weighted_dir += dir * flux;
-        }
-
-        if weighted_dir.length_squared() > 1e-12 {
-            weighted_dir.normalize()
-        } else {
-            nearest_dir
-        }
-    }
-}
-
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Moon and host collection in render-origin coordinates"
+)]
 fn collect_system_moons(
     query: &CelestialBodyQuery,
     config: &SimulationConfig,
+    origin: &crate::rendering::origin::RenderOrigin,
     star_pos: Vec3,
     min_orbit_r: f32,
     cam_pos: Option<Vec3>,
@@ -218,7 +140,7 @@ fn collect_system_moons(
         (_, _, opt_diff, ..),
     ) in query.iter()
     {
-        let m_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let m_pos = origin.to_render(pos.0);
         all_parents.push((m_ent, m_pos, mass.0));
         let is_moon = opt_sat.is_some() || body.body_type == BodyType::Moon;
         let is_host_planet = !is_moon
@@ -464,9 +386,11 @@ fn resolve_expected_mesh(
     entity: Entity,
     visual_assets: &VisualAssets,
     opt_player_state: Option<&PlayerInteractionState>,
+    focused_host: Option<Entity>,
 ) -> Handle<Mesh> {
     let target_mesh = select_body_mesh(body, radius_au, visual_assets);
-    let is_selected = opt_player_state.is_some_and(|ps| ps.selected_entity == Some(entity));
+    let is_selected = opt_player_state.is_some_and(|ps| ps.selected_entity == Some(entity))
+        || focused_host == Some(entity);
     if is_selected {
         if body.body_type.is_star_or_remnant() {
             visual_assets.star_mesh_hires.clone()
@@ -478,6 +402,50 @@ fn resolve_expected_mesh(
     } else {
         target_mesh
     }
+}
+
+fn resolve_focused_and_surface_host(
+    opt_cam: Option<&crate::rendering::camera::PanOrbitCamera>,
+    opt_player_state: Option<&PlayerInteractionState>,
+    probes_query: &Query<&crate::simulation::probes::FlightComputer>,
+) -> (Option<Entity>, Option<Entity>) {
+    let raw_target = opt_player_state
+        .and_then(|ps| ps.selected_entity)
+        .or_else(|| opt_cam.and_then(|c| c.target_entity));
+    let resolved_host = raw_target.map(|ent| {
+        probes_query
+            .get(ent)
+            .ok()
+            .map_or(ent, |fc| fc.target_entity)
+    });
+    let surface_host = if opt_cam.is_some_and(|c| c.surface_horizon_mode) {
+        resolved_host.or_else(|| {
+            opt_cam.and_then(|c| c.target_entity).map(|ent| {
+                probes_query
+                    .get(ent)
+                    .ok()
+                    .map_or(ent, |fc| fc.target_entity)
+            })
+        })
+    } else {
+        None
+    };
+    (resolved_host, surface_host)
+}
+
+/// Freezes the per-frame visual spin increment on the active surface-mode host world
+/// while the player is standing on its surface so `world_up` does not step across the
+/// coarse 1 AU `f32` mantissa grid (while `planet.time` still animates waves and clouds).
+#[inline]
+pub fn clamp_surface_mode_spin_dt_yr(
+    current_dt_yr: f64,
+    _opt_spin: Option<&SpinState>,
+    is_surface_host: bool,
+) -> f64 {
+    if is_surface_host || current_dt_yr <= 0.0 {
+        return 0.0;
+    }
+    current_dt_yr
 }
 
 #[allow(
@@ -689,13 +657,49 @@ fn sync_single_body_material(
     }
 }
 
+#[inline]
+fn resolve_surface_latched_translation(
+    pos_d: bevy::math::DVec3,
+    opt_origin: Option<&crate::rendering::origin::RenderOrigin>,
+    is_surface: bool,
+    opt_cam: Option<&crate::rendering::camera::PanOrbitCamera>,
+) -> Vec3 {
+    let origin = opt_origin.copied().unwrap_or_default();
+    let raw_pos = origin.to_render(pos_d);
+    if opt_origin.is_none()
+        && is_surface
+        && let Some(c) = opt_cam
+        && c.target_focus.length_squared() > 1e-6
+        && c.target_focus.distance(raw_pos) < 0.05
+    {
+        c.target_focus
+    } else {
+        raw_pos
+    }
+}
+
+type TransformCameraQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Transform,
+        Option<&'static crate::rendering::camera::PanOrbitCamera>,
+    ),
+    (With<Camera3d>, Without<CelestialBody>),
+>;
+
+#[allow(clippy::type_complexity, reason = "Celestial transform sync queries")]
 pub fn sync_celestial_transforms(
     (sim_time, time_warp): (Option<Res<SimTime>>, Option<Res<TimeWarp>>),
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     visual_assets: Res<VisualAssets>,
     mut materials: ResMut<Assets<PlanetMaterial>>,
     mut light_query: Query<&mut PointLight>,
-    camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialBody>)>,
+    (camera_query, probes_query): (
+        TransformCameraQuery,
+        Query<&crate::simulation::probes::FlightComputer>,
+    ),
     opt_player_state: Option<Res<PlayerInteractionState>>,
     mut query: CelestialBodyQuery,
     mut stars_scratch: Local<Vec<(Entity, Vec3, f32)>>,
@@ -703,19 +707,21 @@ pub fn sync_celestial_transforms(
     mut parents_scratch: Local<Vec<(Entity, Vec3, f64)>>,
     mut scratch_mat: Local<Option<PlanetMaterial>>,
 ) {
-    let cam_pos = camera_query.iter().next().map(|t| t.translation);
-    let (star_pos, star_mass, _star_entity, min_orbit_r) =
-        find_star_position_and_min_orbit(&query, &mut stars_scratch);
-    let show_atmospheres = opt_player_state
-        .as_deref()
-        .is_none_or(PlayerInteractionState::show_atmospheres);
-    let show_clouds = opt_player_state
-        .as_deref()
-        .is_none_or(PlayerInteractionState::show_clouds);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let cam_entry = camera_query.iter().next();
+    let cam_pos = cam_entry.map(|(t, _)| t.translation);
+    let opt_cam = cam_entry.and_then(|(_, c)| c);
+    let ps = opt_player_state.as_deref();
+    let (focused_host, surface_host) = resolve_focused_and_surface_host(opt_cam, ps, &probes_query);
+    let (star_pos, star_mass, _, min_orbit_r) =
+        find_star_position_and_min_orbit(&query, &origin, &mut stars_scratch);
+    let show_atmospheres = ps.is_none_or(PlayerInteractionState::show_atmospheres);
+    let show_clouds = ps.is_none_or(PlayerInteractionState::show_clouds);
 
     collect_system_moons(
         &query,
         &config,
+        &origin,
         star_pos,
         min_orbit_r,
         cam_pos,
@@ -742,11 +748,17 @@ pub fn sync_celestial_transforms(
         (opt_aurora, opt_flare, opt_diff, opt_storm, opt_roche),
     ) in query.iter_mut()
     {
-        transform.translation = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-
+        let is_surface = surface_host == Some(entity);
+        transform.translation =
+            resolve_surface_latched_translation(pos.0, opt_origin.as_deref(), is_surface, opt_cam);
+        let eff_cam = if is_surface {
+            Some(transform.translation)
+        } else {
+            cam_pos
+        };
+        let eff_dt_yr = clamp_surface_mode_spin_dt_yr(current_dt_yr, opt_spin, is_surface);
         let star_dir =
             resolve_star_direction(entity, transform.translation, star_pos, &stars_scratch);
-
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
         update_star_lights_and_strobes(
             opt_children,
@@ -767,20 +779,15 @@ pub fn sync_celestial_transforms(
             show_atmospheres,
             star_pos,
             min_orbit_r,
-            cam_pos,
+            eff_cam,
             is_blown_out,
             opt_spin,
         );
 
-        let expected_mesh = resolve_expected_mesh(
-            body,
-            radius.0,
-            entity,
-            &visual_assets,
-            opt_player_state.as_deref(),
-        );
-        if mesh.0 != expected_mesh {
-            mesh.0 = expected_mesh;
+        let expected =
+            resolve_expected_mesh(body, radius.0, entity, &visual_assets, ps, focused_host);
+        if mesh.0 != expected {
+            mesh.0 = expected;
         }
 
         sync_single_body_material(
@@ -795,7 +802,7 @@ pub fn sync_celestial_transforms(
             comp,
             visual_time,
             elapsed_years,
-            current_dt_yr,
+            eff_dt_yr,
             &transform,
             visual_radius,
             full_visual_radius,
@@ -820,7 +827,7 @@ pub fn sync_celestial_transforms(
             opt_diff,
             opt_storm,
             opt_roche,
-            opt_player_state.as_deref(),
+            ps,
             show_atmospheres,
             show_clouds,
         );
@@ -838,9 +845,17 @@ pub fn sync_camera_adaptive_body_scales(
     config: Res<SimulationConfig>,
     mut materials: Option<ResMut<Assets<PlanetMaterial>>>,
     opt_player_state: Option<Res<PlayerInteractionState>>,
-    camera_query: Query<&Transform, (With<Camera3d>, Without<CelestialBody>)>,
+    camera_query: Query<
+        (
+            &Transform,
+            Option<&crate::rendering::camera::PanOrbitCamera>,
+        ),
+        (With<Camera3d>, Without<CelestialBody>),
+    >,
+    probes_query: Query<&crate::simulation::probes::FlightComputer>,
     mut bodies_query: Query<
         (
+            Entity,
             &Mass,
             &Radius,
             Option<&Composition>,
@@ -853,9 +868,12 @@ pub fn sync_camera_adaptive_body_scales(
         Without<Camera3d>,
     >,
 ) {
-    let Some(cam_pos) = camera_query.iter().next().map(|t| t.translation) else {
+    let Some((cam_tf, opt_cam)) = camera_query.iter().next() else {
         return;
     };
+    let cam_pos = cam_tf.translation;
+    let (_, surface_host) =
+        resolve_focused_and_surface_host(opt_cam, opt_player_state.as_deref(), &probes_query);
     let show_atmospheres = opt_player_state
         .as_deref()
         .is_none_or(PlayerInteractionState::show_atmospheres);
@@ -863,7 +881,7 @@ pub fn sync_camera_adaptive_body_scales(
     let mut star_pos = Vec3::ZERO;
     let mut star_mass = -1.0_f64;
     let mut star_count = 0_usize;
-    for (mass, _, _, body, tf, _, _, _) in bodies_query.iter() {
+    for (_, mass, _, _, body, tf, _, _, _) in bodies_query.iter() {
         if body.body_type.is_star_or_remnant() {
             star_count += 1;
             if mass.0 > star_mass {
@@ -875,7 +893,7 @@ pub fn sync_camera_adaptive_body_scales(
 
     let min_orbit_r = if star_count == 1 {
         let mut min_r = f32::MAX;
-        for (_, _, _, _, tf, _, _, _) in bodies_query.iter() {
+        for (_, _, _, _, _, tf, _, _, _) in bodies_query.iter() {
             let dist = (tf.translation - star_pos).length();
             if dist > 0.001 && dist < min_r {
                 min_r = dist;
@@ -886,7 +904,7 @@ pub fn sync_camera_adaptive_body_scales(
         1.0
     };
 
-    for (mass, radius, opt_comp, body, mut tf, opt_mat, opt_bhs, opt_diff) in
+    for (entity, mass, radius, opt_comp, body, mut tf, opt_mat, opt_bhs, opt_diff) in
         bodies_query.iter_mut()
     {
         // Skip entities that still hold an unsynced default Transform::IDENTITY (e.g. headless spawns)
@@ -894,7 +912,11 @@ pub fn sync_camera_adaptive_body_scales(
             continue;
         }
         let r_orb = (tf.translation - star_pos).length();
-        let cam_dist = cam_pos.distance(tf.translation);
+        let cam_dist = if surface_host == Some(entity) {
+            0.0
+        } else {
+            cam_pos.distance(tf.translation)
+        };
         let is_blown_out = opt_bhs.is_some_and(|s| s.is_blown_out);
         let visual_radius = if body.body_type == BodyType::QuasiStar && is_blown_out {
             let r_schwa = (1.974e-8 * mass.0).max(1e-4);
@@ -921,7 +943,7 @@ pub fn sync_camera_adaptive_body_scales(
             )
         };
 
-        let scale_tol = (visual_radius * 1e-4).max(1e-6);
+        let scale_tol = (visual_radius * 1e-4).max(1e-10);
         if (tf.scale.x - visual_radius).abs() > scale_tol {
             tf.scale = Vec3::splat(visual_radius);
             if let (Some(mats), Some(mat_handle)) = (materials.as_deref_mut(), opt_mat)

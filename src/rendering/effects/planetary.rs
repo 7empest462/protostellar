@@ -265,9 +265,9 @@ pub fn draw_body_selection_and_beacons(
     cam_pos: Option<Vec3>,
 ) {
     let is_star = body.body_type.is_star_or_remnant();
-    let safe_vis_r = visual_r.max(0.00005);
+    let safe_vis_r = visual_r.max(1e-9);
 
-    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec)).max(0.0002);
+    let cam_dist = cam_pos.map_or(12.0, |cp| cp.distance(body_vec)).max(1e-8);
     // Smoothly fade selection reticle & beacon when zoomed right up to a planet's surface
     // so rings and markers do not clutter a close planetary inspection view.
     let close_fade = ((cam_dist / safe_vis_r - 2.3) / 5.5).clamp(0.0, 1.0);
@@ -800,7 +800,7 @@ pub fn draw_distant_optical_glint(
 
     let to_cam_raw = cam_pos - body_vec;
     let cam_dist = to_cam_raw.length();
-    if !cam_dist.is_finite() || cam_dist <= 0.0005 {
+    if !cam_dist.is_finite() || cam_dist <= 1e-7 {
         return;
     }
 

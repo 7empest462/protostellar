@@ -134,21 +134,24 @@ pub fn step_protostar_ignition_and_limits(
     supernova_events: &mut MessageWriter<SupernovaEvent>,
     is_gmc: bool,
 ) {
-    // Degenerate stellar remnants (Black Holes, Neutron Stars, Pulsars, Magnetars, White Dwarfs)
-    // have completed stellar fusion and must never undergo pre-main-sequence contraction or re-ignition!
-    if body.body_type.is_remnant() {
-        return;
-    }
+    let in_post_fusion_phase = body.body_type.is_remnant()
+        || body.body_type.is_evolved_giant()
+        || opt_evo.as_deref().is_some_and(|e| {
+            !matches!(
+                e.phase,
+                StellarEvolutionPhase::ProtostarContraction | StellarEvolutionPhase::MainSequence
+            )
+        });
 
     let is_genesis = body.name.contains("Genesis") || body.name.contains("T-Tauri");
-    if ignition.is_ignited {
+    if ignition.is_ignited && !body.body_type.is_remnant() {
         let blast_speed = 0.65;
         ignition.shockwave_radius = (ignition.shockwave_radius + blast_speed * dt_yr).min(30.0);
         if !is_genesis && !is_gmc {
             let time_decay = (1.0 - (elapsed_years / 15_000.0)).clamp(0.0, 1.0) as f32;
             config.gas_density_scale = config.gas_density_scale.min(time_decay);
         }
-    } else {
+    } else if !in_post_fusion_phase {
         advance_pre_main_sequence_contraction(
             entity,
             mass,
@@ -167,19 +170,27 @@ pub fn step_protostar_ignition_and_limits(
         );
     }
 
-    apply_stellar_collapse_limits(
-        entity,
-        mass,
-        radius,
-        temp,
-        lum,
-        body,
-        ignition,
-        opt_evo,
-        opt_em,
-        commands,
-        supernova_events,
-    );
+    if opt_evo.as_deref().is_none_or(|e| {
+        !matches!(
+            e.phase,
+            StellarEvolutionPhase::PlanetaryNebulaEjection
+                | StellarEvolutionPhase::SupernovaExplosion
+        )
+    }) {
+        apply_stellar_collapse_limits(
+            entity,
+            mass,
+            radius,
+            temp,
+            lum,
+            body,
+            ignition,
+            opt_evo,
+            opt_em,
+            commands,
+            supernova_events,
+        );
+    }
 
     // Sub-stellar Brown Dwarfs with IgnitionState that subsequently accrete past 0.08 M_sun
     // immediately ignite hydrogen fusion into the matching Morgan-Keenan class.
@@ -514,6 +525,182 @@ pub(super) fn clean_star_base_name(name: &str) -> &str {
         name.get(..idx).unwrap_or(name).trim()
     } else {
         name.trim()
+    }
+}
+
+/// Returns the player-facing spectral or evolved label for `"The Star (...)"` bodies.
+#[must_use]
+pub fn the_star_display_name_for_type(body_type: BodyType) -> &'static str {
+    match body_type {
+        BodyType::BrownDwarf => "The Star (Brown Dwarf)",
+        BodyType::RedDwarf => "The Star (Red Dwarf - M Type)",
+        BodyType::OrangeDwarf => "The Star (Orange Dwarf - K Type)",
+        BodyType::YellowDwarf => "The Star (Yellow Dwarf - G2V)",
+        BodyType::YellowWhiteDwarf => "The Star (Yellow-White Dwarf - F Type)",
+        BodyType::WhiteMainSequence => "The Star (White Main-Sequence - A Type)",
+        BodyType::BlueMainSequence => "The Star (Blue-White Star - B/A Type)",
+        BodyType::BlueGiant => "The Star (Blue Giant - B Type)",
+        BodyType::BlueSupergiant => "The Star (Blue Supergiant - O Type)",
+        BodyType::Hypergiant | BodyType::YellowHypergiant => {
+            "The Star (Luminous Yellow Hypergiant)"
+        }
+        BodyType::PopulationIIIStar => "The Star (Population III Hypergiant)",
+        BodyType::RedGiant => "The Star (Red Giant Branch)",
+        BodyType::CarbonStar => "The Star (Carbon Star AGB)",
+        BodyType::RedSupergiant => "The Star (Red Supergiant)",
+        _ => "The Star (Main Sequence)",
+    }
+}
+
+fn sync_evolved_giant_after_mass_edit(
+    mass_solar: f64,
+    body: &mut CelestialBody,
+    radius: Option<&mut Radius>,
+    opt_temp: Option<&mut Temperature>,
+    opt_lum: Option<&mut Luminosity>,
+    opt_evo: Option<&mut StellarEvolutionState>,
+) {
+    let in_ejection = opt_evo.as_deref().is_some_and(|e| {
+        matches!(
+            e.phase,
+            StellarEvolutionPhase::PlanetaryNebulaEjection
+                | StellarEvolutionPhase::SupernovaExplosion
+        )
+    });
+    if in_ejection {
+        return;
+    }
+
+    if mass_solar >= 25.0 {
+        body.body_type = BodyType::YellowHypergiant;
+        if let Some(evo) = opt_evo {
+            evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
+        }
+        if body.name.starts_with("The Star") {
+            body.name = "The Star (Luminous Yellow Hypergiant)".to_string();
+        }
+        if let Some(r) = radius {
+            r.0 = r.0.max(4.5);
+        }
+        if let Some(t) = opt_temp {
+            t.0 = 4000.0;
+        }
+        if let Some(l) = opt_lum {
+            l.0 = l.0.max(250_000.0);
+        }
+    } else if mass_solar >= 8.0 {
+        body.body_type = BodyType::RedSupergiant;
+        if let Some(evo) = opt_evo {
+            evo.phase = StellarEvolutionPhase::RedSupergiantBranch;
+        }
+        if body.name.starts_with("The Star") {
+            body.name = "The Star (Red Supergiant)".to_string();
+        }
+        if let Some(r) = radius {
+            r.0 =
+                r.0.max((3.2 * (mass_solar / 15.0).powf(0.4)).clamp(1.8, 4.5));
+        }
+        if let Some(t) = opt_temp {
+            t.0 = 3300.0;
+        }
+        if let Some(l) = opt_lum {
+            l.0 =
+                l.0.max(80_000.0 * (mass_solar / 15.0).powf(2.0).clamp(0.3, 4.0));
+        }
+    } else if matches!(
+        body.body_type,
+        BodyType::RedSupergiant | BodyType::YellowHypergiant | BodyType::Hypergiant
+    ) {
+        body.body_type = BodyType::RedGiant;
+        if let Some(evo) = opt_evo {
+            evo.phase = StellarEvolutionPhase::RedGiantBranch;
+        }
+        if body.name.starts_with("The Star") {
+            body.name = "The Star (Red Giant Branch)".to_string();
+        }
+        if let Some(r) = radius {
+            r.0 = (1.25 * mass_solar.max(0.5).powf(0.3)).clamp(0.8, 2.5);
+        }
+    }
+}
+
+/// Updates spectral class, evolutionary branch, radius, temperature, and luminosity after
+/// editing the mass of an existing star or stellar remnant without resetting evolved phases.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Synchronizes mass-dependent spectral type and evolved stellar branch state"
+)]
+pub fn sync_stellar_classification_after_mass_edit(
+    mass_solar: f64,
+    old_type: BodyType,
+    comp: &Composition,
+    body: &mut CelestialBody,
+    radius: Option<&mut Radius>,
+    opt_temp: Option<&mut Temperature>,
+    opt_lum: Option<&mut Luminosity>,
+    opt_evo: Option<&mut StellarEvolutionState>,
+) {
+    if old_type.is_remnant() || old_type.is_hypothetical() {
+        if old_type == BodyType::BlackHole
+            && let Some(r) = radius
+        {
+            r.0 = (1.974e-8 * mass_solar).max(1e-7);
+        }
+        return;
+    }
+
+    if old_type == BodyType::Protostar
+        && opt_evo
+            .as_deref()
+            .is_none_or(|e| e.phase == StellarEvolutionPhase::ProtostarContraction)
+    {
+        return;
+    }
+
+    let is_evolved = old_type.is_evolved_giant()
+        || opt_evo.as_deref().is_some_and(|e| {
+            !matches!(
+                e.phase,
+                StellarEvolutionPhase::ProtostarContraction | StellarEvolutionPhase::MainSequence
+            )
+        });
+    if is_evolved {
+        sync_evolved_giant_after_mass_edit(mass_solar, body, radius, opt_temp, opt_lum, opt_evo);
+        return;
+    }
+
+    let new_type = classify_body_by_mass_and_comp(mass_solar, comp, true);
+    body.body_type = new_type;
+
+    if body.name.starts_with("The Star")
+        || (body.name.starts_with("The Sun") && new_type != BodyType::YellowDwarf)
+    {
+        body.name = the_star_display_name_for_type(new_type).to_string();
+    } else {
+        let (_, label) = classify_stellar_type_and_label(mass_solar, comp);
+        update_promoted_stellar_name(&mut body.name, new_type, mass_solar, label);
+    }
+
+    if new_type == BodyType::BrownDwarf {
+        if let Some(r) = radius {
+            r.0 = 0.11 * SOLAR_RADIUS_AU;
+        }
+        if let Some(t) = opt_temp {
+            t.0 = 1400.0;
+        }
+        if let Some(l) = opt_lum {
+            l.0 = 1e-4 * (mass_solar / 0.05).clamp(0.1, 2.0);
+        }
+    } else if !new_type.is_remnant() && !new_type.is_hypothetical() {
+        if let Some(r) = radius {
+            r.0 = (SOLAR_RADIUS_AU * mass_solar.max(0.08).powf(0.8)).clamp(0.002, 0.12);
+        }
+        if let Some(t) = opt_temp {
+            t.0 = (5778.0 * mass_solar.max(0.08).powf(0.505)).clamp(1800.0, 50_000.0);
+        }
+        if let Some(l) = opt_lum {
+            l.0 = mass_solar.max(0.01).powf(3.5);
+        }
     }
 }
 

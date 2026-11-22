@@ -18,15 +18,14 @@ fn resolve_shockwave_surface_pos_and_radius(
     p_tf: Option<&Transform>,
     fallback_dir: Vec3,
 ) -> (Vec3, f32) {
-    let p_center = p_tf.map_or(
-        Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-        |tf| tf.translation,
-    );
-    let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-5);
+    let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
+    let phys_r = p_rad.map_or(4.2e-5, |r| r.0 as f32).max(1e-9);
     let r_surf = p_tf
         .map(|tf| tf.scale.x)
-        .filter(|&vis_r| vis_r > phys_r && (vis_r - 1.0).abs() > 1e-4)
-        .unwrap_or(0.035);
+        .filter(|&vis_r| {
+            vis_r.is_finite() && vis_r > 1e-10 && !((vis_r - 1.0).abs() < 1e-4 && phys_r < 0.25)
+        })
+        .unwrap_or(phys_r);
 
     let norm = fallback_dir.normalize_or_zero();
     let world_dir = if norm == Vec3::ZERO { Vec3::Y } else { norm };
@@ -80,10 +79,7 @@ pub fn update_impact_shockwaves(
         );
         let (local_pos, pos, r_surf) =
             if let Ok((_, p_pos, p_rad, p_tf)) = bodies_query.get(ev.primary_entity) {
-                let p_center = p_tf.map_or(
-                    Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-                    |tf| tf.translation,
-                );
+                let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
                 let (w_pos, r) =
                     resolve_shockwave_surface_pos_and_radius(p_pos, p_rad, p_tf, ev_pos - p_center);
                 (w_pos - p_center, w_pos, r)
@@ -115,10 +111,7 @@ pub fn update_impact_shockwaves(
         if let (Ok((_, pos1, p_rad1, p_tf1)), Ok((_, pos2, _, _))) =
             (bodies_query.get(ev.entity1), bodies_query.get(ev.entity2))
         {
-            let p_center1 = p_tf1.map_or(
-                Vec3::new(pos1.x as f32, pos1.y as f32, pos1.z as f32),
-                |tf| tf.translation,
-            );
+            let p_center1 = Vec3::new(pos1.x as f32, pos1.y as f32, pos1.z as f32);
             let p_center2 = Vec3::new(pos2.x as f32, pos2.y as f32, pos2.z as f32);
             let dir = (p_center2 - p_center1).normalize_or_zero();
             let (pos, r_surf) = resolve_shockwave_surface_pos_and_radius(pos1, p_rad1, p_tf1, dir);
@@ -138,10 +131,7 @@ pub fn update_impact_shockwaves(
 
     for ev in bombard_reader.read() {
         if let Ok((_, p_pos, p_rad, p_tf)) = bodies_query.get(ev.target_entity) {
-            let p_center = p_tf.map_or(
-                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-                |tf| tf.translation,
-            );
+            let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
             let (pos, r_surf) =
                 resolve_shockwave_surface_pos_and_radius(p_pos, p_rad, p_tf, ev.surface_normal);
             let local_pos = pos - p_center;
@@ -183,12 +173,9 @@ pub fn update_impact_shockwaves(
         let progress = sw.timer / sw.max_timer;
         sw.radius = sw.max_radius * progress.sqrt();
         if let Some(ent) = sw.primary_entity
-            && let Ok((_, p_pos, _, p_tf)) = bodies_query.get(ent)
+            && let Ok((_, p_pos, _, _)) = bodies_query.get(ent)
         {
-            let p_center = p_tf.map_or(
-                Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32),
-                |tf| tf.translation,
-            );
+            let p_center = Vec3::new(p_pos.x as f32, p_pos.y as f32, p_pos.z as f32);
             sw.position = p_center + sw.local_position;
         }
         sw.timer < sw.max_timer
@@ -257,7 +244,11 @@ pub fn update_roche_debris_streams(
 }
 
 /// Renders 3D parabolic ballistic ejecta plume arcs without wireframe sphere/circle cages.
-pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockwavePool) {
+pub fn draw_impact_shockwaves(
+    gizmos: &mut Gizmos,
+    shockwave_pool: &ImpactShockwavePool,
+    origin: crate::rendering::origin::RenderOrigin,
+) {
     for sw in &shockwave_pool.shockwaves {
         let progress = (sw.timer / sw.max_timer).clamp(0.0, 1.0);
         let base_srgba = sw.color.to_srgba();
@@ -266,7 +257,7 @@ pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockw
         let plume_col =
             compute_impact_blackbody_color(base_srgba, (progress + 0.15).min(1.0), 0.65);
 
-        let normal = if sw.local_position.length_squared() > 1e-6 {
+        let normal = if sw.local_position.length_squared() > 1e-18 {
             sw.local_position.normalize()
         } else {
             Vec3::Y
@@ -278,6 +269,7 @@ pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockw
         };
         let tangent_u = normal.cross(up).normalize_or_zero();
         let tangent_v = normal.cross(tangent_u).normalize_or_zero();
+        let center = origin.shift_vec3(sw.position);
 
         // 3D Parabolic Ballistic Ejecta Plume Trajectories oriented along surface normal
         let ray_count = 10;
@@ -291,9 +283,9 @@ pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockw
             let h_mid = plume_apex * speed_var;
             let h_tip = h_mid * (1.0 - progress * 0.85).max(-0.15);
 
-            let p0 = sw.position + dir_tangent * (r_tip * 0.18);
-            let p_mid = sw.position + dir_tangent * (r_tip * 0.58) + normal * h_mid;
-            let p_tip = sw.position + dir_tangent * r_tip + normal * h_tip;
+            let p0 = center + dir_tangent * (r_tip * 0.18);
+            let p_mid = center + dir_tangent * (r_tip * 0.58) + normal * h_mid;
+            let p_tip = center + dir_tangent * r_tip + normal * h_tip;
 
             gizmos.line(p0, p_mid, plume_col);
             gizmos.line(p_mid, p_tip, core_col);
@@ -301,7 +293,11 @@ pub fn draw_impact_shockwaves(gizmos: &mut Gizmos, shockwave_pool: &ImpactShockw
     }
 }
 
-pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebrisPool) {
+pub fn draw_roche_debris_streamers(
+    gizmos: &mut Gizmos,
+    debris_pool: &RocheDebrisPool,
+    origin: crate::rendering::origin::RenderOrigin,
+) {
     for stream in &debris_pool.streams {
         let p = (stream.timer / stream.max_timer).clamp(0.0, 1.0);
         let alpha = if p < 0.15 {
@@ -312,9 +308,10 @@ pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebri
             1.0
         };
 
+        let base_pos = origin.shift_vec3(stream.primary_pos);
         for (i, &(r1, phi1, _, z1)) in stream.fragments.iter().enumerate() {
             let frac = (i as f32) / (stream.fragments.len().max(1) as f32);
-            let pos1 = stream.primary_pos + Vec3::new(r1 * phi1.cos(), z1, r1 * phi1.sin());
+            let pos1 = base_pos + Vec3::new(r1 * phi1.cos(), z1, r1 * phi1.sin());
 
             let node_col = if stream.ice_fraction >= 0.70 {
                 Color::srgba(0.82, 0.94, 1.0, (0.92 - frac * 0.25) * alpha)
@@ -325,7 +322,7 @@ pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebri
             };
 
             let tangent = Vec3::new(-phi1.sin(), 0.0, phi1.cos());
-            let arc_half = (r1 * 0.14).clamp(0.00008, 0.004) * (1.0 - frac * 0.35);
+            let arc_half = (r1 * 0.14).clamp(1e-6, 0.004) * (1.0 - frac * 0.35);
             gizmos.line(
                 pos1 - tangent * arc_half,
                 pos1 + tangent * arc_half,
@@ -333,7 +330,7 @@ pub fn draw_roche_debris_streamers(gizmos: &mut Gizmos, debris_pool: &RocheDebri
             );
 
             if let Some(&(r2, phi2, _, z2)) = stream.fragments.get(i + 1) {
-                let pos2 = stream.primary_pos + Vec3::new(r2 * phi2.cos(), z2, r2 * phi2.sin());
+                let pos2 = base_pos + Vec3::new(r2 * phi2.cos(), z2, r2 * phi2.sin());
                 if pos1.distance(pos2) <= r1 * 0.65 {
                     gizmos.line(pos1, pos2, node_col);
                 }

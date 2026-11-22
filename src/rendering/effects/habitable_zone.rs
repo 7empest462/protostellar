@@ -189,17 +189,21 @@ pub fn draw_habitable_zone_gizmos(
     mut gizmos: Gizmos,
     hz_config: Res<HabitableZoneConfig>,
     player_state: Res<PlayerInteractionState>,
+    camera_query: Query<&crate::rendering::camera::PanOrbitCamera>,
     star_query: StarHabitableZoneQuery<'_, '_>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     if !hz_config.is_enabled
         || player_state.overlay_mode == DiagnosticOverlayMode::Hidden
         || player_state.orbit_mode == OrbitVisualizationMode::Off
+        || camera_query.iter().any(|c| c.surface_horizon_mode)
     {
         return;
     }
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     for (s_pos, s_mass, opt_lum, opt_temp, opt_rad) in star_query.iter() {
-        let star_pos = Vec3::new(s_pos.x as f32, s_pos.y as f32, s_pos.z as f32);
+        let star_pos = origin.to_render(s_pos.0);
         draw_circumstellar_habitable_zone_and_frost_lines(
             &mut gizmos,
             star_pos,

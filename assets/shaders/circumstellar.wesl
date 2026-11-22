@@ -265,10 +265,18 @@ fn evaluate_circumstellar_volume(
 }
 
 @fragment
-fn fragment(in: VertexOutput) -> FragmentOutput {
+fn fragment(
+    in: VertexOutput,
+    @builtin(front_facing) is_front: bool,
+) -> FragmentOutput {
     var out: FragmentOutput;
 
     let cam_pos = view.world_position;
+    let center = env.center_and_outer_r.xyz;
+    let r_outer = max(env.center_and_outer_r.w, 0.001);
+    if (!is_front && length(cam_pos - center) > r_outer * 0.99) {
+        discard;
+    }
     let world_pos = in.world_position.xyz;
     let ray_vec = world_pos - cam_pos;
     let ray_len = length(ray_vec);
@@ -278,8 +286,6 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     }
     let rd = ray_vec / ray_len;
 
-    let center = env.center_and_outer_r.xyz;
-    let r_outer = max(env.center_and_outer_r.w, 0.001);
     let r_inner = env.mode_and_time.x;
     let env_type = u32(env.mode_and_time.y + 0.5);
     let sub_mode = u32(env.mode_and_time.z + 0.5);

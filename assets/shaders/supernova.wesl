@@ -194,7 +194,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
     // 1. Vector from explosion center to current shell surface point
     let d_pos = in.world_position.xyz - sn.center_and_asphericity.xyz;
-    let dist = max(length(d_pos), 0.001);
+    let dist = max(length(d_pos), 1e-9);
     let dir = d_pos / dist;
 
     // View direction and normal for limb brightening

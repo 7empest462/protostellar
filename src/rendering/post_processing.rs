@@ -13,6 +13,7 @@ use bevy::render::render_resource::*;
 use bevy::shader::ShaderRef;
 
 use crate::rendering::camera::PanOrbitCamera;
+use crate::rendering::effects::kilonova::KilonovaPool;
 use crate::rendering::effects::supernova::{SupernovaDebrisPool, SupernovaType};
 use crate::simulation::components::CelestialBody;
 
@@ -70,12 +71,15 @@ impl FullscreenMaterial for PostProcessingSettings {
 /// based on solar proximity and outer-system heliocentric distance.
 pub fn update_adaptive_exposure_and_bloom(
     time: Res<Time>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut cam_q: Query<(&PanOrbitCamera, &Transform, &mut Exposure, &mut Bloom)>,
     star_q: Query<(&Transform, &CelestialBody), Without<PanOrbitCamera>>,
     supernova_pool: Option<Res<SupernovaDebrisPool>>,
+    kilonova_pool: Option<Res<KilonovaPool>>,
 ) {
     let dt = time.delta_secs().clamp(0.001, 0.1);
     let lerp_t = (dt * 3.5).clamp(0.0, 1.0);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
 
     let blowout_bloom_boost = supernova_pool.as_deref().map_or(0.0_f32, |pool| {
         pool.explosions
@@ -87,6 +91,17 @@ pub fn update_adaptive_exposure_and_bloom(
             })
             .fold(0.0_f32, f32::max)
     });
+    let kilonova_bloom_boost = kilonova_pool.as_deref().map_or(0.0_f32, |pool| {
+        pool.instances
+            .iter()
+            .map(|k| {
+                let env = (1.0 - k.timer / 4.5).clamp(0.0, 1.0);
+                let scale = if k.is_ns_merger { 0.90 } else { 0.45 };
+                (0.30 + 0.70 * k.flash_intensity) * env * scale
+            })
+            .fold(0.0_f32, f32::max)
+    });
+    let event_bloom_boost = blowout_bloom_boost.max(kilonova_bloom_boost);
 
     let mut nearest_star_pos = Vec3::ZERO;
     let mut min_star_dist_sq = f32::MAX;
@@ -107,7 +122,8 @@ pub fn update_adaptive_exposure_and_bloom(
         } else {
             cam_tf.translation.length()
         };
-        let focus_helio_dist = pan_orbit.focus.distance(nearest_star_pos);
+        let focus_render = origin.to_render(pan_orbit.focus_au);
+        let focus_helio_dist = focus_render.distance(nearest_star_pos);
 
         // 1. Proximity stop-down when inspecting a star up close (< 0.45 AU)
         let star_close_factor = (1.0 - (cam_to_star - 0.03) / 0.42).clamp(0.0, 1.0);
@@ -124,17 +140,17 @@ pub fn update_adaptive_exposure_and_bloom(
         let target_threshold = (1.65 + star_close_factor * 0.25
             - outer_system_factor * 0.20
             - closeup_factor * 0.08
-            - blowout_bloom_boost * 0.55)
+            - event_bloom_boost * 0.55)
             .max(0.85);
         let target_softness = (0.46 - star_close_factor * 0.06
             + outer_system_factor * 0.08
             + closeup_factor * 0.04
-            + blowout_bloom_boost * 0.16)
+            + event_bloom_boost * 0.16)
             .clamp(0.1, 0.9);
         let target_intensity = 0.155 - star_close_factor * 0.02
             + outer_system_factor * 0.025
             + closeup_factor * 0.015
-            + blowout_bloom_boost * 0.22;
+            + event_bloom_boost * 0.22;
 
         exposure.ev100 += (target_ev100 - exposure.ev100) * lerp_t;
         bloom.prefilter.threshold += (target_threshold - bloom.prefilter.threshold) * lerp_t;
@@ -148,6 +164,7 @@ pub fn update_adaptive_exposure_and_bloom(
 /// and gravitational-wave shockwave ripples for the fullscreen post-processing pass.
 pub fn update_post_processing_effects(
     time: Res<Time>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut cam_q: Query<(
         &Camera,
         &GlobalTransform,
@@ -156,15 +173,20 @@ pub fn update_post_processing_effects(
     )>,
     hazard_mgr: Option<Res<crate::simulation::events::CosmicEventManager>>,
     supernova_pool: Option<Res<SupernovaDebrisPool>>,
+    kilonova_pool: Option<Res<KilonovaPool>>,
 ) {
     let dt = time.delta_secs();
     let elapsed = time.elapsed_secs();
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
 
     let active_blowout = supernova_pool.as_deref().and_then(|pool| {
         pool.explosions
             .iter()
             .find(|e| e.explosion_type == SupernovaType::QuasarBlowout && e.timer < 3.2)
     });
+    let active_kilonova = kilonova_pool
+        .as_deref()
+        .and_then(|pool| pool.instances.iter().find(|k| k.timer < 3.0));
 
     for (camera, cam_gtf, mut settings, mut tonemapping) in &mut cam_q {
         settings.time = elapsed;
@@ -194,7 +216,7 @@ pub fn update_post_processing_effects(
         // 2. Relativistic Quasar Blowout fullscreen distortion shockwave & prompt flash
         if let Some(exp) = active_blowout {
             let screen_uv = camera
-                .world_to_viewport(cam_gtf, exp.center)
+                .world_to_viewport(cam_gtf, origin.shift_vec3(exp.center))
                 .ok()
                 .zip(camera.logical_viewport_size())
                 .map_or(Vec2::splat(0.5), |(px, size)| {
@@ -231,6 +253,27 @@ pub fn update_post_processing_effects(
                 0.0
             };
             target_flash = target_flash.max(blowout_flash);
+        } else if let Some(kn) = active_kilonova {
+            let screen_uv = camera
+                .world_to_viewport(cam_gtf, origin.shift_vec3(kn.position))
+                .ok()
+                .zip(camera.logical_viewport_size())
+                .map_or(Vec2::splat(0.5), |(px, size)| {
+                    Vec2::new(
+                        (px.x / size.x.max(1.0)).clamp(0.05, 0.95),
+                        (px.y / size.y.max(1.0)).clamp(0.05, 0.95),
+                    )
+                });
+            settings.shockwave_center = screen_uv;
+            let gw_rise = (kn.timer / 0.10).clamp(0.0, 1.0);
+            let gw_amp =
+                gw_rise * (-1.10 * kn.timer).exp() * if kn.is_bbh_merger { 0.92 } else { 0.78 };
+            settings.shockwave_amplitude = settings.shockwave_amplitude.max(gw_amp);
+            settings.shockwave_phase = kn.timer * 1.85;
+            if kn.is_ns_merger && kn.timer < 1.1 {
+                let grb_flash = gw_rise * (-3.2 * kn.timer).exp() * 0.58;
+                target_flash = target_flash.max(grb_flash);
+            }
         } else if settings.shockwave_amplitude > 0.0001 {
             // Standard gravitational-wave shockwave progression & decay
             settings.shockwave_phase += dt;

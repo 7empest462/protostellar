@@ -132,6 +132,13 @@ pub fn handle_time_control_input(
         Query<(), With<bevy::text::EditableText>>,
     ),
 ) {
+    if keyboard.get_just_pressed().len() == 0 {
+        if time_warp.step_once {
+            time_warp.step_once = false;
+        }
+        return;
+    }
+
     if crate::game::ui::widgets::is_text_input_focused(focus.as_deref(), &editable_query) {
         return;
     }
@@ -155,7 +162,10 @@ pub fn handle_time_control_input(
     let is_alt = keyboard.pressed(KeyCode::AltLeft) || keyboard.pressed(KeyCode::AltRight);
 
     // Step once (when paused with unmodified Period / .)
-    time_warp.step_once = !is_shift && !is_alt && keyboard.just_pressed(KeyCode::Period);
+    let want_step = !is_shift && !is_alt && keyboard.just_pressed(KeyCode::Period);
+    if time_warp.step_once != want_step {
+        time_warp.step_once = want_step;
+    }
 
     // Continuous Granular Speed Controls (unmodified - / =)
     if !is_shift && !is_alt && keyboard.just_pressed(KeyCode::Equal) {

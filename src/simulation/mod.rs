@@ -46,6 +46,11 @@ pub use crate::simulation::atmosphere_escape::{
     AtmosphericEscapeConfig, AtmosphericEscapeRegime, AtmosphericEscapeState,
     AtmosphericStrippedEvent, update_atmospheric_escape_evolution,
 };
+pub use crate::simulation::biology::{
+    CivilizationMilestoneEvent, CivilizationState, ColonyFoundedEvent, KardashevEra,
+    evolve_civilizations_system, kardashev_from_technosignature,
+    sync_progression_and_trophies_system, technosignature_from_kardashev,
+};
 pub use crate::simulation::campaign::{
     CampaignMissionCompletedEvent, CampaignMissionFailedEvent, CampaignMissionId, CampaignPlugin,
     CampaignState, MissionObjective, MissionStatus, StartCampaignMissionEvent,
@@ -56,8 +61,9 @@ use crate::simulation::disk::*;
 pub use crate::simulation::economy::*;
 pub use crate::simulation::events::{
     ActiveCosmicEvent, CosmicEventManager, CosmicEventPhase, CosmicEventResolvedEvent,
-    CosmicEventStartedEvent, CosmicEventType, CosmicEventsPlugin, HazardComet, RogueInterloper,
-    TonemappingDisplayMode, TriggerCosmicEvent,
+    CosmicEventStartedEvent, CosmicEventType, CosmicEventsPlugin, CrisisCountermeasureEvent,
+    CrisisCountermeasureKind, CrisisImpactor, CrisisInterceptorBolt, CrisisInterceptorPool,
+    CrisisOutcome, HazardComet, RogueInterloper, TonemappingDisplayMode, TriggerCosmicEvent,
 };
 pub use crate::simulation::kozai_lidov::{
     KozaiDisruptionEvent, KozaiLidovConfig, KozaiLidovState, KozaiRegime,
@@ -100,6 +106,50 @@ pub use crate::simulation::tides::{
 
 pub struct SimulationPlugin;
 
+fn register_simulation_resources_and_events(app: &mut App) {
+    app.init_resource::<SimulationConfig>()
+        .init_resource::<TimeWarp>()
+        .init_resource::<SimTime>()
+        .init_resource::<EnergyMonitor>()
+        .init_resource::<DiskParameters>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<SlingshotState>()
+        .init_resource::<PlanetesimalSpawner>()
+        .init_resource::<ActiveScenarioState>()
+        .init_resource::<SimulationTelemetryHistory>()
+        .init_resource::<TheiaImpactState>()
+        .init_resource::<TrajectoryPredictorState>()
+        .init_resource::<TidalConfig>()
+        .init_resource::<RelativityConfig>()
+        .init_resource::<AtmosphericEscapeConfig>()
+        .init_resource::<KozaiLidovConfig>()
+        .init_resource::<TidalDisruptionPool>()
+        .init_resource::<HabitableZoneConfig>()
+        .init_resource::<LagrangeOverlayConfig>()
+        .init_resource::<GmcClusterDiskManager>()
+        .add_message::<AccretionMergeEvent>()
+        .add_message::<MoonFormationEvent>()
+        .add_message::<CollisionBounceEvent>()
+        .add_message::<RocheDisruptionEvent>()
+        .add_message::<TidalDisruptionEvent>()
+        .add_message::<StarIgnitionEvent>()
+        .add_message::<PlanetaryEngulfmentEvent>()
+        .add_message::<SupernovaEvent>()
+        .add_message::<LoadScenarioEvent>()
+        .add_message::<SaveSystemEvent>()
+        .add_message::<LoadSystemEvent>()
+        .add_message::<CopySystemSeedClipboardEvent>()
+        .add_message::<PasteSystemSeedClipboardEvent>()
+        .add_message::<ImportSystemSeedJsonEvent>()
+        .add_message::<BombardmentEvent>()
+        .add_message::<GravitationalWaveMergerEvent>()
+        .add_message::<AtmosphericStrippedEvent>()
+        .add_message::<KozaiDisruptionEvent>()
+        .add_message::<CmeShockwaveEvent>()
+        .add_message::<CivilizationMilestoneEvent>()
+        .add_message::<ColonyFoundedEvent>();
+}
+
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(crate::simulation::probes::ProbesPlugin)
@@ -108,46 +158,8 @@ impl Plugin for SimulationPlugin {
             .add_plugins(crate::simulation::events::CosmicEventsPlugin)
             .add_plugins(crate::simulation::oort::OortPlugin)
             .add_plugins(crate::simulation::neutron_stars::NeutronStarPlugin);
-        app.init_resource::<SimulationConfig>()
-            .init_resource::<TimeWarp>()
-            .init_resource::<SimTime>()
-            .init_resource::<EnergyMonitor>()
-            .init_resource::<DiskParameters>()
-            .init_resource::<PlayerInteractionState>()
-            .init_resource::<SlingshotState>()
-            .init_resource::<PlanetesimalSpawner>()
-            .init_resource::<ActiveScenarioState>()
-            .init_resource::<SimulationTelemetryHistory>()
-            .init_resource::<TheiaImpactState>()
-            .init_resource::<TrajectoryPredictorState>()
-            .init_resource::<TidalConfig>()
-            .init_resource::<RelativityConfig>()
-            .init_resource::<AtmosphericEscapeConfig>()
-            .init_resource::<KozaiLidovConfig>()
-            .init_resource::<TidalDisruptionPool>()
-            .init_resource::<HabitableZoneConfig>()
-            .init_resource::<LagrangeOverlayConfig>()
-            .init_resource::<GmcClusterDiskManager>()
-            .add_message::<AccretionMergeEvent>()
-            .add_message::<MoonFormationEvent>()
-            .add_message::<CollisionBounceEvent>()
-            .add_message::<RocheDisruptionEvent>()
-            .add_message::<TidalDisruptionEvent>()
-            .add_message::<StarIgnitionEvent>()
-            .add_message::<PlanetaryEngulfmentEvent>()
-            .add_message::<SupernovaEvent>()
-            .add_message::<LoadScenarioEvent>()
-            .add_message::<SaveSystemEvent>()
-            .add_message::<LoadSystemEvent>()
-            .add_message::<CopySystemSeedClipboardEvent>()
-            .add_message::<PasteSystemSeedClipboardEvent>()
-            .add_message::<ImportSystemSeedJsonEvent>()
-            .add_message::<BombardmentEvent>()
-            .add_message::<GravitationalWaveMergerEvent>()
-            .add_message::<AtmosphericStrippedEvent>()
-            .add_message::<KozaiDisruptionEvent>()
-            .add_message::<CmeShockwaveEvent>()
-            .add_systems(Startup, setup_simulation)
+        register_simulation_resources_and_events(app);
+        app.add_systems(Startup, setup_simulation)
             .add_systems(
                 Update,
                 (
@@ -227,6 +239,13 @@ impl Plugin for SimulationPlugin {
                         .after(step_physics_simulation)
                         .after(update_thermodynamics)
                         .after(update_terraforming_atmospheres),
+                    evolve_civilizations_system
+                        .after(
+                            crate::simulation::biology::civilization::habitability_tracking_system,
+                        )
+                        .after(update_thermodynamics)
+                        .after(update_terraforming_atmospheres),
+                    sync_progression_and_trophies_system.after(evolve_civilizations_system),
                     process_roche_lobe_overflow.after(process_accretion_and_collisions),
                     cleanup_roche_lobe_overflow.after(process_roche_lobe_overflow),
                     process_classical_novae.after(process_roche_lobe_overflow),

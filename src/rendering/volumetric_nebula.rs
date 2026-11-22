@@ -77,12 +77,17 @@ pub fn sync_volumetric_nebula(
     mut commands: Commands,
     scenario_state: Option<Res<ActiveScenarioState>>,
     sim_time: Option<Res<crate::simulation::resources::SimTime>>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VolumetricNebulaMaterial>>,
     mut images: Option<ResMut<Assets<Image>>>,
     live_volume: Option<Res<GmcLiveVolumeHandle>>,
-    nebula_query: Query<
-        (Entity, &MeshMaterial3d<VolumetricNebulaMaterial>),
+    mut nebula_query: Query<
+        (
+            Entity,
+            &MeshMaterial3d<VolumetricNebulaMaterial>,
+            &mut Transform,
+        ),
         With<VolumetricNebulaVolume>,
     >,
     star_query: Query<
@@ -102,11 +107,14 @@ pub fn sync_volumetric_nebula(
 
     if !is_gmc_active {
         // Tear down nebula volume if present
-        for (entity, _) in nebula_query.iter() {
+        for (entity, _, _) in nebula_query.iter() {
             commands.entity(entity).despawn();
         }
         return;
     }
+
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let origin_v = origin.0.as_vec3();
 
     // Ensure persistent 96^3 3D volume texture exists for GPU-to-GPU density binding
     let volume_handle = if let Some(existing) = live_volume {
@@ -119,8 +127,12 @@ pub fn sync_volumetric_nebula(
         None
     };
 
-    // Ensure volume exists
-    let material_handle = if let Some((_, mat_handle)) = nebula_query.iter().next() {
+    // Ensure volume exists and stay centered at `-origin_v` in render space
+    let material_handle = if let Some((_, mat_handle, mut tf)) = nebula_query.iter_mut().next() {
+        let target_t = -origin_v;
+        if tf.translation != target_t {
+            tf.translation = target_t;
+        }
         mat_handle.0.clone()
     } else {
         let mat = materials.add(VolumetricNebulaMaterial {
@@ -133,7 +145,7 @@ pub fn sync_volumetric_nebula(
             VolumetricNebulaVolume,
             Mesh3d(mesh),
             MeshMaterial3d(mat.clone()),
-            Transform::from_translation(Vec3::ZERO),
+            Transform::from_translation(-origin_v),
             bevy::light::NotShadowCaster,
             bevy::light::NotShadowReceiver,
         ));
@@ -167,7 +179,8 @@ pub fn sync_volumetric_nebula(
                 star_positions.get_mut(count as usize),
                 star_colors.get_mut(count as usize),
             ) {
-                *pos_slot = Vec4::new(pos.x as f32, pos.y as f32, pos.z as f32, cavity_r);
+                let p_render = origin.to_render(pos.0);
+                *pos_slot = Vec4::new(p_render.x, p_render.y, p_render.z, cavity_r);
                 *color_slot = Vec4::new(r, g, b, lum_val);
                 count += 1;
             }
@@ -175,14 +188,20 @@ pub fn sync_volumetric_nebula(
     }
 
     let elapsed = sim_time.as_deref().map_or(0.0, |t| t.elapsed_years as f32);
+    let box_min = Vec3::splat(-1100.0) - origin_v;
+    let box_max = Vec3::splat(1100.0) - origin_v;
 
     if let Some(mat) = materials.get(&material_handle)
         && (mat.uniforms.num_stars != count
             || (mat.uniforms.elapsed_years - elapsed).abs() > 1e-4
+            || mat.uniforms.box_min != box_min
+            || mat.uniforms.box_max != box_max
             || mat.uniforms.star_positions_and_cavities != star_positions
             || mat.uniforms.star_colors_and_lum != star_colors)
         && let Some(mut mat_mut) = materials.get_mut(&material_handle)
     {
+        mat_mut.uniforms.box_min = box_min;
+        mat_mut.uniforms.box_max = box_max;
         mat_mut.uniforms.num_stars = count;
         mat_mut.uniforms.elapsed_years = elapsed;
         mat_mut.uniforms.star_positions_and_cavities = star_positions;

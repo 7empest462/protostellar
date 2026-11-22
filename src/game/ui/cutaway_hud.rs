@@ -273,6 +273,7 @@ fn sync_cutaway_pill_card(
 
 /// Dynamic system updating floating cutaway callout positions and physical text.
 #[allow(
+    clippy::too_many_arguments,
     clippy::type_complexity,
     reason = "Cutaway HUD requires camera projection, celestial components, and UI nodes"
 )]
@@ -286,6 +287,7 @@ pub fn update_cutaway_hud_ui(
     )>,
     player_state: Res<PlayerInteractionState>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut pill_query: Query<(Entity, &CutawayCalloutPill, &mut Node, &mut BorderColor)>,
     mut text_query: Query<(&ChildOf, &CutawayField, &mut Text, &mut TextColor)>,
     bodies_query: Query<(
@@ -335,7 +337,8 @@ pub fn update_cutaway_hud_ui(
         return;
     };
 
-    let body_vec = Vec3::new(sim_pos.x as f32, sim_pos.y as f32, sim_pos.z as f32);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let body_vec = origin.to_render(sim_pos.0);
     let cam_dist = cam_tf.translation.distance(body_vec);
     let show_atmospheres = player_state.show_atmospheres();
     let (eff_rad, eff_type) = if let (Some(comp), Some(mass)) = (opt_comp, opt_mass) {

@@ -65,6 +65,22 @@ pub struct CosmicEventsReaders<'w, 's> {
     pub supernova: MessageReader<'w, 's, SupernovaEvent>,
     pub tde: MessageReader<'w, 's, crate::simulation::accretion::TidalDisruptionEvent>,
     pub moon: MessageReader<'w, 's, crate::simulation::accretion::MoonFormationEvent>,
+    pub star_ignition:
+        Option<Res<'w, Messages<crate::simulation::thermodynamics::StarIgnitionEvent>>>,
+    pub star_ignition_cursor: Local<
+        's,
+        bevy::ecs::message::MessageCursor<crate::simulation::thermodynamics::StarIgnitionEvent>,
+    >,
+    pub engulfment: Option<Res<'w, Messages<PlanetaryEngulfmentEvent>>>,
+    pub engulfment_cursor: Local<'s, bevy::ecs::message::MessageCursor<PlanetaryEngulfmentEvent>>,
+    pub accretion_merge:
+        Option<Res<'w, Messages<crate::simulation::accretion::events::AccretionMergeEvent>>>,
+    pub accretion_merge_cursor: Local<
+        's,
+        bevy::ecs::message::MessageCursor<
+            crate::simulation::accretion::events::AccretionMergeEvent,
+        >,
+    >,
 }
 
 /// Surfaces major astrophysical simulation events to the HUD toast banner and bounded event log.
@@ -190,6 +206,14 @@ pub fn handle_cosmic_event_toasts(
             Some(ev.moon_entity),
         );
     }
+
+    super::event_feed::record_optional_lifecycle_events(
+        &mut readers,
+        &mut toast,
+        &mut event_log,
+        timestamp_yr,
+        &bodies,
+    );
 }
 
 #[inline]
@@ -454,15 +478,21 @@ fn update_time_warp_diagnostics(
         0.0
     };
 
+    let scale_label = if (config.size_exaggeration - 1.0).abs() < 0.01 {
+        "1.00x (True 1:1)".to_string()
+    } else {
+        format!("{:.2}x", config.size_exaggeration)
+    };
+
     set_text_if_changed(
         text,
         format!(
-            "CLOCK: {}\nSPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {:.2}x [,/Shift+.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
+            "CLOCK: {}\nSPEED: {}\nTOOL: {}\nOVERLAY: {} [V]\nSize Scale: {} [,/Shift+.]\nCompute: {} [F8]\nAccretion: Active (Boost: {:.0}x)\nEnergy Drift: {:.4}%\nSim Steps: {}",
             clock_str,
             speed_str,
             tool_str,
             player_state.overlay_mode.display_name(),
-            config.size_exaggeration,
+            scale_label,
             if config.enable_gpu_compute {
                 format!("WGPU Compute ({}k)", config.target_particle_count / 1000)
             } else {
@@ -556,6 +586,7 @@ fn update_inspector_body_telemetry(
         Option<&MagnetarCrustStress>,
         Option<&OortComet>,
     )>,
+    civ_hud_query: &Query<&crate::simulation::biology::CivilizationState>,
     phase_mgr: &PhaseManager,
     config: &SimulationConfig,
     visual_time: f32,
@@ -655,6 +686,7 @@ fn update_inspector_body_telemetry(
         probes_hud_query,
         disk_hud_query,
         neutron_oort_hud_query,
+        civ_hud_query,
         visual_time,
         audio_enabled,
     );
@@ -687,6 +719,7 @@ fn append_inspector_domain_telemetry(
         Option<&MagnetarCrustStress>,
         Option<&OortComet>,
     )>,
+    civ_hud_query: &Query<&crate::simulation::biology::CivilizationState>,
     visual_time: f32,
     audio_enabled: bool,
 ) {
@@ -739,6 +772,9 @@ fn append_inspector_domain_telemetry(
         .get(selected_entity)
         .ok()
         .and_then(|(opt_aurora, _)| opt_aurora);
+    if let Ok(civ) = civ_hud_query.get(selected_entity) {
+        next_telemetry.push_str(&civ.format_telemetry());
+    }
     let sonification = crate::game::audio::compute_body_sonification_snapshot(
         body,
         opt_rel,
@@ -767,6 +803,7 @@ pub fn update_hud(
         lhb_state,
         opt_scenario,
         opt_audio,
+        opt_visibility,
     ): (
         Res<Time>,
         Res<SimTime>,
@@ -777,6 +814,7 @@ pub fn update_hud(
         Res<crate::game::phases::LateHeavyBombardmentState>,
         Option<Res<crate::simulation::scenarios::ActiveScenarioState>>,
         Option<Res<crate::game::audio::CosmicAudioState>>,
+        Option<Res<HudVisibilityState>>,
     ),
     player_state: Res<PlayerInteractionState>,
     mut toast: ResMut<NotificationToast>,
@@ -797,13 +835,21 @@ pub fn update_hud(
         Option<&MagnetarCrustStress>,
         Option<&OortComet>,
     )>,
+    civ_hud_query: Query<&crate::simulation::biology::CivilizationState>,
     mut text_queries: HudTextQueries,
     opt_predictor: Option<Res<crate::simulation::predictor::TrajectoryPredictorState>>,
+    mut throttle: Local<(f32, Option<Entity>, bool, bool)>,
 ) {
+    let dt = time.delta_secs();
     if toast.timer > 0.0 {
-        toast.timer -= time.delta_secs();
+        toast.timer -= dt;
     }
-    if let Ok(mut toast_text) = text_queries.toast.single_mut() {
+    if (toast.timer > 0.0
+        || toast.is_changed()
+        || phase_mgr.is_changed()
+        || player_state.is_changed())
+        && let Ok(mut toast_text) = text_queries.toast.single_mut()
+    {
         update_toast_text(
             &mut toast_text,
             &phase_mgr,
@@ -812,6 +858,19 @@ pub fn update_hud(
             &bodies_query,
         );
     }
+
+    throttle.0 += dt.max(0.0);
+    let selection_changed = throttle.1 != player_state.selected_entity;
+    let pause_changed = throttle.2 != time_warp.is_paused;
+    let force_refresh = !throttle.3 || selection_changed || pause_changed || dt <= 0.0;
+    if !force_refresh && throttle.0 < 0.08 {
+        return;
+    }
+    throttle.0 = 0.0;
+    throttle.1 = player_state.selected_entity;
+    throttle.2 = time_warp.is_paused;
+    throttle.3 = true;
+
     if let Ok(mut text) = text_queries.header.single_mut() {
         update_header_stats(
             &mut text,
@@ -836,38 +895,44 @@ pub fn update_hud(
         update_bottom_timer(&mut text, marker.0, &sim_time, &time_warp);
     }
 
-    if let Ok(mut text) = text_queries.inspector.single_mut() {
-        if let Some(selected_entity) = player_state.selected_entity {
-            update_inspector_body_telemetry(
+    let inspector_hidden = opt_visibility
+        .as_deref()
+        .is_some_and(|v| v.is_full_screen_clean || v.inspector_minimized);
+    if !inspector_hidden {
+        if let Ok(mut text) = text_queries.inspector.single_mut() {
+            if let Some(selected_entity) = player_state.selected_entity {
+                update_inspector_body_telemetry(
+                    &mut text,
+                    selected_entity,
+                    &bodies_query,
+                    &quasi_hud_query,
+                    &jet_hud_query,
+                    &space_weather_hud_query,
+                    &probes_hud_query,
+                    &disk_hud_query,
+                    &neutron_oort_hud_query,
+                    &civ_hud_query,
+                    &phase_mgr,
+                    &config,
+                    sim_time.visual_time_secs,
+                    opt_audio.as_deref().is_none_or(|a| a.enabled),
+                    player_state.show_atmospheres(),
+                );
+            } else {
+                set_text_str_if_changed(
+                    &mut text,
+                    "No celestial body selected.\nClick on the Star or Planets above (or in 3D) to inspect & live-edit.\n[Tab] Next Body | [F] Focus Target | [WASD] Free-Fly View",
+                );
+            }
+        }
+
+        if let Ok(mut text) = text_queries.forecast.single_mut() {
+            update_encounter_forecast_text(
                 &mut text,
-                selected_entity,
-                &bodies_query,
-                &quasi_hud_query,
-                &jet_hud_query,
-                &space_weather_hud_query,
-                &probes_hud_query,
-                &disk_hud_query,
-                &neutron_oort_hud_query,
-                &phase_mgr,
-                &config,
-                sim_time.visual_time_secs,
-                opt_audio.as_deref().is_none_or(|a| a.enabled),
-                player_state.show_atmospheres(),
-            );
-        } else {
-            set_text_str_if_changed(
-                &mut text,
-                "No celestial body selected.\nClick on the Star or Planets above (or in 3D) to inspect & live-edit.\n[Tab] Next Body | [F] Focus Target | [WASD] Free-Fly View",
+                opt_predictor.as_deref(),
+                player_state.selected_entity.is_some(),
             );
         }
-    }
-
-    if let Ok(mut text) = text_queries.forecast.single_mut() {
-        update_encounter_forecast_text(
-            &mut text,
-            opt_predictor.as_deref(),
-            player_state.selected_entity.is_some(),
-        );
     }
 }
 

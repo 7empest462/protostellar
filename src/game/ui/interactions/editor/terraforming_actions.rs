@@ -4,15 +4,377 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 
 use crate::game::ui::types::*;
+use crate::simulation::biology::{CivilizationState, technosignature_from_kardashev};
 use crate::simulation::components::*;
+use crate::simulation::economy::{
+    ActionAccessResult, ProgressionState, ScienceData, TechnologyId, UnlockedTechs,
+};
 use crate::simulation::resources::*;
 use crate::utils::constants::*;
 
-pub fn handle_shatter_and_life(
-    action: &UiButtonAction,
+fn check_progression_gate(
+    progression: Option<&ProgressionState>,
+    techs: Option<&UnlockedTechs>,
+    science: &mut Option<&mut ScienceData>,
+    req_tech: Option<TechnologyId>,
+    cost: f64,
+    toast: &mut NotificationToast,
+) -> bool {
+    let Some(prog) = progression else {
+        return true;
+    };
+    match prog.check_action_access(req_tech, cost, techs, science.as_deref()) {
+        ActionAccessResult::Allowed => prog.consume_progression_cost(cost, science.as_deref_mut()),
+        ActionAccessResult::Locked(reason) => {
+            toast.message = reason;
+            toast.timer = 4.0;
+            false
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Civilization uplift validates progression access and upgrades target world"
+)]
+fn handle_advance_civilization(
+    selected_query: &mut SelectedWorldQuery,
+    civ_query: &mut Query<(&mut CivilizationState, Option<&mut BiosphereState>)>,
+    player_state: &PlayerInteractionState,
+    commands: &mut Commands,
+    progression: Option<&ProgressionState>,
+    techs: Option<&UnlockedTechs>,
+    mut science: Option<&mut ScienceData>,
+    sim_time_years: f64,
+    toast: &mut NotificationToast,
+) -> bool {
+    if let Some(ent) = player_state.selected_entity
+        && let Ok((_, _, _, _, _, _, body, is_star, _, _, opt_temp, _, opt_vol, opt_climate)) =
+            selected_query.get_mut(ent)
+    {
+        if is_star.is_some() || body.body_type.is_star_or_remnant() {
+            toast.message = "⚠️ Civilization cannot survive on a star.".to_string();
+            toast.timer = 3.5;
+        } else if !check_progression_gate(
+            progression,
+            techs,
+            &mut science,
+            Some(TechnologyId::KardashevAscension),
+            200.0,
+            toast,
+        ) {
+            return true;
+        } else if let Ok((mut civ, opt_bio)) = civ_query.get_mut(ent) {
+            let era = civ.advance_to_next_tier();
+            let next_tech = technosignature_from_kardashev(civ.kardashev_level);
+            if let Some(mut bio) = opt_bio {
+                bio.technosignature = next_tech;
+            } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                let surface_temp_k = opt_climate
+                    .as_deref()
+                    .map(|c| f64::from(c.surface_temperature_k))
+                    .or_else(|| opt_temp.as_deref().map(|t| t.0))
+                    .unwrap_or(288.0);
+                let has_liquid_water = opt_vol
+                    .as_deref()
+                    .is_some_and(|v| v.ocean_coverage_frac > 0.02);
+                let (_, mut bio) = CivilizationState::bootstrap_for_world(
+                    None,
+                    surface_temp_k,
+                    has_liquid_water,
+                    sim_time_years,
+                );
+                bio.technosignature = next_tech;
+                p_cmd.insert(bio);
+            }
+            toast.message = format!(
+                "🏙️ {} uplifted to {} (K{:.2})!",
+                body.name,
+                era.short_badge(),
+                civ.kardashev_level
+            );
+            toast.timer = 5.0;
+        } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+            let surface_temp_k = opt_climate
+                .as_deref()
+                .map(|c| f64::from(c.surface_temperature_k))
+                .or_else(|| opt_temp.as_deref().map(|t| t.0))
+                .unwrap_or(288.0);
+            let has_liquid_water = opt_vol
+                .as_deref()
+                .is_some_and(|v| v.ocean_coverage_frac > 0.02);
+            let (civ, bio) = CivilizationState::bootstrap_for_world(
+                None,
+                surface_temp_k,
+                has_liquid_water,
+                sim_time_years,
+            );
+            let era = civ.era();
+            let kind_label = if civ.is_domed_colony {
+                "Pressurized Domed Colony"
+            } else {
+                "Planetary Civilization"
+            };
+            let k_lvl = civ.kardashev_level;
+            p_cmd.insert((civ, bio));
+            toast.message = format!(
+                "🏙️ {} established {} — {} (K{:.2})! Check night-side lights.",
+                body.name,
+                kind_label,
+                era.short_badge(),
+                k_lvl
+            );
+            toast.timer = 5.0;
+        }
+    }
+    true
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Biosphere seeding validates progression access and initializes oceans/climate"
+)]
+fn handle_seed_life(
     selected_query: &mut SelectedWorldQuery,
     player_state: &PlayerInteractionState,
     commands: &mut Commands,
+    progression: Option<&ProgressionState>,
+    techs: Option<&UnlockedTechs>,
+    mut science: Option<&mut ScienceData>,
+    sim_time_years: f64,
+    toast: &mut NotificationToast,
+) -> bool {
+    if let Some(ent) = player_state.selected_entity
+        && let Ok((_, _, _, _, _, mut comp, body, is_star, ..)) = selected_query.get_mut(ent)
+    {
+        if is_star.is_some() {
+            toast.message = "⚠️ Cannot seed life onto a stellar plasma furnace!".to_string();
+            toast.timer = 3.5;
+        } else if !check_progression_gate(progression, techs, &mut science, None, 100.0, toast) {
+            return true;
+        } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+            p_cmd.insert((
+                VolatileInventory {
+                    delivered_water_m_earth: 0.002,
+                    ocean_coverage_frac: 0.70,
+                    atmospheric_pressure_bar: 1.0,
+                    cometary_impact_count: 12,
+                },
+                BiosphereState {
+                    habitability_score: 0.95,
+                    biomass_coverage_frac: 0.65,
+                    oxygen_fraction: 0.21,
+                    emergence_year: Some(sim_time_years),
+                    technosignature: 0.0,
+                    bioluminescence_intensity: 0.25,
+                    ..Default::default()
+                },
+                PlanetaryClimate {
+                    surface_temperature_k: 288.0,
+                    equilibrium_temperature_k: 255.0,
+                    greenhouse_delta_k: 33.0,
+                    albedo: 0.30,
+                    ice_coverage_frac: 0.10,
+                    cloud_coverage_frac: 0.55,
+                    climate_regime: ClimateRegime::TemperateHabitable,
+                    polar_ice_cap_latitude_deg: 75.0,
+                },
+            ));
+            comp.ice_frac = 0.08;
+            comp.gas_frac = 0.02;
+            toast.message = format!(
+                "🌱 Seeded Photosynthetic Biosphere & Oceans on {}!",
+                body.name
+            );
+            toast.timer = 5.0;
+        }
+    }
+    true
+}
+
+fn handle_flora_or_clear_civ(
+    action: &UiButtonAction,
+    ent: Entity,
+    body_name: &str,
+    civ_query: &mut Query<(&mut CivilizationState, Option<&mut BiosphereState>)>,
+    commands: &mut Commands,
+    sim_time_years: f64,
+    toast: &mut NotificationToast,
+) -> bool {
+    match action {
+        UiButtonAction::CycleFloraAndBiolum => {
+            if let Ok((_, Some(mut bio))) = civ_query.get_mut(ent) {
+                bio.flora_pigment = match bio.flora_pigment {
+                    FloraPigmentClass::SolarChlorophyll => FloraPigmentClass::RedDwarfCrimson,
+                    FloraPigmentClass::RedDwarfCrimson => FloraPigmentClass::OrangeDwarfCarotenoid,
+                    FloraPigmentClass::OrangeDwarfCarotenoid => FloraPigmentClass::HighUvIndigo,
+                    FloraPigmentClass::HighUvIndigo => FloraPigmentClass::SolarChlorophyll,
+                };
+                bio.bioluminescence_intensity = if bio.bioluminescence_intensity < 0.20 {
+                    0.55
+                } else if bio.bioluminescence_intensity < 0.70 {
+                    0.95
+                } else {
+                    0.0
+                };
+                toast.message = format!(
+                    "🌿 {} flora: {} | Bioluminescence: {:.0}%",
+                    body_name,
+                    bio.flora_pigment.label(),
+                    bio.bioluminescence_intensity * 100.0
+                );
+                toast.timer = 4.0;
+            } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                p_cmd.insert(BiosphereState {
+                    habitability_score: 0.90,
+                    biomass_coverage_frac: 0.70,
+                    oxygen_fraction: 0.21,
+                    emergence_year: Some(sim_time_years),
+                    bioluminescence_intensity: 0.65,
+                    ..Default::default()
+                });
+                toast.message = format!("🌿 Enabled glowing biosphere on {body_name}!");
+                toast.timer = 4.0;
+            }
+            true
+        }
+        UiButtonAction::ClearCivilization => {
+            if let Ok((_, Some(mut bio))) = civ_query.get_mut(ent) {
+                bio.technosignature = 0.0;
+            }
+            if let Ok(mut p_cmd) = commands.get_entity(ent) {
+                p_cmd.remove::<CivilizationState>();
+            }
+            toast.message = format!("✖ Removed civilization & megastructures from {body_name}.");
+            toast.timer = 4.0;
+            true
+        }
+        _ => false,
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Civilization infrastructure toggles share world, civilization, and progression access"
+)]
+fn handle_civ_infrastructure_toggle(
+    action: &UiButtonAction,
+    selected_query: &mut SelectedWorldQuery,
+    civ_query: &mut Query<(&mut CivilizationState, Option<&mut BiosphereState>)>,
+    player_state: &PlayerInteractionState,
+    commands: &mut Commands,
+    progression: Option<&ProgressionState>,
+    techs: Option<&UnlockedTechs>,
+    mut science: Option<&mut ScienceData>,
+    sim_time_years: f64,
+    toast: &mut NotificationToast,
+) -> bool {
+    let Some(ent) = player_state.selected_entity else {
+        return true;
+    };
+    let Ok((_, _, _, _, _, _, body, is_star, _, _, opt_temp, _, opt_vol, opt_climate)) =
+        selected_query.get_mut(ent)
+    else {
+        return true;
+    };
+    if is_star.is_some() || body.body_type.is_star_or_remnant() {
+        toast.message = "⚠️ Planetary civilization controls apply to planets & moons.".to_string();
+        toast.timer = 3.5;
+        return true;
+    }
+
+    if handle_flora_or_clear_civ(
+        action,
+        ent,
+        &body.name,
+        civ_query,
+        commands,
+        sim_time_years,
+        toast,
+    ) {
+        return true;
+    }
+
+    if !check_progression_gate(
+        progression,
+        techs,
+        &mut science,
+        Some(TechnologyId::KardashevAscension),
+        120.0,
+        toast,
+    ) {
+        return true;
+    }
+    if let Ok((mut civ, _)) = civ_query.get_mut(ent) {
+        let (label, enabled) = match action {
+            UiButtonAction::ToggleCivOrbitalRing => {
+                civ.force_orbital_ring = !civ.force_orbital_ring;
+                if civ.force_orbital_ring {
+                    civ.orbital_infrastructure = civ.orbital_infrastructure.max(0.35);
+                }
+                ("Orbital Habitat Ring", civ.force_orbital_ring)
+            }
+            UiButtonAction::ToggleCivSolarMirrors => {
+                civ.force_solar_mirrors = !civ.force_solar_mirrors;
+                ("Orbital Solar Mirrors", civ.force_solar_mirrors)
+            }
+            _ => {
+                civ.force_planetary_shield = !civ.force_planetary_shield;
+                ("Planetary Shield", civ.force_planetary_shield)
+            }
+        };
+        let state_str = if enabled { "ENABLED" } else { "DISABLED" };
+        toast.message = format!("🛰️ {} {}: {}", body.name, label, state_str);
+        toast.timer = 4.0;
+    } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
+        let surface_temp_k = opt_climate
+            .as_deref()
+            .map(|c| f64::from(c.surface_temperature_k))
+            .or_else(|| opt_temp.as_deref().map(|t| t.0))
+            .unwrap_or(288.0);
+        let has_liquid_water = opt_vol
+            .as_deref()
+            .is_some_and(|v| v.ocean_coverage_frac > 0.02);
+        let (mut civ, bio) = CivilizationState::bootstrap_for_world(
+            None,
+            surface_temp_k,
+            has_liquid_water,
+            sim_time_years,
+        );
+        let label = match action {
+            UiButtonAction::ToggleCivOrbitalRing => {
+                civ.force_orbital_ring = true;
+                "Orbital Habitat Ring"
+            }
+            UiButtonAction::ToggleCivSolarMirrors => {
+                civ.force_solar_mirrors = true;
+                "Orbital Solar Mirrors"
+            }
+            _ => {
+                civ.force_planetary_shield = true;
+                "Planetary Shield"
+            }
+        };
+        p_cmd.insert((civ, bio));
+        toast.message = format!("🛰️ Bootstrapped {} with {}!", body.name, label);
+        toast.timer = 4.5;
+    }
+    true
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Shatter, SeedLife, Probe launch, and multi-tier Civilization uplift share world & progression access"
+)]
+pub fn handle_shatter_and_life(
+    action: &UiButtonAction,
+    selected_query: &mut SelectedWorldQuery,
+    civ_query: &mut Query<(&mut CivilizationState, Option<&mut BiosphereState>)>,
+    player_state: &PlayerInteractionState,
+    commands: &mut Commands,
+    progression: Option<&ProgressionState>,
+    techs: Option<&UnlockedTechs>,
+    science: Option<&mut ScienceData>,
     sim_time_years: f64,
     toast: &mut NotificationToast,
 ) -> bool {
@@ -40,31 +402,33 @@ pub fn handle_shatter_and_life(
             }
             true
         }
-
-        UiButtonAction::AdvanceCivilization => {
-            if let Some(ent) = player_state.selected_entity
-                && let Ok((_, _, _, _, _, mut _comp, _body, is_star, ..)) =
-                    selected_query.get_mut(ent)
-            {
-                if is_star.is_some() {
-                    toast.message = "⚠️ Civilization cannot survive on a star.".to_string();
-                    toast.timer = 3.5;
-                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
-                    p_cmd.insert(BiosphereState {
-                        habitability_score: 0.95,
-                        biomass_coverage_frac: 0.85,
-                        oxygen_fraction: 0.21,
-                        emergence_year: Some(0.0),
-                        technosignature: 1.0,
-                        bioluminescence_intensity: 0.35,
-                        ..Default::default()
-                    });
-                    toast.message = "🏙️ Civilization Emerged! Observe the night side.".to_string();
-                    toast.timer = 5.0;
-                }
-            }
-            true
-        }
+        UiButtonAction::AdvanceCivilization => handle_advance_civilization(
+            selected_query,
+            civ_query,
+            player_state,
+            commands,
+            progression,
+            techs,
+            science,
+            sim_time_years,
+            toast,
+        ),
+        UiButtonAction::ToggleCivOrbitalRing
+        | UiButtonAction::ToggleCivSolarMirrors
+        | UiButtonAction::ToggleCivPlanetaryShield
+        | UiButtonAction::CycleFloraAndBiolum
+        | UiButtonAction::ClearCivilization => handle_civ_infrastructure_toggle(
+            action,
+            selected_query,
+            civ_query,
+            player_state,
+            commands,
+            progression,
+            techs,
+            science,
+            sim_time_years,
+            toast,
+        ),
         UiButtonAction::LaunchProbe => {
             if let Some(target) = player_state.selected_entity {
                 commands.spawn(crate::simulation::probes::LaunchProbeRequest { target });
@@ -76,54 +440,16 @@ pub fn handle_shatter_and_life(
             }
             true
         }
-        UiButtonAction::SeedLife => {
-            if let Some(ent) = player_state.selected_entity
-                && let Ok((_, _, _, _, _, mut comp, body, is_star, ..)) =
-                    selected_query.get_mut(ent)
-            {
-                if is_star.is_some() {
-                    toast.message =
-                        "⚠️ Cannot seed life onto a stellar plasma furnace!".to_string();
-                    toast.timer = 3.5;
-                } else if let Ok(mut p_cmd) = commands.get_entity(ent) {
-                    p_cmd.insert((
-                        VolatileInventory {
-                            delivered_water_m_earth: 0.002,
-                            ocean_coverage_frac: 0.70,
-                            atmospheric_pressure_bar: 1.0,
-                            cometary_impact_count: 12,
-                        },
-                        BiosphereState {
-                            habitability_score: 0.95,
-                            biomass_coverage_frac: 0.65,
-                            oxygen_fraction: 0.21,
-                            emergence_year: Some(sim_time_years),
-                            technosignature: 0.0,
-                            bioluminescence_intensity: 0.25,
-                            ..Default::default()
-                        },
-                        PlanetaryClimate {
-                            surface_temperature_k: 288.0,
-                            equilibrium_temperature_k: 255.0,
-                            greenhouse_delta_k: 33.0,
-                            albedo: 0.30,
-                            ice_coverage_frac: 0.10,
-                            cloud_coverage_frac: 0.55,
-                            climate_regime: ClimateRegime::TemperateHabitable,
-                            polar_ice_cap_latitude_deg: 75.0,
-                        },
-                    ));
-                    comp.ice_frac = 0.08;
-                    comp.gas_frac = 0.02;
-                    toast.message = format!(
-                        "🌱 Seeded Photosynthetic Biosphere & Oceans on {}!",
-                        body.name
-                    );
-                    toast.timer = 5.0;
-                }
-            }
-            true
-        }
+        UiButtonAction::SeedLife => handle_seed_life(
+            selected_query,
+            player_state,
+            commands,
+            progression,
+            techs,
+            science,
+            sim_time_years,
+            toast,
+        ),
         _ => false,
     }
 }
@@ -367,11 +693,18 @@ pub fn handle_strip_atmosphere(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Bombardment dispatch validates optional Progression gating"
+)]
 pub fn handle_bombardment_trigger(
     action: &UiButtonAction,
     selected_query: &mut SelectedWorldQuery,
     player_state: &PlayerInteractionState,
     commands: &mut Commands,
+    progression: Option<&ProgressionState>,
+    techs: Option<&UnlockedTechs>,
+    mut science: Option<&mut ScienceData>,
     sim_time_years: f64,
     toast: &mut NotificationToast,
 ) {
@@ -405,6 +738,20 @@ pub fn handle_bombardment_trigger(
         }
         _ => return,
     };
+
+    let (req_tech, cost) = match b_type {
+        crate::simulation::terraforming::BombardmentType::IcyComet => {
+            (Some(TechnologyId::CometRedirection), 50.0)
+        }
+        crate::simulation::terraforming::BombardmentType::CarbonaceousChondrite
+        | crate::simulation::terraforming::BombardmentType::VolatileAblationSalvo => {
+            (Some(TechnologyId::AtmosphericInjection), 50.0)
+        }
+        crate::simulation::terraforming::BombardmentType::IronAsteroid => (None, 50.0),
+    };
+    if !check_progression_gate(progression, techs, &mut science, req_tech, cost, toast) {
+        return;
+    }
 
     crate::simulation::terraforming::launch_targeted_bombardment(
         commands,

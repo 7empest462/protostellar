@@ -677,6 +677,7 @@ fn setup_surface_atmosphere_test_app() -> (App, Entity, Entity, Entity) {
 
 #[test]
 fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
+    use bevy::core_pipeline::prepass::DepthPrepass;
     use bevy::pbr::{AtmosphereSettings, ContactShadows};
     use protostellar::game::ui::NotificationToast;
     use protostellar::rendering::camera::PanOrbitCamera;
@@ -694,30 +695,17 @@ fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
             .contains::<AtmosphereSettings>()
     );
     assert!(!app.world().entity(camera_ent).contains::<ContactShadows>());
+    assert!(!app.world().entity(camera_ent).contains::<DepthPrepass>());
 
-    // 1. Enter Surface Horizon mode on Earth (has atmosphere: 1.013 bar)
-    {
-        let mut toast = NotificationToast::default();
-        let mut cam = app
-            .world_mut()
-            .get_mut::<PanOrbitCamera>(camera_ent)
-            .unwrap();
-        toggle_surface_horizon_mode(&mut cam, Some(earth_ent), &mut toast);
-    }
-    sched.run(app.world_mut());
+    // Simulate leaked DepthPrepass/ContactShadows/AtmosphereSettings before Surface Mode runs
+    app.world_mut().entity_mut(camera_ent).insert((
+        DepthPrepass,
+        ContactShadows::default(),
+        AtmosphereSettings::default(),
+    ));
 
-    assert!(
-        app.world()
-            .entity(camera_ent)
-            .contains::<AtmosphereSettings>(),
-        "Camera must have AtmosphereSettings when on an atmosphere-bearing planet"
-    );
-    assert!(
-        app.world().entity(camera_ent).contains::<ContactShadows>(),
-        "Camera must have ContactShadows when in Surface Horizon mode"
-    );
-
-    // 2. Exit Surface Horizon mode back to orbital view
+    // 1. Enter Surface Horizon mode on Earth: must strip DepthPrepass/ContactShadows/AtmosphereSettings
+    // so unwarped prepass geometry cannot punch black hexagons through the warped planet surface.
     {
         let mut toast = NotificationToast::default();
         let mut cam = app
@@ -732,16 +720,47 @@ fn test_surface_horizon_atmosphere_and_contact_shadows_lifecycle() {
         !app.world()
             .entity(camera_ent)
             .contains::<AtmosphereSettings>(),
-        "AtmosphereSettings must be removed when exiting Surface Horizon mode"
+        "Camera must NOT attach Bevy AtmosphereSettings in Surface Horizon mode"
     );
     assert!(
         !app.world().entity(camera_ent).contains::<ContactShadows>(),
-        "ContactShadows must be removed when exiting Surface Horizon mode"
+        "Camera must NOT attach ContactShadows in Surface Horizon mode"
+    );
+    assert!(
+        !app.world().entity(camera_ent).contains::<DepthPrepass>(),
+        "Camera must NOT leak DepthPrepass in Surface Horizon mode"
+    );
+
+    // 2. Exit Surface Horizon mode back to orbital view: still clean
+    {
+        let mut toast = NotificationToast::default();
+        let mut cam = app
+            .world_mut()
+            .get_mut::<PanOrbitCamera>(camera_ent)
+            .unwrap();
+        toggle_surface_horizon_mode(&mut cam, Some(earth_ent), &mut toast);
+    }
+    sched.run(app.world_mut());
+
+    assert!(
+        !app.world()
+            .entity(camera_ent)
+            .contains::<AtmosphereSettings>(),
+        "AtmosphereSettings must stay absent when exiting Surface Horizon mode"
+    );
+    assert!(
+        !app.world().entity(camera_ent).contains::<ContactShadows>(),
+        "ContactShadows must stay absent when exiting Surface Horizon mode"
+    );
+    assert!(
+        !app.world().entity(camera_ent).contains::<DepthPrepass>(),
+        "DepthPrepass must stay absent when exiting Surface Horizon mode"
     );
 }
 
 #[test]
 fn test_surface_horizon_airless_body_shadows() {
+    use bevy::core_pipeline::prepass::DepthPrepass;
     use bevy::pbr::{AtmosphereSettings, ContactShadows};
     use protostellar::game::ui::NotificationToast;
     use protostellar::rendering::camera::PanOrbitCamera;
@@ -765,8 +784,12 @@ fn test_surface_horizon_airless_body_shadows() {
     sched.run(app.world_mut());
 
     assert!(
-        app.world().entity(camera_ent).contains::<ContactShadows>(),
-        "Camera must have ContactShadows on the Moon"
+        !app.world().entity(camera_ent).contains::<ContactShadows>(),
+        "Airless Moon must NOT attach ContactShadows/DepthPrepass"
+    );
+    assert!(
+        !app.world().entity(camera_ent).contains::<DepthPrepass>(),
+        "Airless Moon must NOT attach DepthPrepass"
     );
     assert!(
         !app.world()

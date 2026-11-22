@@ -80,7 +80,10 @@ pub type MagnetospherePartFilter = (
 pub type MagnetospherePartQuery<'w, 's> =
     Query<'w, 's, MagnetospherePartQueryItem<'static>, MagnetospherePartFilter>;
 
-fn find_magnetar_source(body_query: &MagnetosphereBodyQuery) -> Option<MagnetarSource> {
+fn find_magnetar_source(
+    body_query: &MagnetosphereBodyQuery,
+    origin: &crate::rendering::origin::RenderOrigin,
+) -> Option<MagnetarSource> {
     body_query
         .iter()
         .find(|(_, _, _, body, _, _, _, opt_em, _, opt_mag_root, _)| {
@@ -92,7 +95,7 @@ fn find_magnetar_source(body_query: &MagnetosphereBodyQuery) -> Option<MagnetarS
                     && !body.name.contains("Ejecta"))
         })
         .map(|(_, pos, vel, _, _, _, _, opt_em, _, _, _)| {
-            let p = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+            let p = origin.to_render(pos.0);
             let v = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
             let b_field = opt_em.map_or(1.0e15, |em| em.magnetic_field_gauss);
             MagnetarSource {
@@ -190,6 +193,7 @@ fn compute_magnetosphere_params_for_body(
 
 fn collect_magnetosphere_candidates(
     body_query: &MagnetosphereBodyQuery,
+    origin: &crate::rendering::origin::RenderOrigin,
     magnetar_source: Option<&MagnetarSource>,
     config: &SimulationConfig,
     elapsed: f32,
@@ -237,7 +241,7 @@ fn collect_magnetosphere_candidates(
             continue;
         }
 
-        let world_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        let world_pos = origin.to_render(pos.0);
         let world_vel = Vec3::new(vel.x as f32, vel.y as f32, vel.z as f32);
 
         let spin_axis = opt_spin.map_or(Vec3::Y, |s| {
@@ -258,7 +262,7 @@ fn collect_magnetosphere_candidates(
             opt_tf,
             radius.0,
             body.body_type,
-            world_pos.length(),
+            pos.0.length() as f32,
             25.0,
             config,
         );
@@ -373,18 +377,26 @@ fn spawn_missing_magnetospheres(
 ///
 /// Intelligently skips the central magnetar (which already renders permanent 3D field loops)
 /// and simulates magnetic induction and distortion on companion stars and orbiting planets.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Magnetosphere overlay synchronization"
+)]
 pub fn sync_magnetic_field_overlays(
     mut commands: Commands,
     sim_time: Option<Res<SimTime>>,
     player_state: Res<PlayerInteractionState>,
     visual_assets: Option<Res<VisualAssets>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    camera_query: Query<&crate::rendering::camera::PanOrbitCamera>,
     body_query: MagnetosphereBodyQuery,
     mut root_query: MagnetosphereRootQuery,
     mut part_query: MagnetospherePartQuery,
 ) {
-    let is_active_mode = player_state.overlay_mode == DiagnosticOverlayMode::MagneticFields;
+    let in_surface_mode = camera_query.iter().any(|c| c.surface_horizon_mode);
+    let is_active_mode =
+        !in_surface_mode && player_state.overlay_mode == DiagnosticOverlayMode::MagneticFields;
 
     if !is_active_mode {
         for (root_ent, _, _, _) in root_query.iter() {
@@ -399,11 +411,17 @@ pub fn sync_magnetic_field_overlays(
         return;
     };
 
-    let magnetar_source = find_magnetar_source(&body_query);
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
+    let magnetar_source = find_magnetar_source(&body_query, &origin);
     let elapsed = sim_time.as_deref().map_or(0.0, |st| st.visual_time_secs);
 
-    let candidate_map =
-        collect_magnetosphere_candidates(&body_query, magnetar_source.as_ref(), &config, elapsed);
+    let candidate_map = collect_magnetosphere_candidates(
+        &body_query,
+        &origin,
+        magnetar_source.as_ref(),
+        &config,
+        elapsed,
+    );
 
     let updated_entities = update_existing_magnetospheres(
         &mut commands,

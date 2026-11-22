@@ -2,14 +2,14 @@
 
 use bevy::prelude::*;
 
-use crate::simulation::components::{CelestialBody, CentralStar};
+use crate::simulation::components::{BodyType, CelestialBody, CentralStar};
 use crate::simulation::resources::PlayerInteractionState;
 
 use super::types::{
-    HrDiagramPanel, HrDiagramPanelState, HudButton, HudDynamicText, HudPanelElement,
-    HudVisibilityState, InspectorExoticHeader, InspectorSection, InspectorTab, PlanetBuilderPanel,
-    PlanetBuilderState, QuickBarButtonBaseColor, TelemetryGraphPanel, TelemetryPanelState,
-    UiButtonAction,
+    CosmicEventLog, HrDiagramPanel, HrDiagramPanelState, HudButton, HudDynamicText,
+    HudPanelElement, HudVisibilityState, InspectorExoticHeader, InspectorSection, InspectorTab,
+    PlanetBuilderPanel, PlanetBuilderState, QuickBarButtonBaseColor, QuickBarScrollViewport,
+    QuickBarState, QuickBodySelectorBar, TelemetryGraphPanel, TelemetryPanelState, UiButtonAction,
 };
 use crate::simulation::resources::{
     DiagnosticOverlayMode, HabitableZoneConfig, LagrangeOverlayConfig, SimulationConfig,
@@ -18,7 +18,8 @@ use crate::simulation::resources::{
 /// Synchronizes visibility for collapsible HUD panels and master full-screen view mode.
 #[allow(
     clippy::type_complexity,
-    reason = "Many overlapping queries, each with specific element types"
+    clippy::too_many_arguments,
+    reason = "Many overlapping queries, each with specific element types and optional HUD state"
 )]
 pub fn update_hud_visibility(
     hud_visibility: Res<HudVisibilityState>,
@@ -28,13 +29,19 @@ pub fn update_hud_visibility(
     opt_hr_state: Option<Res<HrDiagramPanelState>>,
     opt_lagrange: Option<Res<LagrangeOverlayConfig>>,
     opt_hz: Option<Res<HabitableZoneConfig>>,
-    opt_config: Option<Res<SimulationConfig>>,
-    opt_audio: Option<Res<crate::game::audio::CosmicAudioState>>,
+    opt_misc: (
+        Option<Res<SimulationConfig>>,
+        Option<Res<crate::game::audio::CosmicAudioState>>,
+        Option<Res<QuickBarState>>,
+        Option<Res<CosmicEventLog>>,
+    ),
     mut panel_nodes: ParamSet<(
         Query<(&mut Node, &HudPanelElement)>,
         Query<&mut Node, With<PlanetBuilderPanel>>,
         Query<&mut Node, With<TelemetryGraphPanel>>,
         Query<&mut Node, With<HrDiagramPanel>>,
+        Query<&mut Node, With<QuickBarScrollViewport>>,
+        Query<&mut Node, With<QuickBodySelectorBar>>,
     )>,
     mut text_query: Query<(&mut Text, Option<&mut TextColor>, &HudDynamicText)>,
     names_query: Query<&CelestialBody>,
@@ -49,13 +56,18 @@ pub fn update_hud_visibility(
         With<HudButton>,
     >,
 ) {
+    let (opt_config, opt_audio, opt_quick_bar, opt_event_log) = opt_misc;
+
     update_panel_nodes(
         &mut panel_nodes.p0(),
         &hud_visibility,
         &builder_state,
         &telemetry_state,
         opt_hr_state.as_deref(),
+        opt_quick_bar.as_deref(),
     );
+    update_quick_bar_viewport_layout(&mut panel_nodes.p4(), opt_quick_bar.as_deref());
+    update_quick_bar_wrap_layout(&mut panel_nodes.p5(), opt_quick_bar.as_deref());
     update_builder_drawer(&mut panel_nodes.p1(), &builder_state);
     update_telemetry_drawer(&mut panel_nodes.p2(), &telemetry_state, &hud_visibility);
     update_hr_diagram_drawer(
@@ -73,6 +85,7 @@ pub fn update_hud_visibility(
         opt_hz.as_deref(),
         opt_config.as_deref(),
         opt_audio.as_deref(),
+        opt_event_log.as_deref(),
     );
     update_inspector_tab_highlights(&mut tab_buttons_query, hud_visibility.active_inspector_tab);
 }
@@ -115,6 +128,7 @@ fn update_panel_nodes(
     builder_state: &PlanetBuilderState,
     telemetry_state: &TelemetryPanelState,
     hr_state: Option<&HrDiagramPanelState>,
+    quick_bar_state: Option<&QuickBarState>,
 ) {
     for (mut node, element) in panels_query.iter_mut() {
         let new_display = match element {
@@ -164,9 +178,59 @@ fn update_panel_nodes(
             HudPanelElement::HrDiagramPanelPill => {
                 flex_or_none(hr_state.is_some_and(|h| h.is_open && h.is_minimized))
             }
+            HudPanelElement::QuickBarFilterRow => flex_or_none(
+                quick_bar_state.is_some_and(|qb| qb.show_filter)
+                    && !hud_visibility.is_full_screen_clean,
+            ),
+            HudPanelElement::CinemaRestorePill => flex_or_none(hud_visibility.is_full_screen_clean),
+            HudPanelElement::EventFeedPanel => flex_or_none(
+                !hud_visibility.event_feed_minimized && !hud_visibility.is_full_screen_clean,
+            ),
+            HudPanelElement::EventFeedPill => flex_or_none(
+                hud_visibility.event_feed_minimized && !hud_visibility.is_full_screen_clean,
+            ),
         };
         if node.display != new_display {
             node.display = new_display;
+        }
+    }
+}
+
+fn update_quick_bar_viewport_layout(
+    viewport_query: &mut Query<&mut Node, With<QuickBarScrollViewport>>,
+    quick_bar_state: Option<&QuickBarState>,
+) {
+    let wrap_rows = quick_bar_state.is_some_and(|qb| qb.wrap_rows);
+    let (target_overflow, target_max_height) = if wrap_rows {
+        (Overflow::scroll_y(), Val::Vh(28.0))
+    } else {
+        (Overflow::scroll_x(), Val::Auto)
+    };
+
+    for mut node in viewport_query.iter_mut() {
+        if node.overflow != target_overflow {
+            node.overflow = target_overflow;
+        }
+        if node.max_height != target_max_height {
+            node.max_height = target_max_height;
+        }
+    }
+}
+
+fn update_quick_bar_wrap_layout(
+    selector_query: &mut Query<&mut Node, With<QuickBodySelectorBar>>,
+    quick_bar_state: Option<&QuickBarState>,
+) {
+    let wrap_rows = quick_bar_state.is_some_and(|qb| qb.wrap_rows);
+    let target_wrap = if wrap_rows {
+        FlexWrap::Wrap
+    } else {
+        FlexWrap::NoWrap
+    };
+
+    for mut node in selector_query.iter_mut() {
+        if node.flex_wrap != target_wrap {
+            node.flex_wrap = target_wrap;
         }
     }
 }
@@ -226,14 +290,15 @@ fn update_dynamic_badges(
     opt_hz: Option<&HabitableZoneConfig>,
     opt_config: Option<&SimulationConfig>,
     opt_audio: Option<&crate::game::audio::CosmicAudioState>,
+    opt_event_log: Option<&CosmicEventLog>,
 ) {
     for (mut text, opt_color, dynamic_text) in text_query.iter_mut() {
         let (new_text, new_color): (&str, Option<Color>) = match dynamic_text {
             HudDynamicText::FullScreenBadge => {
                 if hud_visibility.is_full_screen_clean {
-                    ("👁️ Show HUD", None)
+                    ("👁️ Show HUD [`]", None)
                 } else {
-                    ("⛶ Fullscreen", None)
+                    ("🎬 Cinema [`]", None)
                 }
             }
             HudDynamicText::OrbitModeBadge => {
@@ -328,6 +393,25 @@ fn update_dynamic_badges(
                 }
                 continue;
             }
+            HudDynamicText::EventFeedBadge => {
+                let (total, unread) =
+                    opt_event_log.map_or((0, 0), |log| (log.entries.len(), log.unread_count));
+                let badge_text = format!("📡 Events ({total}) [Shift-E]");
+                if text.0 != badge_text {
+                    text.0 = badge_text;
+                }
+                let target_color = if unread > 0 {
+                    Color::srgb(1.0, 0.85, 0.35)
+                } else {
+                    Color::srgb(0.5, 0.85, 1.0)
+                };
+                if let Some(mut color) = opt_color
+                    && color.0 != target_color
+                {
+                    color.0 = target_color;
+                }
+                continue;
+            }
         };
 
         if text.0 != new_text {
@@ -381,6 +465,17 @@ pub fn update_scenario_contextual_ui(
     });
     let is_active_star = selected_info.is_some_and(|(body, opt_star, _)| {
         !body.body_type.is_remnant() && (opt_star.is_some() || body.body_type.is_star_or_remnant())
+    });
+    let is_ageable_star = selected_info.is_some_and(|(body, opt_star, _)| {
+        (opt_star.is_some() || body.body_type.is_star_or_remnant())
+            && !matches!(
+                body.body_type,
+                BodyType::BlackHole
+                    | BodyType::BlackDwarf
+                    | BodyType::IronStar
+                    | BodyType::BosonStar
+                    | BodyType::QuasiStar
+            )
     });
 
     // 1. Synchronize inspector section containers
@@ -449,10 +544,16 @@ pub fn update_scenario_contextual_ui(
                 preset == crate::simulation::scenarios::ScenarioPreset::MagnetarOutburst
                     || is_star_like,
             ),
-            // Biosphere seeding: universally available on solid non-star, non-probe worlds
-            UiButtonAction::SeedLife => flex_or_none(!is_star_like && !is_probe),
-            // Stellar ignition & aging: only active on hydrogen-burning or protostellar bodies (never degenerate remnants)
-            UiButtonAction::IgniteStar | UiButtonAction::AgeStar => flex_or_none(is_active_star),
+            // Biosphere seeding & universal civilization setup: available on solid non-star, non-probe worlds
+            UiButtonAction::SeedLife
+            | UiButtonAction::ToggleCivOrbitalRing
+            | UiButtonAction::ToggleCivSolarMirrors
+            | UiButtonAction::ToggleCivPlanetaryShield
+            | UiButtonAction::CycleFloraAndBiolum
+            | UiButtonAction::ClearCivilization => flex_or_none(!is_star_like && !is_probe),
+            // Stellar ignition: active stars; Aging: also compact remnants until terminal Black Dwarf / Black Hole
+            UiButtonAction::IgniteStar => flex_or_none(is_active_star),
+            UiButtonAction::AgeStar => flex_or_none(is_ageable_star),
             // Geological Epoch scrubber: scenarios with planetary era timelines
             UiButtonAction::ToggleEpochScrubberPanel => flex_or_none(matches!(
                 preset,

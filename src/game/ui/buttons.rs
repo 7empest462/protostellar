@@ -36,6 +36,7 @@ pub fn create_button(
                 },
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                flex_shrink: 0.0,
                 ..default()
             },
             BorderColor::all(border_color.with_alpha(0.85)),
@@ -85,6 +86,7 @@ pub fn create_compact_selectable_button(
                 },
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                flex_shrink: 0.0,
                 ..default()
             },
             BorderColor::all(border_color.with_alpha(0.88)),
@@ -128,6 +130,7 @@ pub fn create_compact_button(
                 },
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                flex_shrink: 0.0,
                 ..default()
             },
             BorderColor::all(border_color.with_alpha(0.85)),

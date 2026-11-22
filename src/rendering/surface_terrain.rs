@@ -4,9 +4,11 @@
 //! and liquid ocean planes for First-Person Surface & Rover Horizon mode.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::pbr::StandardMaterial;
+use bevy::core_pipeline::prepass::DepthPrepass;
+use bevy::pbr::{AtmosphereSettings, ContactShadows};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy_light::atmosphere::Atmosphere;
 use std::f32::consts::PI;
 
 use crate::rendering::camera::PanOrbitCamera;
@@ -661,10 +663,9 @@ pub fn sync_surface_terrain_system(
     >,
     children_query: Query<&Children>,
     mut terrain_state: ResMut<SurfaceTerrainState>,
-    _meshes: ResMut<Assets<Mesh>>,
-    _std_materials: ResMut<Assets<StandardMaterial>>,
     sim_time: Option<Res<SimTime>>,
     config: Res<SimulationConfig>,
+    opt_origin: Option<Res<crate::rendering::origin::RenderOrigin>>,
 ) {
     let Ok(camera) = camera_query.single() else {
         return;
@@ -720,10 +721,11 @@ pub fn sync_surface_terrain_system(
     let needs_rebuild =
         terrain_state.root_entity.is_none() || terrain_state.active_host != Some(host_ent);
 
+    let origin = opt_origin.as_deref().copied().unwrap_or_default();
     let elapsed_years = sim_time.as_deref().map_or(0.0, |st| st.elapsed_years);
     let (spin_dir, spin_angle) = compute_planet_spin_frame(opt_spin, elapsed_years);
     let spin_rot = Quat::from_axis_angle(spin_dir.as_vec3(), spin_angle as f32);
-    let planet_pos = pos.0.as_vec3();
+    let planet_pos = origin.to_render(pos.0);
 
     if needs_rebuild {
         if let Some(old_root) = terrain_state.root_entity.take() {
@@ -749,6 +751,50 @@ pub fn sync_surface_terrain_system(
             root_tf.scale = Vec3::splat(scale_ratio);
         }
     }
+}
+
+pub(super) fn cleanup_surface_horizon_effects(
+    commands: &mut Commands,
+    cam_entity: Entity,
+    has_atmosphere_settings: bool,
+    has_contact_shadows: bool,
+    has_depth_prepass: bool,
+    all_atmospheres: &Query<Entity, With<Atmosphere>>,
+) {
+    if has_atmosphere_settings {
+        commands.entity(cam_entity).remove::<AtmosphereSettings>();
+    }
+    if has_contact_shadows {
+        commands.entity(cam_entity).remove::<ContactShadows>();
+    }
+    if has_depth_prepass {
+        commands.entity(cam_entity).remove::<DepthPrepass>();
+    }
+    for ent in all_atmospheres.iter() {
+        commands.entity(ent).remove::<Atmosphere>();
+    }
+}
+
+pub(super) fn sync_surface_horizon_atmosphere_and_shadows(
+    commands: &mut Commands,
+    cam_entity: Entity,
+    has_contact_shadows: bool,
+    has_atmosphere_settings: bool,
+    has_depth_prepass: bool,
+    all_atmospheres: &Query<Entity, With<Atmosphere>>,
+) {
+    // Protostellar renders surface skies, aerial perspective, and relief shadowing natively inside
+    // `atmosphere.wesl` and `planet.wesl`. Attaching `ContactShadows` (which requires `DepthPrepass`)
+    // or meter-scaled Hillaire `Atmosphere` would write an unwarped unit sphere into the prepass depth
+    // buffer that punches black hexagonal pyramids through the warped planet surface.
+    cleanup_surface_horizon_effects(
+        commands,
+        cam_entity,
+        has_atmosphere_settings,
+        has_contact_shadows,
+        has_depth_prepass,
+        all_atmospheres,
+    );
 }
 
 /// Resolves the host planet entity and current surface vantage point, matching `surface_camera`.

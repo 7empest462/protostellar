@@ -20,6 +20,7 @@ fn assert_monotonic_flight_to_target(
     target_pos: Vec3,
     target_r: f32,
 ) {
+    let start_r = app.world().get::<PanOrbitCamera>(cam_ent).unwrap().radius;
     {
         let mut cam = app.world_mut().get_mut::<PanOrbitCamera>(cam_ent).unwrap();
         cam.initiate_target_transition(target_ent, target_pos, target_r);
@@ -30,6 +31,8 @@ fn assert_monotonic_flight_to_target(
     let mut prev_dist = init_cam_tf.translation.distance(target_pos);
     let mut prev_theta = init_body_tf.scale.x / prev_dist;
     let mut prev_fov_z: Option<f32> = None;
+    let r_min_bound = start_r.min(target_r) - 1e-6;
+    let r_max_bound = start_r.max(target_r) + 1e-5;
 
     for frame in 0..40 {
         app.world_mut()
@@ -53,8 +56,8 @@ fn assert_monotonic_flight_to_target(
             "Frame {frame}: Camera plunged closer than final framing ({dist} < {target_r})!"
         );
         assert!(
-            cam_state.radius <= target_r + 1e-5,
-            "Frame {frame}: camera.radius bounced outward to {} (expected <= {target_r})!",
+            cam_state.radius >= r_min_bound && cam_state.radius <= r_max_bound,
+            "Frame {frame}: camera.radius ({}) strayed outside monotonic interval [{r_min_bound}, {r_max_bound}]!",
             cam_state.radius
         );
         assert!(
@@ -139,7 +142,7 @@ fn test_tab_planet_transition_strictly_monotonic_apparent_angular_size() {
         Mass(1.0),
         Radius(SOLAR_RADIUS_AU),
         SimPosition(DVec3::ZERO),
-        Transform::from_scale(Vec3::splat(0.015)),
+        Transform::from_scale(Vec3::splat(SOLAR_RADIUS_AU as f32)),
     ));
 
     let earth_pos = Vec3::new(0.0, 0.0, 1.0);
@@ -171,7 +174,7 @@ fn test_tab_planet_transition_strictly_monotonic_apparent_angular_size() {
             Mass(EARTH_MASS_SOLAR),
             Radius(EARTH_RADIUS_AU),
             SimPosition(DVec3::new(0.0, 0.0, 1.0)),
-            Transform::from_translation(earth_pos).with_scale(Vec3::splat(0.00018)),
+            Transform::from_translation(earth_pos).with_scale(Vec3::splat(EARTH_RADIUS_AU as f32)),
         ))
         .id();
 
@@ -185,7 +188,7 @@ fn test_tab_planet_transition_strictly_monotonic_apparent_angular_size() {
             Mass(EARTH_MASS_SOLAR * 0.107),
             Radius(mars_rad_au),
             SimPosition(DVec3::new(0.0, 0.0, 1.52)),
-            Transform::from_translation(mars_pos).with_scale(Vec3::splat(0.0029)),
+            Transform::from_translation(mars_pos).with_scale(Vec3::splat(mars_rad_au as f32)),
         ))
         .id();
 
@@ -240,4 +243,116 @@ fn test_tab_planet_transition_strictly_monotonic_apparent_angular_size() {
         earth_pos,
         earth_frame_r,
     );
+}
+
+#[test]
+fn test_render_origin_centers_focused_planet_and_preserves_earth_moon_separation() {
+    use protostellar::rendering::bodies::{
+        VisualAssets, VisualBody, transforms::sync_celestial_transforms,
+    };
+    use protostellar::rendering::origin::{RenderOrigin, update_render_origin};
+
+    let mut app = App::new();
+    app.init_resource::<Time>()
+        .init_resource::<SimulationConfig>()
+        .init_resource::<PlayerInteractionState>()
+        .init_resource::<RenderOrigin>()
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<Assets<protostellar::rendering::materials::PlanetMaterial>>();
+    let mesh = app
+        .world_mut()
+        .resource_mut::<Assets<Mesh>>()
+        .add(Cuboid::new(1.0, 1.0, 1.0));
+    app.insert_resource(VisualAssets::dummy(mesh));
+    app.add_systems(
+        Update,
+        (update_render_origin, sync_celestial_transforms).chain(),
+    );
+
+    let earth_sim = DVec3::new(1.0, 0.0, 0.0);
+    let moon_offset = DVec3::new(0.00257, 0.0, 0.0);
+    let planet_nine_sim = DVec3::new(380.0, 0.0, -145.0);
+
+    let earth = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Earth".to_string(),
+                body_type: BodyType::TerrestrialPlanet,
+            },
+            SimPosition(earth_sim),
+            Radius(EARTH_RADIUS_AU),
+            Transform::default(),
+            VisualBody,
+        ))
+        .id();
+    let moon = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "The Moon".to_string(),
+                body_type: BodyType::Moon,
+            },
+            SimPosition(earth_sim + moon_offset),
+            Radius(EARTH_RADIUS_AU * 0.272),
+            Transform::default(),
+            VisualBody,
+        ))
+        .id();
+    let planet_nine = app
+        .world_mut()
+        .spawn((
+            CelestialBody {
+                name: "Planet Nine".to_string(),
+                body_type: BodyType::IceGiant,
+            },
+            SimPosition(planet_nine_sim),
+            Radius(EARTH_RADIUS_AU * 3.2),
+            Transform::default(),
+            VisualBody,
+        ))
+        .id();
+
+    let mut cam = PanOrbitCamera {
+        target_entity: Some(earth),
+        previous_target_entity: Some(earth),
+        focus_transition_progress: 1.0,
+        ..default()
+    };
+    cam.set_focus_au(earth_sim);
+    cam.set_target_focus_au(earth_sim);
+    let cam_ent = app.world_mut().spawn((Camera3d::default(), cam)).id();
+
+    app.update();
+
+    let origin = *app.world().resource::<RenderOrigin>();
+    let earth_r = origin.to_render(earth_sim);
+    let moon_r = origin.to_render(earth_sim + moon_offset);
+    assert!(
+        earth_r.length() < 1e-9,
+        "Focused Earth must sit at render-space origin, got {earth_r:?}"
+    );
+    assert!(
+        (moon_r.distance(earth_r) - 0.00257).abs() < 1e-7,
+        "Earth-Moon render distance must be 0.00257 AU, got {}",
+        moon_r.distance(earth_r)
+    );
+
+    {
+        let mut cam_mut = app.world_mut().get_mut::<PanOrbitCamera>(cam_ent).unwrap();
+        cam_mut.target_entity = Some(planet_nine);
+        cam_mut.previous_target_entity = Some(planet_nine);
+        cam_mut.focus_transition_progress = 1.0;
+        cam_mut.set_focus_au(planet_nine_sim);
+        cam_mut.set_target_focus_au(planet_nine_sim);
+    }
+    app.update();
+
+    let origin = *app.world().resource::<RenderOrigin>();
+    assert!(
+        origin.to_render(planet_nine_sim).length() < 1e-9,
+        "Focused Planet Nine at 380 AU must sit at render-space origin"
+    );
+    let _ = (moon, earth);
 }
